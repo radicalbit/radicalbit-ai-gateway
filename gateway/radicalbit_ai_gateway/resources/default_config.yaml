@@ -1,0 +1,19 @@
+# Minimal gateway configuration template.
+# Edit this config and load it to start serving requests.
+#
+# Required fields: chat_models and routes.
+# Each route must reference at least one chat model by model_id.
+#
+# Use !secret references for API keys (defined in secrets.yaml).
+
+chat_models:
+  # - model_id: my-model
+  #   model: openai/gpt-4o-mini
+  #   credentials:
+  #     api_key: !secret MY_API_KEY
+  #   prompt: You are a helpful assistant.
+
+routes:
+  # default-route:
+  #   chat_models:
+  #     - my-model

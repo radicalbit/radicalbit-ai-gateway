@@ -1,0 +1,14 @@
+<clickhouse>
+  <profiles>
+    <default>
+      <max_threads>2</max_threads>
+      <max_block_size>8192</max_block_size>
+      <queue_max_wait_ms>1000</queue_max_wait_ms>
+      <max_execution_time>600</max_execution_time>
+      <input_format_parallel_parsing>0</input_format_parallel_parsing>
+      <output_format_parallel_formatting>0</output_format_parallel_formatting>
+      <max_bytes_before_external_group_by>3221225472</max_bytes_before_external_group_by> <!-- 3 GB -->
+      <max_bytes_before_external_sort>3221225472</max_bytes_before_external_sort> <!-- 3 GB -->
+    </default>
+  </profiles>
+</clickhouse>
