@@ -1,0 +1,155 @@
+# JetBrains specific
+.idea
+*.iml
+
+# MacOS files
+.DS_Store
+
+#####################
+## PYTHON SPECIFICS #
+#####################
+
+# Byte-compiled / optimized / DLL files
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+**/.Python
+**/build/
+**/develop-eggs/
+**/dist/
+**/downloads/
+**/eggs/
+**/.eggs/
+**/lib/
+**/lib64/
+**/parts/
+**/sdist/
+**/var/
+**/wheels/
+**/share/python-wheels/
+**/*.egg-info/
+**/.installed.cfg
+**/*.egg
+**/MANIFEST
+
+# Installer logs
+**/pip-log.txt
+**/pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+**/htmlcov/
+**/.tox/
+**/.nox/
+**/.coverage
+**/.coverage.*
+**/.cache
+**/nosetests.xml
+**/coverage.xml
+**/*.cover
+**/*.py,cover
+**/.hypothesis/
+**/.pytest_cache/
+**/cover/
+
+# PyBuilder
+**/.pybuilder/
+**/target/
+
+# Jupyter Notebook
+**/.ipynb_checkpoints
+
+# Environments
+**/.env
+**/.secrets
+**/.venv
+**/env/
+**/venv/
+**/ENV/
+**/env.bak/
+**/venv.bak/
+**/.python-version
+**/.env.dev
+**/.env.prod
+**/.env.test
+**/.env.local
+**/.env.staging
+**/.env.production
+**/.env.development
+**/.env.test
+**/.env.local
+
+#####################
+## UI  SPECIFICS    #
+#####################
+
+# Logs
+ui/logs
+ui/*.log
+ui/npm-debug.log*
+ui/yarn-debug.log*
+ui/yarn-error.log*
+ui/pnpm-debug.log*
+ui/lerna-debug.log*
+
+ui/node_modules
+ui/dist
+ui/dist-ssr
+ui/*.local
+ui/.npmrc
+ui/*.suo
+ui/*.ntvs*
+ui/*.njsproj
+ui/*.sln
+ui/*.sw?
+ui/.env*
+ui/.vite
+
+#####################
+## DEMO  SPECIFICS  #
+#####################
+
+demo/ollama/ollama
+
+
+#####################
+## BENCHMARKS      #
+#####################
+
+# Benchmark results
+# - benchmarks/results/: K6 test results
+# - benchmarks/github/results/: GitHub CI benchmark results
+benchmarks/results/**
+benchmarks/github/results/**
+
+# K6 test results
+benchmarks/results/k6_summary_*.json
+benchmarks/results/k6_report_*.html
+benchmarks/results/k6_raw_*.json
+
+# GitHub CI benchmark results
+benchmarks/results/summary_mock_v2_*.txt
+benchmarks/results/summary_nostream_v2_*.txt
+benchmarks/results/summary_stream_v2_*.txt
+
+# Gateway PID and log files (generated during benchmarks)
+gateway/gateway.pid
+gateway/gateway.log
+gateway/gateway_debug.log
+gateway/gateway-debug.log
+gateway/gateway-error.log
+gateway/gateway-warning.log
+gateway/gateway-info.log
+gateway_guardrails_test.log
+
+# General log and PID files
+**/*.log
+**/*.pid
+
+# Claude files
+**/CLAUDE.md
+**/.claude
