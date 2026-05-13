@@ -1,0 +1,256 @@
+# Docker Compose - Build from source or use pre-built images
+#
+# Usage:
+#   Build from source (default, images tagged with :local):
+#     docker compose up --build
+#
+#   Use pre-built images:
+#     GATEWAY_TAG=latest docker compose up
+
+services:
+  gateway:
+    image: ${GATEWAY_IMAGE:-tools.radicalbit.io/radicalbit-ai-gateway:${GATEWAY_TAG:-local}}
+    build: .
+    container_name: gateway
+    ports:
+      - 9000:9000
+    develop:
+      watch:
+        - path: ./gateway/radicalbit_ai_gateway
+          action: rebuild
+        - path: ./ui/src
+          action: rebuild
+    environment:
+      DB_TYPE: "postgresql"
+      DB_HOST: "postgres"
+      DB_PORT: 5432
+      DB_USER: "postgres"
+      DB_PWD: "postgres"
+      DB_NAME: "radicalbit"
+      DB_SCHEMA: "public"
+      GATEWAY_DEBUG_MODE: "False"
+      LOG_MODE: "${LOG_MODE:-plain}" # json | plain | color
+      REDIS_HOST: "valkey"
+      REDIS_PORT: 6379
+      ENABLED_PLUGINS: "${ENABLED_PLUGINS:-} "
+      CELERY_BROKER_URL: 'redis://valkey:6379/0'
+      # ClickHouse configuration
+      CLICKHOUSE_DB_HOST: "${CLICKHOUSE_DB_HOST:-clickhouse}"
+      CLICKHOUSE_DB_PORT: "${CLICKHOUSE_DB_PORT:-9000}"
+      CLICKHOUSE_DB_USER: "${CLICKHOUSE_DB_USER:-default}"
+      CLICKHOUSE_DB_PWD: "${CLICKHOUSE_DB_PWD:-default}"
+      CLICKHOUSE_DB_NAME: "${CLICKHOUSE_DB_NAME:-default}"
+      CLICKHOUSE_DB_SCHEMA: "${CLICKHOUSE_DB_SCHEMA:-default}"
+      # LLM prompts directory if present (optional)
+      # PROMPTS_DIR: "/radicalbit_ai_gateway/radicalbit_ai_gateway/prompts"
+      # LLM Judge prompts directory (optional)
+      JUDGE_PROMPTS_DIR: "/radicalbit_ai_gateway/radicalbit_ai_gateway/guardrails/judges/custom-prompts"
+      # Tracing configs
+      COLLECTOR_BASE_URL: http://otel-collector:4318/v1/traces
+      # OTLP_EXPORTERS: '[{"url":"http://jaeger:4318/v1/traces"}]'
+      # CORS configs
+      CORS_ALLOW_ORIGINS: '["http://localhost:5173"]'
+      CORS_ALLOW_CREDENTIALS: True
+      # AI Config Generator
+      CONFIG_GENERATOR_OPENAI_API_KEY: "OPENAI_API_KEY"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ${SECRETS_FILE:-./secrets.yaml}:/radicalbit_ai_gateway/secrets.yaml
+      # Mount custom model prompts if they exist (optional)
+      # - ${PROMPTS_HOST_DIR:-./prompts}:/radicalbit_ai_gateway/radicalbit_ai_gateway/prompts
+      # Mount custom judge prompts if they exist
+      - ./demo/llm-judge-prompts:/radicalbit_ai_gateway/radicalbit_ai_gateway/guardrails/judges/custom-prompts
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_DB: radicalbit
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrations:
+    image: ${MIGRATIONS_IMAGE:-tools.radicalbit.io/radicalbit-ai-gateway-migrations:${GATEWAY_TAG:-local}}
+    container_name: migrations
+    build:
+      context: ./gateway
+      dockerfile: ./migrations.Dockerfile
+    environment:
+      DB_TYPE: "postgresql"
+      DB_HOST: "postgres"
+      DB_PORT: 5432
+      DB_USER: "postgres"
+      DB_PWD: "postgres"
+      DB_NAME: "radicalbit"
+      DB_SCHEMA: "public"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./gateway/alembic:/app/alembic
+      - ./gateway/alembic.ini:/app/alembic.ini
+      - ./gateway/radicalbit_ai_gateway/db/tables:/app/radicalbit_ai_gateway/db/tables
+
+
+  adminer:
+    image: adminer:5.4.1-standalone
+    container_name: adminer
+    ports:
+      - 8090:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  valkey:
+    image: valkey/valkey:8.1.4
+    container_name: valkey
+    ports:
+      - 6379:6379
+    command: valkey-server --appendonly yes
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  valkey-cache:
+    image: valkey/valkey-bundle:8.1.4
+    container_name: valkey-cache
+    ports:
+      - 6380:6379
+    command: valkey-server --appendonly yes
+    volumes:
+      - valkey-cache-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  redis-insight:
+    image: redis/redisinsight:3.0.2
+    container_name: redis-insight
+    environment:
+      - RI_REDIS_HOST_SYSTEM=valkey
+      - RI_REDIS_PORT_SYSTEM=6379
+      - RI_REDIS_HOST_CACHE=valkey-cache
+      - RI_REDIS_PORT_CACHE=6379
+    restart: always
+    ports:
+      - "5540:5540"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.12
+    container_name: clickhouse
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9002:9000"  # Native client
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--host", "localhost"]
+      interval: 5s
+      retries: 5
+      start_period: 5s
+      timeout: 5s
+    environment:
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=default
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./docker/clickhouse/config.xml:/etc/clickhouse-server/config.d/low-memory-config.xml:ro
+      - ./docker/clickhouse/users.xml:/etc/clickhouse-server/users.d/low-memory-users.xml:ro
+
+  ch-ui:
+    image: ghcr.io/caioricciuti/ch-ui:1.6.4
+    restart: always
+    ports:
+      - "5521:5521"
+    environment:
+      VITE_CLICKHOUSE_URL: "http://localhost:8123"
+      VITE_CLICKHOUSE_USER: "default"
+      VITE_CLICKHOUSE_PASS: "default"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  clickhouse-migrations:
+    image: ${CLICKHOUSE_MIGRATIONS_IMAGE:-tools.radicalbit.io/radicalbit-ai-gateway-metrics-worker-migrations:${GATEWAY_TAG:-local}}
+    container_name: clickhouse-migrations
+    build:
+      context: ./clickhouse-migrations
+    environment:
+      GOOSE_DRIVER: clickhouse
+      GOOSE_DBSTRING: "tcp://${CLICKHOUSE_DB_USER:-default}:${CLICKHOUSE_DB_PWD:-default}@${CLICKHOUSE_DB_HOST:-clickhouse}:${CLICKHOUSE_DB_PORT:-9000}/${CLICKHOUSE_DB_NAME:-default}"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  metrics-worker:
+    image: ${METRICS_WORKER_IMAGE:-tools.radicalbit.io/radicalbit-ai-gateway-metrics-worker:${GATEWAY_TAG:-local}}
+    container_name: metrics-worker
+    build:
+      context: ./metrics-worker
+    environment:
+      CELERY_BROKER_URL: redis://valkey:6379/0
+      CLICKHOUSE_HOST: "clickhouse"
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_USER: "default"
+      CLICKHOUSE_PASSWORD: "default"
+      REDIS_HOST: "valkey"
+      REDIS_PORT: 6379
+      SLACK_ENABLED: "False"
+      # SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/t1/t2/t3"
+      # SLACK_USER_MAPPINGS: '{"business-development": "U123ABC"}'
+      SENDGRID_ENABLED: "False"
+      # SENDGRID_API_KEY: "SG.-..."
+      # SENDGRID_FROM_EMAIL: "ai-gateway@radicalbit.ai"
+      # SENDGRID_EMAIL_MAPPINGS: '{"business-development": ["hello@radicalbit.ai", "another@radicalbit.ai"], "marketing": ["hello@radicalbit.ai", "another@radicalbit.ai"]}'
+      # SENDGRID_TEMPLATE_ID: "d-abcde"
+
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    restart: always
+    command: [ "--config", "/etc/otel-collector-config.yaml" ]
+    environment:
+      CLICKHOUSE_DB_HOST: "${CLICKHOUSE_DB_HOST:-clickhouse}"
+      CLICKHOUSE_DB_PORT: "${CLICKHOUSE_DB_PORT:-9000}"
+      CLICKHOUSE_DB_USER: "${CLICKHOUSE_DB_USER:-default}"
+      CLICKHOUSE_DB_PASSWORD: "${CLICKHOUSE_DB_PWD:-default}"
+      CLICKHOUSE_DB_NAME: "${CLICKHOUSE_DB_NAME:-default}"
+    volumes:
+      - ./docker/otel-collector-config/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+
+volumes:
+  postgres-data:
+    name: rb-ai-gateway-postgres-data
+  valkey-data:
+    name: rb-ai-gateway-valkey-data
+  valkey-cache-data:
+    name: rb-ai-gateway-valkey-cache-data
+  clickhouse_data:
+    name: rb-ai-gateway-clickhouse-data

@@ -1,0 +1,246 @@
+import datetime
+from unittest.mock import AsyncMock, patch
+
+from freezegun import freeze_time
+import pytest
+
+from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+
+from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
+from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType, RateLimiting
+from radicalbit_ai_gateway.utils.exceptions import RequestRateLimitExceeded
+
+
+@pytest.fixture(autouse=True)
+def mock_emit_event():
+    """Mock emit_event for all tests in this module."""
+    with patch('radicalbit_ai_gateway.limiting.rate_limiter.emit_event', autospec=True):
+        yield
+
+
+class TestRequestRateLimiter:
+    def test_init_without_config(self):
+        """Test RequestRateLimiter initialization without any configuration."""
+        limiter = RequestRateLimiter(route_name='rb-gateway')
+        assert limiter.limiter is None
+
+    def test_init_with_config(self):
+        """Test RequestRateLimiter initialization with configuration."""
+        config = RateLimiting(
+            algorithm=LimitingAlgorithmType.FIXED_WINDOW,
+            max_requests=10,
+            window_size='1 minute',
+        )
+        limiter = RequestRateLimiter(
+            route_name='rb-gateway', rate_limiting_config=config
+        )
+        assert limiter.limiter is not None
+
+    def test_init_without_max_requests_raises_error(self):
+        """Test that initialization without max_requests raises ValueError."""
+        config = RateLimiting(window_size='1 minute')  # No max_requests set
+        with pytest.raises(
+            ValueError, match='max_requests must be set for rate limiting'
+        ):
+            RequestRateLimiter(route_name='rb-gateway', rate_limiting_config=config)
+
+    @pytest.mark.asyncio
+    async def test_check_request_no_config(self):
+        """Test request checking without configuration does nothing."""
+        limiter = RequestRateLimiter(route_name='rb-gateway')
+        # Should not raise any exception
+        await limiter._check_request(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='fake-name',
+            group_name='test-group',
+        )
+        # count_request with no config should also be a no-op
+        await limiter._count_request()
+
+    @pytest.mark.asyncio
+    async def test_check_request_within_limit_and_count_consumes(self):
+        """Test request checking within limit, and then count_request consumes."""
+        config = RateLimiting(max_requests=5, window_size='1 minute')
+        limiter = RequestRateLimiter(
+            route_name='rb-gateway', rate_limiting_config=config
+        )
+
+        # check_request should NOT consume
+        with patch.object(limiter.limiter, 'hit', new=AsyncMock()) as mock_hit:
+            await limiter._check_request(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='fake-name',
+                group_name='test-group',
+            )
+            mock_hit.assert_not_called()
+
+        # count_request should consume (hit)
+        with patch.object(limiter.limiter, 'hit', new=AsyncMock()) as mock_hit2:
+            await limiter._count_request()
+            mock_hit2.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_check_request_exceeds_limit(self):
+        """Test request checking that exceeds the limit (check-only, no hit)."""
+        config = RateLimiting(max_requests=2, window_size='1 minute')
+        limiter = RequestRateLimiter(
+            route_name='rb-gateway', rate_limiting_config=config
+        )
+
+        # First request: check passes, then we consume
+        await limiter._check_request(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='fake-name',
+            group_name='test-group',
+        )
+        await limiter._count_request()
+
+        # Second request: check passes, then we consume
+        await limiter._check_request(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='fake-name',
+            group_name='test-group',
+        )
+        await limiter._count_request()
+
+        # Third: check should fail BEFORE consuming
+        with pytest.raises(RequestRateLimitExceeded) as exc:
+            await limiter._check_request(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='fake-name',
+                group_name='test-group',
+            )
+
+        msg = getattr(exc.value, 'log_message', str(exc.value))
+        assert '[RATE LIMIT]' in msg
+        assert '[route=rb-gateway]' in msg
+        assert '[kind=REQUEST]' in msg
+        assert '[limit=2]' in msg
+        assert '[window=1 minute]' in msg
+        assert '[action=BLOCK]' in msg
+
+    @pytest.mark.asyncio
+    async def test_request_accumulates_over_multiple_calls(self):
+        """Test that consumption accumulates over multiple requests."""
+        config = RateLimiting(max_requests=3, window_size='1 minute')
+        limiter = RequestRateLimiter(
+            route_name='rb-gateway', rate_limiting_config=config
+        )
+
+        # First 2: check passes, then we consume via count_request
+        await limiter._check_request(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='fake-name',
+            group_name='test-group',
+        )
+        await limiter._count_request()
+
+        await limiter._check_request(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='fake-name',
+            group_name='test-group',
+        )
+        await limiter._count_request()
+
+        await limiter._check_request(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='fake-name',
+            group_name='test-group',
+        )
+        await limiter._count_request()
+
+        # Fourth: check should fail BEFORE consuming
+        with pytest.raises(RequestRateLimitExceeded):
+            await limiter._check_request(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='fake-name',
+                group_name='test-group',
+            )
+
+    @pytest.mark.asyncio
+    async def test_window_reset(self):
+        """Test that the window resets after time passes."""
+        initial_datetime = datetime.datetime(
+            year=2025, month=6, day=25, hour=15, minute=0, second=0
+        )
+        with freeze_time(initial_datetime) as frozen_datetime:
+            config = RateLimiting(max_requests=2, window_size='10 second')
+            limiter = RequestRateLimiter(
+                route_name='rb-gateway', rate_limiting_config=config
+            )
+
+            # Use up limit
+            await limiter._check_request(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='fake-name',
+                group_name='test-group',
+            )
+            await limiter._count_request()
+
+            await limiter._check_request(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='fake-name',
+                group_name='test-group',
+            )
+            await limiter._count_request()
+
+            # Should be blocked
+            with pytest.raises(RequestRateLimitExceeded):
+                await limiter._check_request(
+                    request_uuid=str(REQUEST_UUID),
+                    api_key_uuid=str(API_KEY_UUID),
+                    group_uuid=str(GROUP_UUID),
+                    api_key_name='fake-name',
+                    group_name='test-group',
+                )
+
+            # Advance past window
+            frozen_datetime.tick(11)
+
+            # Should work again
+            await limiter._check_request(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='fake-name',
+                group_name='test-group',
+            )
+            await limiter._count_request()
+
+    def test_window_size_formats(self):
+        """Test different window size formats."""
+        # Test with string format
+        config = RateLimiting(max_requests=100, window_size='1 minute')
+        limiter = RequestRateLimiter(
+            route_name='rb-gateway', rate_limiting_config=config
+        )
+        assert limiter.limiter is not None
+
+        # Test with per-second format
+        config2 = RateLimiting(max_requests=100, window_size='100 seconds')
+        limiter2 = RequestRateLimiter(
+            route_name='rb-gateway', rate_limiting_config=config2
+        )
+        assert limiter2.limiter is not None
