@@ -1,0 +1,205 @@
+name: release
+on:
+  push:
+    tags:
+      - '*'
+
+concurrency:
+  group: docker-tag-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  UV_VERSION: "0.7.13"
+  APP_IMAGE: radicalbit/radicalbit-ai-gateway
+  MIGRATIONS_IMAGE: radicalbit/radicalbit-ai-gateway-migrations
+  CLICKHOUSE_MIGRATIONS_IMAGE: radicalbit/radicalbit-ai-gateway-clickhouse-migrations
+  WORKER_IMAGE: radicalbit/metrics-worker
+
+jobs:
+  prep:
+    runs-on: ubuntu-22.04
+    outputs:
+      is_semver: ${{ steps.check.outputs.is_semver }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Set version/tag
+        id: check
+        run: |
+          echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          echo "is_semver=$(if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then echo 'true'; else echo 'false'; fi)" >> $GITHUB_OUTPUT
+
+  publish-pypi:
+    runs-on: ubuntu-22.04
+    needs: prep
+    if: needs.prep.outputs.is_semver == 'true'
+    defaults:
+      run:
+        working-directory: ./gateway
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup uv
+        run: |
+          curl -LsSf https://astral.sh/uv/${{ env.UV_VERSION }}/install.sh | sh
+      - name: Build package
+        run: |
+          uv build
+      - name: Publish to PyPI
+        run: |
+          uv publish --token ${{ secrets.PYPI_TOKEN }}
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-22.04
+            platform_short: amd64
+          - platform: linux/arm64
+            runner: ubuntu-22.04-arm
+            platform_short: arm64
+    runs-on: ${{ matrix.runner }}
+    needs: prep
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            network=host
+            env.BUILDKIT_STEP_LOG_MAX_SIZE=50000000
+            env.BUILDKIT_STEP_LOG_MAX_SPEED=100000000
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push app image by digest
+        id: build-app
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.APP_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Build and push migrations image by digest
+        id: build-migrations
+        uses: docker/build-push-action@v6
+        with:
+          context: ./gateway
+          file: ./gateway/migrations.Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.MIGRATIONS_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Build and push clickhouse-migrations image by digest
+        id: build-clickhouse-migrations
+        uses: docker/build-push-action@v6
+        with:
+          context: ./clickhouse-migrations
+          file: ./clickhouse-migrations/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Build and push metrics-worker image by digest
+        id: build-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: ./metrics-worker
+          file: ./metrics-worker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.WORKER_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Export digests
+        run: |
+          mkdir -p /tmp/digests/app /tmp/digests/migrations /tmp/digests/clickhouse-migrations /tmp/digests/worker
+          touch "/tmp/digests/app/${APP_DIGEST#sha256:}"
+          touch "/tmp/digests/migrations/${MIGRATIONS_DIGEST#sha256:}"
+          touch "/tmp/digests/clickhouse-migrations/${CLICKHOUSE_DIGEST#sha256:}"
+          touch "/tmp/digests/worker/${WORKER_DIGEST#sha256:}"
+        env:
+          APP_DIGEST: ${{ steps.build-app.outputs.digest }}
+          MIGRATIONS_DIGEST: ${{ steps.build-migrations.outputs.digest }}
+          CLICKHOUSE_DIGEST: ${{ steps.build-clickhouse-migrations.outputs.digest }}
+          WORKER_DIGEST: ${{ steps.build-worker.outputs.digest }}
+      - name: Upload digests
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-release-${{ matrix.platform_short }}
+          path: /tmp/digests/**
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-22.04
+    needs: [prep, build]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-release-*
+          merge-multiple: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Create and push app manifest
+        run: |
+          TAGS="-t ${{ env.APP_IMAGE }}:${{ needs.prep.outputs.version }}"
+          if [[ "${{ needs.prep.outputs.is_semver }}" == "true" ]]; then
+            TAGS="$TAGS -t ${{ env.APP_IMAGE }}:latest"
+          fi
+          docker buildx imagetools create $TAGS \
+            $(printf '${{ env.APP_IMAGE }}@sha256:%s ' $(ls /tmp/digests/app/))
+      - name: Create and push migrations manifest
+        run: |
+          TAGS="-t ${{ env.MIGRATIONS_IMAGE }}:${{ needs.prep.outputs.version }}"
+          if [[ "${{ needs.prep.outputs.is_semver }}" == "true" ]]; then
+            TAGS="$TAGS -t ${{ env.MIGRATIONS_IMAGE }}:latest"
+          fi
+          docker buildx imagetools create $TAGS \
+            $(printf '${{ env.MIGRATIONS_IMAGE }}@sha256:%s ' $(ls /tmp/digests/migrations/))
+      - name: Create and push clickhouse-migrations manifest
+        run: |
+          TAGS="-t ${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}:${{ needs.prep.outputs.version }}"
+          if [[ "${{ needs.prep.outputs.is_semver }}" == "true" ]]; then
+            TAGS="$TAGS -t ${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}:latest"
+          fi
+          docker buildx imagetools create $TAGS \
+            $(printf '${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@sha256:%s ' $(ls /tmp/digests/clickhouse-migrations/))
+      - name: Create and push metrics-worker manifest
+        run: |
+          TAGS="-t ${{ env.WORKER_IMAGE }}:${{ needs.prep.outputs.version }}"
+          if [[ "${{ needs.prep.outputs.is_semver }}" == "true" ]]; then
+            TAGS="$TAGS -t ${{ env.WORKER_IMAGE }}:latest"
+          fi
+          docker buildx imagetools create $TAGS \
+            $(printf '${{ env.WORKER_IMAGE }}@sha256:%s ' $(ls /tmp/digests/worker/))
+      - name: Inspect images
+        run: |
+          docker buildx imagetools inspect ${{ env.APP_IMAGE }}:${{ needs.prep.outputs.version }}
+          docker buildx imagetools inspect ${{ env.MIGRATIONS_IMAGE }}:${{ needs.prep.outputs.version }}
+          docker buildx imagetools inspect ${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}:${{ needs.prep.outputs.version }}
+          docker buildx imagetools inspect ${{ env.WORKER_IMAGE }}:${{ needs.prep.outputs.version }}
+      - name: Output image information
+        run: |
+          echo "Successfully built and pushed images:"
+          echo "   Gateway: ${{ env.APP_IMAGE }}:${{ needs.prep.outputs.version }}"
+          echo "   Migrations: ${{ env.MIGRATIONS_IMAGE }}:${{ needs.prep.outputs.version }}"
+          echo "   Clickhouse Migrations: ${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}:${{ needs.prep.outputs.version }}"
+          echo "   Metrics Worker: ${{ env.WORKER_IMAGE }}:${{ needs.prep.outputs.version }}"
+          if [[ "${{ needs.prep.outputs.is_semver }}" == "true" ]]; then
+            echo "   Latest tags also created for semantic version"
+          fi
