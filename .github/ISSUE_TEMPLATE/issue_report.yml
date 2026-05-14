@@ -1,0 +1,55 @@
+name: Create an issue for Radicalbit AI Gateway
+description: Create an issue for bugs, features, or other activities in Radicalbit AI Gateway.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue form is for reporting bugs, requesting features, or creating tasks for Radicalbit AI Gateway.
+
+        Use this template for any type of work item including bugs, enhancements, documentation updates, or other activities.
+
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      options:
+        - label: I have filled out the template to the best of my ability.
+          required: true
+        - label: This only contains 1 issue (if you have multiple issues, open one issue for each item).
+          required: true
+        - label: This issue is not a duplicate of [previous issues](https://github.com/radicalbit/radicalbit-ai-gateway-oss/issues).
+          required: true
+
+  - type: textarea
+    validations:
+      required: true
+    attributes:
+      label: Description
+      description: >-
+        Describe the issue, feature request, or task you want to create.
+
+        For bugs: Tell us what you were trying to do and what happened.
+        For features: Explain what functionality you'd like to see added.
+        For tasks: Describe the work that needs to be done.
+
+        Provide a clear and concise description of what you want to accomplish.
+
+  - type: markdown
+    attributes:
+      value: |
+        # Additional Information
+
+  - type: textarea
+    attributes:
+      label: Logs or Error Messages (if applicable)
+      description: For bugs, include any error messages, stack traces, or relevant logs. For other issues, this field is optional.
+      render: txt
+  - type: textarea
+    attributes:
+      label: Additional Context
+      description: >
+        Any additional information that might be helpful, such as:
+        - Steps to reproduce (for bugs)
+        - Expected vs actual behavior (for bugs)
+        - Use cases or business value (for features)
+        - Dependencies or related issues
+        - Screenshots or examples

@@ -1,0 +1,147 @@
+name: metrics-worker-wf
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+    branches:
+      - "main"
+    paths:
+      - "metrics-worker/**"
+      - "clickhouse-migrations/**"
+      - ".github/workflows/metrics-worker-**"
+  pull_request:
+    branches:
+      - "*"
+    paths:
+      - "metrics-worker/**"
+      - "clickhouse-migrations/**"
+      - ".github/workflows/metrics-worker-**"
+
+env:
+  PYTHON_VERSION: "3.11"
+  UV_VERSION: "0.7.13"
+  WORKER_IMAGE: radicalbit/metrics-worker
+  CLICKHOUSE_MIGRATIONS_IMAGE: radicalbit/radicalbit-ai-gateway-clickhouse-migrations
+  IMAGES_TAG: main
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: ./metrics-worker
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup uv
+        run: |
+          curl -LsSf https://astral.sh/uv/${{ env.UV_VERSION }}/install.sh | sh
+      - name: Run formatting validation
+        run: |
+          uv run ruff check
+      - name: Run format check
+        run: |
+          uv run ruff format --check
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-22.04
+            platform_short: amd64
+          - platform: linux/arm64
+            runner: ubuntu-22.04-arm
+            platform_short: arm64
+    runs-on: ${{ matrix.runner }}
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            network=host
+            env.BUILDKIT_STEP_LOG_MAX_SIZE=50000000
+            env.BUILDKIT_STEP_LOG_MAX_SPEED=100000000
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push metrics-worker image by digest
+        id: build-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: ./metrics-worker
+          file: ./metrics-worker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.WORKER_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Build and push clickhouse-migrations image by digest
+        id: build-clickhouse-migrations
+        uses: docker/build-push-action@v6
+        with:
+          context: ./clickhouse-migrations
+          file: ./clickhouse-migrations/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Export digests
+        run: |
+          mkdir -p /tmp/digests/worker /tmp/digests/clickhouse-migrations
+          touch "/tmp/digests/worker/${WORKER_DIGEST#sha256:}"
+          touch "/tmp/digests/clickhouse-migrations/${CLICKHOUSE_DIGEST#sha256:}"
+        env:
+          WORKER_DIGEST: ${{ steps.build-worker.outputs.digest }}
+          CLICKHOUSE_DIGEST: ${{ steps.build-clickhouse-migrations.outputs.digest }}
+      - name: Upload digests
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-worker-${{ matrix.platform_short }}
+          path: /tmp/digests/**
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-22.04
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-worker-*
+          merge-multiple: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Create metrics-worker manifest and push
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.WORKER_IMAGE }}:${{ env.IMAGES_TAG }} \
+            $(printf '${{ env.WORKER_IMAGE }}@sha256:%s ' $(ls /tmp/digests/worker/))
+      - name: Create clickhouse-migrations manifest and push
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}:${{ env.IMAGES_TAG }} \
+            $(printf '${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@sha256:%s ' $(ls /tmp/digests/clickhouse-migrations/))
+      - name: Inspect images
+        run: |
+          docker buildx imagetools inspect ${{ env.WORKER_IMAGE }}:${{ env.IMAGES_TAG }}
+          docker buildx imagetools inspect ${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}:${{ env.IMAGES_TAG }}
