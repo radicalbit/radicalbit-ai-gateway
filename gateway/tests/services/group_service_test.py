@@ -1,3 +1,4 @@
+import datetime
 import unittest
 from unittest.mock import MagicMock, call
 import uuid
@@ -111,6 +112,23 @@ class GroupServiceTest(unittest.TestCase):
         keys = [i.keys for i in res]
         assert all(r is None for r in keys)
         assert len(res) == 3
+
+    def test_get_all_include_routes_excludes_deleted_project_routes(self):
+        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+        group_uuid = uuid.uuid4()
+        live_route = db_mock.get_sample_group_route(
+            group_uuid=group_uuid, route_name='live-route'
+        )
+        deleted_route = db_mock.get_sample_group_route(
+            group_uuid=group_uuid, route_name='deleted-route'
+        )
+        deleted_route.project.deleted_at = datetime.datetime.now(tz=UTC)
+        group = db_mock.get_sample_group(
+            uuid=group_uuid, group_routes=[live_route, deleted_route]
+        )
+        self.group_dao.get_all = MagicMock(return_value=[group])
+        res = self.group_service.get_all(include_keys=False, include_routes=True)
+        assert res[0].routes == [GroupRouteOut.from_group_route(live_route)]
 
     def test_add_key(self):
         group_uuid = uuid.uuid4()

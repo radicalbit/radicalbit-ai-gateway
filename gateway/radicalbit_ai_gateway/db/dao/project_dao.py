@@ -24,19 +24,22 @@ class ProjectDAO:
 
     def get_by_uuid(self, project_uuid: UUID) -> Project | None:
         with self.db.begin_session() as session:
-            stmt = select(Project).where(Project.uuid == project_uuid)
+            stmt = select(Project).where(
+                Project.uuid == project_uuid,
+                Project.deleted_at.is_(None),
+            )
             return session.scalar(stmt)
 
     def get_all(self) -> Sequence[Project]:
         with self.db.begin_session() as session:
-            stmt = select(Project)
+            stmt = select(Project).where(Project.deleted_at.is_(None))
             return session.scalars(stmt).all()
 
     def get_all_filtered(
         self, project_filter: ProjectFilter | None = None
     ) -> Sequence[Project]:
         with self.db.begin_session() as session:
-            stmt = select(Project)
+            stmt = select(Project).where(Project.deleted_at.is_(None))
             if project_filter == ProjectFilter.ACTIVE:
                 stmt = stmt.where(Project.config_file.is_not(None))
             elif project_filter == ProjectFilter.WITH_USAGE:
@@ -45,7 +48,10 @@ class ProjectDAO:
 
     def get_all_with_config(self) -> Sequence[Project]:
         with self.db.begin_session() as session:
-            stmt = select(Project).where(Project.config_file.is_not(None))
+            stmt = select(Project).where(
+                Project.config_file.is_not(None),
+                Project.deleted_at.is_(None),
+            )
             return session.scalars(stmt).all()
 
     def update_draft_config_file(
@@ -90,11 +96,24 @@ class ProjectDAO:
             )
             return session.execute(query).rowcount
 
+    def soft_delete(self, project_uuid: UUID) -> int:
+        now = datetime.datetime.now(tz=_UTC)
+        with self.db.begin_session() as session:
+            query = (
+                update(Project)
+                .where(Project.uuid == project_uuid)
+                .values(deleted_at=now, updated_at=now)
+            )
+            return session.execute(query).rowcount
+
     def unserve_config(self, project_uuid: UUID, restore_draft: bool) -> int:
         now = datetime.datetime.now(tz=_UTC)
         with self.db.begin_session() as session:
             project = session.scalar(
-                select(Project).where(Project.uuid == project_uuid)
+                select(Project).where(
+                    Project.uuid == project_uuid,
+                    Project.deleted_at.is_(None),
+                )
             )
             if project is None:
                 return 0

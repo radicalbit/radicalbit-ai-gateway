@@ -110,7 +110,10 @@ class GroupDAO:
             stmt = (
                 select(Project.name, GroupRoute.route_name)
                 .join(GroupRoute, GroupRoute.project_uuid == Project.uuid)
-                .where(GroupRoute.group_uuid == group_uuid)
+                .where(
+                    GroupRoute.group_uuid == group_uuid,
+                    Project.deleted_at.is_(None),
+                )
             )
             rows = session.execute(stmt).all()
             return [f'{row[0]}/{row[1]}' for row in rows]

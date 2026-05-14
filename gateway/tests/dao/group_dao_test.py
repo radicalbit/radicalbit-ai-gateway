@@ -5,6 +5,7 @@ from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
+from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 
 
 class GroupDAOTest(DatabaseIntegration):
@@ -149,6 +150,36 @@ class GroupDAOTest(DatabaseIntegration):
             self.project_uuid, 'this-route-does-not-exist'
         )
         assert len(rows) == 0
+
+    def test_get_route_names_by_group_uuid_excludes_deleted_project_routes(self):
+        group_uuid = uuid.uuid4()
+        live_project_uuid = self.project_uuid
+        deleted_project_uuid = uuid.uuid4()
+        self.project_dao.insert(
+            db_mock.get_sample_project(
+                uuid=deleted_project_uuid, name='deleted-project'
+            )
+        )
+        self.group_dao.insert(
+            db_mock.get_sample_group(uuid=group_uuid, group_routes=[])
+        )
+        self.group_dao.add_route(
+            GroupRoute(
+                group_uuid=group_uuid,
+                route_name='live-route',
+                project_uuid=live_project_uuid,
+            )
+        )
+        self.group_dao.add_route(
+            GroupRoute(
+                group_uuid=group_uuid,
+                route_name='dead-route',
+                project_uuid=deleted_project_uuid,
+            )
+        )
+        self.project_dao.soft_delete(deleted_project_uuid)
+        result = self.group_dao.get_route_names_by_group_uuid(group_uuid)
+        assert result == ['my-project/live-route']
 
     def test_get_group_associated_with_multiple_routes(self):
         power_user_group_uuid = uuid.uuid4()

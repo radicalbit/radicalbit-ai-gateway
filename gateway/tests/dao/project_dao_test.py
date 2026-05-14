@@ -165,3 +165,64 @@ class ProjectDAOTest(DatabaseIntegration):
         result = self.project_dao.get_all_filtered(ProjectFilter.WITH_USAGE)
         assert len(result) == 1
         assert result[0].name == 'was-served'
+
+    # --- soft_delete ---
+
+    def test_soft_delete(self):
+        project = db_mock.get_sample_project()
+        self.project_dao.insert(project)
+        rows = self.project_dao.soft_delete(project.uuid)
+        assert rows == 1
+
+    def test_soft_delete_not_found(self):
+        rows = self.project_dao.soft_delete(uuid.uuid4())
+        assert rows == 0
+
+    def test_get_by_uuid_excludes_deleted(self):
+        project = db_mock.get_sample_project()
+        self.project_dao.insert(project)
+        self.project_dao.soft_delete(project.uuid)
+        result = self.project_dao.get_by_uuid(project.uuid)
+        assert result is None
+
+    def test_get_all_excludes_deleted(self):
+        projects = [
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='one'),
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='two'),
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='three'),
+        ]
+        for p in projects:
+            self.project_dao.insert(p)
+        self.project_dao.soft_delete(projects[0].uuid)
+        result = self.project_dao.get_all()
+        assert len(result) == 2
+        assert 'one' not in {p.name for p in result}
+
+    def test_get_all_filtered_excludes_deleted(self):
+        self.project_dao.insert(
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='live')
+        )
+        deleted = db_mock.get_sample_project(uuid=uuid.uuid4(), name='deleted')
+        self.project_dao.insert(deleted)
+        self.project_dao.soft_delete(deleted.uuid)
+        result = self.project_dao.get_all_filtered(None)
+        assert len(result) == 1
+        assert result[0].name == 'live'
+
+    def test_get_all_with_config_excludes_deleted(self):
+        served = db_mock.get_sample_project(
+            uuid=uuid.uuid4(), name='served', config_file='some-yaml'
+        )
+        self.project_dao.insert(served)
+        self.project_dao.soft_delete(served.uuid)
+        result = self.project_dao.get_all_with_config()
+        assert list(result) == []
+
+    def test_unserve_config_noop_on_deleted_project(self):
+        project = db_mock.get_sample_project(
+            uuid=uuid.uuid4(), name='served', config_file='some-yaml'
+        )
+        self.project_dao.insert(project)
+        self.project_dao.soft_delete(project.uuid)
+        rows = self.project_dao.unserve_config(project.uuid, restore_draft=False)
+        assert rows == 0

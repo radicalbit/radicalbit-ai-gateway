@@ -140,6 +140,7 @@ def get_sample_group_route_plain(
             config_status='DRAFT',
             created_at=datetime.datetime.now(tz=UTC),
             updated_at=datetime.datetime.now(tz=UTC),
+            deleted_at=None,
         ),
     )
 
@@ -169,6 +170,7 @@ def get_sample_group_route(
             config_status='DRAFT',
             created_at=datetime.datetime.now(tz=UTC),
             updated_at=datetime.datetime.now(tz=UTC),
+            deleted_at=None,
         ),
     )
 
@@ -284,6 +286,7 @@ def get_sample_project(
     draft_config_file: str | None = None,
     config_status: ConfigStatus = ConfigStatus.DRAFT,
     first_served_at: datetime.datetime | None = None,
+    deleted_at: datetime.datetime | None = None,
 ) -> Project:
     now = datetime.datetime.now(tz=UTC)
     return Project(
@@ -296,6 +299,7 @@ def get_sample_project(
         created_at=now,
         updated_at=now,
         first_served_at=first_served_at,
+        deleted_at=deleted_at,
     )
 
 

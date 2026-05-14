@@ -141,6 +141,18 @@ class ProjectRoute:
             logger.info('Unserved config for project %s', project_uuid)
             return project
 
+        @router.delete(
+            '/projects/{project_uuid}',
+            status_code=200,
+            response_model=ProjectOut,
+        )
+        async def delete_project(project_uuid: UUID):
+            project = project_service.delete_project(project_uuid)
+            if deregister_project_routes and project.config_file:
+                await deregister_project_routes(project_uuid)
+            logger.info('Deleted project %s', project_uuid)
+            return project
+
         @router.patch(
             '/projects/{project_uuid}/routes/{route_name}/groups',
             status_code=200,

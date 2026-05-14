@@ -515,3 +515,68 @@ class TestProjectRoute(unittest.TestCase):
             json=jsonable_encoder(gen_in),
         )
         assert res.status_code == 500
+
+    # --- DELETE /projects/{project_uuid} ---
+
+    def test_delete_project_ok(self):
+        project = db_mock.get_sample_project()
+        project_out = ProjectOut.from_project(project)
+        self.project_service.delete_project = MagicMock(return_value=project_out)
+        res = self.client.delete(f'{self.prefix}/projects/{project.uuid}')
+        assert res.status_code == 200
+        assert res.json() == jsonable_encoder(project_out)
+        self.project_service.delete_project.assert_called_once_with(project.uuid)
+
+    def test_delete_project_not_found(self):
+        unknown_uuid = uuid.uuid4()
+        self.project_service.delete_project = MagicMock(
+            side_effect=ProjectNotFoundError('error')
+        )
+        res = self.client.delete(f'{self.prefix}/projects/{unknown_uuid}')
+        assert res.status_code == 404
+        assert (
+            res.json()['error']
+            == ErrorOut(
+                'error',
+                'auth_registry_error',
+                code='project_not_found',
+                param=None,
+            ).error
+        )
+
+    def test_delete_project_dev_does_not_call_deregister(self):
+        project = db_mock.get_sample_project(config_file=None)
+        project_out = ProjectOut.from_project(project)
+        deregister_fn = AsyncMock()
+        router = ProjectRoute.get_project_router(
+            self.project_service,
+            self.group_service,
+            deregister_project_routes=deregister_fn,
+        )
+        app = FastAPI(title='AI Gateway', debug=True)
+        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+        app.include_router(router, prefix=self.prefix)
+        client = TestClient(app)
+        self.project_service.delete_project = MagicMock(return_value=project_out)
+        res = client.delete(f'{self.prefix}/projects/{project.uuid}')
+        assert res.status_code == 200
+        deregister_fn.assert_not_called()
+
+    def test_delete_project_prod_calls_deregister(self):
+        config_in = db_mock.get_sample_project_config_file_in()
+        project = db_mock.get_sample_project(config_file=config_in.config_file)
+        project_out = ProjectOut.from_project(project)
+        deregister_fn = AsyncMock()
+        router = ProjectRoute.get_project_router(
+            self.project_service,
+            self.group_service,
+            deregister_project_routes=deregister_fn,
+        )
+        app = FastAPI(title='AI Gateway', debug=True)
+        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+        app.include_router(router, prefix=self.prefix)
+        client = TestClient(app)
+        self.project_service.delete_project = MagicMock(return_value=project_out)
+        res = client.delete(f'{self.prefix}/projects/{project.uuid}')
+        assert res.status_code == 200
+        deregister_fn.assert_called_once_with(project.uuid)
