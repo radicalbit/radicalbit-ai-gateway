@@ -127,6 +127,16 @@ class ProjectService:
 
         return self._get_updated_or_raise(project_uuid)
 
+    def delete_project(self, project_uuid: UUID) -> ProjectOut:
+        project = self._get_project_or_raise(project_uuid)
+
+        if project.config_file is not None:
+            restore_draft = project.draft_config_file is None
+            self.project_dao.unserve_config(project_uuid, restore_draft)
+
+        self.project_dao.soft_delete(project_uuid)
+        return ProjectOut.from_project(project)
+
     def get_by_uuid(self, project_uuid: UUID) -> ProjectOut:
         return ProjectOut.from_project(self._get_project_or_raise(project_uuid))
 

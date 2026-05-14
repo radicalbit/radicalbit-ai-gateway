@@ -398,6 +398,66 @@ routes:
         result = self.project_service.get_all_active()
         assert result == []
 
+    # --- delete_project ---
+
+    def test_delete_project_ok_dev_state(self):
+        project = db_mock.get_sample_project(
+            config_file=None, config_status=ConfigStatus.DRAFT
+        )
+        self.project_dao.get_by_uuid = MagicMock(return_value=project)
+        self.project_dao.soft_delete = MagicMock(return_value=1)
+        result = self.project_service.delete_project(project.uuid)
+        self.project_dao.soft_delete.assert_called_once_with(project.uuid)
+        self.project_dao.unserve_config.assert_not_called()
+        assert result == ProjectOut.from_project(project)
+
+    def test_delete_project_ok_prod_state_restores_draft(self):
+        config_in = db_mock.get_sample_project_config_file_in()
+        project = db_mock.get_sample_project(
+            config_file=config_in.config_file,
+            draft_config_file=None,
+            config_status=ConfigStatus.SERVED,
+        )
+        self.project_dao.get_by_uuid = MagicMock(return_value=project)
+        self.project_dao.unserve_config = MagicMock(return_value=1)
+        self.project_dao.soft_delete = MagicMock(return_value=1)
+        result = self.project_service.delete_project(project.uuid)
+        self.project_dao.unserve_config.assert_called_once_with(project.uuid, True)
+        self.project_dao.soft_delete.assert_called_once_with(project.uuid)
+        assert result.config_file == config_in.config_file
+
+    def test_delete_project_ok_prod_state_keeps_existing_draft(self):
+        config_in = db_mock.get_sample_project_config_file_in()
+        project = db_mock.get_sample_project(
+            config_file=config_in.config_file,
+            draft_config_file='existing-draft',
+            config_status=ConfigStatus.SERVED,
+        )
+        self.project_dao.get_by_uuid = MagicMock(return_value=project)
+        self.project_dao.unserve_config = MagicMock(return_value=1)
+        self.project_dao.soft_delete = MagicMock(return_value=1)
+        self.project_service.delete_project(project.uuid)
+        self.project_dao.unserve_config.assert_called_once_with(project.uuid, False)
+
+    def test_delete_project_not_found(self):
+        self.project_dao.get_by_uuid = MagicMock(return_value=None)
+        with pytest.raises(ProjectNotFoundError):
+            self.project_service.delete_project(uuid.uuid4())
+
+    def test_delete_project_returns_pre_deletion_state(self):
+        # DTO must reflect state before deletion so route can call deregister_project_routes.
+        config_in = db_mock.get_sample_project_config_file_in()
+        project = db_mock.get_sample_project(
+            config_file=config_in.config_file,
+            config_status=ConfigStatus.SERVED,
+        )
+        self.project_dao.get_by_uuid = MagicMock(return_value=project)
+        self.project_dao.unserve_config = MagicMock(return_value=1)
+        self.project_dao.soft_delete = MagicMock(return_value=1)
+        result = self.project_service.delete_project(project.uuid)
+        assert result.config_file == config_in.config_file
+        assert result.project_status == ProjectStatus.PROD
+
     # --- get_all_filtered ---
 
     def test_get_all_filtered_delegates_to_dao(self):

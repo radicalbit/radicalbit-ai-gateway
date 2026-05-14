@@ -245,7 +245,9 @@ class GroupFullOut(GroupOut):
             owner=group.owner,
             metadata=json.loads(group.group_metadata) if group.group_metadata else None,
             routes=[
-                GroupRouteOut.from_group_route(route) for route in group.group_routes
+                GroupRouteOut.from_group_route(route)
+                for route in group.group_routes
+                if route.project and route.project.deleted_at is None
             ]
             if include_routes
             else None,
