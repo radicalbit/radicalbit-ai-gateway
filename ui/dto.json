@@ -1,0 +1,430 @@
+{
+    "routeName": "complete-route",
+    "configuration": {
+        "routeName": "complete-route",
+        "chatModels": [
+            {
+                "modelId": "complete-qwen",
+                "model": "openai/qwen2.5:3b",
+                "credentials": {
+                    "apiKey": "**********",
+                    "baseUrl": "http://host.docker.internal:11434/v1"
+                },
+                "params": {
+                    "temperature": 0.7,
+                    "topP": 0.9
+                },
+                "retryAttempts": 3,
+                "prompt": "You are a helpful assistant",
+                "role": "system",
+                "inputCostPerMillionTokens": "50000.0",
+                "outputCostPerMillionTokens": "75000.0",
+                "inputCachedCostPerMillionTokens": "0",
+                "inputCostPerToken": "0.05",
+                "outputCostPerToken": "0.075",
+                "inputCachedCostPerToken": "0",
+                "effectivePrompt": "You are a helpful assistant"
+            },
+            {
+                "modelId": "complete-llama",
+                "model": "openai/llama3.2:3b",
+                "credentials": {
+                    "apiKey": "**********",
+                    "baseUrl": "http://host.docker.internal:11434/v1"
+                },
+                "params": {
+                    "temperature": 0.7,
+                    "topP": 0.9
+                },
+                "retryAttempts": 3,
+                "prompt": "You are a helpful assistant",
+                "role": "system",
+                "inputCostPerMillionTokens": "25000.0",
+                "outputCostPerMillionTokens": "50000.0",
+                "inputCachedCostPerMillionTokens": "0",
+                "inputCostPerToken": "0.025",
+                "outputCostPerToken": "0.05",
+                "inputCachedCostPerToken": "0",
+                "effectivePrompt": "You are a helpful assistant"
+            },
+            {
+                "modelId": "failing-model",
+                "model": "openai/nonexistent-model",
+                "credentials": {
+                    "apiKey": "**********",
+                    "baseUrl": "http://nonexistent-host:9999/v1"
+                },
+                "params": {
+                    "temperature": 0.7,
+                    "maxTokens": 100
+                },
+                "retryAttempts": 3,
+                "role": "system",
+                "inputCostPerMillionTokens": "0",
+                "outputCostPerMillionTokens": "0",
+                "inputCachedCostPerMillionTokens": "0",
+                "inputCostPerToken": "0",
+                "outputCostPerToken": "0",
+                "inputCachedCostPerToken": "0"
+            }
+        ],
+        "embeddingModels": [
+            {
+                "modelId": "text-embedding-3-small",
+                "model": "openai/text-embedding-3-small",
+                "credentials": {
+                    "apiKey": "**********"
+                },
+                "retryAttempts": 3,
+                "role": "system",
+                "inputCostPerMillionTokens": "0.02000000",
+                "outputCostPerMillionTokens": "0",
+                "inputCachedCostPerMillionTokens": "0",
+                "inputCostPerToken": "2E-8",
+                "outputCostPerToken": "0",
+                "inputCachedCostPerToken": "0"
+            },
+            {
+                "modelId": "text-embedding-ada-002",
+                "model": "openai/text-embedding-ada-002",
+                "credentials": {
+                    "apiKey": "**********"
+                },
+                "retryAttempts": 3,
+                "role": "system",
+                "inputCostPerMillionTokens": "0.1000000",
+                "outputCostPerMillionTokens": "0",
+                "inputCachedCostPerMillionTokens": "0",
+                "inputCostPerToken": "1E-7",
+                "outputCostPerToken": "0",
+                "inputCachedCostPerToken": "0"
+            }
+        ],
+        "rateLimiting": {
+            "algorithm": "ALIGNED_FIXED_WINDOW",
+            "windowSize": "1 minute",
+            "maxRequests": 10
+        },
+        "tokenLimiting": {
+            "input": {
+                "algorithm": "FIXED_WINDOW",
+                "windowSize": "1 minute",
+                "max_token": 500
+            },
+            "output": {
+                "algorithm": "ALIGNED_FIXED_WINDOW",
+                "windowSize": "1 minute",
+                "max_token": 250
+            }
+        },
+        "fallback": [
+            {
+                "target": "failing-model",
+                "fallbacks": [
+                    "complete-qwen"
+                ],
+                "type": "CHAT"
+            },
+            {
+                "target": "complete-qwen",
+                "fallbacks": [
+                    "complete-llama"
+                ],
+                "type": "CHAT"
+            },
+            {
+                "target": "text-embedding-3-small",
+                "fallbacks": [
+                    "text-embedding-ada-002"
+                ],
+                "type": "EMBEDDING"
+            }
+        ],
+        "guardrails": [
+            {
+                "name": "presidio_anonymizer",
+                "type": "PRESIDIO_ANONYMIZER",
+                "description": "Anonymize IBAN and emails codes",
+                "where": "IO",
+                "behavior": "WARN",
+                "parameters": {
+                    "type": "REDACT",
+                    "language": "it",
+                    "entities": [
+                        "IBAN_CODE"
+                    ]
+                },
+                "enabled": true
+            },
+            {
+                "name": "presidio_analyzer",
+                "type": "PRESIDIO_ANALYZER",
+                "description": "Block italian Identity card",
+                "where": "INPUT",
+                "behavior": "BLOCK",
+                "parameters": {
+                    "type": "REDACT",
+                    "language": "it",
+                    "entities": [
+                        "IT_IDENTITY_CARD"
+                    ]
+                },
+                "responseMessage": "Identity card detected and blocked.",
+                "enabled": true
+            },
+            {
+                "name": "uuid_block",
+                "type": "REGEX",
+                "where": "INPUT",
+                "behavior": "BLOCK",
+                "parameters": {
+                    "type": "CHECK",
+                    "values": [
+                        "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}\\b"
+                    ],
+                    "ignoreCase": false
+                },
+                "responseMessage": "Specific UUID format detected and blocked.",
+                "enabled": true
+            },
+            {
+                "name": "contains_check_ponzi",
+                "type": "CONTAINS",
+                "description": "Check words inside the output text",
+                "where": "OUTPUT",
+                "behavior": "BLOCK",
+                "parameters": {
+                    "type": "CHECK",
+                    "values": [
+                        "ponzi"
+                    ],
+                    "ignoreCase": false
+                },
+                "enabled": true
+            },
+            {
+                "name": "complete_topic_judge",
+                "type": "JUDGE",
+                "description": "Validate request topic using local LLM judge",
+                "where": "INPUT",
+                "behavior": "WARN",
+                "parameters": {
+                    "type": "JUDGE",
+                    "promptRef": "business_context_check.md",
+                    "modelId": "complete-llama",
+                    "temperature": 0.3,
+                    "maxTokens": 50,
+                    "includeReasoning": true
+                },
+                "responseMessage": "⚠️ Request topic evaluation completed.",
+                "enabled": true
+            }
+        ],
+        "caching": {
+            "enabled": true,
+            "type": "semantic",
+            "ttl": 300,
+            "embedding_model_id": "text-embedding-3-small",
+            "similarity_threshold": 0.85,
+            "distance_metric": "cosine",
+            "dim": 1536
+        },
+        "routing": {
+            "name": "complete-keyword-routing",
+            "default_model_id": "complete-llama",
+            "output_mapping": [
+                {
+                    "model_id": "complete-qwen",
+                    "conditions": [
+                        "code",
+                        "programming",
+                        "debug"
+                    ]
+                },
+                {
+                    "model_id": "complete-llama",
+                    "conditions": [
+                        "math",
+                        "calculate",
+                        "compute",
+                        "translate",
+                        "language"
+                    ]
+                },
+                {
+                    "model_id": "failing-model",
+                    "conditions": [
+                        "fail",
+                        "broken",
+                        "fallback"
+                    ]
+                }
+            ],
+            "type": "deterministic",
+            "rule": "keyword"
+        }
+    },
+    "metrics": {
+        "fallbacks": {
+            "value": 5,
+            "lastEvent": {
+                "routeName": "complete-route",
+                "timestamp": "2026-03-10T15:37:28.866081Z",
+                "apiKeyUuid": "bb53a447-4e75-4786-8515-65cd67643bd6",
+                "target": "failing-model",
+                "fallback": "complete-qwen",
+                "apiKeyName": "demo-api-key-bb53a447"
+            }
+        },
+        "guardrails": {
+            "value": 24,
+            "lastEvent": {
+                "routeName": "complete-route",
+                "timestamp": "2026-03-10T15:38:18.112010Z",
+                "apiKeyUuid": "bb53a447-4e75-4786-8515-65cd67643bd6",
+                "name": "complete_topic_judge",
+                "where": "INPUT",
+                "type": "JUDGE",
+                "behavior": "WARN",
+                "apiKeyName": "demo-api-key-bb53a447"
+            }
+        },
+        "routing": {
+            "value": 268,
+            "modelInvocations": [
+                {
+                    "modelId": "failing-model",
+                    "value": 8
+                },
+                {
+                    "modelId": "complete-qwen",
+                    "value": 38
+                },
+                {
+                    "modelId": "complete-llama",
+                    "value": 222
+                }
+            ]
+        },
+        "totalInputTokenProcessed": 123728,
+        "totalOutputTokenProcessed": 48187,
+        "rateLimitTriggered": 321,
+        "tokenInputLimitTriggered": 0,
+        "tokenOutputLimitTriggered": 64,
+        "cache": {
+            "cacheTriggered": 55,
+            "cacheSavedTokensInput": 2130,
+            "cacheSavedTokensOutput": 6525,
+            "hitPercentage": 9.322033898305085,
+            "totalCachedTokens": 8655
+        },
+        "totalRequests": 167,
+        "requestErrorPercentage": 71.69,
+        "lastRequestTimestamp": "2026-03-10T15:38:40.269633Z",
+        "cacheTriggered": 55
+    },
+    "groups": [
+        {
+            "uuid": "98218a30-ed6e-4805-bf2a-d29d758600d8",
+            "name": "group",
+            "createdAt": "2026-02-24 16:14:28.913081+00:00",
+            "updatedAt": "2026-02-24 16:14:28.913081+00:00"
+        },
+        {
+            "uuid": "78cfaa5b-5be6-41f0-9369-7c948d8fea8d",
+            "name": "demo-group-78cfaa5b",
+            "createdAt": "2026-03-10 11:05:00.176597+00:00",
+            "updatedAt": "2026-03-10 11:05:00.176597+00:00"
+        },
+        {
+            "uuid": "e2c3c898-0cb3-460c-80a1-1bc3fa2edb0d",
+            "name": "demo-group-e2c3c898",
+            "createdAt": "2026-03-10 11:06:12.871197+00:00",
+            "updatedAt": "2026-03-10 11:06:12.871197+00:00"
+        },
+        {
+            "uuid": "1653c67d-0a71-4eee-ae48-b11865bed01b",
+            "name": "demo-group-1653c67d",
+            "createdAt": "2026-03-10 11:09:37.824791+00:00",
+            "updatedAt": "2026-03-10 11:09:37.824791+00:00"
+        },
+        {
+            "uuid": "3ed0e9a3-38e6-4df8-8137-c51b2115e6e7",
+            "name": "demo-group-3ed0e9a3",
+            "createdAt": "2026-03-10 11:28:30.643991+00:00",
+            "updatedAt": "2026-03-10 11:28:30.643991+00:00"
+        },
+        {
+            "uuid": "6bb4f71e-059a-41d6-a0e0-95706b685e81",
+            "name": "demo-group-6bb4f71e",
+            "createdAt": "2026-03-10 11:31:13.311644+00:00",
+            "updatedAt": "2026-03-10 11:31:13.311644+00:00"
+        },
+        {
+            "uuid": "48486631-c621-450e-9e1c-8cd7ad9f9ef3",
+            "name": "demo-group-48486631",
+            "createdAt": "2026-03-10 12:45:12.067291+00:00",
+            "updatedAt": "2026-03-10 12:45:12.067291+00:00"
+        },
+        {
+            "uuid": "6e136f1b-4c26-4bdc-9976-2d833d1799af",
+            "name": "demo-group-6e136f1b",
+            "createdAt": "2026-03-10 12:51:47.829916+00:00",
+            "updatedAt": "2026-03-10 12:51:47.829916+00:00"
+        },
+        {
+            "uuid": "fb6f6bce-6a40-4fba-a3cc-d6f7e795726f",
+            "name": "demo-group-fb6f6bce",
+            "createdAt": "2026-03-10 12:53:09.805569+00:00",
+            "updatedAt": "2026-03-10 12:53:09.805569+00:00"
+        },
+        {
+            "uuid": "b77e161b-71be-4825-b65a-2fbc47a21386",
+            "name": "demo-group-b77e161b",
+            "createdAt": "2026-03-10 12:55:44.722234+00:00",
+            "updatedAt": "2026-03-10 12:55:44.722234+00:00"
+        },
+        {
+            "uuid": "68593a89-b9c4-40b2-8783-de21f01baf6f",
+            "name": "demo-group-68593a89",
+            "createdAt": "2026-03-10 12:56:55.755746+00:00",
+            "updatedAt": "2026-03-10 12:56:55.755746+00:00"
+        },
+        {
+            "uuid": "a9ccb1f5-a476-4603-9d10-095346d75e4c",
+            "name": "demo-group-a9ccb1f5",
+            "createdAt": "2026-03-10 13:06:12.448542+00:00",
+            "updatedAt": "2026-03-10 13:06:12.448542+00:00"
+        },
+        {
+            "uuid": "cfee8449-3e3d-4b45-ba89-36f64d1d348d",
+            "name": "demo-group-cfee8449",
+            "createdAt": "2026-03-10 14:52:48.381476+00:00",
+            "updatedAt": "2026-03-10 14:52:48.381476+00:00"
+        },
+        {
+            "uuid": "7a052208-f8ad-4197-ac70-8dd6269eeec3",
+            "name": "demo-group-7a052208",
+            "createdAt": "2026-03-10 15:16:45.550824+00:00",
+            "updatedAt": "2026-03-10 15:16:45.550824+00:00"
+        },
+        {
+            "uuid": "fee808fb-c1d3-4242-9e19-3d70bb6231fa",
+            "name": "demo-group-fee808fb",
+            "createdAt": "2026-03-10 15:26:23.899989+00:00",
+            "updatedAt": "2026-03-10 15:26:23.899989+00:00"
+        },
+        {
+            "uuid": "6d287c1f-27a0-4b3a-84f8-61abb3fd809e",
+            "name": "demo-group-6d287c1f",
+            "createdAt": "2026-03-10 15:32:54.315619+00:00",
+            "updatedAt": "2026-03-10 15:32:54.315619+00:00"
+        },
+        {
+            "uuid": "c811b74f-5bf5-479c-8010-0174c9573105",
+            "name": "demo-group-c811b74f",
+            "createdAt": "2026-03-10 15:36:03.013575+00:00",
+            "updatedAt": "2026-03-10 15:36:03.013575+00:00"
+        }
+    ]
+}

@@ -1,0 +1,21 @@
+in @.task/github_pr_desc.txt there is the BE PR description with all the endpoint list
+that has changed. I want to procede as follow: I want to change one page at the time.
+Let's start with the Usage page (@src/container/pages/usage). The  @.task/screenshot.png 
+contains the image of the current usage page, we need to add a new <Select /> before 
+the Routes <Select /> to allow the user to pick the project. That <Select /> will be 
+fill with the getProjects slice (@src/store/state/projects/api.js). 
+
+For starters, IF no projects has been selected yet the user has so see a UI with the tabs
+and only the <Select /> to select the projects, once he select the projects he can see
+the whole page and if he change the project the page will react accordingly. To do that
+wrap the Body component @src/container/pages/usage/list/body/index.jsx so a parent component 
+decide if render the body componennt or a "white" component with just the select. 
+
+The project ID (or UUID I don't know) has to be saved into the query params and the 
+localStorage so it is share across the whole app. We already has some query params
+that are also stored in localStorage, maybe this hook can help ? @src/hooks/use-persistence-query-params.js
+
+Let's start with that page, then we will refine the implementation and the we can check
+also the other pages.
+
+Within that task you have to update only the endpoint needed to update the usage page

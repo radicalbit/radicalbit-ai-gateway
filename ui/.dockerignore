@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+.vite/
+
+# Dependencies (will be installed in container)
+node_modules/
+
+# Test files
+*.test.js
+*.spec.js
+coverage/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+

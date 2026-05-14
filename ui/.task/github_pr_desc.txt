@@ -1,0 +1,165 @@
+DTO Changes
+No response model shapes changed. All existing DTOs (EventsDTO, GatewayRouteOut, CostDataDTO, UsageCostsDTO, RequestChartDataDTO, TracesChartDataDTO, etc.) remain identical.
+
+Affected Endpoints
+Dashboard — all routes moved under /projects/{project_uuid}/
+Changes:
+
+- GET /metrics
++ GET /projects/{project_uuid}/metrics
+
+- GET /routes
++ GET /projects/{project_uuid}/routes
+
+- GET /routes/{route_name}
++ GET /projects/{project_uuid}/routes/{route_name}
+
+- GET /routes/{route_name}/events
++ GET /projects/{project_uuid}/routes/{route_name}/events
+
+- GET /routes/{route_name}/costs/chart
++ GET /projects/{project_uuid}/routes/{route_name}/costs/chart
+
+- GET /routes/{route_name}/costs/summary
++ GET /projects/{project_uuid}/routes/{route_name}/costs/summary
+
+- GET /routes/{route_name}/tokens/chart
++ GET /projects/{project_uuid}/routes/{route_name}/tokens/chart
+
+- GET /routes/{route_name}/requests/chart
++ GET /projects/{project_uuid}/routes/{route_name}/requests/chart
+
+- GET /routes/{route_name}/invocations/chart
++ GET /projects/{project_uuid}/routes/{route_name}/invocations/chart
+
+- GET /routes/{route_name}/prompts
++ GET /projects/{project_uuid}/routes/{route_name}/prompts
+
+- GET /routes/tokens/stream            (SSE)
++ GET /projects/{project_uuid}/routes/tokens/stream
+
+- GET /routes/limits/stream            (SSE)
++ GET /projects/{project_uuid}/routes/limits/stream
+
+- GET /routes/invocations/stream       (SSE)
++ GET /projects/{project_uuid}/routes/invocations/stream
+
+- GET /routes/most-requested/stream    (SSE)
++ GET /projects/{project_uuid}/routes/most-requested/stream
+
+- GET /routes/most-requested-error/stream  (SSE)
++ GET /projects/{project_uuid}/routes/most-requested-error/stream
+
+- GET /routes/costs/stream             (SSE)
++ GET /projects/{project_uuid}/routes/costs/stream
+
+- GET /routes/costs/key/{key_uuid}/stream      (SSE)
++ GET /projects/{project_uuid}/routes/costs/key/{key_uuid}/stream
+
+- GET /routes/costs/group/{group_uuid}/stream  (SSE)
++ GET /projects/{project_uuid}/routes/costs/group/{group_uuid}/stream
+
+- GET /routes/costs/model/{model_id}/stream    (SSE)
++ GET /projects/{project_uuid}/routes/costs/model/{model_id}/stream
+
+- GET /routes/costs/key/{key_uuid}/breakdown
++ GET /projects/{project_uuid}/routes/costs/key/{key_uuid}/breakdown
+
+- GET /routes/costs/group/{group_uuid}/breakdown
++ GET /projects/{project_uuid}/routes/costs/group/{group_uuid}/breakdown
+
+- GET /routes/costs/model/{model_id}/breakdown
++ GET /projects/{project_uuid}/routes/costs/model/{model_id}/breakdown
+
+- GET /routes/costs/summary/stream     (SSE)
++ GET /projects/{project_uuid}/routes/costs/summary/stream
+
+- GET /routes/most-expensive/stream    (SSE)
++ GET /projects/{project_uuid}/routes/most-expensive/stream
+All endpoints now resolve the project_uuid to the project's in-memory config (app.state.project_configs) and return 404 if the project has no active configuration or if the requested route_name is not part of that project.
+
+GET /projects/{project_uuid}/metrics (MODIFIED path)
+Returns total counters for all routes of the project.
+
+Example request:
+
+GET /projects/d47c9cbb-7c0a-45f1-a69a-9490a12e3419/metrics?_from=1704067200&_to=1706745600
+Parameter	Type	Required	Description
+project_uuid	string (UUID)	yes	Target project (path)
+_from	integer	no	Unix timestamp lower bound
+_to	integer	no	Unix timestamp upper bound
+GET /projects/{project_uuid}/routes (MODIFIED path)
+Returns config + metrics for every route in the project.
+
+Example request:
+
+GET /projects/d47c9cbb-7c0a-45f1-a69a-9490a12e3419/routes?include_groups=true
+Parameter	Type	Required	Description
+project_uuid	string (UUID)	yes	Target project (path)
+_from	integer	no	Unix timestamp lower bound
+_to	integer	no	Unix timestamp upper bound
+include_groups	boolean	no	Include associated groups (default: false)
+GET /projects/{project_uuid}/routes/{route_name}/costs/chart (MODIFIED path)
+Example request:
+
+GET /projects/d47c9cbb-7c0a-45f1-a69a-9490a12e3419/routes/my-route/costs/chart?group_by=keys
+Parameter	Type	Required	Description
+project_uuid	string (UUID)	yes	Target project (path)
+route_name	string	yes	Route name (path)
+_from	datetime	no	Start timestamp
+_to	datetime	no	End timestamp
+group_by	string	yes	One of: keys, groups, models
+Usage endpoint — moved under /projects/{project_uuid}/
+Changes:
+
+- GET /usage/costs
++ GET /projects/{project_uuid}/usage/costs
+Example request:
+
+GET /projects/d47c9cbb-7c0a-45f1-a69a-9490a12e3419/usage/costs?_with_saved_tokens=true
+Parameter	Type	Required	Description
+project_uuid	string (UUID)	yes	Target project (path)
+_from	integer	no	Unix timestamp lower bound
+_to	integer	no	Unix timestamp upper bound
+_with_saved_tokens	boolean	no	Include saved token counts (default: false)
+Tracing endpoints — moved under /projects/{project_uuid}/
+Changes:
+
+- GET /traces/chart
++ GET /projects/{project_uuid}/traces/chart
+
+- GET /traces/latencies
++ GET /projects/{project_uuid}/traces/latencies
+
+- GET /traces/spans/latencies
++ GET /projects/{project_uuid}/traces/spans/latencies
+
+- GET /traces
++ GET /projects/{project_uuid}/traces
+GET /traces/{trace_id} and GET /traces/{trace_id}/spans/{span_id} remain global (not project-scoped).
+
+All four project-scoped tracing endpoints now:
+
+Validate the project_uuid exists (404 if not).
+Resolve the effective route list from the project's in-memory config; the optional routes filter is intersected with the project's configured routes, so callers can only query routes that belong to the project.
+Example request:
+
+GET /projects/d47c9cbb-7c0a-45f1-a69a-9490a12e3419/traces?routes=my-route&_page=1&_limit=50
+Parameter	Type	Required	Description
+project_uuid	string (UUID)	yes	Target project (path)
+_from	integer	no	Unix timestamp lower bound
+_to	integer	no	Unix timestamp upper bound
+routes	string[]	no	Filter by route names (short names, without project prefix)
+groups	string[] (UUID)	no	Filter by group UUIDs
+keys	string[] (UUID)	no	Filter by API key UUIDs
+_page	integer	no	Page number ≥ 1 (default: 1)
+_limit	integer	no	Page size 1–100 (default: 50)
+Other Changes
+db/dao/event_dao.py — added project_uuid: UUID as the first parameter to every query method; added _add_project_filter() helper that conditionally appends a PROJECT_UUID = ? condition (passing None disables the filter).
+db/dao/request_event_dao.py — same pattern; _add_time_filters() now also applies a null-guarded project filter.
+services/event_service.py — project_uuid and config propagated through all service methods; get_route_limits_progress() now receives project_name to strip the prefix when iterating app.state.routes; all internal references to self.gateway_config replaced with the per-request config.
+services/request_event_service.py — project_uuid and config added to get_most_requested_route() and get_most_requested_error_route(); project_uuid added to chart data methods.
+services/group_service.py — get_all_groups_by_route(route_name: str) changed to get_all_groups_by_route(project_name: str, route_name: str) (explicit args instead of splitting on /). _validate_route(route_name: str) refactored to _validate_route(project_name: str, route_name: str) — eliminates the '/' in route_name split; all call sites updated. add_groups_to_project_route no longer constructs a full_route_name string internally.
+models/auth_dto.py — GroupsRouteOut gains a project_name: str field; from_group_route now takes project_name and route_name as separate arguments instead of a pre-joined string.
+services/project_service.py — added validate_exists(project_uuid) convenience method (raises ProjectNotFoundError without returning the project object).
+utils/gateway_route_factory.py — fixed a bug where route.gateway_route_config.route_name = full_key mutated the shared GatewayRouteConfig object stored in project_gateway_config.routes, causing GET /routes to return routeName with the project_name/ prefix. Fixed with model_copy(update={'route_name': full_key})
