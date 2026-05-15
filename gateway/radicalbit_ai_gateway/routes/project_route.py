@@ -19,6 +19,7 @@ from radicalbit_ai_gateway.models.project_dto import (
     ProjectIn,
     ProjectOut,
 )
+from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.services.config_generator_service import (
     ConfigGeneratorService,
 )
@@ -60,6 +61,7 @@ class ProjectRoute:
         router = APIRouter(tags=['project_api'])
 
         @router.post('/projects', status_code=201, response_model=ProjectOut)
+        @route_meta(entity_type='PROJECT', response_uuid_field='uuid')
         def create_project(project_in: ProjectIn):
             project = project_service.create_project(project_in)
             logger.info('Created project %s', project.uuid)
@@ -87,6 +89,7 @@ class ProjectRoute:
             status_code=200,
             response_model=ProjectOut,
         )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         def load_config(project_uuid: UUID, config_in: ProjectConfigFileIn):
             project = project_service.load_config(project_uuid, config_in)
             logger.info('Loaded config for project %s', project_uuid)
@@ -97,6 +100,7 @@ class ProjectRoute:
             status_code=200,
             response_model=ProjectOut,
         )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         def approve_config(project_uuid: UUID):
             project = project_service.approve_config(project_uuid)
             logger.info('Approved config for project %s', project_uuid)
@@ -107,6 +111,7 @@ class ProjectRoute:
             status_code=200,
             response_model=ProjectOut,
         )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def serve_config(project_uuid: UUID):
             project = project_service.serve_config(project_uuid)
             if register_project_routes and project.config_file:
@@ -121,6 +126,7 @@ class ProjectRoute:
             status_code=200,
             response_model=GenerateConfigOut,
         )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def generate_config(project_uuid: UUID, gen_in: GenerateConfigIn):
             project = project_service.get_by_uuid(project_uuid)
             yaml_str = await config_generator_service.generate_config(
@@ -134,6 +140,7 @@ class ProjectRoute:
             status_code=200,
             response_model=ProjectOut,
         )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def unserve_config(project_uuid: UUID):
             project = project_service.unserve_config(project_uuid)
             if deregister_project_routes:
@@ -146,6 +153,7 @@ class ProjectRoute:
             status_code=200,
             response_model=ProjectOut,
         )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def delete_project(project_uuid: UUID):
             project = project_service.delete_project(project_uuid)
             if deregister_project_routes and project.config_file:
@@ -157,6 +165,9 @@ class ProjectRoute:
             '/projects/{project_uuid}/routes/{route_name}/groups',
             status_code=200,
             response_model=GroupsRouteOut,
+        )
+        @route_meta(
+            entity_type='PROJECT', entity_uuid_param='project_uuid', action='ASSIGN'
         )
         def add_groups_to_project_route(
             project_uuid: UUID,

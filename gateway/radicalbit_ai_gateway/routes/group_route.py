@@ -11,6 +11,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyFullOut,
     KeysUuidIn,
 )
+from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -29,6 +30,7 @@ class GroupRoute:
         router = APIRouter(tags=['group_api'])
 
         @router.post('/groups', status_code=201, response_model=GroupFullOut)
+        @route_meta(entity_type='GROUP', response_uuid_field='uuid')
         def create_group(
             group_in: GroupIn,
         ):
@@ -57,12 +59,14 @@ class GroupRoute:
         @router.patch(
             '/groups/{group_uuid}', status_code=200, response_model=GroupFullOut
         )
+        @route_meta(entity_type='GROUP', entity_uuid_param='group_uuid')
         def update_group(group_uuid: UUID, group_in: GroupIn):
             return group_service.update_group_name(group_uuid, group_in)
 
         @router.delete(
             '/groups/{group_uuid}', status_code=200, response_model=GroupFullOut
         )
+        @route_meta(entity_type='GROUP', entity_uuid_param='group_uuid')
         def delete_group(
             group_uuid: UUID,
             include_routes: bool = Query(False),
@@ -74,6 +78,9 @@ class GroupRoute:
             '/groups/{group_uuid}/projects/{project_uuid}/routes',
             status_code=201,
             response_model=GroupFullOut,
+        )
+        @route_meta(
+            entity_type='GROUP', entity_uuid_param='group_uuid', action='ASSIGN'
         )
         def add_project_route(
             group_uuid: UUID,
@@ -97,6 +104,9 @@ class GroupRoute:
             status_code=200,
             response_model=GroupFullOut,
         )
+        @route_meta(
+            entity_type='GROUP', entity_uuid_param='group_uuid', action='REVOKE'
+        )
         def remove_project_route(group_uuid: UUID, project_uuid: UUID, route_name: str):
             project = project_service.get_by_uuid(project_uuid)
             return group_service.remove_project_route(
@@ -105,6 +115,9 @@ class GroupRoute:
 
         @router.patch(
             '/groups/{group_uuid}/keys', status_code=201, response_model=GroupFullOut
+        )
+        @route_meta(
+            entity_type='GROUP', entity_uuid_param='group_uuid', action='ASSIGN'
         )
         def add_key(
             group_uuid: UUID,
@@ -118,6 +131,9 @@ class GroupRoute:
             '/groups/{group_uuid}/keys/{key_uuid}',
             status_code=200,
             response_model=GroupFullOut,
+        )
+        @route_meta(
+            entity_type='GROUP', entity_uuid_param='group_uuid', action='REVOKE'
         )
         def remove_key(group_uuid: UUID, key_uuid: UUID):
             return group_service.remove_key(group_uuid, key_uuid)
