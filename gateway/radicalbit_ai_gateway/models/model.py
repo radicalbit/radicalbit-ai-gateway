@@ -11,9 +11,11 @@ except ImportError:
     from typing_extensions import Self
 
 from langchain_core.embeddings import Embeddings
+from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_deepseek import ChatDeepSeek
 from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 from radicalbit_ai_gateway.models.credentials import Credentials
@@ -247,6 +249,28 @@ class Model(BaseModel):
         )
         prompt_manager.get_model_prompt(self.prompt_ref)
         return self
+
+
+class GatewayDeepSeekChatModel(ChatDeepSeek):
+    def _get_request_payload(
+        self,
+        input_: LanguageModelInput,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict:
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        messages = self._convert_input(input_).to_messages()
+        for msg_dict, msg in zip(payload['messages'], messages):
+            if (
+                isinstance(msg, AIMessage)
+                and msg_dict.get('role') == 'assistant'
+                and msg.additional_kwargs.get('reasoning_content')
+            ):
+                msg_dict['reasoning_content'] = msg.additional_kwargs[
+                    'reasoning_content'
+                ]
+        return payload
 
 
 # Mock models for testing purposes

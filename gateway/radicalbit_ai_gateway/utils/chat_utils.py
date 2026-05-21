@@ -51,6 +51,9 @@ class ChatUtils:
                 content=content,
                 tool_calls=None,
             )
+            reasoning_content = ai_message.additional_kwargs.get('reasoning_content')
+            if reasoning_content:
+                message_to_send.reasoning_content = reasoning_content
             # Normalize finish_reason to lowercase (Gemini returns uppercase like 'STOP')
             finish_reason_raw = response_metadata.get('finish_reason', 'stop')
             finish_reason = (
