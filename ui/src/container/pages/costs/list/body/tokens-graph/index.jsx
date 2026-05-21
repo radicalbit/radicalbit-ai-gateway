@@ -50,7 +50,6 @@ function TokensGraph({ routeName }) {
     );
   }
 
-  // FIXME: index.jsx:53 Uncaught TypeError: Cannot read properties of undefined (reading 'data')
   if (!data.data?.length) {
     return <IsEmpty />;
   }
