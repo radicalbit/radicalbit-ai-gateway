@@ -41,7 +41,9 @@ export const costsApiSlice = apiService.injectEndpoints({
 
     getCostsForChartsByRouteName: builder.query({
       providesTags: () => [API_TAGS.USAGE],
-      query: ({ routeName, from, to, gte, groupBy }) => {
+      query: ({
+        projectUuid, routeName, from, to, gte, groupBy,
+      }) => {
         const init = {};
 
         const params = timeFiltersQueryParamFactory({ from, to, gte, init, withTimezone: true });
@@ -51,7 +53,7 @@ export const costsApiSlice = apiService.injectEndpoints({
         }
 
         return ({
-          url: `/routes/${routeName}/costs/chart?${params.toString()}`,
+          url: `/projects/${projectUuid}/routes/${routeName}/costs/chart?${params.toString()}`,
           method: 'get',
         });
       },
@@ -59,13 +61,13 @@ export const costsApiSlice = apiService.injectEndpoints({
 
     getTokensForChartsByRouteName: builder.query({
       providesTags: () => [API_TAGS.USAGE],
-      query: ({ routeName, from, to, gte }) => {
+      query: ({ projectUuid, routeName, from, to, gte }) => {
         const init = {};
 
         const params = timeFiltersQueryParamFactory({ from, to, gte, init, withTimezone: true });
 
         return ({
-          url: `/routes/${routeName}/tokens/chart?${params.toString()}`,
+          url: `/projects/${projectUuid}/routes/${routeName}/tokens/chart?${params.toString()}`,
           method: 'get',
         });
       },
@@ -73,13 +75,13 @@ export const costsApiSlice = apiService.injectEndpoints({
 
     getRequestsForChartsByRouteName: builder.query({
       providesTags: () => [API_TAGS.USAGE],
-      query: ({ routeName, from, to, gte }) => {
+      query: ({ projectUuid, routeName, from, to, gte }) => {
         const init = {};
 
         const params = timeFiltersQueryParamFactory({ from, to, gte, init, withTimezone: true });
 
         return ({
-          url: `/routes/${routeName}/requests/chart?${params.toString()}`,
+          url: `/projects/${projectUuid}/routes/${routeName}/requests/chart?${params.toString()}`,
           method: 'get',
         });
       },
@@ -87,7 +89,9 @@ export const costsApiSlice = apiService.injectEndpoints({
 
     getInvocationsForChartsByRouteName: builder.query({
       providesTags: () => [API_TAGS.USAGE],
-      query: ({ routeName, from, to, gte, includeModels }) => {
+      query: ({
+        projectUuid, routeName, from, to, gte, includeModels,
+      }) => {
         const init = {};
 
         if (includeModels) {
@@ -97,7 +101,7 @@ export const costsApiSlice = apiService.injectEndpoints({
         const params = timeFiltersQueryParamFactory({ from, to, gte, init, withTimezone: true });
 
         return ({
-          url: `/routes/${routeName}/invocations/chart?${params.toString()}`,
+          url: `/projects/${projectUuid}/routes/${routeName}/invocations/chart?${params.toString()}`,
           method: 'get',
         });
       },
@@ -105,7 +109,7 @@ export const costsApiSlice = apiService.injectEndpoints({
 
     getRequestsWithErrorsForChartsByRouteName: builder.query({
       providesTags: () => [API_TAGS.USAGE],
-      query: ({ routeName, from, to, gte }) => {
+      query: ({ projectUuid, routeName, from, to, gte }) => {
         const init = {
           show_errors: 'true',
         };
@@ -113,7 +117,7 @@ export const costsApiSlice = apiService.injectEndpoints({
         const params = timeFiltersQueryParamFactory({ from, to, gte, init, withTimezone: true });
 
         return ({
-          url: `/routes/${routeName}/requests/chart?${params.toString()}`,
+          url: `/projects/${projectUuid}/routes/${routeName}/requests/chart?${params.toString()}`,
           method: 'get',
         });
       },

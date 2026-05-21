@@ -1,6 +1,6 @@
-import { faTrash } from '@fortawesome/free-solid-svg-icons';
 import TimeFilter from '@Components/time-filter';
 import useModals from '@Hooks/use-modals';
+import { faArrowLeft } from '@fortawesome/free-solid-svg-icons';
 import {
   FontAwesomeIcon, NewHeader, RbitModal,
   SectionTitle,
@@ -20,11 +20,14 @@ function RouteAnalytics() {
       defaultMaximize
       header={(
         <NewHeader
-          details={{
-            one: <TimeFilter />,
-            two: <FontAwesomeIcon icon={faTrash} onClick={hideModal} />,
-          }}
-          title={<SectionTitle subtitle={routeName} title="Drill-down" />}
+          details={{ one: <TimeFilter /> }}
+          prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={hideModal} />}
+          title={(
+            <SectionTitle
+              subtitle={routeName}
+              title="Drill-down"
+            />
+          )}
         />
       )}
       onCancel={hideModal}

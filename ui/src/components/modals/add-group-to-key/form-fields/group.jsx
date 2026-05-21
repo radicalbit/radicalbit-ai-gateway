@@ -1,7 +1,6 @@
 import useModals from '@Hooks/use-modals';
 import { PathsEnum } from '@Src/constants';
-import { useGetAssociableGroupsByKeyQuery } from '@State/keys/api';
-import { useGetKeyQuery } from '@State/keys/api';
+import { useGetAssociableGroupsByKeyQuery, useGetKeyQuery } from '@State/keys/api';
 import { faKey, faSearch } from '@fortawesome/free-solid-svg-icons';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {

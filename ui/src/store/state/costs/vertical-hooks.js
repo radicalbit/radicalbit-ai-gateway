@@ -8,10 +8,11 @@ const useQueryRangeParams = () => {
   const gte = searchParams.get('gte') || null;
   const from = searchParams.get('from') || null;
   const to = searchParams.get('to') || null;
+  const projectUuid = searchParams.get('projectUuid') || null;
   const groupBy = searchParams.get('groupBy') || COSTS_GROUP_BY.groups.key;
 
   return {
-    gte, from, to, groupBy,
+    gte, from, to, projectUuid, groupBy,
   };
 };
 
@@ -24,11 +25,11 @@ const useGetAllCostsWithRange = ({ withSavedTokens }, options) => {
 };
 
 const useGetCostsForChartsByRouteNameWithRange = ({ routeName }, options) => {
-  const { gte, from, to, groupBy } = useQueryRangeParams();
+  const { gte, from, to, projectUuid, groupBy } = useQueryRangeParams();
 
   return useGetCostsForChartsByRouteNameQuery({
-    routeName, gte, from, to, groupBy,
-  }, options);
+    projectUuid, routeName, gte, from, to, groupBy,
+  }, { skip: !projectUuid, ...options });
 };
 
 const useGetCostsByRouteNameWithRange = ({ routeName, withSavedTokens }, options) => {
@@ -40,35 +41,35 @@ const useGetCostsByRouteNameWithRange = ({ routeName, withSavedTokens }, options
 };
 
 const useGetTokensForChartsByRouteNameWithRange = ({ routeName }, options) => {
-  const { gte, from, to } = useQueryRangeParams();
+  const { gte, from, to, projectUuid } = useQueryRangeParams();
 
   return useGetTokensForChartsByRouteNameQuery({
-    routeName, gte, from, to,
-  }, options);
+    projectUuid, routeName, gte, from, to,
+  }, { skip: !projectUuid, ...options });
 };
 
 const useGetRequestsForChartsByRouteNameWithRange = ({ routeName }, options) => {
-  const { gte, from, to } = useQueryRangeParams();
+  const { gte, from, to, projectUuid } = useQueryRangeParams();
 
   return useGetRequestsForChartsByRouteNameQuery({
-    routeName, gte, from, to,
-  }, options);
+    projectUuid, routeName, gte, from, to,
+  }, { skip: !projectUuid, ...options });
 };
 
 const useGetInvocationsForChartsByRouteNameWithRange = ({ routeName, includeModels }, options) => {
-  const { gte, from, to } = useQueryRangeParams();
+  const { gte, from, to, projectUuid } = useQueryRangeParams();
 
   return useGetInvocationsForChartsByRouteNameQuery({
-    routeName, gte, from, to, includeModels,
-  }, options);
+    projectUuid, routeName, gte, from, to, includeModels,
+  }, { skip: !projectUuid, ...options });
 };
 
 const useGetRequestsWithErrorsForChartsByRouteNameWithRange = ({ routeName }, options) => {
-  const { gte, from, to } = useQueryRangeParams();
+  const { gte, from, to, projectUuid } = useQueryRangeParams();
 
   return useGetRequestsWithErrorsForChartsByRouteNameQuery({
-    routeName, gte, from, to,
-  }, options);
+    projectUuid, routeName, gte, from, to,
+  }, { skip: !projectUuid, ...options });
 };
 
 export {
