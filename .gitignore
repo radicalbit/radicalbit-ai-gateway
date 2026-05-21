@@ -108,6 +108,7 @@ ui/*.sln
 ui/*.sw?
 ui/.env*
 ui/.vite
+ui/docs-claude/
 
 #####################
 ## DEMO  SPECIFICS  #
