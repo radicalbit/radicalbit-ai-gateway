@@ -32,7 +32,11 @@ def test_to_openai_chat_completion_without_reasoning_content():
     assert not hasattr(msg, 'reasoning_content') or msg.reasoning_content is None
 
 
-def test_to_openai_chat_completion_reasoning_content_not_set_on_tool_calls():
+def test_to_openai_chat_completion_reasoning_content_set_on_tool_calls():
+    """DeepSeek requires reasoning_content echoed back in multi-turn tool call flows.
+    The gateway must include it in Turn 1 tool_call responses so the client can send
+    it back in Turn 2.
+    """
     ai_message = AIMessage(
         content='',
         additional_kwargs={'reasoning_content': 'some reasoning'},
@@ -51,4 +55,4 @@ def test_to_openai_chat_completion_reasoning_content_not_set_on_tool_calls():
     )
     msg = result.choices[0].message
     assert msg.tool_calls is not None
-    assert not hasattr(msg, 'reasoning_content') or msg.reasoning_content is None
+    assert msg.reasoning_content == 'some reasoning'

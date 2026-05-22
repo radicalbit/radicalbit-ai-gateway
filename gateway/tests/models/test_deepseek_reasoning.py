@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from radicalbit_ai_gateway.models.model import GatewayDeepSeekChatModel
 
@@ -124,3 +124,60 @@ def test_multiple_assistant_messages_with_reasoning_content():
     assert 'reasoning_content' not in payload['messages'][0]
     assert 'reasoning_content' not in payload['messages'][2]
     assert 'reasoning_content' not in payload['messages'][4]
+
+
+def test_reasoning_content_injected_for_tool_call_assistant_message():
+    model = _make_model()
+    input_messages = [
+        HumanMessage(content="What's the weather in Paris?"),
+        AIMessage(
+            content='',
+            tool_calls=[
+                {
+                    'id': 'call_1',
+                    'name': 'get_weather',
+                    'args': {'city': 'Paris'},
+                    'type': 'tool_call',
+                }
+            ],
+            additional_kwargs={
+                'reasoning_content': 'I need to call the weather API to answer this.'
+            },
+        ),
+        ToolMessage(content='Sunny, 22°C', tool_call_id='call_1'),
+    ]
+    base_payload = _base_payload(
+        [
+            {'role': 'user', 'content': "What's the weather in Paris?"},
+            {
+                'role': 'assistant',
+                'content': '',
+                'tool_calls': [
+                    {
+                        'id': 'call_1',
+                        'function': {
+                            'name': 'get_weather',
+                            'arguments': '{"city": "Paris"}',
+                        },
+                        'type': 'function',
+                    }
+                ],
+            },
+            {'role': 'tool', 'content': 'Sunny, 22°C', 'tool_call_id': 'call_1'},
+        ]
+    )
+    with patch.object(
+        GatewayDeepSeekChatModel.__bases__[0],
+        '_get_request_payload',
+        return_value=base_payload,
+    ):
+        payload = model._get_request_payload(input_messages)
+
+    # reasoning_content must be injected on the assistant message with tool_calls
+    assert (
+        payload['messages'][1]['reasoning_content']
+        == 'I need to call the weather API to answer this.'
+    )
+    # user and tool messages must not carry reasoning_content
+    assert 'reasoning_content' not in payload['messages'][0]
+    assert 'reasoning_content' not in payload['messages'][2]

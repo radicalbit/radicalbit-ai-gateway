@@ -41,6 +41,9 @@ class ChatUtils:
                 content=None,
                 tool_calls=openai_tool_calls,
             )
+            reasoning_content = ai_message.additional_kwargs.get('reasoning_content')
+            if reasoning_content:
+                message_to_send.reasoning_content = reasoning_content
             finish_reason = 'tool_calls'
         else:
             content = ai_message.content
