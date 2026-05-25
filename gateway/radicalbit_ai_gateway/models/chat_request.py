@@ -204,6 +204,9 @@ def convert_openai_messages(messages: list) -> list[BaseMessage]:
             tool_calls=parse_tool_calls(list(m.get('tool_calls', []) or [])),
             tool_call_id=m.get('tool_call_id'),
         )
+        reasoning_content = m.get('reasoning_content')
+        if reasoning_content and isinstance(message, AIMessage):
+            message.additional_kwargs['reasoning_content'] = reasoning_content
         openai_messages.append(message)
 
     return openai_messages

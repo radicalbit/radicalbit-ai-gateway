@@ -165,3 +165,44 @@ def test_convert_messages():
     assert isinstance(result[0], SystemMessage)
     assert isinstance(result[1], HumanMessage)
     assert isinstance(result[2], AIMessage)
+
+
+def test_convert_openai_messages_assistant_with_reasoning_content():
+    messages = [
+        {'role': 'user', 'content': 'What is the capital of France?'},
+        {
+            'role': 'assistant',
+            'content': 'Paris.',
+            'reasoning_content': 'The user is asking a geography question...',
+        },
+    ]
+    result = convert_openai_messages(messages)
+    assert len(result) == 2
+    ai_msg = result[1]
+    assert isinstance(ai_msg, AIMessage)
+    assert ai_msg.content == 'Paris.'
+    assert ai_msg.additional_kwargs.get('reasoning_content') == (
+        'The user is asking a geography question...'
+    )
+
+
+def test_convert_openai_messages_assistant_without_reasoning_content():
+    messages = [
+        {'role': 'user', 'content': 'Hello'},
+        {'role': 'assistant', 'content': 'Hi there!'},
+    ]
+    result = convert_openai_messages(messages)
+    ai_msg = result[1]
+    assert isinstance(ai_msg, AIMessage)
+    assert 'reasoning_content' not in ai_msg.additional_kwargs
+
+
+def test_convert_openai_messages_reasoning_content_ignored_for_non_assistant():
+    messages = [
+        {'role': 'user', 'content': 'Hello', 'reasoning_content': 'should be ignored'},
+    ]
+    result = convert_openai_messages(messages)
+    assert isinstance(result[0], HumanMessage)
+    assert not hasattr(result[0], 'additional_kwargs') or 'reasoning_content' not in (
+        result[0].additional_kwargs or {}
+    )

@@ -14,6 +14,7 @@ from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import (
     ENABLE_PROMPT_CACHE_PARAM,
+    GatewayDeepSeekChatModel,
     MockGatewayChatModel,
     Model,
 )
@@ -72,12 +73,6 @@ class ChatModelInvoker(ModelInvoker):
                 response_text=response_text,
             )
 
-        # Map gateway provider names to LangChain provider names
-        # LangChain uses underscore (google_genai) while gateway uses hyphen (google-genai)
-        langchain_provider = provider.replace('-', '_')
-
-        # init_chat_model handles provider recognition and model initialization
-        # LangChain accepts api_key directly as an alias for provider-specific keys
         # Strip gateway-only params that must not reach LangChain
         _GATEWAY_PARAMS = {ENABLE_PROMPT_CACHE_PARAM}
         init_kwargs = {
@@ -85,6 +80,18 @@ class ChatModelInvoker(ModelInvoker):
             for k, v in {**params, **credentials}.items()
             if k not in _GATEWAY_PARAMS
         }
+
+        if provider == 'deepseek':
+            return GatewayDeepSeekChatModel(
+                model=model_name,
+                http_async_client=self.httpx_client,
+                **init_kwargs,
+            )
+
+        # Map gateway provider names to LangChain provider names
+        # LangChain uses underscore (google_genai) while gateway uses hyphen (google-genai)
+        langchain_provider = provider.replace('-', '_')
+
         if provider not in ('anthropic', 'mistralai'):
             init_kwargs['http_async_client'] = self.httpx_client
         return init_chat_model(
