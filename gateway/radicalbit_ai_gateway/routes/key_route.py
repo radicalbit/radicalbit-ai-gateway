@@ -9,6 +9,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyGroupIn,
     KeyIn,
 )
+from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
@@ -23,6 +24,7 @@ class KeyRoute:
         router = APIRouter(tags=['key_api'])
 
         @router.post('/keys', status_code=201, response_model=KeyFullOut)
+        @route_meta(entity_type='KEY', response_uuid_field='uuid')
         def create_key(
             key_in: KeyIn,
         ):
@@ -39,16 +41,19 @@ class KeyRoute:
             return key_service.get_key_by_uuid(key_uuid, include_groups)
 
         @router.patch('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
+        @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
         def update_key(key_uuid: UUID, key_in: KeyIn):
             return key_service.update_key_name(key_uuid, key_in)
 
         @router.delete('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
+        @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
         def delete_key(key_uuid: UUID, include_groups: bool = Query(False)):
             return key_service.delete_key(key_uuid, include_groups)
 
         @router.patch(
             '/keys/{key_uuid}/group', status_code=200, response_model=KeyFullOut
         )
+        @route_meta(entity_type='KEY', entity_uuid_param='key_uuid', action='ASSIGN')
         def add_groups_to_key(
             key_uuid: UUID,
             key_group_in: KeyGroupIn,
