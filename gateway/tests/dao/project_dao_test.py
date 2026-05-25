@@ -166,6 +166,36 @@ class ProjectDAOTest(DatabaseIntegration):
         assert len(result) == 1
         assert result[0].name == 'was-served'
 
+    def test_get_all_filtered_dev_returns_only_without_config_file(self):
+        self.project_dao.insert(
+            db_mock.get_sample_project(
+                uuid=uuid.uuid4(), name='no-config', config_file=None
+            )
+        )
+        self.project_dao.insert(
+            db_mock.get_sample_project(
+                uuid=uuid.uuid4(), name='with-config', config_file='yaml'
+            )
+        )
+        result = self.project_dao.get_all_filtered(ProjectFilter.DEV)
+        assert len(result) == 1
+        assert result[0].name == 'no-config'
+
+    def test_get_all_filtered_prod_returns_only_with_config_file(self):
+        self.project_dao.insert(
+            db_mock.get_sample_project(
+                uuid=uuid.uuid4(), name='no-config', config_file=None
+            )
+        )
+        self.project_dao.insert(
+            db_mock.get_sample_project(
+                uuid=uuid.uuid4(), name='with-config', config_file='yaml'
+            )
+        )
+        result = self.project_dao.get_all_filtered(ProjectFilter.PROD)
+        assert len(result) == 1
+        assert result[0].name == 'with-config'
+
     # --- soft_delete ---
 
     def test_soft_delete(self):

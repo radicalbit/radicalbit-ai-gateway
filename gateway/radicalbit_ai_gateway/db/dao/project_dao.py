@@ -44,6 +44,10 @@ class ProjectDAO:
                 stmt = stmt.where(Project.config_file.is_not(None))
             elif project_filter == ProjectFilter.WITH_USAGE:
                 stmt = stmt.where(Project.first_served_at.is_not(None))
+            elif project_filter == ProjectFilter.DEV:
+                stmt = stmt.where(Project.config_file.is_(None))
+            elif project_filter == ProjectFilter.PROD:
+                stmt = stmt.where(Project.config_file.is_not(None))
             return session.scalars(stmt).all()
 
     def get_all_with_config(self) -> Sequence[Project]:
