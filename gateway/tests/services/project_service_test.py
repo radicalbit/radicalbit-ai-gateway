@@ -479,3 +479,27 @@ routes:
         result = self.project_service.get_all_filtered(None)
         self.project_dao.get_all_filtered.assert_called_once_with(None)
         assert len(result) == 2
+
+    def test_get_all_filtered_dev_delegates_to_dao(self):
+        projects = [
+            db_mock.get_sample_project(
+                uuid=uuid.uuid4(), name='no-config', config_file=None
+            ),
+        ]
+        self.project_dao.get_all_filtered = MagicMock(return_value=projects)
+        result = self.project_service.get_all_filtered(ProjectFilter.DEV)
+        self.project_dao.get_all_filtered.assert_called_once_with(ProjectFilter.DEV)
+        assert len(result) == 1
+        assert result == [ProjectOut.from_project(p) for p in projects]
+
+    def test_get_all_filtered_prod_delegates_to_dao(self):
+        projects = [
+            db_mock.get_sample_project(
+                uuid=uuid.uuid4(), name='with-config', config_file='yaml'
+            ),
+        ]
+        self.project_dao.get_all_filtered = MagicMock(return_value=projects)
+        result = self.project_service.get_all_filtered(ProjectFilter.PROD)
+        self.project_dao.get_all_filtered.assert_called_once_with(ProjectFilter.PROD)
+        assert len(result) == 1
+        assert result == [ProjectOut.from_project(p) for p in projects]

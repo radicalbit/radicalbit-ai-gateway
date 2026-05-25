@@ -14,6 +14,16 @@ from radicalbit_ai_gateway.utils.yaml_utils import get_default_config_template
 class ProjectFilter(str, Enum):
     ACTIVE = 'active'
     WITH_USAGE = 'with_usage'
+    DEV = 'dev'
+    PROD = 'prod'
+
+    @classmethod
+    def _missing_(cls, value: object):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value == value.lower():
+                    return member
+        return None
 
 
 class ProjectIn(BaseModel, validate_assignment=True):
