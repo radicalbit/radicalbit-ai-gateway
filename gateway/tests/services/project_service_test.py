@@ -164,6 +164,51 @@ routes:
         saved_content = self.project_dao.update_draft_config_file.call_args[0][1]
         assert '!secret OPENAI_API_KEY' in saved_content
 
+    # --- cancel_approval ---
+
+    def test_cancel_approval_ok(self):
+        config_in = db_mock.get_sample_project_config_file_in()
+        project = db_mock.get_sample_project(
+            draft_config_file=config_in.config_file,
+            config_status=ConfigStatus.READY_TO_SERVE,
+        )
+        cancelled_project = db_mock.get_sample_project(
+            draft_config_file=config_in.config_file,
+            config_status=ConfigStatus.DRAFT,
+        )
+        self.project_dao.get_by_uuid = MagicMock(
+            side_effect=[project, cancelled_project]
+        )
+        self.project_dao.set_config_status = MagicMock(return_value=1)
+        result = self.project_service.cancel_approval(project.uuid)
+        self.project_dao.set_config_status.assert_called_once_with(
+            project.uuid, ConfigStatus.DRAFT
+        )
+        assert result.config_status == ConfigStatus.DRAFT
+
+    def test_cancel_approval_project_not_found(self):
+        self.project_dao.get_by_uuid = MagicMock(return_value=None)
+        with pytest.raises(ProjectNotFoundError):
+            self.project_service.cancel_approval(uuid.uuid4())
+
+    def test_cancel_approval_wrong_status_draft(self):
+        project = db_mock.get_sample_project(
+            config_status=ConfigStatus.DRAFT,
+        )
+        self.project_dao.get_by_uuid = MagicMock(return_value=project)
+        with pytest.raises(ProjectConfigValidationError):
+            self.project_service.cancel_approval(project.uuid)
+
+    def test_cancel_approval_wrong_status_served(self):
+        config_in = db_mock.get_sample_project_config_file_in()
+        project = db_mock.get_sample_project(
+            config_file=config_in.config_file,
+            config_status=ConfigStatus.SERVED,
+        )
+        self.project_dao.get_by_uuid = MagicMock(return_value=project)
+        with pytest.raises(ProjectConfigValidationError):
+            self.project_service.cancel_approval(project.uuid)
+
     # --- approve_config ---
 
     def test_approve_config_ok(self):

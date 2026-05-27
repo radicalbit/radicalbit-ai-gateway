@@ -107,6 +107,17 @@ class ProjectRoute:
             return project
 
         @router.patch(
+            '/projects/{project_uuid}/cancel-approval',
+            status_code=200,
+            response_model=ProjectOut,
+        )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
+        def cancel_approval(project_uuid: UUID):
+            project = project_service.cancel_approval(project_uuid)
+            logger.info('Cancelled approval for project %s', project_uuid)
+            return project
+
+        @router.patch(
             '/projects/{project_uuid}/serve-config',
             status_code=200,
             response_model=ProjectOut,

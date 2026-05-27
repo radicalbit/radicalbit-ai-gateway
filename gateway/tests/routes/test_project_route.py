@@ -222,6 +222,62 @@ class TestProjectRoute(unittest.TestCase):
             ).error
         )
 
+    # --- cancel-approval ---
+
+    def test_cancel_approval_ok(self):
+        config_in = db_mock.get_sample_project_config_file_in()
+        project = db_mock.get_sample_project(
+            draft_config_file=config_in.config_file,
+        )
+        project_out = ProjectOut.from_project(project)
+        self.project_service.cancel_approval = MagicMock(return_value=project_out)
+        res = self.client.patch(
+            f'{self.prefix}/projects/{project.uuid}/cancel-approval'
+        )
+        assert res.status_code == 200
+        assert res.json() == jsonable_encoder(project_out)
+        self.project_service.cancel_approval.assert_called_once_with(project.uuid)
+
+    def test_cancel_approval_not_found(self):
+        unknown_uuid = uuid.uuid4()
+        self.project_service.cancel_approval = MagicMock(
+            side_effect=ProjectNotFoundError('error')
+        )
+        res = self.client.patch(
+            f'{self.prefix}/projects/{unknown_uuid}/cancel-approval'
+        )
+        assert res.status_code == 404
+        assert (
+            res.json()['error']
+            == ErrorOut(
+                'error',
+                'auth_registry_error',
+                code='project_not_found',
+                param=None,
+            ).error
+        )
+
+    def test_cancel_approval_wrong_status(self):
+        project_uuid = uuid.uuid4()
+        self.project_service.cancel_approval = MagicMock(
+            side_effect=ProjectConfigValidationError('error')
+        )
+        res = self.client.patch(
+            f'{self.prefix}/projects/{project_uuid}/cancel-approval'
+        )
+        assert res.status_code == 400
+        assert (
+            res.json()['error']
+            == ErrorOut(
+                'error',
+                'auth_registry_error',
+                code='project_config_validation_error',
+                param=None,
+            ).error
+        )
+
+    # --- serve-config ---
+
     def test_serve_config_ok(self):
         config_in = db_mock.get_sample_project_config_file_in()
         project = db_mock.get_sample_project(
