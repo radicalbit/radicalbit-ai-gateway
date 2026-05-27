@@ -70,6 +70,18 @@ class ProjectService:
             raise ProjectNotFoundError(f'Project with UUID {project_uuid} not found')
         return ProjectOut.from_project(updated_project)
 
+    def cancel_approval(self, project_uuid: UUID) -> ProjectOut:
+        project = self._get_project_or_raise(project_uuid)
+
+        if project.config_status != ConfigStatus.READY_TO_SERVE.value:
+            raise ProjectConfigValidationError(
+                f'Project {project_uuid} is not in READY_TO_SERVE state'
+            )
+
+        self.project_dao.set_config_status(project_uuid, ConfigStatus.DRAFT)
+
+        return self._get_updated_or_raise(project_uuid)
+
     def approve_config(self, project_uuid: UUID) -> ProjectOut:
         project = self._get_project_or_raise(project_uuid)
 
