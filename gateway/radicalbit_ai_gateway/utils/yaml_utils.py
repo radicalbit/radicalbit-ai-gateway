@@ -1,4 +1,3 @@
-from importlib.resources import files
 import re
 
 from pydantic import ValidationError
@@ -19,7 +18,8 @@ def check_no_literal_secrets(yaml_content: str) -> list[str]:
     for match in SENSITIVE_FIELD_PATTERN.finditer(yaml_content):
         value = match.group(1).strip()
         if value and not SECRET_REF_PATTERN.match(value):
-            violations.append(match.group(0).strip())
+            line_no = yaml_content[: match.start()].count('\n') + 1
+            violations.append(f'line {line_no}: {match.group(0).strip()}')
     return violations
 
 
@@ -40,7 +40,10 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
     try:
         parsed = parse_yaml_with_secret_placeholders(yaml_str)
     except yaml.YAMLError as e:
-        raise ProjectConfigValidationError(f'Invalid YAML: {e}') from e
+        mark = getattr(e, 'problem_mark', None)
+        location = f' (line {mark.line + 1}, column {mark.column + 1})' if mark else ''
+        problem = getattr(e, 'problem', None) or str(e)
+        raise ProjectConfigValidationError(f'Invalid YAML{location}: {problem}') from e
     if check_secrets:
         violations = check_no_literal_secrets(yaml_str)
         if violations:
@@ -50,13 +53,13 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
     try:
         GatewayConfig.model_validate(parsed)
     except (ValidationError, KeyError, TypeError) as e:
+        if isinstance(e, ValidationError):
+            details = '; '.join(
+                f"'{'.'.join(str(p) for p in err['loc'])}': {err['msg']}"
+                for err in e.errors()
+            )
+            raise ProjectConfigValidationError(
+                f'Invalid gateway configuration — {len(e.errors())} error(s): {details}'
+            ) from e
         raise ProjectConfigValidationError(f'Invalid gateway configuration: {e}') from e
     return yaml_str
-
-
-def get_default_config_template() -> str:
-    return (
-        files('radicalbit_ai_gateway.resources')
-        .joinpath('default_config.yaml')
-        .read_text()
-    )

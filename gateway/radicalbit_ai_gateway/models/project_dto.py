@@ -8,7 +8,6 @@ from pydantic.alias_generators import to_camel
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_status import ProjectStatus
-from radicalbit_ai_gateway.utils.yaml_utils import get_default_config_template
 
 
 class ProjectFilter(str, Enum):
@@ -42,7 +41,7 @@ class ProjectIn(BaseModel, validate_assignment=True):
             name=self.name,
             description=self.description,
             config_status=ConfigStatus.DRAFT.value,
-            draft_config_file=get_default_config_template(),
+            draft_config_file=None,
             created_at=now,
             updated_at=now,
         )
