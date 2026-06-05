@@ -1,3 +1,4 @@
+from importlib.resources import files
 import re
 
 from pydantic import ValidationError
@@ -63,3 +64,11 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
             ) from e
         raise ProjectConfigValidationError(f'Invalid gateway configuration: {e}') from e
     return yaml_str
+
+
+def get_default_config_template() -> str:
+    return (
+        files('radicalbit_ai_gateway.resources')
+        .joinpath('default_config.yaml')
+        .read_text()
+    )
