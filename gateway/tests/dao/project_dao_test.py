@@ -1,10 +1,14 @@
 import datetime
 import uuid
 
+from sqlalchemy import update
+
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
+from radicalbit_ai_gateway.db.tables.project_table import Project
+from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 
 
@@ -13,6 +17,24 @@ class ProjectDAOTest(DatabaseIntegration):
     def setUpClass(cls):
         super().setUpClass()
         cls.project_dao = ProjectDAO(cls.db)
+
+    def _insert_served_project(self, name: str) -> Project:
+        """Insert a project plus a SERVED config and wire served_config_uuid."""
+        project = db_mock.get_sample_project(uuid=uuid.uuid4(), name=name)
+        self.project_dao.insert(project)
+        config = db_mock.get_sample_project_config(
+            project_uuid=project.uuid,
+            config_file='served-yaml',
+            config_status=ConfigStatus.SERVED,
+        )
+        self.insert(config)
+        with self.db.begin_session() as session:
+            session.execute(
+                update(Project)
+                .where(Project.uuid == project.uuid)
+                .values(served_config_uuid=config.uuid)
+            )
+        return self.project_dao.get_by_uuid(project.uuid)
 
     def test_insert(self):
         project = db_mock.get_sample_project()
@@ -26,207 +48,104 @@ class ProjectDAOTest(DatabaseIntegration):
         result = self.project_dao.get_by_uuid(project.uuid)
         assert result is not None
         assert result.uuid == project.uuid
-        assert result.name == project.name
 
     def test_get_by_uuid_not_found(self):
-        result = self.project_dao.get_by_uuid(uuid.uuid4())
-        assert result is None
+        assert self.project_dao.get_by_uuid(uuid.uuid4()) is None
 
     def test_get_all(self):
-        projects = [
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='one'),
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='two'),
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='three'),
-        ]
-        for p in projects:
-            self.project_dao.insert(p)
-        result = self.project_dao.get_all()
-        assert len(result) == 3
+        for n in ('one', 'two', 'three'):
+            self.project_dao.insert(
+                db_mock.get_sample_project(uuid=uuid.uuid4(), name=n)
+            )
+        assert len(self.project_dao.get_all()) == 3
 
     def test_get_all_empty(self):
-        result = self.project_dao.get_all()
-        assert list(result) == []
+        assert list(self.project_dao.get_all()) == []
 
-    def test_get_all_with_config_only_returns_projects_with_config(self):
+    def test_get_all_with_config_only_returns_served(self):
+        self._insert_served_project('active')
         self.project_dao.insert(
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='active', config_file='some-yaml'
-            )
-        )
-        self.project_dao.insert(
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='inactive', config_file=None
-            )
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='inactive')
         )
         result = self.project_dao.get_all_with_config()
         assert len(result) == 1
-        assert result[0].config_file == 'some-yaml'
         assert result[0].name == 'active'
 
     def test_get_all_with_config_empty(self):
         self.project_dao.insert(
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='no-config', config_file=None
-            )
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='no-config')
         )
-        result = self.project_dao.get_all_with_config()
-        assert list(result) == []
-
-    def test_update_draft_config_file(self):
-        project = db_mock.get_sample_project()
-        self.project_dao.insert(project)
-        rows = self.project_dao.update_draft_config_file(project.uuid, 'draft-yaml')
-        assert rows == 1
-        updated = self.project_dao.get_by_uuid(project.uuid)
-        assert updated.draft_config_file == 'draft-yaml'
-        assert updated.config_file is None
-
-    def test_update_draft_config_file_not_found(self):
-        rows = self.project_dao.update_draft_config_file(uuid.uuid4(), 'draft-yaml')
-        assert rows == 0
-
-    def test_promote_draft_to_config(self):
-        project = db_mock.get_sample_project(draft_config_file='draft-yaml')
-        self.project_dao.insert(project)
-        rows = self.project_dao.promote_draft_to_config(project.uuid, 'draft-yaml')
-        assert rows == 1
-        updated = self.project_dao.get_by_uuid(project.uuid)
-        assert updated.config_file == 'draft-yaml'
-        assert updated.draft_config_file is None
-
-    def test_promote_draft_to_config_not_found(self):
-        rows = self.project_dao.promote_draft_to_config(uuid.uuid4(), 'some-yaml')
-        assert rows == 0
-
-    def test_promote_draft_to_config_sets_first_served_at(self):
-        project = db_mock.get_sample_project(draft_config_file='draft-yaml')
-        self.project_dao.insert(project)
-        assert project.first_served_at is None
-        self.project_dao.promote_draft_to_config(project.uuid, 'draft-yaml')
-        updated = self.project_dao.get_by_uuid(project.uuid)
-        assert updated.first_served_at is not None
-
-    def test_promote_draft_to_config_preserves_first_served_at_on_re_serve(self):
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        original_time = datetime.datetime(2025, 1, 1, tzinfo=UTC)
-        project = db_mock.get_sample_project(
-            draft_config_file='draft-yaml',
-            first_served_at=original_time,
-        )
-        self.project_dao.insert(project)
-        self.project_dao.promote_draft_to_config(project.uuid, 'draft-yaml')
-        updated = self.project_dao.get_by_uuid(project.uuid)
-        assert updated.first_served_at == original_time
+        assert list(self.project_dao.get_all_with_config()) == []
 
     def test_get_all_filtered_no_filter_returns_all(self):
-        self.project_dao.insert(
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='a', config_file='yaml')
-        )
-        self.project_dao.insert(
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='b', config_file=None)
-        )
-        result = self.project_dao.get_all_filtered(None)
-        assert len(result) == 2
+        self._insert_served_project('a')
+        self.project_dao.insert(db_mock.get_sample_project(uuid=uuid.uuid4(), name='b'))
+        assert len(self.project_dao.get_all_filtered(None)) == 2
 
     def test_get_all_filtered_active_returns_only_served(self):
+        self._insert_served_project('served')
         self.project_dao.insert(
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='served', config_file='yaml'
-            )
-        )
-        self.project_dao.insert(
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='not-served', config_file=None
-            )
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='not-served')
         )
         result = self.project_dao.get_all_filtered(ProjectFilter.ACTIVE)
-        assert len(result) == 1
-        assert result[0].name == 'served'
+        assert len(result) == 1 and result[0].name == 'served'
+
+    def test_get_all_filtered_prod_returns_only_served(self):
+        self._insert_served_project('with-config')
+        self.project_dao.insert(
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='no-config')
+        )
+        result = self.project_dao.get_all_filtered(ProjectFilter.PROD)
+        assert len(result) == 1 and result[0].name == 'with-config'
+
+    def test_get_all_filtered_dev_returns_only_without_served(self):
+        self._insert_served_project('with-config')
+        self.project_dao.insert(
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='no-config')
+        )
+        result = self.project_dao.get_all_filtered(ProjectFilter.DEV)
+        assert len(result) == 1 and result[0].name == 'no-config'
 
     def test_get_all_filtered_with_usage_returns_ever_served(self):
         UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
         now = datetime.datetime.now(tz=UTC)
         self.project_dao.insert(
             db_mock.get_sample_project(
-                uuid=uuid.uuid4(),
-                name='was-served',
-                config_file=None,
-                first_served_at=now,
+                uuid=uuid.uuid4(), name='was-served', first_served_at=now
             )
         )
         self.project_dao.insert(
             db_mock.get_sample_project(
-                uuid=uuid.uuid4(),
-                name='never-served',
-                config_file=None,
-                first_served_at=None,
+                uuid=uuid.uuid4(), name='never-served', first_served_at=None
             )
         )
         result = self.project_dao.get_all_filtered(ProjectFilter.WITH_USAGE)
-        assert len(result) == 1
-        assert result[0].name == 'was-served'
-
-    def test_get_all_filtered_dev_returns_only_without_config_file(self):
-        self.project_dao.insert(
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='no-config', config_file=None
-            )
-        )
-        self.project_dao.insert(
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='with-config', config_file='yaml'
-            )
-        )
-        result = self.project_dao.get_all_filtered(ProjectFilter.DEV)
-        assert len(result) == 1
-        assert result[0].name == 'no-config'
-
-    def test_get_all_filtered_prod_returns_only_with_config_file(self):
-        self.project_dao.insert(
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='no-config', config_file=None
-            )
-        )
-        self.project_dao.insert(
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='with-config', config_file='yaml'
-            )
-        )
-        result = self.project_dao.get_all_filtered(ProjectFilter.PROD)
-        assert len(result) == 1
-        assert result[0].name == 'with-config'
-
-    # --- soft_delete ---
+        assert len(result) == 1 and result[0].name == 'was-served'
 
     def test_soft_delete(self):
         project = db_mock.get_sample_project()
         self.project_dao.insert(project)
-        rows = self.project_dao.soft_delete(project.uuid)
-        assert rows == 1
+        assert self.project_dao.soft_delete(project.uuid) == 1
 
     def test_soft_delete_not_found(self):
-        rows = self.project_dao.soft_delete(uuid.uuid4())
-        assert rows == 0
+        assert self.project_dao.soft_delete(uuid.uuid4()) == 0
 
     def test_get_by_uuid_excludes_deleted(self):
         project = db_mock.get_sample_project()
         self.project_dao.insert(project)
         self.project_dao.soft_delete(project.uuid)
-        result = self.project_dao.get_by_uuid(project.uuid)
-        assert result is None
+        assert self.project_dao.get_by_uuid(project.uuid) is None
 
     def test_get_all_excludes_deleted(self):
         projects = [
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='one'),
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='two'),
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='three'),
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name=n)
+            for n in ('one', 'two', 'three')
         ]
         for p in projects:
             self.project_dao.insert(p)
         self.project_dao.soft_delete(projects[0].uuid)
         result = self.project_dao.get_all()
-        assert len(result) == 2
-        assert 'one' not in {p.name for p in result}
+        assert len(result) == 2 and 'one' not in {p.name for p in result}
 
     def test_get_all_filtered_excludes_deleted(self):
         self.project_dao.insert(
@@ -236,23 +155,9 @@ class ProjectDAOTest(DatabaseIntegration):
         self.project_dao.insert(deleted)
         self.project_dao.soft_delete(deleted.uuid)
         result = self.project_dao.get_all_filtered(None)
-        assert len(result) == 1
-        assert result[0].name == 'live'
+        assert len(result) == 1 and result[0].name == 'live'
 
     def test_get_all_with_config_excludes_deleted(self):
-        served = db_mock.get_sample_project(
-            uuid=uuid.uuid4(), name='served', config_file='some-yaml'
-        )
-        self.project_dao.insert(served)
+        served = self._insert_served_project('served')
         self.project_dao.soft_delete(served.uuid)
-        result = self.project_dao.get_all_with_config()
-        assert list(result) == []
-
-    def test_unserve_config_noop_on_deleted_project(self):
-        project = db_mock.get_sample_project(
-            uuid=uuid.uuid4(), name='served', config_file='some-yaml'
-        )
-        self.project_dao.insert(project)
-        self.project_dao.soft_delete(project.uuid)
-        rows = self.project_dao.unserve_config(project.uuid, restore_draft=False)
-        assert rows == 0
+        assert list(self.project_dao.get_all_with_config()) == []

@@ -5,10 +5,10 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
+from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_status import ProjectStatus
-from radicalbit_ai_gateway.utils.yaml_utils import get_default_config_template
 
 
 class ProjectFilter(str, Enum):
@@ -41,8 +41,6 @@ class ProjectIn(BaseModel, validate_assignment=True):
         return Project(
             name=self.name,
             description=self.description,
-            config_status=ConfigStatus.DRAFT.value,
-            draft_config_file=get_default_config_template(),
             created_at=now,
             updated_at=now,
         )
@@ -72,14 +70,35 @@ class GenerateConfigOut(BaseModel):
     )
 
 
+class ConfigSlotOut(BaseModel):
+    uuid: UUID
+    slot: str
+    config_file: str | None
+    config_status: ConfigStatus
+    updated_at: str
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+    @staticmethod
+    def from_config(config: ProjectConfig) -> 'ConfigSlotOut':
+        return ConfigSlotOut(
+            uuid=config.uuid,
+            slot=config.slot,
+            config_file=config.config_file,
+            config_status=ConfigStatus(config.config_status),
+            updated_at=str(config.updated_at),
+        )
+
+
 class ProjectOut(BaseModel):
     uuid: UUID
     name: str
     description: str | None
-    config_file: str | None
-    draft_config_file: str | None
-    config_status: ConfigStatus
     project_status: ProjectStatus
+    served_config_uuid: UUID | None
+    configs: list[ConfigSlotOut]
     created_at: str
     updated_at: str
 
@@ -88,17 +107,21 @@ class ProjectOut(BaseModel):
     )
 
     @staticmethod
-    def from_project(project: Project) -> 'ProjectOut':
+    def from_project(
+        project: Project, configs: list[ProjectConfig]
+    ) -> 'ProjectOut':
+        ordered = sorted(configs, key=lambda c: c.slot)
+        served = next(
+            (c for c in ordered if c.config_status == ConfigStatus.SERVED.value),
+            None,
+        )
         return ProjectOut(
             uuid=project.uuid,
             name=project.name,
             description=project.description,
-            config_file=project.config_file,
-            draft_config_file=project.draft_config_file,
-            config_status=ConfigStatus(project.config_status),
-            project_status=ProjectStatus.PROD
-            if project.config_file is not None
-            else ProjectStatus.DEV,
+            project_status=ProjectStatus.PROD if served else ProjectStatus.DEV,
+            served_config_uuid=served.uuid if served else None,
+            configs=[ConfigSlotOut.from_config(c) for c in ordered],
             created_at=str(project.created_at),
             updated_at=str(project.updated_at),
         )

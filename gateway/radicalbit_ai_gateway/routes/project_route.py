@@ -85,78 +85,98 @@ class ProjectRoute:
             return get_project_fn(request, project_uuid)
 
         @router.patch(
-            '/projects/{project_uuid}/load-config',
+            '/projects/{project_uuid}/configs/{config_uuid}',
             status_code=200,
             response_model=ProjectOut,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def load_config(project_uuid: UUID, config_in: ProjectConfigFileIn):
-            project = project_service.load_config(project_uuid, config_in)
-            logger.info('Loaded config for project %s', project_uuid)
+        def update_config(
+            project_uuid: UUID, config_uuid: UUID, config_in: ProjectConfigFileIn
+        ):
+            project = project_service.update_config(
+                project_uuid, config_uuid, config_in
+            )
+            logger.info('Updated config %s for project %s', config_uuid, project_uuid)
             return project
 
         @router.patch(
-            '/projects/{project_uuid}/approve-config',
+            '/projects/{project_uuid}/configs/{config_uuid}/approve',
             status_code=200,
             response_model=ProjectOut,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def approve_config(project_uuid: UUID):
-            project = project_service.approve_config(project_uuid)
-            logger.info('Approved config for project %s', project_uuid)
+        def approve_config(project_uuid: UUID, config_uuid: UUID):
+            project = project_service.approve_config(project_uuid, config_uuid)
+            logger.info('Approved config %s for project %s', config_uuid, project_uuid)
             return project
 
         @router.patch(
-            '/projects/{project_uuid}/cancel-approval',
+            '/projects/{project_uuid}/configs/{config_uuid}/cancel-approval',
             status_code=200,
             response_model=ProjectOut,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def cancel_approval(project_uuid: UUID):
-            project = project_service.cancel_approval(project_uuid)
-            logger.info('Cancelled approval for project %s', project_uuid)
+        def cancel_approval(project_uuid: UUID, config_uuid: UUID):
+            project = project_service.cancel_approval(project_uuid, config_uuid)
+            logger.info(
+                'Cancelled approval for config %s of project %s',
+                config_uuid,
+                project_uuid,
+            )
             return project
 
         @router.patch(
-            '/projects/{project_uuid}/serve-config',
+            '/projects/{project_uuid}/configs/{config_uuid}/serve',
             status_code=200,
             response_model=ProjectOut,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        async def serve_config(project_uuid: UUID):
-            project = project_service.serve_config(project_uuid)
-            if register_project_routes and project.config_file:
+        async def serve_config(project_uuid: UUID, config_uuid: UUID):
+            project = project_service.serve_config(project_uuid, config_uuid)
+            # Swap: drop any routes from the previously served config, then
+            # register the newly served one.
+            if deregister_project_routes:
+                await deregister_project_routes(project_uuid)
+            served = next(
+                (c for c in project.configs if c.uuid == project.served_config_uuid),
+                None,
+            )
+            if register_project_routes and served and served.config_file:
                 await register_project_routes(
-                    project_uuid, project.name, project.config_file
+                    project_uuid, project.name, served.config_file
                 )
-            logger.info('Served config for project %s', project_uuid)
+            logger.info('Served config %s for project %s', config_uuid, project_uuid)
             return project
 
         @router.post(
-            '/projects/{project_uuid}/generate-config',
+            '/projects/{project_uuid}/configs/{config_uuid}/generate-config',
             status_code=200,
             response_model=GenerateConfigOut,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        async def generate_config(project_uuid: UUID, gen_in: GenerateConfigIn):
-            project = project_service.get_by_uuid(project_uuid)
+        async def generate_config(
+            project_uuid: UUID, config_uuid: UUID, gen_in: GenerateConfigIn
+        ):
+            config = project_service.get_config(project_uuid, config_uuid)
             yaml_str = await config_generator_service.generate_config(
-                gen_in.description, project.draft_config_file
+                gen_in.description, config.config_file
             )
-            logger.info('Generated config for project %s', project_uuid)
+            logger.info(
+                'Generated config %s for project %s', config_uuid, project_uuid
+            )
             return GenerateConfigOut(config_file=yaml_str)
 
         @router.patch(
-            '/projects/{project_uuid}/unserve-config',
+            '/projects/{project_uuid}/configs/{config_uuid}/unserve',
             status_code=200,
             response_model=ProjectOut,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        async def unserve_config(project_uuid: UUID):
-            project = project_service.unserve_config(project_uuid)
+        async def unserve_config(project_uuid: UUID, config_uuid: UUID):
+            project = project_service.unserve_config(project_uuid, config_uuid)
             if deregister_project_routes:
                 await deregister_project_routes(project_uuid)
-            logger.info('Unserved config for project %s', project_uuid)
+            logger.info('Unserved config %s for project %s', config_uuid, project_uuid)
             return project
 
         @router.delete(
@@ -167,7 +187,7 @@ class ProjectRoute:
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def delete_project(project_uuid: UUID):
             project = project_service.delete_project(project_uuid)
-            if deregister_project_routes and project.config_file:
+            if deregister_project_routes and project.served_config_uuid:
                 await deregister_project_routes(project_uuid)
             logger.info('Deleted project %s', project_uuid)
             return project

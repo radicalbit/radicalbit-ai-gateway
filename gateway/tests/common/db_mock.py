@@ -1,6 +1,6 @@
 import datetime
 import uuid
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from radicalbit_ai_gateway.db.models.event import EventDetails
 from radicalbit_ai_gateway.db.tables.event_table import Event
@@ -8,6 +8,7 @@ from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 from radicalbit_ai_gateway.db.tables.group_table import Group
 from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.db.tables.otel_traces_table import OtelTraces
+from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.db.tables.request_event_table import RequestEvent
 from radicalbit_ai_gateway.models.api_key_dto import ApiKeySec
@@ -24,8 +25,10 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeysUuidIn,
     RouteGroupsIn,
 )
+from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import (
+    ConfigSlotOut,
     ProjectConfigFileIn,
     ProjectIn,
     ProjectOut,
@@ -137,7 +140,6 @@ def get_sample_group_route_plain(
         project=Project(
             uuid=project_uuid,
             name=project_name,
-            config_status='DRAFT',
             created_at=datetime.datetime.now(tz=UTC),
             updated_at=datetime.datetime.now(tz=UTC),
             deleted_at=None,
@@ -167,7 +169,6 @@ def get_sample_group_route(
         project=Project(
             uuid=project_uuid,
             name=project_name,
-            config_status='DRAFT',
             created_at=datetime.datetime.now(tz=UTC),
             updated_at=datetime.datetime.now(tz=UTC),
             deleted_at=None,
@@ -282,9 +283,7 @@ def get_sample_project(
     uuid: uuid.UUID = RANDOM_UUID,
     name: str = 'my-project',
     description: str | None = None,
-    config_file: str | None = None,
-    draft_config_file: str | None = None,
-    config_status: ConfigStatus = ConfigStatus.DRAFT,
+    served_config_uuid: uuid.UUID | None = None,
     first_served_at: datetime.datetime | None = None,
     deleted_at: datetime.datetime | None = None,
 ) -> Project:
@@ -293,12 +292,31 @@ def get_sample_project(
         uuid=uuid,
         name=name,
         description=description,
-        config_file=config_file,
-        draft_config_file=draft_config_file,
-        config_status=config_status.value,
+        served_config_uuid=served_config_uuid,
         created_at=now,
         updated_at=now,
         first_served_at=first_served_at,
+        deleted_at=deleted_at,
+    )
+
+
+def get_sample_project_config(
+    project_uuid: uuid.UUID,
+    slot: Slot = Slot.A,
+    config_file: str | None = None,
+    config_status: ConfigStatus = ConfigStatus.DRAFT,
+    uuid: uuid.UUID | None = None,
+    deleted_at: datetime.datetime | None = None,
+) -> ProjectConfig:
+    now = datetime.datetime.now(tz=UTC)
+    return ProjectConfig(
+        uuid=uuid or uuid4(),
+        project_uuid=project_uuid,
+        slot=slot.value,
+        config_file=config_file,
+        config_status=config_status.value,
+        created_at=now,
+        updated_at=now,
         deleted_at=deleted_at,
     )
 
@@ -313,25 +331,44 @@ def get_sample_project_in(
     )
 
 
+def get_sample_config_slot_out(
+    uuid: uuid.UUID = RANDOM_UUID,
+    slot: Slot = Slot.A,
+    config_file: str | None = None,
+    config_status: ConfigStatus = ConfigStatus.DRAFT,
+) -> ConfigSlotOut:
+    now = datetime.datetime.now(tz=UTC)
+    return ConfigSlotOut(
+        uuid=uuid,
+        slot=slot.value,
+        config_file=config_file,
+        config_status=config_status,
+        updated_at=str(now),
+    )
+
+
 def get_sample_project_out(
     uuid: uuid.UUID = RANDOM_UUID,
     name: str = 'my-project',
     description: str | None = None,
-    config_file: str | None = None,
-    draft_config_file: str | None = None,
-    config_status: ConfigStatus = ConfigStatus.DRAFT,
+    served_config_uuid: uuid.UUID | None = None,
+    configs: list[ConfigSlotOut] | None = None,
 ) -> ProjectOut:
     now = datetime.datetime.now(tz=UTC)
+    if configs is None:
+        configs = [
+            get_sample_config_slot_out(uuid=uuid4(), slot=Slot.A),
+            get_sample_config_slot_out(uuid=uuid4(), slot=Slot.B),
+        ]
     return ProjectOut(
         uuid=uuid,
         name=name,
         description=description,
-        config_file=config_file,
-        draft_config_file=draft_config_file,
-        config_status=config_status,
         project_status=ProjectStatus.PROD
-        if config_file is not None
+        if served_config_uuid is not None
         else ProjectStatus.DEV,
+        served_config_uuid=served_config_uuid,
+        configs=configs,
         created_at=str(now),
         updated_at=str(now),
     )
