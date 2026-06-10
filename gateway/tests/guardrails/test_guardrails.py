@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import HumanMessage
+from presidio_analyzer import EntityRecognizer
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
@@ -22,6 +23,7 @@ from radicalbit_ai_gateway.models.guardrails import (
 from radicalbit_ai_gateway.models.soft_block_info import SoftBlockInfo
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
 
 
@@ -575,3 +577,59 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
 
         assert self.soft_block_info is not None
         assert self.soft_block_info.guardrail.name == 'soft_block_start_with_hello'
+
+
+class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
+    """Tests for the Azure Health Data Services de-identification recognizer integration."""
+
+    def test_local_analyzer_has_no_ahds_recognizer(self):
+        engine = PresidioEngine()
+        analyzer = engine.get_analyzer('local')
+        recognizer_names = [r.name for r in analyzer.registry.recognizers]
+        assert 'Azure Health Deid' not in ' '.join(recognizer_names)
+
+    @patch('radicalbit_ai_gateway.guardrails.presidio.get_app_config')
+    def test_ahds_analyzer_raises_when_endpoint_missing(self, mock_get_config):
+        real_config = get_app_config()
+        mock_config = MagicMock()
+        mock_config.log_config.logger_name = real_config.log_config.logger_name
+        mock_config.ahds_config.ahds_endpoint = None
+        mock_get_config.return_value = mock_config
+
+        engine = PresidioEngine()
+        with pytest.raises(ValueError, match='AHDS_ENDPOINT must be set'):
+            engine.get_analyzer('ahds')
+
+    @patch('radicalbit_ai_gateway.guardrails.presidio.get_app_config')
+    def test_ahds_analyzer_registers_recognizer(self, mock_get_config):
+        real_config = get_app_config()
+        mock_config = MagicMock()
+        mock_config.log_config.logger_name = real_config.log_config.logger_name
+        mock_config.ahds_config.ahds_endpoint = 'https://test.api.deid.azure.com'
+        mock_get_config.return_value = mock_config
+
+        mock_recognizer_instance = MagicMock(spec=EntityRecognizer)
+        mock_recognizer_instance.name = 'Azure Health Deid'
+        mock_recognizer_instance.supported_language = 'en'
+        mock_recognizer_instance.supported_entities = ['PATIENT', 'DOCTOR']
+        mock_recognizer_instance.get_supported_entities.return_value = [
+            'PATIENT',
+            'DOCTOR',
+        ]
+
+        with (
+            patch(
+                'presidio_analyzer.predefined_recognizers.AzureHealthDeidRecognizer',
+                return_value=mock_recognizer_instance,
+                create=True,
+            ) as mock_cls,
+            patch.object(
+                PresidioEngine,
+                '_build_ahds_client',
+                return_value=MagicMock(),
+            ) as mock_build_client,
+        ):
+            engine = PresidioEngine()
+            engine.get_analyzer('ahds')
+            mock_cls.assert_called_once()
+            mock_build_client.assert_called_once_with('https://test.api.deid.azure.com')

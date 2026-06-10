@@ -56,7 +56,7 @@ RUN apt-get update && \
 # Install Python dependencies
 COPY ./gateway/uv.lock ./gateway/pyproject.toml ./
 RUN pip install --no-cache-dir --no-compile uv==0.9.27 && \
-    uv export --no-hashes --format requirements-txt > requirements.txt && \
+    uv export --no-hashes --format requirements-txt --group ahds > requirements.txt && \
     pip install --no-cache-dir --no-compile -r requirements.txt && \
     rm -f requirements.txt uv.lock pyproject.toml && \
     rm -rf /root/.cache

@@ -62,6 +62,10 @@ dev = [
     "ruff>=0.14.11",
     "testcontainers>=4.14.0",
 ]
+ahds = [
+    "azure-health-deidentification>=1.0.0b3",
+    "azure-identity>=1.21.0",
+]
 migrations = [
     "alembic>=1.18.1",
     "sqlalchemy>=2.0.45",

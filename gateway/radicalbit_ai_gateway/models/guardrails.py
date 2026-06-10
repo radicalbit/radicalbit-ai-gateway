@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Literal, Union
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -42,6 +42,15 @@ class CheckParameter(BaseModel):
     ignore_case: bool = Field(default=False, description='Ignore case.')
 
 
+PresidioBackend = Annotated[
+    Literal['local', 'ahds'],
+    Field(
+        default='local',
+        description='Detection backend: "local" for spaCy-only, "ahds" for Azure Health Data Services.',
+    ),
+]
+
+
 class RedactParameter(BaseModel):
     type: Literal['REDACT'] = Field(default='REDACT')
     language: str = Field(
@@ -54,6 +63,7 @@ class RedactParameter(BaseModel):
         description='List of entity types to redact from the text.',
         examples=['EMAIL_ADDRESS', 'IBAN_CODE'],
     )
+    backend: PresidioBackend = 'local'
 
 
 class JudgeParameter(BaseModel):

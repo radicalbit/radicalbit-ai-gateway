@@ -53,6 +53,12 @@ services:
       CORS_ALLOW_CREDENTIALS: True
       # AI Config Generator
       CONFIG_GENERATOR_OPENAI_API_KEY: "OPENAI_API_KEY"
+      # Azure Health Data Services (AHDS) de-identification (optional)
+      # Set AHDS_ENDPOINT and Azure credentials to enable backend=ahds in guardrails
+      AHDS_ENDPOINT: "${AHDS_ENDPOINT:-}"
+      AZURE_TENANT_ID: "${AZURE_TENANT_ID:-}"
+      AZURE_CLIENT_ID: "${AZURE_CLIENT_ID:-}"
+      AZURE_CLIENT_SECRET: "${AZURE_CLIENT_SECRET:-}"
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9000/health"]
       interval: 5s
