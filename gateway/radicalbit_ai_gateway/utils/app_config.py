@@ -92,10 +92,6 @@ class ConfigGeneratorConfig(BaseSettings):
     config_generator_max_retries: int = 3
 
 
-class AhdsConfig(BaseSettings):
-    ahds_endpoint: str | None = None
-
-
 class CorsConfig(BaseSettings):
     """CORS configuration settings.
 
@@ -216,7 +212,6 @@ class AppConfig(BaseSettings):
     clickhouse_config: ClickHouseConfig = ClickHouseConfig()
     celery_config: CeleryConfig = CeleryConfig()
     prompt_manager_config: PromptManagerConfig = PromptManagerConfig()
-    ahds_config: AhdsConfig = AhdsConfig()
     cors_config: CorsConfig = CorsConfig()
     config_generator_config: ConfigGeneratorConfig = ConfigGeneratorConfig()
 

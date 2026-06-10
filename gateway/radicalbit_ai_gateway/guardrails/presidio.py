@@ -7,6 +7,7 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_analyzer.predefined_recognizers import AzureHealthDeidRecognizer
 from presidio_anonymizer import AnonymizerEngine
 
+from radicalbit_ai_gateway.models.guardrails import AhdsParams
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
@@ -73,30 +74,25 @@ class PresidioEngine:
         )
         return DeidentificationClient(endpoint, credential, api_version=api_version)
 
-    def _resolve_ahds_settings(self, ahds):
-        cfg = get_app_config().ahds_config
-        global_secret = (
-            cfg.ahds_client_secret.get_secret_value()
-            if cfg.ahds_client_secret
-            else None
-        )
+    def _resolve_ahds_settings(self, ahds: AhdsParams | None):
+        """Resolve AHDS connection settings.
 
-        def pick(attr, fallback):
-            return getattr(ahds, attr, None) or fallback
-
-        endpoint = pick('endpoint', cfg.ahds_endpoint)
+        Credentials and api_version come from the per-guardrail AhdsParams;
+        only the endpoint falls back to the AHDS_ENDPOINT env var.
+        """
+        endpoint = ahds.endpoint if ahds else None
         if not endpoint:
             raise ValueError(
                 'AHDS endpoint must be set when backend="ahds" is used '
                 '(guardrail parameters.ahds.endpoint or the AHDS_ENDPOINT env var)'
             )
-        api_version = pick('api_version', None) or cfg.ahds_api_version
-        tenant_id = pick('tenant_id', cfg.ahds_tenant_id)
-        client_id = pick('client_id', cfg.ahds_client_id)
-        client_secret = pick('client_secret', global_secret)
+        api_version = ahds.api_version if ahds else None
+        tenant_id = ahds.tenant_id if ahds else None
+        client_id = ahds.client_id if ahds else None
+        client_secret = ahds.client_secret if ahds else None
         return endpoint, api_version, tenant_id, client_id, client_secret
 
-    def _get_ahds_analyzer(self, ahds=None):
+    def _get_ahds_analyzer(self, ahds: AhdsParams | None = None):
         endpoint, api_version, tenant_id, client_id, client_secret = (
             self._resolve_ahds_settings(ahds)
         )
@@ -143,7 +139,7 @@ class PresidioEngine:
             self._anonymizer = AnonymizerEngine()
         return self._anonymizer
 
-    def get_analyzer(self, backend: str = 'local', ahds=None):
+    def get_analyzer(self, backend: str = 'local', ahds: AhdsParams | None = None):
         if backend == 'ahds':
             return self._get_ahds_analyzer(ahds)
         return self.analyzer

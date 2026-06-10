@@ -58,8 +58,8 @@ class AhdsParams(BaseModel):
         examples=['https://<name>.api.<region>.deid.azure.com'],
     )
     api_version: str | None = Field(
-        default=None,
-        description='AHDS API version. Falls back to the global default (2024-11-15).',
+        default='2024-11-15',
+        description='AHDS API version. Falls back to the default (2024-11-15).',
     )
     tenant_id: str | None = Field(
         default=None, description='Service principal tenant id.'
