@@ -1,7 +1,7 @@
 import logging
 
 from azure.health.deidentification import DeidentificationClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import ClientSecretCredential, EnvironmentCredential
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_analyzer.predefined_recognizers import AzureHealthDeidRecognizer
@@ -15,7 +15,7 @@ logger = logging.getLogger(get_app_config().log_config.logger_name)
 class PresidioEngine:
     def __init__(self, languages: list[str] = ['en', 'it']):
         self._analyzer_local = None
-        self._analyzer_ahds = None
+        self._analyzer_ahds_cache = {}
         self._anonymizer = None
         self._nlp_engine = None
         self._languages = languages
@@ -48,54 +48,93 @@ class PresidioEngine:
         return self._analyzer_local
 
     @staticmethod
-    def _build_ahds_client(endpoint: str):
-        """Construct a DeidentificationClient using DefaultAzureCredential.
-
-        DefaultAzureCredential resolves credentials lazily and only includes
-        WorkloadIdentityCredential in its chain when the relevant env vars are
-        present, so it does not fail at construction time the way the recognizer's
-        built-in ChainedTokenCredential helper does.
-        """
-        credential = DefaultAzureCredential()
-        return DeidentificationClient(endpoint, credential)
-
-    @property
-    def analyzer_ahds(self):
-        if not self._analyzer_ahds:
-            logger.info('Presidio Analyzer (AHDS) initialization...')
-            ahds_endpoint = get_app_config().ahds_config.ahds_endpoint
-            if not ahds_endpoint:
-                raise ValueError('AHDS_ENDPOINT must be set when backend=ahds is used')
-
-            # Build the Azure client ourselves with DefaultAzureCredential instead of
-            # relying on the recognizer's default get_azure_credential() helper. That
-            # helper eagerly constructs WorkloadIdentityCredential() in production mode,
-            # which raises at construction time when the AKS workload-identity env vars
-            # are absent (e.g. Docker with service-principal env vars). DefaultAzureCredential
-            # only adds workload identity to its chain when those vars exist, and still
-            # resolves service principal env vars, managed identity, and `az login`.
-            client = self._build_ahds_client(ahds_endpoint)
-            recognizer = AzureHealthDeidRecognizer(client=client)
-            entities = recognizer.get_supported_entities()
-            if not entities or not isinstance(entities, list):
-                raise ValueError(
-                    f'AzureHealthDeidRecognizer reported no supported entities '
-                    f'(got {type(entities).__name__}). '
-                    f'Check azure-health-deidentification installation.'
-                )
+    def _build_ahds_credential(tenant_id, client_id, client_secret):
+        if tenant_id and client_id and client_secret:
             logger.info(
-                'AHDS recognizer supports %d entities: %s',
-                len(entities),
-                entities[:5],
+                'AHDS auth: ClientSecretCredential (tenant=%s, client=%s)',
+                tenant_id,
+                client_id,
+            )
+            return ClientSecretCredential(
+                tenant_id=tenant_id,
+                client_id=client_id,
+                client_secret=client_secret,
             )
 
-            self._analyzer_ahds = AnalyzerEngine(
-                supported_languages=self._languages,
-                nlp_engine=self._get_nlp_engine(),
+        logger.info('AHDS auth: EnvironmentCredential (AZURE_* env vars)')
+        return EnvironmentCredential()
+
+    @staticmethod
+    def _build_ahds_client(
+        endpoint, api_version, tenant_id=None, client_id=None, client_secret=None
+    ):
+        credential = PresidioEngine._build_ahds_credential(
+            tenant_id, client_id, client_secret
+        )
+        return DeidentificationClient(endpoint, credential, api_version=api_version)
+
+    def _resolve_ahds_settings(self, ahds):
+        cfg = get_app_config().ahds_config
+        global_secret = (
+            cfg.ahds_client_secret.get_secret_value()
+            if cfg.ahds_client_secret
+            else None
+        )
+
+        def pick(attr, fallback):
+            return getattr(ahds, attr, None) or fallback
+
+        endpoint = pick('endpoint', cfg.ahds_endpoint)
+        if not endpoint:
+            raise ValueError(
+                'AHDS endpoint must be set when backend="ahds" is used '
+                '(guardrail parameters.ahds.endpoint or the AHDS_ENDPOINT env var)'
             )
-            self._analyzer_ahds.registry.add_recognizer(recognizer)
-            logger.info('AHDS recognizer registered on AnalyzerEngine')
-        return self._analyzer_ahds
+        api_version = pick('api_version', None) or cfg.ahds_api_version
+        tenant_id = pick('tenant_id', cfg.ahds_tenant_id)
+        client_id = pick('client_id', cfg.ahds_client_id)
+        client_secret = pick('client_secret', global_secret)
+        return endpoint, api_version, tenant_id, client_id, client_secret
+
+    def _get_ahds_analyzer(self, ahds=None):
+        endpoint, api_version, tenant_id, client_id, client_secret = (
+            self._resolve_ahds_settings(ahds)
+        )
+        cache_key = (endpoint, api_version, tenant_id, client_id)
+        analyzer = self._analyzer_ahds_cache.get(cache_key)
+        if analyzer is not None:
+            return analyzer
+
+        logger.info(
+            'Presidio Analyzer (AHDS) initialization... endpoint=%s api_version=%s',
+            endpoint,
+            api_version,
+        )
+        client = self._build_ahds_client(
+            endpoint, api_version, tenant_id, client_id, client_secret
+        )
+        recognizer = AzureHealthDeidRecognizer(client=client)
+        entities = recognizer.get_supported_entities()
+        if not entities or not isinstance(entities, list):
+            raise ValueError(
+                f'AzureHealthDeidRecognizer reported no supported entities '
+                f'(got {type(entities).__name__}). '
+                f'Check azure-health-deidentification installation.'
+            )
+        logger.info(
+            'AHDS recognizer supports %d entities: %s',
+            len(entities),
+            entities[:5],
+        )
+
+        analyzer = AnalyzerEngine(
+            supported_languages=self._languages,
+            nlp_engine=self._get_nlp_engine(),
+        )
+        analyzer.registry.add_recognizer(recognizer)
+        logger.info('AHDS recognizer registered on AnalyzerEngine')
+        self._analyzer_ahds_cache[cache_key] = analyzer
+        return analyzer
 
     @property
     def anonymizer(self):
@@ -104,7 +143,7 @@ class PresidioEngine:
             self._anonymizer = AnonymizerEngine()
         return self._anonymizer
 
-    def get_analyzer(self, backend: str = 'local'):
+    def get_analyzer(self, backend: str = 'local', ahds=None):
         if backend == 'ahds':
-            return self.analyzer_ahds
+            return self._get_ahds_analyzer(ahds)
         return self.analyzer

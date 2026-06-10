@@ -4417,6 +4417,8 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "azure-health-deidentification" },
+    { name = "azure-identity" },
     { name = "cachetools" },
     { name = "celery" },
     { name = "clickhouse-sqlalchemy" },
@@ -4458,10 +4460,6 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
-ahds = [
-    { name = "azure-health-deidentification" },
-    { name = "azure-identity" },
-]
 dev = [
     { name = "fakeredis" },
     { name = "freezegun" },
@@ -4485,6 +4483,8 @@ migrations = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.18.1" },
+    { name = "azure-health-deidentification", specifier = ">=1.0.0b3" },
+    { name = "azure-identity", specifier = ">=1.21.0" },
     { name = "cachetools", specifier = ">=6.2.4" },
     { name = "celery", specifier = ">=5.6.2" },
     { name = "clickhouse-sqlalchemy", specifier = ">=0.3.2" },
@@ -4526,10 +4526,6 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-ahds = [
-    { name = "azure-health-deidentification", specifier = ">=1.0.0b3" },
-    { name = "azure-identity", specifier = ">=1.21.0" },
-]
 dev = [
     { name = "fakeredis", specifier = ">=2.33.0" },
     { name = "freezegun", specifier = ">=1.5.5" },

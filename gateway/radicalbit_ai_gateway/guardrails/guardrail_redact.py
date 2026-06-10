@@ -63,6 +63,7 @@ async def _anonymize_text_with_presidio(
     entities: list,
     presidio_engine: PresidioEngine,
     backend: str = 'local',
+    ahds=None,
 ) -> tuple[str, bool]:
     """Execute analyze + anonymize on a string.
     Returns (redacted_text, True) if changed, otherwise (original_text, False).
@@ -71,7 +72,7 @@ async def _anonymize_text_with_presidio(
         return text, False
 
     try:
-        analyzer = presidio_engine.get_analyzer(backend)
+        analyzer = presidio_engine.get_analyzer(backend, ahds)
     except Exception:
         logger.exception('Failed to initialize Presidio analyzer (backend=%s)', backend)
         raise
@@ -130,6 +131,7 @@ class GuardrailRedact:
         language = params.language
         entities = params.entities
         backend = params.backend
+        ahds = params.ahds
 
         new_messages: list[BaseMessage] = []
         any_redacted = False
@@ -140,7 +142,7 @@ class GuardrailRedact:
             # Case 1: content is a string
             if isinstance(content, str):
                 red_text, changed = await _anonymize_text_with_presidio(
-                    content, language, entities, self._presidio_engine, backend
+                    content, language, entities, self._presidio_engine, backend, ahds
                 )
                 any_redacted = any_redacted or changed
                 new_messages.append(_with_content(msg, red_text))
@@ -155,7 +157,12 @@ class GuardrailRedact:
                         t = p.get('text')
                         if isinstance(t, str):
                             red_t, ch = await _anonymize_text_with_presidio(
-                                t, language, entities, self._presidio_engine, backend
+                                t,
+                                language,
+                                entities,
+                                self._presidio_engine,
+                                backend,
+                                ahds,
                             )
                             changed_here = changed_here or ch
                             np = dict(p)

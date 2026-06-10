@@ -2,6 +2,7 @@ import copy
 import unittest
 from unittest.mock import MagicMock, patch
 
+from azure.identity import ClientSecretCredential, EnvironmentCredential
 from langchain_core.messages import HumanMessage
 from presidio_analyzer import EntityRecognizer
 import pytest
@@ -13,6 +14,7 @@ from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.guardrails import (
+    AhdsParams,
     CheckParameter,
     Guardrail,
     GuardrailBehaviorType,
@@ -594,10 +596,11 @@ class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
         mock_config = MagicMock()
         mock_config.log_config.logger_name = real_config.log_config.logger_name
         mock_config.ahds_config.ahds_endpoint = None
+        mock_config.ahds_config.ahds_client_secret = None
         mock_get_config.return_value = mock_config
 
         engine = PresidioEngine()
-        with pytest.raises(ValueError, match='AHDS_ENDPOINT must be set'):
+        with pytest.raises(ValueError, match='AHDS endpoint must be set'):
             engine.get_analyzer('ahds')
 
     @patch('radicalbit_ai_gateway.guardrails.presidio.get_app_config')
@@ -606,6 +609,10 @@ class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
         mock_config = MagicMock()
         mock_config.log_config.logger_name = real_config.log_config.logger_name
         mock_config.ahds_config.ahds_endpoint = 'https://test.api.deid.azure.com'
+        mock_config.ahds_config.ahds_api_version = '2024-11-15'
+        mock_config.ahds_config.ahds_tenant_id = None
+        mock_config.ahds_config.ahds_client_id = None
+        mock_config.ahds_config.ahds_client_secret = None
         mock_get_config.return_value = mock_config
 
         mock_recognizer_instance = MagicMock(spec=EntityRecognizer)
@@ -619,9 +626,8 @@ class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                'presidio_analyzer.predefined_recognizers.AzureHealthDeidRecognizer',
+                'radicalbit_ai_gateway.guardrails.presidio.AzureHealthDeidRecognizer',
                 return_value=mock_recognizer_instance,
-                create=True,
             ) as mock_cls,
             patch.object(
                 PresidioEngine,
@@ -632,4 +638,39 @@ class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
             engine = PresidioEngine()
             engine.get_analyzer('ahds')
             mock_cls.assert_called_once()
-            mock_build_client.assert_called_once_with('https://test.api.deid.azure.com')
+            mock_build_client.assert_called_once_with(
+                'https://test.api.deid.azure.com', '2024-11-15', None, None, None
+            )
+
+    def test_credential_uses_client_secret_when_configured(self):
+        credential = PresidioEngine._build_ahds_credential(
+            'tenant-123', 'client-456', 'super-secret'
+        )
+        assert isinstance(credential, ClientSecretCredential)
+
+    def test_credential_falls_back_to_environment(self):
+        credential = PresidioEngine._build_ahds_credential(None, None, None)
+        assert isinstance(credential, EnvironmentCredential)
+
+    @patch('radicalbit_ai_gateway.guardrails.presidio.get_app_config')
+    def test_ahds_params_override_global(self, mock_get_config):
+        mock_config = MagicMock()
+        mock_config.ahds_config.ahds_endpoint = 'https://global.deid.azure.com'
+        mock_config.ahds_config.ahds_api_version = '2024-11-15'
+        mock_config.ahds_config.ahds_tenant_id = 'global-tenant'
+        mock_config.ahds_config.ahds_client_id = 'global-client'
+        mock_config.ahds_config.ahds_client_secret = None
+        mock_get_config.return_value = mock_config
+
+        engine = PresidioEngine()
+        ahds = AhdsParams(
+            endpoint='https://guardrail.deid.azure.com', tenant_id='gr-tenant'
+        )
+        endpoint, api_version, tenant_id, client_id, _secret = (
+            engine._resolve_ahds_settings(ahds)
+        )
+        # Per-guardrail values win; unset fields fall back to the global config.
+        assert endpoint == 'https://guardrail.deid.azure.com'
+        assert tenant_id == 'gr-tenant'
+        assert client_id == 'global-client'
+        assert api_version == '2024-11-15'

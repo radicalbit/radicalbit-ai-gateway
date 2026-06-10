@@ -51,6 +51,28 @@ PresidioBackend = Annotated[
 ]
 
 
+class AhdsParams(BaseModel):
+    endpoint: str | None = Field(
+        default=None,
+        description='AHDS de-identification endpoint URL.',
+        examples=['https://<name>.api.<region>.deid.azure.com'],
+    )
+    api_version: str | None = Field(
+        default=None,
+        description='AHDS API version. Falls back to the global default (2024-11-15).',
+    )
+    tenant_id: str | None = Field(
+        default=None, description='Service principal tenant id.'
+    )
+    client_id: str | None = Field(
+        default=None, description='Service principal client (application) id.'
+    )
+    client_secret: str | None = Field(
+        default=None,
+        description='Service principal client secret. Use a !secret reference, never an inline value.',
+    )
+
+
 class RedactParameter(BaseModel):
     type: Literal['REDACT'] = Field(default='REDACT')
     language: str = Field(
@@ -64,6 +86,10 @@ class RedactParameter(BaseModel):
         examples=['EMAIL_ADDRESS', 'IBAN_CODE'],
     )
     backend: PresidioBackend = 'local'
+    ahds: AhdsParams | None = Field(
+        default=None,
+        description='Azure Health Data Services connection settings (used only when backend="ahds").',
+    )
 
 
 class JudgeParameter(BaseModel):
