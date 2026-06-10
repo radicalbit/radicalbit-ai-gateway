@@ -637,7 +637,9 @@ class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
     def test_resolve_settings_from_ahds_params(self):
         engine = PresidioEngine()
         ahds = AhdsParams(
-            endpoint='https://guardrail.deid.azure.com', tenant_id='gr-tenant'
+            endpoint='https://guardrail.deid.azure.com',
+            tenant_id='gr-tenant',
+            client_secret='super-secret',
         )
         endpoint, api_version, tenant_id, client_id, secret = (
             engine._resolve_ahds_settings(ahds)
@@ -646,5 +648,9 @@ class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
         # api_version falls back to the model default.
         assert endpoint == 'https://guardrail.deid.azure.com'
         assert tenant_id == 'gr-tenant'
-        assert (client_id, secret) == (None, None)
+        assert client_id is None
         assert api_version == '2024-11-15'
+        # The SecretStr is unwrapped to a plain string for the Azure credential.
+        assert secret == 'super-secret'
+        # And it is masked in the model's repr/serialization.
+        assert 'super-secret' not in repr(ahds)

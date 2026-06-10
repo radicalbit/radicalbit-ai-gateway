@@ -85,7 +85,11 @@ class PresidioEngine:
         api_version = ahds.api_version if ahds else None
         tenant_id = ahds.tenant_id if ahds else None
         client_id = ahds.client_id if ahds else None
-        client_secret = ahds.client_secret if ahds else None
+        client_secret = (
+            ahds.client_secret.get_secret_value()
+            if ahds and ahds.client_secret
+            else None
+        )
         return endpoint, api_version, tenant_id, client_id, client_secret
 
     def _get_ahds_analyzer(self, ahds: AhdsParams | None = None):

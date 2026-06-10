@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 
 class GuardrailClass(str, Enum):
@@ -67,7 +67,7 @@ class AhdsParams(BaseModel):
     client_id: str | None = Field(
         default=None, description='Service principal client (application) id.'
     )
-    client_secret: str | None = Field(
+    client_secret: SecretStr | None = Field(
         default=None,
         description='Service principal client secret. Use a !secret reference, never an inline value.',
     )

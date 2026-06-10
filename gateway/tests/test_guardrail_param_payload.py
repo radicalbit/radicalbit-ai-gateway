@@ -1,5 +1,10 @@
 from fastapi.encoders import jsonable_encoder
 
+from radicalbit_ai_gateway.models.guardrails import (
+    AhdsParams,
+    Guardrail,
+    RedactParameter,
+)
 from radicalbit_ai_gateway.utils.exceptions import _guardrail_param_payload
 
 
@@ -96,3 +101,43 @@ def test_guardrail_param_payload_is_json_safe_on_weird_objects():
     assert payload4['where'] == 'INPUT'
     assert payload4['behavior'] == 'BLOCK'
     assert isinstance(jsonable_encoder(payload4), dict)
+
+
+def test_guardrail_param_payload_strips_ahds_connection_settings():
+    """The AHDS block (endpoint, service principal, secret) must never reach clients."""
+    guardrail = Guardrail(
+        name='redact-phi-ahds-block',
+        type='presidio_analyzer',
+        where='input',
+        behavior='block',
+        parameters=RedactParameter(
+            language='en',
+            entities=['PATIENT', 'DOCTOR'],
+            backend='ahds',
+            ahds=AhdsParams(
+                endpoint='https://test.api.deid.azure.com',
+                tenant_id='tenant-123',
+                client_id='client-456',
+                client_secret='super-secret',
+            ),
+        ),
+    )
+
+    payload = _guardrail_param_payload(guardrail)
+    params = payload['parameters']
+    assert 'ahds' not in params
+    assert params['backend'] == 'ahds'
+    assert 'super-secret' not in str(jsonable_encoder(payload))
+
+
+def test_guardrail_param_payload_strips_sensitive_keys_from_dict_params():
+    class _GuardrailWithDictParams:
+        name = 'gr-dict'
+        parameters = {
+            'language': 'en',
+            'api_key': 'leak-me-not',
+            'ahds': {'client_secret': 'leak-me-not'},
+        }
+
+    payload = _guardrail_param_payload(_GuardrailWithDictParams())
+    assert payload['parameters'] == {'language': 'en'}
