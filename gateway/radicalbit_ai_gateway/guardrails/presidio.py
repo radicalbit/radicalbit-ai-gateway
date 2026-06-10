@@ -75,16 +75,12 @@ class PresidioEngine:
         return DeidentificationClient(endpoint, credential, api_version=api_version)
 
     def _resolve_ahds_settings(self, ahds: AhdsParams | None):
-        """Resolve AHDS connection settings.
-
-        Credentials and api_version come from the per-guardrail AhdsParams;
-        only the endpoint falls back to the AHDS_ENDPOINT env var.
-        """
+        """Resolve AHDS connection settings from the per-guardrail AhdsParams."""
         endpoint = ahds.endpoint if ahds else None
         if not endpoint:
             raise ValueError(
                 'AHDS endpoint must be set when backend="ahds" is used '
-                '(guardrail parameters.ahds.endpoint or the AHDS_ENDPOINT env var)'
+                '(guardrail parameters.ahds.endpoint)'
             )
         api_version = ahds.api_version if ahds else None
         tenant_id = ahds.tenant_id if ahds else None
