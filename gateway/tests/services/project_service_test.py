@@ -1,4 +1,3 @@
-import unittest
 from unittest.mock import MagicMock
 import uuid
 
@@ -6,545 +5,192 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from tests.common import db_mock
+from tests.common.db_integration import DatabaseIntegration
 
+from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
-from radicalbit_ai_gateway.models.project_dto import ProjectFilter, ProjectOut
+from radicalbit_ai_gateway.models.project_dto import (
+    ProjectConfigFileIn,
+    ProjectFilter,
+    ProjectIn,
+)
 from radicalbit_ai_gateway.models.project_status import ProjectStatus
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.utils.exceptions import (
     ProjectAlreadyExistsError,
     ProjectConfigValidationError,
-    ProjectInternalError,
     ProjectNotFoundError,
 )
 
+_VALID = db_mock.VALID_CONFIG_YAML
 
-class ProjectServiceTest(unittest.TestCase):
+
+class ProjectServiceTest(DatabaseIntegration):
     @classmethod
     def setUpClass(cls):
-        cls.project_dao: ProjectDAO = MagicMock(spec_set=ProjectDAO)
-        cls.project_service = ProjectService(project_dao=cls.project_dao)
-        cls.mocks = [cls.project_dao]
+        super().setUpClass()
+        cls.svc = ProjectService(ProjectDAO(cls.db), ProjectConfigDAO(cls.db))
 
-    def setUp(self):
-        for mock in self.mocks:
-            mock.reset_mock()
+    def _create(self, name='proj'):
+        out = self.svc.create_project(ProjectIn(name=name))
+        return out, out.configs[0].uuid, out.configs[1].uuid
 
-    def test_create_project_ok(self):
-        project = db_mock.get_sample_project()
-        self.project_dao.insert = MagicMock(return_value=project)
-        project_in = db_mock.get_sample_project_in()
-        result = self.project_service.create_project(project_in)
-        self.project_dao.insert.assert_called_once()
-        assert result == ProjectOut.from_project(project)
+    # --- create ---
+
+    def test_create_project_seeds_two_draft_slots(self):
+        out, a, b = self._create()
+        assert len(out.configs) == 2
+        assert [c.slot for c in out.configs] == ['A', 'B']
+        assert all(c.config_status == ConfigStatus.DRAFT for c in out.configs)
+        assert out.project_status == ProjectStatus.DEV
+        assert out.served_config_uuid is None
 
     def test_create_project_already_exists(self):
-        self.project_dao.insert = MagicMock(
+        # IntegrityError -> ProjectAlreadyExistsError mapping is a unit concern,
+        # tested with a mocked DAO to stay independent of create_all metadata.
+        svc = ProjectService(MagicMock(), MagicMock())
+        svc.project_dao.insert_with_configs = MagicMock(
             side_effect=IntegrityError(None, None, BaseException('uq_project_NAME'))
         )
-        project_in = db_mock.get_sample_project_in()
         with pytest.raises(ProjectAlreadyExistsError):
-            self.project_service.create_project(project_in)
-
-    def test_create_project_internal_error(self):
-        self.project_dao.insert = MagicMock(
-            side_effect=IntegrityError(
-                None, None, BaseException('some_other_constraint')
-            )
-        )
-        project_in = db_mock.get_sample_project_in()
-        with pytest.raises(ProjectInternalError):
-            self.project_service.create_project(project_in)
-
-    def test_get_by_uuid_ok(self):
-        project = db_mock.get_sample_project()
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        result = self.project_service.get_by_uuid(project.uuid)
-        self.project_dao.get_by_uuid.assert_called_once_with(project.uuid)
-        assert result == ProjectOut.from_project(project)
+            svc.create_project(ProjectIn(name='dup'))
 
     def test_get_by_uuid_not_found(self):
-        self.project_dao.get_by_uuid = MagicMock(return_value=None)
         with pytest.raises(ProjectNotFoundError):
-            self.project_service.get_by_uuid(uuid.uuid4())
+            self.svc.get_by_uuid(uuid.uuid4())
 
-    def test_get_all(self):
-        projects = [
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='one'),
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='two'),
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='three'),
-        ]
-        self.project_dao.get_all = MagicMock(return_value=projects)
-        result = self.project_service.get_all()
-        assert len(result) == 3
-        assert result == [ProjectOut.from_project(p) for p in projects]
+    # --- update ---
 
-    def test_get_all_empty(self):
-        self.project_dao.get_all = MagicMock(return_value=[])
-        result = self.project_service.get_all()
-        assert result == []
-
-    def test_load_config_ok(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.DRAFT,
+    def test_update_config_ok(self):
+        out, a, _ = self._create()
+        res = self.svc.update_config(
+            out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
         )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        self.project_dao.update_draft_config_file = MagicMock(return_value=1)
-        result = self.project_service.load_config(project.uuid, config_in)
-        self.project_dao.update_draft_config_file.assert_called_once()
-        assert result.draft_config_file == config_in.config_file
-        assert result.config_status == ConfigStatus.DRAFT
+        ca = next(c for c in res.configs if c.uuid == a)
+        assert ca.config_file == _VALID
+        assert ca.config_status == ConfigStatus.DRAFT
 
-    def test_load_config_project_not_found(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        self.project_dao.get_by_uuid = MagicMock(return_value=None)
+    def test_update_config_invalid_yaml(self):
+        out, a, _ = self._create()
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.update_config(
+                out.uuid, a, ProjectConfigFileIn(config_file='::not yaml::')
+            )
+
+    def test_update_config_served_is_read_only(self):
+        out, a, _ = self._create()
+        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        self.svc.approve_config(out.uuid, a)
+        self.svc.serve_config(out.uuid, a)
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+
+    def test_update_config_wrong_project(self):
+        out, a, _ = self._create()
         with pytest.raises(ProjectNotFoundError):
-            self.project_service.load_config(uuid.uuid4(), config_in)
+            self.svc.update_config(
+                uuid.uuid4(), a, ProjectConfigFileIn(config_file=_VALID)
+            )
 
-    def test_load_config_invalid_yaml(self):
-        config_in = db_mock.get_sample_project_config_file_in(
-            config_file='{{invalid yaml'
+    # --- approve / cancel ---
+
+    def test_approve_then_cancel(self):
+        out, a, _ = self._create()
+        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        res = self.svc.approve_config(out.uuid, a)
+        assert next(c for c in res.configs if c.uuid == a).config_status == (
+            ConfigStatus.READY_TO_SERVE
         )
+        res = self.svc.cancel_approval(out.uuid, a)
+        assert next(c for c in res.configs if c.uuid == a).config_status == (
+            ConfigStatus.DRAFT
+        )
+
+    def test_cancel_when_not_ready_raises(self):
+        out, a, _ = self._create()
         with pytest.raises(ProjectConfigValidationError):
-            self.project_service.load_config(uuid.uuid4(), config_in)
+            self.svc.cancel_approval(out.uuid, a)
 
-    def test_load_config_invalid_gateway_config(self):
-        config_in = db_mock.get_sample_project_config_file_in(
-            config_file='some_key: some_value\n'
-        )
+    # --- serve / swap / unserve ---
+
+    def test_serve_requires_approval(self):
+        out, a, _ = self._create()
+        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
         with pytest.raises(ProjectConfigValidationError):
-            self.project_service.load_config(uuid.uuid4(), config_in)
+            self.svc.serve_config(out.uuid, a)
 
-    def test_load_config_rejects_literal_secrets(self):
-        yaml_with_literal_key = """\
-chat_models:
-  - model_id: mock-chat
-    model: mock/gateway
-    credentials:
-      api_key: sk-super-secret-key
-    params:
-      latency_ms: 150
-      response_text: "mock response"
-routes:
-  test-route:
-    chat_models:
-      - mock-chat
-"""
-        config_in = db_mock.get_sample_project_config_file_in(
-            config_file=yaml_with_literal_key
+    def test_serve_ok(self):
+        out, a, _ = self._create()
+        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        self.svc.approve_config(out.uuid, a)
+        res = self.svc.serve_config(out.uuid, a)
+        assert res.project_status == ProjectStatus.PROD
+        assert res.served_config_uuid == a
+        assert next(c for c in res.configs if c.uuid == a).config_status == (
+            ConfigStatus.SERVED
         )
-        with pytest.raises(ProjectConfigValidationError, match='literal secrets'):
-            self.project_service.load_config(uuid.uuid4(), config_in)
 
-    def test_load_config_accepts_secret_refs(self):
-        yaml_with_secret_ref = """\
-chat_models:
-  - model_id: mock-chat
-    model: mock/gateway
-    credentials:
-      api_key: !secret OPENAI_API_KEY
-    params:
-      latency_ms: 150
-      response_text: "mock response"
-routes:
-  test-route:
-    chat_models:
-      - mock-chat
-"""
-        config_in = db_mock.get_sample_project_config_file_in(
-            config_file=yaml_with_secret_ref
-        )
-        project = db_mock.get_sample_project()
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        self.project_dao.update_draft_config_file = MagicMock(return_value=1)
-        self.project_service.load_config(project.uuid, config_in)
-        saved_content = self.project_dao.update_draft_config_file.call_args[0][1]
-        assert '!secret OPENAI_API_KEY' in saved_content
+    def test_serve_swaps_displaced_to_draft(self):
+        out, a, b = self._create()
+        for c in (a, b):
+            self.svc.update_config(out.uuid, c, ProjectConfigFileIn(config_file=_VALID))
+            self.svc.approve_config(out.uuid, c)
+        self.svc.serve_config(out.uuid, a)
+        res = self.svc.serve_config(out.uuid, b)
+        st = {c.uuid: c.config_status for c in res.configs}
+        assert st[b] == ConfigStatus.SERVED
+        assert st[a] == ConfigStatus.DRAFT
+        assert res.served_config_uuid == b
 
-    # --- cancel_approval ---
+    def test_unserve_ok(self):
+        out, a, _ = self._create()
+        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        self.svc.approve_config(out.uuid, a)
+        self.svc.serve_config(out.uuid, a)
+        res = self.svc.unserve_config(out.uuid, a)
+        assert res.project_status == ProjectStatus.DEV
+        assert res.served_config_uuid is None
 
-    def test_cancel_approval_ok(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.READY_TO_SERVE,
-        )
-        cancelled_project = db_mock.get_sample_project(
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.DRAFT,
-        )
-        self.project_dao.get_by_uuid = MagicMock(
-            side_effect=[project, cancelled_project]
-        )
-        self.project_dao.set_config_status = MagicMock(return_value=1)
-        result = self.project_service.cancel_approval(project.uuid)
-        self.project_dao.set_config_status.assert_called_once_with(
-            project.uuid, ConfigStatus.DRAFT
-        )
-        assert result.config_status == ConfigStatus.DRAFT
+    def test_unserve_when_not_served_raises(self):
+        out, a, _ = self._create()
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.unserve_config(out.uuid, a)
 
-    def test_cancel_approval_project_not_found(self):
-        self.project_dao.get_by_uuid = MagicMock(return_value=None)
+    # --- delete ---
+
+    def test_delete_project(self):
+        out, _, _ = self._create()
+        deleted = self.svc.delete_project(out.uuid)
+        assert deleted.uuid == out.uuid
         with pytest.raises(ProjectNotFoundError):
-            self.project_service.cancel_approval(uuid.uuid4())
+            self.svc.get_by_uuid(out.uuid)
 
-    def test_cancel_approval_wrong_status_draft(self):
-        project = db_mock.get_sample_project(
-            config_status=ConfigStatus.DRAFT,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        with pytest.raises(ProjectConfigValidationError):
-            self.project_service.cancel_approval(project.uuid)
+    # --- get_config ---
 
-    def test_cancel_approval_wrong_status_served(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            config_file=config_in.config_file,
-            config_status=ConfigStatus.SERVED,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        with pytest.raises(ProjectConfigValidationError):
-            self.project_service.cancel_approval(project.uuid)
+    def test_get_config(self):
+        out, a, _ = self._create()
+        slot = self.svc.get_config(out.uuid, a)
+        assert slot.uuid == a and slot.slot == 'A'
 
-    # --- approve_config ---
-
-    def test_approve_config_ok(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.DRAFT,
-        )
-        approved_project = db_mock.get_sample_project(
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.READY_TO_SERVE,
-        )
-        self.project_dao.get_by_uuid = MagicMock(
-            side_effect=[project, approved_project]
-        )
-        self.project_dao.set_config_status = MagicMock(return_value=1)
-        result = self.project_service.approve_config(project.uuid)
-        self.project_dao.set_config_status.assert_called_once_with(
-            project.uuid, ConfigStatus.READY_TO_SERVE
-        )
-        assert result.config_status == ConfigStatus.READY_TO_SERVE
-
-    def test_approve_config_project_not_found(self):
-        self.project_dao.get_by_uuid = MagicMock(return_value=None)
+    def test_get_config_wrong_project(self):
+        out, a, _ = self._create()
         with pytest.raises(ProjectNotFoundError):
-            self.project_service.approve_config(uuid.uuid4())
+            self.svc.get_config(uuid.uuid4(), a)
 
-    def test_approve_config_no_draft(self):
-        project = db_mock.get_sample_project(
-            config_status=ConfigStatus.READY_TO_SERVE, draft_config_file=None
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        with pytest.raises(ProjectConfigValidationError):
-            self.project_service.approve_config(project.uuid)
+    # --- listing / filters ---
 
-    def test_approve_config_wrong_status(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.READY_TO_SERVE,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        with pytest.raises(ProjectConfigValidationError):
-            self.project_service.approve_config(project.uuid)
+    def test_get_all_and_filters(self):
+        served, a, _ = self._create(name='served')
+        self.svc.update_config(served.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        self.svc.approve_config(served.uuid, a)
+        self.svc.serve_config(served.uuid, a)
+        self._create(name='dev')
 
-    def test_approve_config_invalid_yaml(self):
-        project = db_mock.get_sample_project(
-            draft_config_file='{{invalid yaml',
-            config_status=ConfigStatus.DRAFT,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        with pytest.raises(ProjectConfigValidationError):
-            self.project_service.approve_config(project.uuid)
-
-    def test_approve_config_invalid_gateway_config(self):
-        project = db_mock.get_sample_project(
-            draft_config_file='some_key: some_value\n',
-            config_status=ConfigStatus.DRAFT,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        with pytest.raises(ProjectConfigValidationError):
-            self.project_service.approve_config(project.uuid)
-
-    def test_approve_config_rejects_literal_secrets(self):
-        yaml_with_literal_key = """\
-chat_models:
-  - model_id: mock-chat
-    model: mock/gateway
-    credentials:
-      api_key: sk-super-secret-key
-    params:
-      latency_ms: 150
-      response_text: "mock response"
-routes:
-  test-route:
-    chat_models:
-      - mock-chat
-"""
-        project = db_mock.get_sample_project(
-            draft_config_file=yaml_with_literal_key,
-            config_status=ConfigStatus.DRAFT,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        with pytest.raises(ProjectConfigValidationError, match='literal secrets'):
-            self.project_service.approve_config(project.uuid)
-
-    # --- serve_config ---
-
-    def test_serve_config_ok(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.READY_TO_SERVE,
-        )
-        updated_project = db_mock.get_sample_project(
-            draft_config_file=None,
-            config_file=config_in.config_file,
-            config_status=ConfigStatus.SERVED,
-        )
-        self.project_dao.get_by_uuid = MagicMock(side_effect=[project, updated_project])
-        self.project_dao.promote_draft_to_config = MagicMock(return_value=1)
-        result = self.project_service.serve_config(project.uuid)
-        self.project_dao.promote_draft_to_config.assert_called_once_with(
-            project.uuid, config_in.config_file
-        )
-        assert result.config_file == config_in.config_file
-        assert result.draft_config_file is None
-        assert result.config_status == ConfigStatus.SERVED
-        assert result.project_status == ProjectStatus.PROD
-
-    def test_serve_config_project_not_found(self):
-        self.project_dao.get_by_uuid = MagicMock(return_value=None)
-        with pytest.raises(ProjectNotFoundError):
-            self.project_service.serve_config(uuid.uuid4())
-
-    def test_serve_config_requires_approved_status(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.DRAFT,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        with pytest.raises(ProjectConfigValidationError):
-            self.project_service.serve_config(project.uuid)
-
-    def test_serve_config_promote_returns_zero(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.READY_TO_SERVE,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        self.project_dao.promote_draft_to_config = MagicMock(return_value=0)
-        with pytest.raises(ProjectInternalError):
-            self.project_service.serve_config(project.uuid)
-
-    # --- unserve_config ---
-
-    def test_unserve_config_ok_restores_draft(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            config_file=config_in.config_file,
-            draft_config_file=None,
-            config_status=ConfigStatus.SERVED,
-        )
-        unserved_project = db_mock.get_sample_project(
-            config_file=None,
-            draft_config_file=config_in.config_file,
-            config_status=ConfigStatus.DRAFT,
-        )
-        self.project_dao.get_by_uuid = MagicMock(
-            side_effect=[project, unserved_project]
-        )
-        self.project_dao.unserve_config = MagicMock(return_value=1)
-        result = self.project_service.unserve_config(project.uuid)
-        self.project_dao.unserve_config.assert_called_once_with(project.uuid, True)
-        assert result.config_file is None
-        assert result.draft_config_file == config_in.config_file
-        assert result.config_status == ConfigStatus.DRAFT
-        assert result.project_status == ProjectStatus.DEV
-
-    def test_unserve_config_ok_keeps_existing_draft(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            config_file=config_in.config_file,
-            draft_config_file='existing-draft',
-            config_status=ConfigStatus.DRAFT,
-        )
-        unserved_project = db_mock.get_sample_project(
-            config_file=None,
-            draft_config_file='existing-draft',
-            config_status=ConfigStatus.DRAFT,
-        )
-        self.project_dao.get_by_uuid = MagicMock(
-            side_effect=[project, unserved_project]
-        )
-        self.project_dao.unserve_config = MagicMock(return_value=1)
-        result = self.project_service.unserve_config(project.uuid)
-        self.project_dao.unserve_config.assert_called_once_with(project.uuid, False)
-        assert result.draft_config_file == 'existing-draft'
-
-    def test_unserve_config_project_not_found(self):
-        self.project_dao.get_by_uuid = MagicMock(return_value=None)
-        with pytest.raises(ProjectNotFoundError):
-            self.project_service.unserve_config(uuid.uuid4())
-
-    def test_unserve_config_not_served(self):
-        project = db_mock.get_sample_project(
-            config_file=None,
-            config_status=ConfigStatus.DRAFT,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        with pytest.raises(ProjectConfigValidationError):
-            self.project_service.unserve_config(project.uuid)
-
-    # --- project_status and config_status in responses ---
-
-    def test_new_project_has_draft_status_and_dev(self):
-        project = db_mock.get_sample_project(config_status=ConfigStatus.DRAFT)
-        self.project_dao.insert = MagicMock(return_value=project)
-        result = self.project_service.create_project(db_mock.get_sample_project_in())
-        assert result.config_status == ConfigStatus.DRAFT
-        assert result.project_status == ProjectStatus.DEV
-
-    def test_served_project_has_prod_status(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            config_file=config_in.config_file,
-            config_status=ConfigStatus.SERVED,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        result = self.project_service.get_by_uuid(project.uuid)
-        assert result.project_status == ProjectStatus.PROD
-        assert result.config_status == ConfigStatus.SERVED
-
-    # --- get_all_active ---
-
-    def test_get_all_active_returns_only_active_projects(self):
-        active = db_mock.get_sample_project(
-            config_file='some-yaml',
-            config_status=ConfigStatus.SERVED,
-        )
-        self.project_dao.get_all_with_config = MagicMock(return_value=[active])
-        result = self.project_service.get_all_active()
-        self.project_dao.get_all_with_config.assert_called_once()
-        assert len(result) == 1
-        assert result[0].config_file == 'some-yaml'
-        assert result[0].name == active.name
-
-    def test_get_all_active_empty(self):
-        self.project_dao.get_all_with_config = MagicMock(return_value=[])
-        result = self.project_service.get_all_active()
-        assert result == []
-
-    # --- delete_project ---
-
-    def test_delete_project_ok_dev_state(self):
-        project = db_mock.get_sample_project(
-            config_file=None, config_status=ConfigStatus.DRAFT
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        self.project_dao.soft_delete = MagicMock(return_value=1)
-        result = self.project_service.delete_project(project.uuid)
-        self.project_dao.soft_delete.assert_called_once_with(project.uuid)
-        self.project_dao.unserve_config.assert_not_called()
-        assert result == ProjectOut.from_project(project)
-
-    def test_delete_project_ok_prod_state_restores_draft(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            config_file=config_in.config_file,
-            draft_config_file=None,
-            config_status=ConfigStatus.SERVED,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        self.project_dao.unserve_config = MagicMock(return_value=1)
-        self.project_dao.soft_delete = MagicMock(return_value=1)
-        result = self.project_service.delete_project(project.uuid)
-        self.project_dao.unserve_config.assert_called_once_with(project.uuid, True)
-        self.project_dao.soft_delete.assert_called_once_with(project.uuid)
-        assert result.config_file == config_in.config_file
-
-    def test_delete_project_ok_prod_state_keeps_existing_draft(self):
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            config_file=config_in.config_file,
-            draft_config_file='existing-draft',
-            config_status=ConfigStatus.SERVED,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        self.project_dao.unserve_config = MagicMock(return_value=1)
-        self.project_dao.soft_delete = MagicMock(return_value=1)
-        self.project_service.delete_project(project.uuid)
-        self.project_dao.unserve_config.assert_called_once_with(project.uuid, False)
-
-    def test_delete_project_not_found(self):
-        self.project_dao.get_by_uuid = MagicMock(return_value=None)
-        with pytest.raises(ProjectNotFoundError):
-            self.project_service.delete_project(uuid.uuid4())
-
-    def test_delete_project_returns_pre_deletion_state(self):
-        # DTO must reflect state before deletion so route can call deregister_project_routes.
-        config_in = db_mock.get_sample_project_config_file_in()
-        project = db_mock.get_sample_project(
-            config_file=config_in.config_file,
-            config_status=ConfigStatus.SERVED,
-        )
-        self.project_dao.get_by_uuid = MagicMock(return_value=project)
-        self.project_dao.unserve_config = MagicMock(return_value=1)
-        self.project_dao.soft_delete = MagicMock(return_value=1)
-        result = self.project_service.delete_project(project.uuid)
-        assert result.config_file == config_in.config_file
-        assert result.project_status == ProjectStatus.PROD
-
-    # --- get_all_filtered ---
-
-    def test_get_all_filtered_delegates_to_dao(self):
-        projects = [
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='one'),
-        ]
-        self.project_dao.get_all_filtered = MagicMock(return_value=projects)
-        result = self.project_service.get_all_filtered(ProjectFilter.ACTIVE)
-        self.project_dao.get_all_filtered.assert_called_once_with(ProjectFilter.ACTIVE)
-        assert len(result) == 1
-        assert result == [ProjectOut.from_project(p) for p in projects]
-
-    def test_get_all_filtered_no_filter(self):
-        projects = [
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='a'),
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='b'),
-        ]
-        self.project_dao.get_all_filtered = MagicMock(return_value=projects)
-        result = self.project_service.get_all_filtered(None)
-        self.project_dao.get_all_filtered.assert_called_once_with(None)
-        assert len(result) == 2
-
-    def test_get_all_filtered_dev_delegates_to_dao(self):
-        projects = [
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='no-config', config_file=None
-            ),
-        ]
-        self.project_dao.get_all_filtered = MagicMock(return_value=projects)
-        result = self.project_service.get_all_filtered(ProjectFilter.DEV)
-        self.project_dao.get_all_filtered.assert_called_once_with(ProjectFilter.DEV)
-        assert len(result) == 1
-        assert result == [ProjectOut.from_project(p) for p in projects]
-
-    def test_get_all_filtered_prod_delegates_to_dao(self):
-        projects = [
-            db_mock.get_sample_project(
-                uuid=uuid.uuid4(), name='with-config', config_file='yaml'
-            ),
-        ]
-        self.project_dao.get_all_filtered = MagicMock(return_value=projects)
-        result = self.project_service.get_all_filtered(ProjectFilter.PROD)
-        self.project_dao.get_all_filtered.assert_called_once_with(ProjectFilter.PROD)
-        assert len(result) == 1
-        assert result == [ProjectOut.from_project(p) for p in projects]
+        assert len(self.svc.get_all()) == 2
+        prod = self.svc.get_all_filtered(ProjectFilter.PROD)
+        assert [p.uuid for p in prod] == [served.uuid]
+        dev = self.svc.get_all_filtered(ProjectFilter.DEV)
+        assert served.uuid not in [p.uuid for p in dev]
+        active = self.svc.get_all_active()
+        assert [p.uuid for p in active] == [served.uuid]
