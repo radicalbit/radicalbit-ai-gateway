@@ -54,7 +54,7 @@ class ProjectConfig(Reflected, BaseTable, BaseDAO):
     config_file = Column('CONFIG_FILE', TEXT(), nullable=True)
     config_status = Column(
         'CONFIG_STATUS',
-        SAEnum(ConfigStatus, name='project_config_status', create_type=False),
+        SAEnum(ConfigStatus, name='project_config_status', create_type=True),
         nullable=False,
         server_default='DRAFT',
     )

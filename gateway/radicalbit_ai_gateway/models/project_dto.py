@@ -107,9 +107,7 @@ class ProjectOut(BaseModel):
     )
 
     @staticmethod
-    def from_project(
-        project: Project, configs: list[ProjectConfig]
-    ) -> 'ProjectOut':
+    def from_project(project: Project, configs: list[ProjectConfig]) -> 'ProjectOut':
         ordered = sorted(configs, key=lambda c: c.slot)
         served = next(
             (c for c in ordered if c.config_status == ConfigStatus.SERVED.value),

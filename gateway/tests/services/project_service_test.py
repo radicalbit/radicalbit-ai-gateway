@@ -1,6 +1,8 @@
+from unittest.mock import MagicMock
 import uuid
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
@@ -47,12 +49,8 @@ class ProjectServiceTest(DatabaseIntegration):
     def test_create_project_already_exists(self):
         # IntegrityError -> ProjectAlreadyExistsError mapping is a unit concern,
         # tested with a mocked DAO to stay independent of create_all metadata.
-        from unittest.mock import MagicMock
-
-        from sqlalchemy.exc import IntegrityError
-
         svc = ProjectService(MagicMock(), MagicMock())
-        svc.project_dao.insert = MagicMock(
+        svc.project_dao.insert_with_configs = MagicMock(
             side_effect=IntegrityError(None, None, BaseException('uq_project_NAME'))
         )
         with pytest.raises(ProjectAlreadyExistsError):
@@ -66,7 +64,9 @@ class ProjectServiceTest(DatabaseIntegration):
 
     def test_update_config_ok(self):
         out, a, _ = self._create()
-        res = self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        res = self.svc.update_config(
+            out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
+        )
         ca = next(c for c in res.configs if c.uuid == a)
         assert ca.config_file == _VALID
         assert ca.config_status == ConfigStatus.DRAFT

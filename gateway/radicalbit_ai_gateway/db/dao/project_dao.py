@@ -5,7 +5,10 @@ from uuid import UUID
 from sqlalchemy import select, update
 
 from radicalbit_ai_gateway.db.database import Database
+from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
+from radicalbit_ai_gateway.models.config_slot import Slot
+from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 
 _UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
@@ -18,6 +21,33 @@ class ProjectDAO:
     def insert(self, project: Project) -> Project:
         with self.db.begin_session() as session:
             session.add(project)
+            session.flush()
+            return project
+
+    def insert_with_configs(
+        self,
+        project: Project,
+        slots: Sequence[tuple[Slot, str | None, ConfigStatus]],
+    ) -> Project:
+        """Insert a project and its initial config slots in a single
+        transaction, so a project is never left with a partial set of slots
+        (the "always 2 slots" invariant holds even on a mid-creation crash).
+        """
+        now = datetime.datetime.now(tz=_UTC)
+        with self.db.begin_session() as session:
+            session.add(project)
+            session.flush()  # assign project.uuid before linking the configs
+            for slot, config_file, status in slots:
+                session.add(
+                    ProjectConfig(
+                        project_uuid=project.uuid,
+                        slot=slot.value,
+                        config_file=config_file,
+                        config_status=status.value,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
             session.flush()
             return project
 

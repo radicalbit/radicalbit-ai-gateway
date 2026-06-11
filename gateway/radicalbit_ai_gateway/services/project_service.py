@@ -28,9 +28,7 @@ from radicalbit_ai_gateway.utils.yaml_utils import (
 
 
 class ProjectService:
-    def __init__(
-        self, project_dao: ProjectDAO, project_config_dao: ProjectConfigDAO
-    ):
+    def __init__(self, project_dao: ProjectDAO, project_config_dao: ProjectConfigDAO):
         self.project_dao = project_dao
         self.project_config_dao = project_config_dao
 
@@ -63,9 +61,18 @@ class ProjectService:
         return self._build_out(project)
 
     def create_project(self, project_in: ProjectIn) -> ProjectOut:
+        template = get_default_config_template()
         try:
             project = project_in.to_project()
-            inserted = self.project_dao.insert(project)
+            # Seed both slots atomically with the project so the response
+            # always carries exactly 2 configs (never a partial project).
+            inserted = self.project_dao.insert_with_configs(
+                project,
+                [
+                    (Slot.A, template, ConfigStatus.DRAFT),
+                    (Slot.B, template, ConfigStatus.DRAFT),
+                ],
+            )
         except IntegrityError as e:
             if 'uq_project_NAME' in str(e.orig) or 'NAME' in str(e.orig):
                 raise ProjectAlreadyExistsError(
@@ -75,11 +82,6 @@ class ProjectService:
                 f'An error occurred while creating the project: {e}'
             ) from e
 
-        template = get_default_config_template()
-        for slot in (Slot.A, Slot.B):
-            self.project_config_dao.create(
-                inserted.uuid, slot, template, ConfigStatus.DRAFT
-            )
         return self._build_out_or_raise(inserted.uuid)
 
     def update_config(
@@ -148,15 +150,11 @@ class ProjectService:
         config = self._get_config_or_raise(project_uuid, config_uuid)
 
         if config.config_status != ConfigStatus.SERVED.value:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} is not served'
-            )
+            raise ProjectConfigValidationError(f'Config {config_uuid} is not served')
 
         rows_updated = self.project_config_dao.unserve(config_uuid)
         if rows_updated == 0:
-            raise ProjectInternalError(
-                f'Failed to unserve config {config_uuid}'
-            )
+            raise ProjectInternalError(f'Failed to unserve config {config_uuid}')
         return self._build_out_or_raise(project_uuid)
 
     def delete_project(self, project_uuid: UUID) -> ProjectOut:

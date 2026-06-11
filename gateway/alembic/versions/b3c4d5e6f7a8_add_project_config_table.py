@@ -13,6 +13,7 @@ Create Date: 2026-06-10 00:00:00.000000
 
 from collections.abc import Sequence
 import datetime
+from importlib.resources import files
 from typing import Union
 import uuid
 
@@ -21,7 +22,17 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-from radicalbit_ai_gateway.utils.yaml_utils import get_default_config_template
+
+def _default_config_template() -> str:
+    # Read the template directly from resources so this migration stays
+    # self-contained: the migrations image installs only the `migrations`
+    # dependency group, which has no PyYAML, and importing
+    # radicalbit_ai_gateway.utils.yaml_utils would pull `import yaml`.
+    return (
+        files('radicalbit_ai_gateway.resources')
+        .joinpath('default_config.yaml')
+        .read_text()
+    )
 
 # revision identifiers, used by Alembic.
 revision: str = 'b3c4d5e6f7a8'
@@ -110,7 +121,7 @@ def upgrade() -> None:
     )
 
     # 4. Data migration: every project ends up with exactly 2 slots (A, B).
-    template = get_default_config_template()
+    template = _default_config_template()
     projects = bind.execute(
         sa.text(
             'SELECT "UUID", "CONFIG_FILE", "DRAFT_CONFIG_FILE", "CONFIG_STATUS", '

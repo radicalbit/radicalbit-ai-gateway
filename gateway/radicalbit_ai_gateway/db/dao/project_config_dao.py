@@ -7,7 +7,6 @@ from sqlalchemy import func, select, update
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
-from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 
 _UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
@@ -16,27 +15,6 @@ _UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
 class ProjectConfigDAO:
     def __init__(self, database: Database):
         self.db = database
-
-    def create(
-        self,
-        project_uuid: UUID,
-        slot: Slot,
-        config_file: str | None,
-        status: ConfigStatus = ConfigStatus.DRAFT,
-    ) -> ProjectConfig:
-        now = datetime.datetime.now(tz=_UTC)
-        with self.db.begin_session() as session:
-            config = ProjectConfig(
-                project_uuid=project_uuid,
-                slot=slot.value,
-                config_file=config_file,
-                config_status=status.value,
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(config)
-            session.flush()
-            return config
 
     def get_by_uuid(self, config_uuid: UUID) -> ProjectConfig | None:
         with self.db.begin_session() as session:

@@ -11,6 +11,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     GroupsRouteOut,
     RouteGroupsIn,
 )
+from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import (
     GenerateConfigIn,
     GenerateConfigOut,
@@ -26,6 +27,7 @@ from radicalbit_ai_gateway.services.config_generator_service import (
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.exceptions import ProjectConfigValidationError
 
 app_config = get_app_config()
 
@@ -157,13 +159,18 @@ class ProjectRoute:
         async def generate_config(
             project_uuid: UUID, config_uuid: UUID, gen_in: GenerateConfigIn
         ):
-            config = project_service.get_config(project_uuid, config_uuid)
+            config_slot = project_service.get_config(project_uuid, config_uuid)
+            # A served slot is read-only: generating against it is pointless
+            # since the result could not be saved back (see update_config).
+            if config_slot.config_status == ConfigStatus.SERVED:
+                raise ProjectConfigValidationError(
+                    f'Config {config_uuid} is served and cannot be used to '
+                    'generate a new configuration'
+                )
             yaml_str = await config_generator_service.generate_config(
-                gen_in.description, config.config_file
+                gen_in.description, config_slot.config_file
             )
-            logger.info(
-                'Generated config %s for project %s', config_uuid, project_uuid
-            )
+            logger.info('Generated config %s for project %s', config_uuid, project_uuid)
             return GenerateConfigOut(config_file=yaml_str)
 
         @router.patch(

@@ -127,9 +127,7 @@ class TestProjectRoute(unittest.TestCase):
         self.project_service.approve_config = MagicMock(
             return_value=db_mock.get_sample_project_out(uuid=pid)
         )
-        res = self.client.patch(
-            f'{self.prefix}/projects/{pid}/configs/{cid}/approve'
-        )
+        res = self.client.patch(f'{self.prefix}/projects/{pid}/configs/{cid}/approve')
         assert res.status_code == 200
         self.project_service.approve_config.assert_called_once_with(pid, cid)
 
@@ -185,6 +183,23 @@ class TestProjectRoute(unittest.TestCase):
         assert res.status_code == 200
         assert res.json()['configFile'] == '# generated'
         self.project_service.get_config.assert_called_once_with(pid, cid)
+
+    def test_generate_config_rejected_when_served(self):
+        pid, cid = uuid.uuid4(), uuid.uuid4()
+        self.project_service.get_config = MagicMock(
+            return_value=db_mock.get_sample_config_slot_out(
+                uuid=cid, config_file='# x', config_status=ConfigStatus.SERVED
+            )
+        )
+        self.config_generator_service.generate_config = AsyncMock(
+            return_value='# generated'
+        )
+        res = self.client.post(
+            f'{self.prefix}/projects/{pid}/configs/{cid}/generate-config',
+            json={'description': 'make it'},
+        )
+        assert res.status_code == 400
+        self.config_generator_service.generate_config.assert_not_awaited()
 
     def test_delete_project_deregisters_when_served(self):
         pid = uuid.uuid4()

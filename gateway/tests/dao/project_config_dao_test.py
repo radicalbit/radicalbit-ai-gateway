@@ -1,12 +1,16 @@
+import datetime
 import uuid
 
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
+from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+
+_UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
 
 
 class ProjectConfigDAOTest(DatabaseIntegration):
@@ -16,15 +20,36 @@ class ProjectConfigDAOTest(DatabaseIntegration):
         cls.dao = ProjectConfigDAO(cls.db)
 
     def _project(self) -> Project:
-        project = db_mock.get_sample_project(uuid=uuid.uuid4(), name=f'p-{uuid.uuid4()}')
+        project = db_mock.get_sample_project(
+            uuid=uuid.uuid4(), name=f'p-{uuid.uuid4()}'
+        )
         return self.insert(project)
 
     def _seed_two(self, project_uuid):
-        a = self.dao.create(project_uuid, Slot.A, '# a', ConfigStatus.DRAFT)
-        b = self.dao.create(project_uuid, Slot.B, '# b', ConfigStatus.DRAFT)
+        now = datetime.datetime.now(tz=_UTC)
+        a = self.insert(
+            ProjectConfig(
+                project_uuid=project_uuid,
+                slot=Slot.A.value,
+                config_file='# a',
+                config_status=ConfigStatus.DRAFT.value,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        b = self.insert(
+            ProjectConfig(
+                project_uuid=project_uuid,
+                slot=Slot.B.value,
+                config_file='# b',
+                config_status=ConfigStatus.DRAFT.value,
+                created_at=now,
+                updated_at=now,
+            )
+        )
         return a.uuid, b.uuid
 
-    def test_create_and_list_ordered(self):
+    def test_seed_and_list_ordered(self):
         p = self._project()
         self._seed_two(p.uuid)
         configs = self.dao.list_by_project(p.uuid)
