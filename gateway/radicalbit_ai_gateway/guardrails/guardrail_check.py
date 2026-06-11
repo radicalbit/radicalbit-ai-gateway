@@ -297,9 +297,10 @@ class GuardrailCheck:
             return False
 
         try:
+            analyzer = self._presidio_engine.get_analyzer(params.backend, params.ahds)
             # Run presidio analysis in thread pool to avoid blocking
             results = await asyncio.to_thread(
-                self._presidio_engine.analyzer.analyze,
+                analyzer.analyze,
                 text=blob,
                 entities=entities,
                 language=language,

@@ -1,7 +1,7 @@
 from enum import Enum
-from typing import Literal, Union
+from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 
 class GuardrailClass(str, Enum):
@@ -42,6 +42,37 @@ class CheckParameter(BaseModel):
     ignore_case: bool = Field(default=False, description='Ignore case.')
 
 
+PresidioBackend = Annotated[
+    Literal['local', 'ahds'],
+    Field(
+        default='local',
+        description='Detection backend: "local" for spaCy-only, "ahds" for Azure Health Data Services.',
+    ),
+]
+
+
+class AhdsParams(BaseModel):
+    endpoint: str | None = Field(
+        default=None,
+        description='AHDS de-identification endpoint URL.',
+        examples=['https://<name>.api.<region>.deid.azure.com'],
+    )
+    api_version: str | None = Field(
+        default='2024-11-15',
+        description='AHDS API version. Falls back to the default (2024-11-15).',
+    )
+    tenant_id: str | None = Field(
+        default=None, description='Service principal tenant id.'
+    )
+    client_id: str | None = Field(
+        default=None, description='Service principal client (application) id.'
+    )
+    client_secret: SecretStr | None = Field(
+        default=None,
+        description='Service principal client secret. Use a !secret reference, never an inline value.',
+    )
+
+
 class RedactParameter(BaseModel):
     type: Literal['REDACT'] = Field(default='REDACT')
     language: str = Field(
@@ -53,6 +84,11 @@ class RedactParameter(BaseModel):
         ...,
         description='List of entity types to redact from the text.',
         examples=['EMAIL_ADDRESS', 'IBAN_CODE'],
+    )
+    backend: PresidioBackend = 'local'
+    ahds: AhdsParams | None = Field(
+        default=None,
+        description='Azure Health Data Services connection settings (used only when backend="ahds").',
     )
 
 
