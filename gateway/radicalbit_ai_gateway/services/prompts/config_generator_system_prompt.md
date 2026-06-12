@@ -103,8 +103,44 @@ Detects PII; blocks or warns.
       - PHONE_NUMBER
 ```
 
-Common entities: `EMAIL_ADDRESS`, `PHONE_NUMBER`, `PERSON`, `LOCATION`, `DATE_TIME`,
+Optional `parameters.backend` selects the detection engine: `local` (default, spaCy) or `ahds` (Azure Health Data Services PHI detection). With `backend: ahds`, `parameters.ahds` is required:
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `endpoint` | Yes | AHDS de-identification endpoint URL |
+| `api_version` | No | Default `2024-11-15` |
+| `tenant_id` | Yes | Service principal tenant id |
+| `client_id` | Yes | Service principal client id |
+| `client_secret` | Yes | Must use `!secret ENV_VAR_NAME` — never inline |
+
+```yaml
+- name: detect-phi
+  type: presidio_analyzer
+  where: input
+  behavior: block
+  parameters:
+    language: en
+    entities:
+      - PATIENT
+      - DOCTOR
+      - DATE
+      - HOSPITAL
+    backend: ahds
+    ahds:
+      endpoint: https://<name>.api.<region>.deid.azure.com
+      api_version: "2024-11-15"
+      tenant_id: <tenant-id>
+      client_id: <client-id>
+      client_secret: !secret AHDS_CLIENT_SECRET
+```
+
+Common entities (`local` backend): `EMAIL_ADDRESS`, `PHONE_NUMBER`, `PERSON`, `LOCATION`, `DATE_TIME`,
 `IBAN_CODE`, `CREDIT_CARD`, `IT_IDENTITY_CARD`, `IP_ADDRESS`, `URL`, `SSN`
+
+Supported PHI entities (`ahds` backend): `UNKNOWN`, `ACCOUNT`, `AGE`, `BIO_ID`, `CITY`, `COUNTRY_OR_REGION`,
+`DATE`, `DEVICE`, `DOCTOR`, `EMAIL`, `FAX`, `HEALTH_PLAN`, `HOSPITAL`, `ID_NUM`, `IP_ADDRESS`, `LICENSE`,
+`LOCATION_OTHER`, `MEDICAL_RECORD`, `ORGANIZATION`, `PATIENT`, `PHONE`, `PROFESSION`, `SOCIAL_SECURITY`,
+`STATE`, `STREET`, `URL`, `USERNAME`, `VEHICLE`, `ZIP`
 
 ### Type: `presidio_anonymizer`
 
@@ -119,6 +155,26 @@ Detects and **masks** PII. No `behavior` needed — it always redacts.
     entities:
       - EMAIL_ADDRESS
       - IBAN_CODE
+```
+
+Accepts the same `backend` / `ahds` parameters as `presidio_analyzer` — use `backend: ahds` with the PHI entity list to redact PHI:
+
+```yaml
+- name: redact-phi
+  type: presidio_anonymizer
+  where: input
+  parameters:
+    language: en
+    entities:
+      - PATIENT
+      - DOCTOR
+      - MEDICAL_RECORD
+    backend: ahds
+    ahds:
+      endpoint: https://<name>.api.<region>.deid.azure.com
+      tenant_id: <tenant-id>
+      client_id: <client-id>
+      client_secret: !secret AHDS_CLIENT_SECRET
 ```
 
 ### Type: `judge`
@@ -398,6 +454,9 @@ budget_limiting:
 - Guardrails are defined globally and referenced by name inside routes.
 - `parameters.values` for string/regex guardrails is always a **list**, never a single string.
 - `presidio_anonymizer` has no `behavior` — it always redacts.
+- `presidio_analyzer` and `presidio_anonymizer` support `backend: local` (default) or `backend: ahds`.
+- `backend: ahds` requires `parameters.ahds` with `endpoint`, `tenant_id`, `client_id`, and `client_secret` — `client_secret` must use `!secret` syntax, never an inline value.
+- With `backend: ahds`, use entity names from the PHI list (e.g. `PATIENT`, `DOCTOR`, `MEDICAL_RECORD`); the local entity names (e.g. `EMAIL_ADDRESS`, `IBAN_CODE`) apply only to `backend: local`.
 - Caching requires `type: exact` or `type: semantic` — `type` is mandatory.
 - Semantic caching requires `embedding_models` on the route and `cache` at top level.
 - `token_length` and `context_length` routing conditions use `gte`, `lte`, or `between` — never a bare `threshold`.
