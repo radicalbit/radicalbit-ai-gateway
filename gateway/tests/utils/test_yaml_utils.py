@@ -65,3 +65,70 @@ def test_validate_gateway_config_secret_violation_includes_line_number():
     with pytest.raises(ProjectConfigValidationError) as exc_info:
         validate_gateway_config(yaml_with_secret, check_secrets=True)
     assert 'line 4' in str(exc_info.value)
+
+
+def test_validate_gateway_config_rejects_unknown_field_in_route():
+    yaml_with_extra_in_route = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    credentials:\n'
+        '      api_key: !secret OPENAI_API_KEY\n'
+        'routes:\n'
+        '  default-route:\n'
+        '    chat_models: [m1]\n'
+        '    unknown_field: 1\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_extra_in_route, check_secrets=False)
+    message = str(exc_info.value)
+    assert 'routes.default-route.unknown_field' in message
+    assert 'Extra inputs are not permitted' in message
+
+
+def test_validate_gateway_config_rejects_unknown_top_level_field():
+    yaml_with_extra_top = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    credentials:\n'
+        '      api_key: !secret OPENAI_API_KEY\n'
+        'routes: {}\n'
+        'unexpected_top: true\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_extra_top, check_secrets=False)
+    assert 'unexpected_top' in str(exc_info.value)
+
+
+def test_validate_gateway_config_suggests_correct_field_on_typo():
+    yaml_with_typo = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    credentials:\n'
+        '      api_key: !secret OPENAI_API_KEY\n'
+        'route:\n'
+        '  default-route:\n'
+        '    chat_models: [m1]\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_typo, check_secrets=False)
+    message = str(exc_info.value)
+    assert "did you mean 'routes'?" in message
+
+
+def test_validate_gateway_config_extra_field_includes_line():
+    yaml_with_typo = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    credentials:\n'
+        '      api_key: !secret OPENAI_API_KEY\n'
+        'rout:\n'
+        '  default-route:\n'
+        '    chat_models: [m1]\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_typo, check_secrets=False)
+    assert "'rout' (line 6)" in str(exc_info.value)
