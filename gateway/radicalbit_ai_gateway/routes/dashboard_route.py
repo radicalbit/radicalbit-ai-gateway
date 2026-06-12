@@ -125,9 +125,7 @@ class DashboardRoute:
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
-                raise GatewayNotFoundError(
-                    f'No active configuration for project {project.name}'
-                )
+                return EventsDTO(request_error_percentage=0.0)
             return event_service.get_total_counter(
                 project_uuid=project_uuid,
                 config=project_entry.config,
@@ -151,9 +149,7 @@ class DashboardRoute:
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
-                raise GatewayNotFoundError(
-                    f'No active configuration for project {project.name}'
-                )
+                return []
             return event_service.get_total_counter_per_route(
                 project_uuid=project_uuid,
                 project_name=project.name,
