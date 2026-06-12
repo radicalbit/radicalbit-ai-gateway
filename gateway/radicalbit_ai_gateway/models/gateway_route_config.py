@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
@@ -13,6 +13,8 @@ from radicalbit_ai_gateway.models.limiting import (
 
 
 class GatewayRouteConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     route_name: str = Field(
         ...,
         description='Unique name for the route configuration.',

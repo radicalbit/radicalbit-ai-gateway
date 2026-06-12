@@ -1,14 +1,6 @@
 import uuid
 
-from sqlalchemy import (
-    TEXT,
-    TIMESTAMP,
-    UUID,
-    VARCHAR,
-    Column,
-    ForeignKey,
-    UniqueConstraint,
-)
+from sqlalchemy import TEXT, TIMESTAMP, UUID, VARCHAR, Column, ForeignKey, Index, text
 
 from radicalbit_ai_gateway.db.dao.base_dao import BaseDAO
 from radicalbit_ai_gateway.db.database import BaseTable, Reflected
@@ -16,7 +8,14 @@ from radicalbit_ai_gateway.db.database import BaseTable, Reflected
 
 class Project(Reflected, BaseTable, BaseDAO):
     __tablename__ = 'project'
-    __table_args__ = (UniqueConstraint('NAME', name='uq_project_NAME'),)
+    __table_args__ = (
+        Index(
+            'uq_project_NAME',
+            'NAME',
+            unique=True,
+            postgresql_where=text('"DELETED_AT" IS NULL'),
+        ),
+    )
     uuid = Column(
         'UUID',
         UUID(as_uuid=True),

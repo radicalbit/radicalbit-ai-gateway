@@ -166,6 +166,18 @@ class ProjectServiceTest(DatabaseIntegration):
         with pytest.raises(ProjectNotFoundError):
             self.svc.get_by_uuid(out.uuid)
 
+    def test_recreate_with_deleted_project_name_succeeds(self):
+        out, _, _ = self._create(name='reuse-me')
+        self.svc.delete_project(out.uuid)
+        again = self.svc.create_project(ProjectIn(name='reuse-me'))
+        assert again.uuid != out.uuid
+        assert again.name == 'reuse-me'
+
+    def test_duplicate_active_name_still_rejected(self):
+        self._create(name='dup-active')
+        with pytest.raises(ProjectAlreadyExistsError):
+            self.svc.create_project(ProjectIn(name='dup-active'))
+
     # --- get_config ---
 
     def test_get_config(self):

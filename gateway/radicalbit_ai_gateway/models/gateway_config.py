@@ -8,7 +8,7 @@ try:
 except ImportError:
     from typing_extensions import Self
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from radicalbit_ai_gateway.models.caching import CacheConfig, SemanticCaching
 from radicalbit_ai_gateway.models.fallback import FallbackModelType
@@ -35,6 +35,8 @@ def get_model_from_model_id(
 
 
 class GatewayConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     routes: dict[str, GatewayRouteConfig] = {}
     chat_models: list[Model]
     embedding_models: list[Model] | None = None
