@@ -62,6 +62,8 @@ async def _anonymize_text_with_presidio(
     language: str,
     entities: list,
     presidio_engine: PresidioEngine,
+    backend: str = 'local',
+    ahds=None,
 ) -> tuple[str, bool]:
     """Execute analyze + anonymize on a string.
     Returns (redacted_text, True) if changed, otherwise (original_text, False).
@@ -69,13 +71,29 @@ async def _anonymize_text_with_presidio(
     if not isinstance(text, str) or not text:
         return text, False
 
-    # Run presidio analysis in thread pool to avoid blocking
-    results = await asyncio.to_thread(
-        presidio_engine.analyzer.analyze,
-        text=text,
-        entities=entities,
-        language=language,
-    )
+    try:
+        analyzer = presidio_engine.get_analyzer(backend, ahds)
+    except Exception:
+        logger.exception('Failed to initialize Presidio analyzer (backend=%s)', backend)
+        raise
+
+    try:
+        results = await asyncio.to_thread(
+            analyzer.analyze,
+            text=text,
+            entities=entities,
+            language=language,
+        )
+    except ValueError:
+        logger.exception(
+            'Presidio analyze failed (backend=%s, entities=%s, language=%s). '
+            'Check that the requested entities are supported by the configured backend.',
+            backend,
+            entities,
+            language,
+        )
+        raise
+
     if not results:
         return text, False
 
@@ -112,6 +130,8 @@ class GuardrailRedact:
         """
         language = params.language
         entities = params.entities
+        backend = params.backend
+        ahds = params.ahds
 
         new_messages: list[BaseMessage] = []
         any_redacted = False
@@ -122,7 +142,7 @@ class GuardrailRedact:
             # Case 1: content is a string
             if isinstance(content, str):
                 red_text, changed = await _anonymize_text_with_presidio(
-                    content, language, entities, self._presidio_engine
+                    content, language, entities, self._presidio_engine, backend, ahds
                 )
                 any_redacted = any_redacted or changed
                 new_messages.append(_with_content(msg, red_text))
@@ -137,7 +157,12 @@ class GuardrailRedact:
                         t = p.get('text')
                         if isinstance(t, str):
                             red_t, ch = await _anonymize_text_with_presidio(
-                                t, language, entities, self._presidio_engine
+                                t,
+                                language,
+                                entities,
+                                self._presidio_engine,
+                                backend,
+                                ahds,
                             )
                             changed_here = changed_here or ch
                             np = dict(p)

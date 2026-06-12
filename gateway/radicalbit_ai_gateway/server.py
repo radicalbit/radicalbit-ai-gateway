@@ -31,6 +31,7 @@ from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
+from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
@@ -154,6 +155,7 @@ key_dao = KeyDAO(database)
 group_dao = GroupDAO(database)
 group_route_dao = GroupRouteDAO(database)
 project_dao = ProjectDAO(database)
+project_config_dao = ProjectConfigDAO(database)
 event_dao = EventDAO(ch_database)
 request_event_dao = RequestEventDAO(ch_database)
 otel_traces_dao = OtelTracesDAO(ch_database)
@@ -171,7 +173,9 @@ group_service = GroupService(
     key_service=key_service,
     project_configs=project_configs,
 )
-project_service = ProjectService(project_dao=project_dao)
+project_service = ProjectService(
+    project_dao=project_dao, project_config_dao=project_config_dao
+)
 config_generator_service = ConfigGeneratorService()
 event_service = EventService(
     event_dao=event_dao,
@@ -201,16 +205,25 @@ async def lifespan(app: FastAPI):
 
     async def _safe_register(project_out: ProjectOut) -> None:
         try:
-            if project_out.config_file:
+            served = next(
+                (
+                    c
+                    for c in project_out.configs
+                    if c.uuid == project_out.served_config_uuid
+                ),
+                None,
+            )
+            if served and served.config_file:
                 await register_fn(
                     project_out.uuid,
                     project_out.name,
-                    project_out.config_file,
+                    served.config_file,
                 )
                 logger.info('Loaded project routes at startup: %s', project_out.name)
             else:
                 logger.info(
-                    'Skipping project %s at startup — no config file', project_out.name
+                    'Skipping project %s at startup — no served config',
+                    project_out.name,
                 )
         except Exception:
             logger.exception(

@@ -2,10 +2,12 @@ from collections.abc import Sequence
 import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 
 from radicalbit_ai_gateway.db.database import Database
+from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
+from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 
@@ -19,6 +21,33 @@ class ProjectDAO:
     def insert(self, project: Project) -> Project:
         with self.db.begin_session() as session:
             session.add(project)
+            session.flush()
+            return project
+
+    def insert_with_configs(
+        self,
+        project: Project,
+        slots: Sequence[tuple[Slot, str | None, ConfigStatus]],
+    ) -> Project:
+        """Insert a project and its initial config slots in a single
+        transaction, so a project is never left with a partial set of slots
+        (the "always 2 slots" invariant holds even on a mid-creation crash).
+        """
+        now = datetime.datetime.now(tz=_UTC)
+        with self.db.begin_session() as session:
+            session.add(project)
+            session.flush()  # assign project.uuid before linking the configs
+            for slot, config_file, status in slots:
+                session.add(
+                    ProjectConfig(
+                        project_uuid=project.uuid,
+                        slot=slot.value,
+                        config_file=config_file,
+                        config_status=status.value,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
             session.flush()
             return project
 
@@ -40,65 +69,22 @@ class ProjectDAO:
     ) -> Sequence[Project]:
         with self.db.begin_session() as session:
             stmt = select(Project).where(Project.deleted_at.is_(None))
-            if project_filter == ProjectFilter.ACTIVE:
-                stmt = stmt.where(Project.config_file.is_not(None))
+            if project_filter in (ProjectFilter.ACTIVE, ProjectFilter.PROD):
+                stmt = stmt.where(Project.served_config_uuid.is_not(None))
+            elif project_filter == ProjectFilter.DEV:
+                stmt = stmt.where(Project.served_config_uuid.is_(None))
             elif project_filter == ProjectFilter.WITH_USAGE:
                 stmt = stmt.where(Project.first_served_at.is_not(None))
-            elif project_filter == ProjectFilter.DEV:
-                stmt = stmt.where(Project.config_file.is_(None))
-            elif project_filter == ProjectFilter.PROD:
-                stmt = stmt.where(Project.config_file.is_not(None))
             return session.scalars(stmt).all()
 
     def get_all_with_config(self) -> Sequence[Project]:
+        """Projects that currently have a served config (used at startup)."""
         with self.db.begin_session() as session:
             stmt = select(Project).where(
-                Project.config_file.is_not(None),
+                Project.served_config_uuid.is_not(None),
                 Project.deleted_at.is_(None),
             )
             return session.scalars(stmt).all()
-
-    def update_draft_config_file(
-        self, project_uuid: UUID, draft_config_file: str
-    ) -> int:
-        now = datetime.datetime.now(tz=_UTC)
-        with self.db.begin_session() as session:
-            query = (
-                update(Project)
-                .where(Project.uuid == project_uuid)
-                .values(
-                    draft_config_file=draft_config_file,
-                    config_status=ConfigStatus.DRAFT.value,
-                    updated_at=now,
-                )
-            )
-            return session.execute(query).rowcount
-
-    def promote_draft_to_config(self, project_uuid: UUID, config_file: str) -> int:
-        now = datetime.datetime.now(tz=_UTC)
-        with self.db.begin_session() as session:
-            query = (
-                update(Project)
-                .where(Project.uuid == project_uuid)
-                .values(
-                    config_file=config_file,
-                    draft_config_file=None,
-                    config_status=ConfigStatus.SERVED.value,
-                    updated_at=now,
-                    first_served_at=func.coalesce(Project.first_served_at, now),
-                )
-            )
-            return session.execute(query).rowcount
-
-    def set_config_status(self, project_uuid: UUID, status: ConfigStatus) -> int:
-        now = datetime.datetime.now(tz=_UTC)
-        with self.db.begin_session() as session:
-            query = (
-                update(Project)
-                .where(Project.uuid == project_uuid)
-                .values(config_status=status.value, updated_at=now)
-            )
-            return session.execute(query).rowcount
 
     def soft_delete(self, project_uuid: UUID) -> int:
         now = datetime.datetime.now(tz=_UTC)
@@ -108,25 +94,4 @@ class ProjectDAO:
                 .where(Project.uuid == project_uuid)
                 .values(deleted_at=now, updated_at=now)
             )
-            return session.execute(query).rowcount
-
-    def unserve_config(self, project_uuid: UUID, restore_draft: bool) -> int:
-        now = datetime.datetime.now(tz=_UTC)
-        with self.db.begin_session() as session:
-            project = session.scalar(
-                select(Project).where(
-                    Project.uuid == project_uuid,
-                    Project.deleted_at.is_(None),
-                )
-            )
-            if project is None:
-                return 0
-            values: dict = {
-                'config_status': ConfigStatus.DRAFT.value,
-                'config_file': None,
-                'updated_at': now,
-            }
-            if restore_draft:
-                values['draft_config_file'] = project.config_file
-            query = update(Project).where(Project.uuid == project_uuid).values(**values)
             return session.execute(query).rowcount

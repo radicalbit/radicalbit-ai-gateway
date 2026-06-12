@@ -58,6 +58,16 @@ class DatabaseIntegration(unittest.TestCase):
             for c in to_remove:
                 table.constraints.remove(c)
 
+            # Remove duplicate indexes (by name) that reflection may have
+            # re-added alongside model-declared ones (e.g. partial unique
+            # indexes), which would make a later create_all emit them twice.
+            seen_idx: set[str] = set()
+            for index in list(table.indexes):
+                if index.name in seen_idx:
+                    table.indexes.discard(index)
+                else:
+                    seen_idx.add(index.name)
+
     def tearDown(self):
         with self.db.begin_session() as session:
             for table in reversed(database.BaseTable.metadata.sorted_tables):

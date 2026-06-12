@@ -279,12 +279,12 @@ def _guardrail_param_payload(guardrail: Any) -> Any:
             return f'<unprintable {type(v).__name__}>'
 
     fallback = {'class': type(guardrail).__name__, 'repr': _safe_str(guardrail)}
-
-    # Fields that must never be exposed to clients.
-    _SENSITIVE_PARAM_KEYS = {'api_key', 'base_url'}
+    _SENSITIVE_PARAM_KEYS = {'api_key', 'base_url', 'ahds'}
 
     def _serialize_params(params: Any) -> Any:
-        if isinstance(params, dict | list):
+        if isinstance(params, dict):
+            return {k: v for k, v in params.items() if k not in _SENSITIVE_PARAM_KEYS}
+        if isinstance(params, list):
             return params
         if hasattr(params, 'model_dump'):
             try:

@@ -2,7 +2,9 @@ import copy
 import unittest
 from unittest.mock import MagicMock, patch
 
+from azure.identity import ClientSecretCredential, EnvironmentCredential
 from langchain_core.messages import HumanMessage
+from presidio_analyzer import EntityRecognizer
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
@@ -12,6 +14,7 @@ from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.guardrails import (
+    AhdsParams,
     CheckParameter,
     Guardrail,
     GuardrailBehaviorType,
@@ -575,3 +578,79 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
 
         assert self.soft_block_info is not None
         assert self.soft_block_info.guardrail.name == 'soft_block_start_with_hello'
+
+
+class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
+    """Tests for the Azure Health Data Services de-identification recognizer integration."""
+
+    def test_local_analyzer_has_no_ahds_recognizer(self):
+        engine = PresidioEngine()
+        analyzer = engine.get_analyzer('local')
+        recognizer_names = [r.name for r in analyzer.registry.recognizers]
+        assert 'Azure Health Deid' not in ' '.join(recognizer_names)
+
+    def test_ahds_analyzer_raises_when_endpoint_missing(self):
+        engine = PresidioEngine()
+        with pytest.raises(ValueError, match='AHDS endpoint must be set'):
+            engine.get_analyzer('ahds')
+
+    def test_ahds_analyzer_registers_recognizer(self):
+        mock_recognizer_instance = MagicMock(spec=EntityRecognizer)
+        mock_recognizer_instance.name = 'Azure Health Deid'
+        mock_recognizer_instance.supported_language = 'en'
+        mock_recognizer_instance.supported_entities = ['PATIENT', 'DOCTOR']
+        mock_recognizer_instance.get_supported_entities.return_value = [
+            'PATIENT',
+            'DOCTOR',
+        ]
+
+        with (
+            patch(
+                'radicalbit_ai_gateway.guardrails.presidio.AzureHealthDeidRecognizer',
+                return_value=mock_recognizer_instance,
+            ) as mock_cls,
+            patch.object(
+                PresidioEngine,
+                '_build_ahds_client',
+                return_value=MagicMock(),
+            ) as mock_build_client,
+        ):
+            engine = PresidioEngine()
+            engine.get_analyzer(
+                'ahds', AhdsParams(endpoint='https://test.api.deid.azure.com')
+            )
+            mock_cls.assert_called_once()
+            mock_build_client.assert_called_once_with(
+                'https://test.api.deid.azure.com', '2024-11-15', None, None, None
+            )
+
+    def test_credential_uses_client_secret_when_configured(self):
+        credential = PresidioEngine._build_ahds_credential(
+            'tenant-123', 'client-456', 'super-secret'
+        )
+        assert isinstance(credential, ClientSecretCredential)
+
+    def test_credential_falls_back_to_environment(self):
+        credential = PresidioEngine._build_ahds_credential(None, None, None)
+        assert isinstance(credential, EnvironmentCredential)
+
+    def test_resolve_settings_from_ahds_params(self):
+        engine = PresidioEngine()
+        ahds = AhdsParams(
+            endpoint='https://guardrail.deid.azure.com',
+            tenant_id='gr-tenant',
+            client_secret='super-secret',
+        )
+        endpoint, api_version, tenant_id, client_id, secret = (
+            engine._resolve_ahds_settings(ahds)
+        )
+        # All settings come from the per-guardrail AhdsParams;
+        # api_version falls back to the model default.
+        assert endpoint == 'https://guardrail.deid.azure.com'
+        assert tenant_id == 'gr-tenant'
+        assert client_id is None
+        assert api_version == '2024-11-15'
+        # The SecretStr is unwrapped to a plain string for the Azure credential.
+        assert secret == 'super-secret'
+        # And it is masked in the model's repr/serialization.
+        assert 'super-secret' not in repr(ahds)
