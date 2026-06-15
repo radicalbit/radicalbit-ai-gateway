@@ -45,7 +45,7 @@ class ProjectDAO:
                         config_file=config_file,
                         config_status=status.value,
                         created_at=now,
-                        updated_at=now,
+                        updated_at=None,
                     )
                 )
             session.flush()

@@ -343,6 +343,7 @@ def get_sample_config_slot_out(
         slot=slot.value,
         config_file=config_file,
         config_status=config_status,
+        created_at=str(now),
         updated_at=str(now),
     )
 

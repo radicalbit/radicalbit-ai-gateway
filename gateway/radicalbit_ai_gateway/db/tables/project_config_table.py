@@ -59,5 +59,5 @@ class ProjectConfig(Reflected, BaseTable, BaseDAO):
         server_default='DRAFT',
     )
     created_at = Column('CREATED_AT', TIMESTAMP(timezone=True), nullable=False)
-    updated_at = Column('UPDATED_AT', TIMESTAMP(timezone=True), nullable=False)
+    updated_at = Column('UPDATED_AT', TIMESTAMP(timezone=True), nullable=True)
     deleted_at = Column('DELETED_AT', TIMESTAMP(timezone=True), nullable=True)

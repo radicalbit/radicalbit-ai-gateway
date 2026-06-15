@@ -46,6 +46,18 @@ class ProjectServiceTest(DatabaseIntegration):
         assert out.project_status == ProjectStatus.DEV
         assert out.served_config_uuid is None
 
+    def test_create_project_leaves_updated_at_null(self):
+        out, _, _ = self._create()
+        assert all(c.created_at is not None for c in out.configs)
+        assert all(c.updated_at is None for c in out.configs)
+
+    def test_update_config_sets_updated_at(self):
+        out, a, _ = self._create()
+        res = self.svc.update_config(
+            out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
+        )
+        assert next(c for c in res.configs if c.uuid == a).updated_at is not None
+
     def test_create_project_already_exists(self):
         # IntegrityError -> ProjectAlreadyExistsError mapping is a unit concern,
         # tested with a mocked DAO to stay independent of create_all metadata.

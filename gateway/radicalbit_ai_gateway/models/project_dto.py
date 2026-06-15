@@ -75,7 +75,8 @@ class ConfigSlotOut(BaseModel):
     slot: str
     config_file: str | None
     config_status: ConfigStatus
-    updated_at: str
+    created_at: str
+    updated_at: str | None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -88,7 +89,8 @@ class ConfigSlotOut(BaseModel):
             slot=config.slot,
             config_file=config.config_file,
             config_status=ConfigStatus(config.config_status),
-            updated_at=str(config.updated_at),
+            created_at=str(config.created_at),
+            updated_at=str(config.updated_at) if config.updated_at else None,
         )
 
 
