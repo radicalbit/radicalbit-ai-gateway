@@ -16,7 +16,6 @@ logger = logging.getLogger(get_app_config().log_config.logger_name)
 class PresidioEngine:
     def __init__(self, languages: list[str] = ['en', 'it']):
         self._analyzer_local = None
-        self._analyzer_ahds_cache = {}
         self._anonymizer = None
         self._nlp_engine = None
         self._languages = languages
@@ -96,10 +95,6 @@ class PresidioEngine:
         endpoint, api_version, tenant_id, client_id, client_secret = (
             self._resolve_ahds_settings(ahds)
         )
-        cache_key = (endpoint, api_version, tenant_id, client_id)
-        analyzer = self._analyzer_ahds_cache.get(cache_key)
-        if analyzer is not None:
-            return analyzer
 
         logger.info(
             'Presidio Analyzer (AHDS) initialization... endpoint=%s api_version=%s',
@@ -129,7 +124,6 @@ class PresidioEngine:
         )
         analyzer.registry.add_recognizer(recognizer)
         logger.info('AHDS recognizer registered on AnalyzerEngine')
-        self._analyzer_ahds_cache[cache_key] = analyzer
         return analyzer
 
     @property
