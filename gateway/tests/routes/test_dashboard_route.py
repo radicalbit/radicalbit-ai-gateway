@@ -1351,3 +1351,49 @@ class TestDashboardRoute(unittest.TestCase):
             granularity='months',
             routes=None,
         )
+
+
+class TestDashboardRouteNoActiveConfig(unittest.TestCase):
+    """Endpoints that return lists or aggregates must return empty data (not 404)
+    when the project exists in the DB but has no actively served config.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix = '/public/api/v1'
+        cls.event_service: EventService = MagicMock(spec_set=EventService)
+        cls.request_event_service: RequestEventService = MagicMock(
+            spec_set=RequestEventService
+        )
+        cls.project_service: ProjectService = MagicMock(spec_set=ProjectService)
+        os.environ['ENABLED_PLUGINS'] = 'registry_oidc_auth,keycloak_idp'
+        router = DashboardRoute.get_dashboard_router(
+            event_service=cls.event_service,
+            request_event_service=cls.request_event_service,
+            project_service=cls.project_service,
+        )
+        app = FastAPI(title='AI Gateway', debug=True)
+        app.add_exception_handler(GatewayError, gateway_exception_handler)
+        app.include_router(router, prefix=cls.prefix)
+        app.state.project_configs = {}
+        app.state.routes = {}
+        cls.client = TestClient(app)
+        cls.project_path = f'{cls.prefix}/projects/{PROJECT_UUID}'
+
+    def setUp(self):
+        project_mock = MagicMock()
+        project_mock.name = PROJECT_NAME
+        self.project_service.get_by_uuid = MagicMock(return_value=project_mock)
+
+    def test_routes_returns_empty_list_when_no_active_config(self):
+        response = self.client.get(f'{self.project_path}/routes')
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_metrics_returns_empty_dto_when_no_active_config(self):
+        response = self.client.get(f'{self.project_path}/metrics')
+        assert response.status_code == 200
+        data = response.json()
+        assert data['totalRequests'] == 0
+        assert data['totalInputTokenProcessed'] == 0
+        assert data['totalOutputTokenProcessed'] == 0

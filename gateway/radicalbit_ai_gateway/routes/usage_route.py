@@ -7,7 +7,6 @@ from fastapi import APIRouter, Query, Request
 from radicalbit_ai_gateway.models.event_dto import UsageCostsDTO
 from radicalbit_ai_gateway.services.event_service import EventService
 from radicalbit_ai_gateway.services.project_service import ProjectService
-from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
 
 
 class UsageRoute:
@@ -34,9 +33,7 @@ class UsageRoute:
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
-                raise GatewayNotFoundError(
-                    f'No active configuration for project {project.name}'
-                )
+                return UsageCostsDTO(total=0.0, routes=[])
             return event_service.get_all_routes_costs(
                 project_uuid=project_uuid,
                 config=project_entry.config,

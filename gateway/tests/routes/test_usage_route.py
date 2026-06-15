@@ -157,3 +157,14 @@ class TestUsageRoute(unittest.TestCase):
         summary = response.json()['routes'][0]['summary']
         assert 'cache_triggered' not in summary
         assert 'saved_amount_input' not in summary
+
+    def test_usage_costs_returns_empty_when_no_active_config(self):
+        app = self.client.app
+        original = app.state.project_configs
+        app.state.project_configs = {}
+        try:
+            response = self.client.get(f'{self.project_path}/usage/costs')
+            assert response.status_code == 200
+            assert response.json() == {'total': 0.0, 'routes': []}
+        finally:
+            app.state.project_configs = original
