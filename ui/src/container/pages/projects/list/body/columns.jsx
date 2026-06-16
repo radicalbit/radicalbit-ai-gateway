@@ -1,6 +1,6 @@
 import ConfigStatusTag from '@Container/pages/projects/components/config-status-tag';
 import ProjectStatusTag from '@Container/pages/projects/components/project-status-tag';
-import { useGetThreeDotsMenuItems } from '@Container/pages/projects/detail/header/three-dots-menu';
+import { useGetThreeDotsMenuItems } from '@Container/pages/projects/list/body/three-dots-menu';
 import { DATE_FORMAT, DATE_FORMAT_SHORT } from '@Src/constants';
 import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons';
 import {

@@ -1,7 +1,6 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
-import { DETAIL_LAYOUT_CONFIGURATION, WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { CreateProjectButton } from '@Container/pages/projects/list/header';
-import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
+import { SEARCH_PARAMS } from '@Src/constants';
 import {
   useApproveConfigMutation,
   useCancelApprovalMutation,
@@ -19,11 +18,9 @@ import {
   Spin,
   Void,
 } from '@radicalbit/radicalbit-design-system';
-import { useEffect, useMemo } from 'react';
-import { useDispatch } from 'react-redux';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import getColumns from './columns';
-import VerticalResizableDivider from './vertical-resizable-divider';
 
 function ProjectsList() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -87,8 +84,6 @@ function ProjectsCount({ searchValue }) {
 }
 
 function ProjectsTable({ searchValue }) {
-  useInitLayoutConfigurations();
-
   const { data = [], isError, isLoading, isSuccess } = useGetProjectsQuery();
 
   if (isLoading) {
@@ -126,9 +121,6 @@ function ProjectsTable({ searchValue }) {
 }
 
 function IsSuccess({ searchValue }) {
-  const navigate = useNavigate();
-  const { uuid } = useParams();
-
   const { data = [] } = useGetProjectsQuery();
 
   const filteredData = searchValue
@@ -142,33 +134,17 @@ function IsSuccess({ searchValue }) {
 
   const columns = getColumns();
 
-  const handleOnRowClick = (record) => {
-    const { search } = window.location;
-    navigate(`/${PathsEnum.PROJECTS}/${record.uuid}${search}`);
-  };
-
   const components = useMemo(() => ({ body: { row: makeRowWithSpinner(columns.length) } }), [columns.length]);
 
   return (
-    <>
-      <DataTable
-        clickable
-        columns={columns}
-        components={components}
-        dataSource={sortedData}
-        onRow={(record) => ({
-          onClick: () => {
-            handleOnRowClick(record);
-          },
-        })}
-        pagination={{ hideOnSinglePage: true }}
-        rowClassName={({ uuid: projectUUID }) => projectUUID === uuid ? DataTable.ROW_PRIMARY_LIGHT : undefined}
-        rowKey={({ uuid: projectUUID }) => projectUUID}
-        scroll={{ y: 'calc(100vh - 10rem)' }}
-      />
-
-      <VerticalResizableDivider />
-    </>
+    <DataTable
+      columns={columns}
+      components={components}
+      dataSource={sortedData}
+      pagination={{ hideOnSinglePage: true }}
+      rowKey={({ uuid: projectUUID }) => projectUUID}
+      scroll={{ y: 'calc(100vh - 10rem)' }}
+    />
   );
 }
 
@@ -208,19 +184,6 @@ const useIsConfigBusy = (configUuid) => {
   const [, { isLoading: isUnserving }] = useUnserveConfigMutation({ fixedCacheKey: `unserve-config-${configUuid}` });
 
   return isApproving || isCancelling || isServing || isUnserving;
-};
-
-const useInitLayoutConfigurations = () => {
-  const dispatch = useDispatch();
-  const { uuid } = useParams();
-
-  useEffect(() => {
-    if (!uuid) {
-      WIDE_MAIN_LAYOUT_CONFIGURATION.forEach((action) => dispatch(action()));
-    } else {
-      DETAIL_LAYOUT_CONFIGURATION.forEach((action) => dispatch(action()));
-    }
-  }, [dispatch, uuid]);
 };
 
 export default ProjectsList;

@@ -12,33 +12,12 @@ import {
 import {
   faCircleStop,
   faCodePullRequest,
-  faEllipsisVertical,
   faPenToSquare,
   faPlay,
   faStop,
   faTrash,
 } from '@fortawesome/free-solid-svg-icons';
-import {
-  Button, Dropdown, FontAwesomeIcon,
-} from '@radicalbit/radicalbit-design-system';
-import { useParams } from 'react-router-dom';
-
-function ThreeDotsMenu() {
-  const { uuid } = useParams();
-  const items = useGetThreeDotsMenuItems(uuid);
-
-  if (!uuid) {
-    return false;
-  }
-
-  return (
-    <Dropdown className="c-project-config-menu" menu={{ items }}>
-      <Button type="text">
-        <FontAwesomeIcon icon={faEllipsisVertical} />
-      </Button>
-    </Dropdown>
-  );
-}
+import { FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
 
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { data, isLoading, isError, isSuccess } = useGetProjectQuery(uuid, { skip: !uuid });
@@ -216,5 +195,3 @@ const useDeleteProjectItems = (uuid) => [
       </DeleteProject>
     ),
   }];
-
-export default ThreeDotsMenu;

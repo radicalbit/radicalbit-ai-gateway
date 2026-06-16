@@ -32,8 +32,6 @@ export default function MainHeaderContentSwitch() {
       <Route element={<UsageListHeader />} path={`/${PathsEnum.USAGE}`} />
 
       <Route element={<ProjectsListHeader />} path={`/${PathsEnum.PROJECTS}`} />
-
-      <Route element={<ProjectsListHeader />} path={`/${PathsEnum.PROJECTS}/:uuid`} />
     </Routes>
   );
 }

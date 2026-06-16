@@ -58,11 +58,6 @@ export default function MainHeaderContentSwitch() {
       />
 
       <Route
-        element={<ProjectsList />}
-        path={`/${PathsEnum.PROJECTS}/:uuid`}
-      />
-
-      <Route
         element={<Navigate replace to={`/${PathsEnum.PROJECTS}`} />}
         path="*"
       />

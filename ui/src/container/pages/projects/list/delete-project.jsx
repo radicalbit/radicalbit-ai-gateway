@@ -1,16 +1,10 @@
 import SuccessMessage from '@Components/success-message';
-import { PathsEnum } from '@Src/constants';
 import { useGetProjectQuery, useDeleteProjectMutation } from '@State/projects/api';
 import { Popconfirm, SectionTitle, TextWithBold } from '@radicalbit/radicalbit-design-system';
-import { useMatch, useNavigate } from 'react-router-dom';
 
 function DeleteProject({ children, uuid }) {
   const { data } = useGetProjectQuery(uuid);
   const name = data?.name;
-
-  const match = useMatch(`/${PathsEnum.PROJECTS}/:uuid`);
-  const currentUuid = match?.params.uuid;
-  const navigate = useNavigate();
 
   const [trigger] = useDeleteProjectMutation({ fixedCacheKey: `delete-project-${uuid}` });
 
@@ -26,11 +20,6 @@ function DeleteProject({ children, uuid }) {
     }
 
     localStorage.removeItem('rbit-gw-projectUuid');
-    localStorage.removeItem('rbit-gw-routes-projectUuid');
-
-    if (currentUuid === uuid) {
-      navigate(`/${PathsEnum.PROJECTS}`, { replace: true });
-    }
   };
 
   const handleOnCancel = (e) => { e.stopPropagation(); };
