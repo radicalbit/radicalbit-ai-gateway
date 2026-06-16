@@ -147,7 +147,17 @@ class ProjectRoute:
                 await register_project_routes(
                     project_uuid, project.name, served.config_file
                 )
-            logger.info('Served config %s for project %s', config_uuid, project_uuid)
+            # Auto-cleanup on swap: drop group↔route associations whose route_name
+            # is no longer present in the newly served config.
+            removed = group_service.cleanup_orphaned_associations(
+                project_uuid, project.name
+            )
+            logger.info(
+                'Served config %s for project %s (removed %d orphaned associations)',
+                config_uuid,
+                project_uuid,
+                removed,
+            )
             return project
 
         @router.post(

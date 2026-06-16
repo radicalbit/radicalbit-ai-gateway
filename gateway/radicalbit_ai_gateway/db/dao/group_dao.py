@@ -104,6 +104,20 @@ class GroupDAO:
             )
             return session.scalars(stmt).all()
 
+    def delete_orphaned_associations(
+        self, project_uuid: UUID, valid_route_names: list[str]
+    ) -> int:
+        """Delete the project's group↔route associations whose route_name is not
+        in valid_route_names (the routes of the newly served config). Returns the
+        number of deleted rows.
+        """
+        with self.db.begin_session() as session:
+            query = delete(GroupRoute).where(
+                GroupRoute.project_uuid == project_uuid,
+                GroupRoute.route_name.notin_(valid_route_names),
+            )
+            return session.execute(query).rowcount
+
     def get_route_names_by_group_uuid(self, group_uuid: UUID) -> list[str]:
         """Return fully-qualified route names (project_name/route_name) for a group."""
         with self.db.begin_session() as session:

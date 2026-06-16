@@ -103,3 +103,43 @@ class GroupRouteDAOTest(DatabaseIntegration):
         project_uuids = {r.project_uuid for r in inserted}
         assert self.project_uuid in project_uuids
         assert project_b_uuid in project_uuids
+
+    def test_delete_orphaned_associations_removes_routes_absent_from_config(self):
+        routes = [
+            db_mock.get_sample_group_route(
+                group_uuid=self.group_one,
+                route_name='route-A',
+                project_uuid=self.project_uuid,
+            ),
+            db_mock.get_sample_group_route(
+                group_uuid=self.group_two,
+                route_name='gone-route',
+                project_uuid=self.project_uuid,
+            ),
+        ]
+        self.group_route_dao.add_bulk(routes)
+        removed = self.group_dao.delete_orphaned_associations(
+            self.project_uuid, ['route-A']
+        )
+        assert removed == 1
+        remaining = self.group_dao.get_all_group_by_route_name(
+            self.project_uuid, 'gone-route'
+        )
+        assert remaining == []
+
+    def test_delete_orphaned_associations_empty_keep_list_removes_all(self):
+        routes = [
+            db_mock.get_sample_group_route(
+                group_uuid=self.group_one,
+                route_name='route-A',
+                project_uuid=self.project_uuid,
+            ),
+            db_mock.get_sample_group_route(
+                group_uuid=self.group_two,
+                route_name='route-B',
+                project_uuid=self.project_uuid,
+            ),
+        ]
+        self.group_route_dao.add_bulk(routes)
+        removed = self.group_dao.delete_orphaned_associations(self.project_uuid, [])
+        assert removed == 2

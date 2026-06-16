@@ -793,3 +793,27 @@ class GroupServiceTest(unittest.TestCase):
         route = next(r for r in res if r.name == 'proj-route')
         assert route.project_uuid == _MY_PROJECT_UUID
         assert route.project_name == 'my-project'
+
+    def test_cleanup_orphaned_associations_keeps_served_routes(self):
+        """Cleanup passes the served config's route names as the keep-list."""
+        self.group_dao.delete_orphaned_associations = MagicMock(return_value=2)
+        removed = self.group_service.cleanup_orphaned_associations(
+            _MY_PROJECT_UUID, 'my-project'
+        )
+        assert removed == 2
+        self.group_dao.delete_orphaned_associations.assert_called_once()
+        args = self.group_dao.delete_orphaned_associations.call_args.args
+        assert args[0] == _MY_PROJECT_UUID
+        assert set(args[1]) == {'route-A', 'route-B'}
+
+    def test_cleanup_orphaned_associations_unknown_project_deletes_all(self):
+        """With no served config the keep-list is empty, so every association is
+        removed.
+        """
+        self.group_dao.delete_orphaned_associations = MagicMock(return_value=3)
+        removed = self.group_service.cleanup_orphaned_associations(
+            uuid.uuid4(), 'unknown-project'
+        )
+        assert removed == 3
+        args = self.group_dao.delete_orphaned_associations.call_args.args
+        assert args[1] == []
