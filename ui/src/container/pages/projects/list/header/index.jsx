@@ -10,7 +10,7 @@ function ProjectsListHeader() {
       }}
       title={(
         <SectionTitle
-          subtitle="Manage your projects and organize resources"
+          subtitle="Organize your AI gateway routes by use case. Create a project to get started."
           title="Projects"
           titlePrefix={<FontAwesomeIcon icon={faFolderOpen} />}
         />
