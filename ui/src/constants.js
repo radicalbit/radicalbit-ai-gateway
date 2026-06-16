@@ -73,9 +73,29 @@ const CHART_COLORS = ['#3E75D8', '#4C95A4', '#F1B143', '#EF9337', '#84929E', '#7
 
 const DATE_FORMAT = ' DD MMM YYYY, HH:mm:ss';
 
+const DATE_FORMAT_SHORT = ' DD MMM YYYY';
+
+const ConfigStatusEnum = {
+  DRAFT: 'DRAFT',
+  READY_TO_SERVE: 'READY_TO_SERVE',
+  SERVED: 'SERVED',
+};
+
+const SlotEnum = {
+  A: 'A',
+  B: 'B',
+};
+
+const ProjectStatusEnum = {
+  DEV: 'DEV',
+  PROD: 'PROD',
+};
+
 export {
+  ConfigStatusEnum,
   CHART_COLORS,
   DATE_FORMAT,
+  DATE_FORMAT_SHORT,
   DEFAULT_POLLING_INTERVAL,
   GATEWAY_OWNER,
   echartNumberFormatter,
@@ -89,6 +109,8 @@ export {
   numberFormatterFloat,
   pageSize,
   PathsEnum,
+  ProjectStatusEnum,
+  SlotEnum,
   SortOrderEnum,
   startPage,
   STATUS_SELECTOR_MAX_LEN,
