@@ -16,7 +16,7 @@ function Subtitle() {
     return false;
   }
 
-  return 'The available groups are listed below. Each group can be associated with routes and credentials.';
+  return 'Control who can invoke which routes by linking credentials and routes together.';
 }
 
 function IsLoading() {

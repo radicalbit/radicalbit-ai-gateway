@@ -30,7 +30,7 @@ function TracingListHeader() {
       }}
       title={(
         <SectionTitle
-          subtitle="Track and inspect requests flowing through your gateway"
+          subtitle="Inspect individual requests processed by the gateway."
           title="Tracing"
           titlePrefix={<FontAwesomeIcon icon={faRoute} />}
         />

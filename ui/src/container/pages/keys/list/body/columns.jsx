@@ -6,6 +6,7 @@ import { useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import { useGetKeyQuery } from '@State/keys/api';
 import {
   faEdit, faPlus, faTrash,
+  faXmark,
 } from '@fortawesome/free-solid-svg-icons';
 import {
   DataTableAction,
@@ -202,7 +203,7 @@ function ActionRemoveGroup({ uuid }) {
         <Popconfirm
           cancelButtonProps={{ type: 'secondary-light' }}
           description={<TextWithBold bold={groupName} isQuestion text="Are you sure you want to remove the credential from the group" />}
-          label={<FontAwesomeIcon className="px-4" icon={faTrash} />}
+          label={<FontAwesomeIcon className="px-4" icon={faXmark} />}
           okText={<div className="is-error">Remove</div>}
           okType="error-light"
           onCancel={handleOnCancel}

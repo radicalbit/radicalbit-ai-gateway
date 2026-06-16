@@ -4,7 +4,7 @@ import { useGetGroupsQuery } from '@State/groups/api';
 function Subtitle() {
   const { isLoading, isSuccess, isError } = useGetGroupsQuery();
 
-  const label = 'Your credentials are listed below. Please note that we do not display your credentials again after you generate them.';
+  const label = 'Manage the API keys used to authenticate gateway route invocations.';
 
   if (isLoading) {
     return <IsLoading />;
