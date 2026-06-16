@@ -11,6 +11,7 @@
     margin: 1rem;
     max-height: calc(100vh - 5rem - 9rem); // FIXME: 5rem is @rdb-header-height
 
+    
     .c-code-block__lines_numbers {
       user-select: none;
       padding-right: 1rem;
@@ -31,6 +32,13 @@
     }
   }
 
+  &--minimal {
+    pre {
+      padding: 0;
+      margin: 0;
+    }
+  }
+  
   &--wrap-text {
     pre code {
       white-space: pre-wrap;
