@@ -10,6 +10,7 @@ import DeleteGroupWithAssociatedItems from './delete-group-with-associated-items
 import DeleteKeyWithGroups from './delete-key-with-groups';
 import EditGroup from './edit-group';
 import EditKey from './edit-key';
+import EditProjectConfig from './edit-project-config';
 import RouteAnalytics from './route-analytics';
 import TraceDetail from './trace-detail';
 
@@ -50,6 +51,9 @@ export default function ModalsProvider() {
 
     case modals.EDIT_KEY:
       return <EditKey />;
+
+    case modals.EDIT_PROJECT_CONFIG:
+      return <EditProjectConfig />;
 
     case modals.ROUTE_ANALYTICS:
       return <RouteAnalytics />;
