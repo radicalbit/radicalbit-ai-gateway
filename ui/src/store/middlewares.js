@@ -10,6 +10,7 @@ const errorWhiteList = {
   getCostsModelBreakdown: 404,
   getCostsGroupBreakdown: 404,
   getCostsKeyBreakdown: 404,
+  verifyProject: 404,
 };
 
 const successWhiteList = {};

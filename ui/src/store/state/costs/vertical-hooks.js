@@ -8,24 +8,24 @@ const useQueryRangeParams = () => {
   const gte = searchParams.get('gte') || null;
   const from = searchParams.get('from') || null;
   const to = searchParams.get('to') || null;
-  const projectUuid = searchParams.get('projectUuid') || null;
   const groupBy = searchParams.get('groupBy') || COSTS_GROUP_BY.groups.key;
+  const projectUuid = searchParams.get('projectUuid') || null;
 
   return {
-    gte, from, to, projectUuid, groupBy,
+    gte, from, to, groupBy, projectUuid,
   };
 };
 
 const useGetAllCostsWithRange = ({ withSavedTokens }, options) => {
-  const { gte, from, to } = useQueryRangeParams();
+  const { gte, from, to, projectUuid } = useQueryRangeParams();
 
   return useGetAllCostsQuery({
-    gte, from, to, withSavedTokens,
-  }, options);
+    projectUuid, gte, from, to, withSavedTokens,
+  }, { skip: !projectUuid, ...options });
 };
 
 const useGetCostsForChartsByRouteNameWithRange = ({ routeName }, options) => {
-  const { gte, from, to, projectUuid, groupBy } = useQueryRangeParams();
+  const { gte, from, to, groupBy, projectUuid } = useQueryRangeParams();
 
   return useGetCostsForChartsByRouteNameQuery({
     projectUuid, routeName, gte, from, to, groupBy,
@@ -33,11 +33,11 @@ const useGetCostsForChartsByRouteNameWithRange = ({ routeName }, options) => {
 };
 
 const useGetCostsByRouteNameWithRange = ({ routeName, withSavedTokens }, options) => {
-  const { gte, from, to } = useQueryRangeParams();
+  const { gte, from, to, projectUuid } = useQueryRangeParams();
 
   return useGetCostsByRouteNameQuery({
-    routeName, gte, from, to, withSavedTokens,
-  }, options);
+    projectUuid, routeName, gte, from, to, withSavedTokens,
+  }, { skip: !projectUuid, ...options });
 };
 
 const useGetTokensForChartsByRouteNameWithRange = ({ routeName }, options) => {
