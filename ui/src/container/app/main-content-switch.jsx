@@ -4,7 +4,6 @@ import ProjectsList from '@Container/pages/projects/list/body';
 import RoutesList from '@Container/pages/routes/list/body';
 import TracingList from '@Container/pages/tracing/list/body';
 import UsageList from '@Container/pages/usage/list/body';
-import ConfigDetail from '@Container/pages/config/detail/body';
 import { PathsEnum } from '@Src/constants';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import useAuthBootstrapReady from './use-auth-bootstrap-ready';
@@ -44,11 +43,6 @@ export default function MainHeaderContentSwitch() {
       />
 
       <Route
-        element={<ConfigDetail />}
-        path={`/${PathsEnum.CONFIG}`}
-      />
-
-      <Route
         element={<TracingList />}
         path={`/${PathsEnum.TRACING}`}
       />
@@ -64,7 +58,7 @@ export default function MainHeaderContentSwitch() {
       />
 
       <Route
-        element={<Navigate replace to={`/${PathsEnum.ROUTES}`} />}
+        element={<Navigate replace to={`/${PathsEnum.PROJECTS}`} />}
         path="*"
       />
     </Routes>

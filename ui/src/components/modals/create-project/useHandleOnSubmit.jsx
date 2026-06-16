@@ -1,12 +1,12 @@
 import SuccessMessage from '@Components/success-message';
 import { getMessageFromQueryError } from '@Helpers/errors';
-import useModals from '@Hooks/use-modals';
+import useModals, { modals } from '@Hooks/use-modals';
 import { useCreateProjectMutation } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { useCallback } from 'react';
 
 export default () => {
-  const { hideModal } = useModals();
+  const { hideModal, showModal } = useModals();
   const { isFormInvalid, isDirty, submitForm } = useFormbitContext();
 
   const [trigger, args] = useCreateProjectMutation({ fixedCacheKey: 'create-project' });
@@ -18,7 +18,7 @@ export default () => {
     }
 
     submitForm(async ({ form: formData }, setError) => {
-      const { error: createError } = await trigger({
+      const { error: createError, data } = await trigger({
         data: formData,
         successMessage: (<SuccessMessage prefix="Project" strong={formData.name} suffix="created" />),
       });
@@ -29,8 +29,12 @@ export default () => {
       }
 
       hideModal();
+
+      if (data?.uuid) {
+        showModal(modals.EDIT_PROJECT_CONFIG, { uuid: data.uuid });
+      }
     });
-  }, [args.isLoading, hideModal, isSubmitDisabled, submitForm, trigger]);
+  }, [args.isLoading, hideModal, isSubmitDisabled, showModal, submitForm, trigger]);
 
   return { handleOnSubmit, args, isSubmitDisabled };
 };

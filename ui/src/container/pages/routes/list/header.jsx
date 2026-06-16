@@ -8,8 +8,8 @@ function RoutesListHeader() {
       details={{ one: <TimeFilter /> }}
       title={(
         <SectionTitle
-          subtitle="Centralize, manage, and monitor the use of artificial intelligence within your company"
-          title="Welcome to your AI Gateway"
+          subtitle="Active routes currently served by the gateway. Only served configurations appear here."
+          title="Routes"
           titlePrefix={<FontAwesomeIcon icon={faMicrochip} />}
         />
       )}

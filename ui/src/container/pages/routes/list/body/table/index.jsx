@@ -1,3 +1,4 @@
+import Logo from '@Img/logo.png';
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { Popup, usePopup } from '@Components/popup';
 import { useGetThreeDotsMenuItems } from '@Container/pages/routes/detail/header/three-dots-menu';
@@ -8,6 +9,7 @@ import {
   Board,
   DataTable,
   Spin,
+  Void,
 } from '@radicalbit/radicalbit-design-system';
 import { useNavigate, useParams } from 'react-router-dom';
 import columns from './columns';
@@ -19,14 +21,16 @@ function RoutesTable({ searchValue }) {
   const navigate = useNavigate();
   const { name } = useParams();
 
-  const { data, isLoading, isError, isSuccess, refetch } = useGetRoutesWithRange();
+  const {
+    data, error, isLoading, isError, isSuccess, refetch,
+  } = useGetRoutesWithRange();
 
   if (isLoading) {
     return <IsLoading />;
   }
 
   if (isError) {
-    return <IsError refetch={refetch} />;
+    return <IsError error={error} refetch={refetch} />;
   }
 
   if (!isSuccess) {
@@ -104,7 +108,22 @@ function IsLoading() {
   );
 }
 
-function IsError({ refetch }) {
+function IsError({ error, refetch }) {
+  if (error?.status === 404) {
+    return (
+      <Board
+        main={(
+          <Void
+            description="This project has no routes yet."
+            image={<img alt="Logo" src={Logo} />}
+            style={{ height: '50vh' }}
+            title="No routes"
+          />
+        )}
+      />
+    );
+  }
+
   return (
     <Board
       main={<SomethingWentWrong refetch={refetch} style={{ height: '50vh' }} />}

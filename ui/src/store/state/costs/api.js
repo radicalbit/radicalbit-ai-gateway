@@ -5,7 +5,7 @@ export const costsApiSlice = apiService.injectEndpoints({
   endpoints: (builder) => ({
     getAllCosts: builder.query({
       providesTags: () => [API_TAGS.USAGE],
-      query: ({ from, to, gte, withSavedTokens }) => {
+      query: ({ projectUuid, from, to, gte, withSavedTokens }) => {
         const init = {};
 
         if (withSavedTokens) {
@@ -15,7 +15,7 @@ export const costsApiSlice = apiService.injectEndpoints({
         const params = timeFiltersQueryParamFactory({ from, to, gte, init });
 
         return ({
-          url: `/usage/costs?${params.toString()}`,
+          url: `/projects/${projectUuid}/usage/costs?${params.toString()}`,
           method: 'get',
         });
       },
@@ -23,7 +23,9 @@ export const costsApiSlice = apiService.injectEndpoints({
 
     getCostsByRouteName: builder.query({
       providesTags: () => [API_TAGS.USAGE],
-      query: ({ routeName, from, to, gte, withSavedTokens }) => {
+      query: ({
+        projectUuid, routeName, from, to, gte, withSavedTokens,
+      }) => {
         const init = {};
 
         if (withSavedTokens) {
@@ -33,7 +35,7 @@ export const costsApiSlice = apiService.injectEndpoints({
         const params = timeFiltersQueryParamFactory({ from, to, gte, init });
 
         return ({
-          url: `/routes/${routeName}/costs/summary?${params.toString()}`,
+          url: `/projects/${projectUuid}/routes/${routeName}/costs/summary?${params.toString()}`,
           method: 'get',
         });
       },

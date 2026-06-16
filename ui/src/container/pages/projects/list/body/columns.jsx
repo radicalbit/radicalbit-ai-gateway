@@ -1,10 +1,19 @@
-import { DATE_FORMAT } from '@Src/constants';
+import ConfigStatusTag from '@Container/pages/projects/components/config-status-tag';
+import ProjectStatusTag from '@Container/pages/projects/components/project-status-tag';
+import { useGetThreeDotsMenuItems } from '@Container/pages/projects/list/body/three-dots-menu';
+import { DATE_FORMAT, DATE_FORMAT_SHORT } from '@Src/constants';
+import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons';
 import {
+  Button,
+  DataTableAction,
+  Dropdown,
+  FontAwesomeIcon,
   RelativeDateTime,
+  SectionTitle,
   Truncate,
 } from '@radicalbit/radicalbit-design-system';
 
-const columns = [
+const getColumns = () => [
   {
     title: '',
     dataIndex: 'margin-left',
@@ -13,43 +22,68 @@ const columns = [
   },
 
   {
-    title: 'Name',
+    title: 'Projects Name',
     dataIndex: 'name',
     key: 'name',
-    render: (value) => (
-      <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
-      </Truncate>
+    render: (value, { description }) => (
+      <SectionTitle
+        size="small"
+        subtitle={(
+          <Truncate tooltip={{ title: description, placement: 'topLeft' }}>
+            {description || '--'}
+          </Truncate>
+          )}
+        title={(
+          <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
+            {value}
+          </Truncate>
+        )}
+      />
     ),
   },
 
   {
-    title: 'Description',
-    dataIndex: 'description',
-    key: 'description',
-    render: (value) => (
-      <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        {value || '--'}
-      </Truncate>
-    ),
+    title: 'Deploy Status',
+    dataIndex: 'projectStatus',
+    key: 'projectStatus',
+    render: (value) => <ProjectStatusTag projectStatus={value} />,
   },
 
   {
-    title: 'Created',
-    dataIndex: 'createdAt',
-    key: 'createdAt',
-    align: 'right',
-    sorter: (a, b) => a.createdAt.localeCompare(b.createdAt),
-    defaultSortOrder: 'descend',
-    render: (date) => <RelativeDateTime format={DATE_FORMAT} formatTooltip={DATE_FORMAT} timestamp={date} withTooltip />,
-  },
-
-  {
-    title: 'Updated',
+    title: 'Last Edit',
     dataIndex: 'updatedAt',
     key: 'updatedAt',
-    align: 'right',
-    render: (date) => <RelativeDateTime format={DATE_FORMAT} formatTooltip={DATE_FORMAT} timestamp={date} withTooltip />,
+    align: 'left',
+    render: (date) => <RelativeDateTime format={DATE_FORMAT_SHORT} formatTooltip={DATE_FORMAT} timestamp={date} withTooltip />,
+  },
+
+  {
+    title: 'Configurations',
+    dataIndex: 'configs',
+    key: 'configs',
+    render: (configs = []) => (
+      <div className="flex flex-col gap-1">
+        {configs.map((config) => (
+          <div key={config.uuid} className="flex items-center gap-4">
+            <span>{`Slot ${config.slot}`}</span>
+
+            <ConfigStatusTag configStatus={config.configStatus} />
+          </div>
+        ))}
+      </div>
+    ),
+  },
+
+  {
+    title: '',
+    dataIndex: 'uuid',
+    key: 'actions',
+    width: '100px',
+    render: (uuid) => (
+      <DataTableAction noHide>
+        <Actions uuid={uuid} />
+      </DataTableAction>
+    ),
   },
 
   {
@@ -60,4 +94,24 @@ const columns = [
   },
 ];
 
-export default columns;
+function Actions({ uuid }) {
+  const items = useGetThreeDotsMenuItems(uuid);
+
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+  };
+
+  if (!items.length) {
+    return false;
+  }
+
+  return (
+    <Dropdown className="c-project-config-menu" menu={{ items }}>
+      <Button onClick={handleOnClick} type="text">
+        <FontAwesomeIcon icon={faEllipsisVertical} />
+      </Button>
+    </Dropdown>
+  );
+}
+
+export default getColumns;

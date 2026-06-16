@@ -19,6 +19,7 @@ import './_styles.less';
  * @property {number} [defaultFontSize=0.8]
  * @property {boolean} [isFontResizable=false]
  * @property {boolean} [hasCopyToClipboard=false]
+ * @property {boolean} [minimal=false]
  * @property {boolean} [wrapText=false]
  * @property {string} [copyToClipboardText='Copy']
  * @property {React.ReactNode} [actions]
@@ -37,16 +38,19 @@ function CodeBlock({
   code = '',
   copyToClipboardText = 'Copy',
   defaultFontSize = 0.8,
+  minimal = false,
   hasCopyToClipboard = false,
   isFontResizable = false,
   wrapText = false,
+  className = '',
   ...rest
 }) {
   const [fontSize, setFontSize] = useState(defaultFontSize);
 
   const css = classNames('c-code-block', {
     'c-code-block--wrap-text': wrapText,
-  });
+    'c-code-block--minimal': minimal,
+  }, className);
 
   const handleOnIncreaseFontSize = () => {
     setFontSize((old) => old + 0.1);

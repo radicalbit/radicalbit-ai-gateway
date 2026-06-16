@@ -1,20 +1,26 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
-import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { CreateProjectButton } from '@Container/pages/projects/list/header';
 import { SEARCH_PARAMS } from '@Src/constants';
-import { useGetProjectsQuery } from '@State/projects/api';
+import {
+  useApproveConfigMutation,
+  useCancelApprovalMutation,
+  useDeleteProjectMutation,
+  useGetProjectsQuery,
+  useServeConfigMutation,
+  useUnserveConfigMutation,
+} from '@State/projects/api';
 import { faCircleXmark } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
   DataTable,
   FontAwesomeIcon,
   Search,
+  Spin,
   Void,
 } from '@radicalbit/radicalbit-design-system';
-import { useEffect } from 'react';
-import { useDispatch } from 'react-redux';
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import columns from './columns';
+import getColumns from './columns';
 
 function ProjectsList() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -78,8 +84,6 @@ function ProjectsCount({ searchValue }) {
 }
 
 function ProjectsTable({ searchValue }) {
-  useInitLayoutConfigurations();
-
   const { data = [], isError, isLoading, isSuccess } = useGetProjectsQuery();
 
   if (isLoading) {
@@ -123,24 +127,63 @@ function IsSuccess({ searchValue }) {
     ? data.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
     : data;
 
+  const sortedData = useMemo(
+    () => [...filteredData].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '')),
+    [filteredData],
+  );
+
+  const columns = getColumns();
+
+  const components = useMemo(() => ({ body: { row: makeRowWithSpinner(columns.length) } }), [columns.length]);
+
   return (
     <DataTable
       columns={columns}
-      dataSource={filteredData}
+      components={components}
+      dataSource={sortedData}
       pagination={{ hideOnSinglePage: true }}
-      rowClassName={() => DataTable.ROW_NOT_CLICKABLE}
       rowKey={({ uuid: projectUUID }) => projectUUID}
       scroll={{ y: 'calc(100vh - 10rem)' }}
     />
   );
 }
 
-const useInitLayoutConfigurations = () => {
-  const dispatch = useDispatch();
+const makeRowWithSpinner = (colSpan) => function RowWithSpinner({ children, ...other }) {
+  const rowKey = other['data-row-key'];
 
-  useEffect(() => {
-    WIDE_MAIN_LAYOUT_CONFIGURATION.forEach((action) => dispatch(action()));
-  }, [dispatch]);
+  const { data = [] } = useGetProjectsQuery();
+  const project = data.find(({ uuid }) => uuid === rowKey);
+  const configs = project?.configs ?? [];
+  const configAUuid = configs[0]?.uuid;
+  const configBUuid = configs[1]?.uuid;
+
+  const isConfigABusy = useIsConfigBusy(configAUuid);
+  const isConfigBBusy = useIsConfigBusy(configBUuid);
+
+  const [, { isLoading: isDeleting }] = useDeleteProjectMutation({ fixedCacheKey: `delete-project-${rowKey}` });
+
+  const isBusy = isConfigABusy || isConfigBBusy || isDeleting;
+
+  if (isBusy) {
+    return (
+      <tr {...other}>
+        <td colSpan={colSpan}>
+          <Spin spinning />
+        </td>
+      </tr>
+    );
+  }
+
+  return <tr {...other}>{children}</tr>;
+};
+
+const useIsConfigBusy = (configUuid) => {
+  const [, { isLoading: isApproving }] = useApproveConfigMutation({ fixedCacheKey: `approve-config-${configUuid}` });
+  const [, { isLoading: isCancelling }] = useCancelApprovalMutation({ fixedCacheKey: `cancel-approval-${configUuid}` });
+  const [, { isLoading: isServing }] = useServeConfigMutation({ fixedCacheKey: `serve-config-${configUuid}` });
+  const [, { isLoading: isUnserving }] = useUnserveConfigMutation({ fixedCacheKey: `unserve-config-${configUuid}` });
+
+  return isApproving || isCancelling || isServing || isUnserving;
 };
 
 export default ProjectsList;

@@ -6,7 +6,7 @@ function UsageListHeader() {
     <NewHeader
       title={(
         <SectionTitle
-          subtitle="Cost distribution and token consumption"
+          subtitle="Monitor request volume, costs, and limits across your projects."
           title="Usage"
           titlePrefix={<FontAwesomeIcon icon={faChartBar} />}
         />

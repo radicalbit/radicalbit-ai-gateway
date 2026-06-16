@@ -1,4 +1,3 @@
-import ConfigDetailHeader from '@Container/pages/config/detail/header';
 import GroupsListHeader from '@Container/pages/groups/list/header/';
 import KeysListHeader from '@Container/pages/keys/list/header';
 import ProjectsListHeader from '@Container/pages/projects/list/header';
@@ -27,8 +26,6 @@ export default function MainHeaderContentSwitch() {
       <Route element={<GroupsListHeader />} path={`/${PathsEnum.GROUPS}`} />
 
       <Route element={<GroupsListHeader />} path={`/${PathsEnum.GROUPS}/:uuid`} />
-
-      <Route element={<ConfigDetailHeader />} path={`/${PathsEnum.CONFIG}`} />
 
       <Route element={<TracingListHeader />} path={`/${PathsEnum.TRACING}`} />
 

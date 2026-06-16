@@ -3,7 +3,7 @@ import { actions as layoutActions } from '@State/layout';
 export const MAIN_LAYOUT_CONFIGURATION = [
   layoutActions.showHeader,
   layoutActions.showLeftColumn,
-  layoutActions.showSecondaryColumn,
+  layoutActions.hideSecondaryColumn,
   layoutActions.hideRightColumn,
 ];
 
