@@ -199,12 +199,12 @@ const useNavigateNavBarWithKeyboard = () => {
 
       if ((isMac && e.ctrlKey && e.code === 'Digit5')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.CREDENTIALS}`);
+        navigate(`/${PathsEnum.GROUPS}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit6')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.GROUPS}`);
+        navigate(`/${PathsEnum.CREDENTIALS}`);
       }
     };
 
