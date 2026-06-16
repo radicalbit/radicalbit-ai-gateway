@@ -1,6 +1,6 @@
 import { PathsEnum } from '@Src/constants';
 import {
-  faChartBar, faFile, faFolderOpen, faKey, faLayerGroup, faMicrochip, faRoute,
+  faChartBar, faFolderOpen, faKey, faLayerGroup, faMicrochip, faRoute,
 } from '@fortawesome/free-solid-svg-icons';
 import { Button, FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
 import { Link } from 'react-router-dom';
@@ -16,87 +16,115 @@ export const createRoutes = ({ hasLeftColumnCollapsed, currentPath }) => {
   return { selectedItem, items: ar };
 };
 
+// GROUPS LABEL
+const GROUP_HEADER_CLASSNAME = 'pointer-events-none !h-auto !mb-1 !leading-none text-md';
+
+function GroupHeaderLabel({ children, collapsed = false }) {
+  const alignmentClassName = collapsed ? 'justify-center text-center tracking-tighter' : 'justify-start text-left';
+
+  return (
+    <div className={`flex w-full uppercase opacity-50 !text-[0.75rem] ${alignmentClassName}`}>
+      {children}
+    </div>
+  );
+}
+
+const groupHeader = (key, label, position, hasLeftColumnCollapsed) => {
+  if (hasLeftColumnCollapsed) {
+    return {
+      position,
+      key,
+      icon: <GroupHeaderLabel collapsed>{label}</GroupHeaderLabel>,
+      className: GROUP_HEADER_CLASSNAME,
+    };
+  }
+
+  return {
+    position,
+    key,
+    title: <GroupHeaderLabel>{label}</GroupHeaderLabel>,
+    className: GROUP_HEADER_CLASSNAME,
+  };
+};
+
+const setupHeader = (hasLeftColumnCollapsed) => groupHeader('setup-header', 'Setup', 1, hasLeftColumnCollapsed);
+const monitorHeader = (hasLeftColumnCollapsed) => groupHeader('monitor-header', 'Monitor', 4, hasLeftColumnCollapsed);
+const manageHeader = (hasLeftColumnCollapsed) => groupHeader('manage-header', 'Manage', 9, hasLeftColumnCollapsed);
+
+// GROUPS SEPARATOR
+const separator = (key, position) => ({
+  position,
+  key,
+  className: 'c-menu-item--separator pointer-events-none !h-[1rem]',
+});
+const separator1 = separator('separator1', 3);
+const separator2 = separator('separator2', 8);
+
+// GROUPS ITEMS
+const projects = (hasLeftColumnCollapsed) => ({
+  position: 2,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '1', shape: 'circle' }] }}>Projects</CollapsedTitle> : 'Projects',
+  icon: <FontAwesomeIcon icon={faFolderOpen} />,
+  key: PathsEnum.PROJECTS,
+  link: getLink(PathsEnum.PROJECTS),
+});
+
 const routes = (hasLeftColumnCollapsed) => ({
-  position: 1,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '1', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
+  position: 5,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '2', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
   icon: <FontAwesomeIcon icon={faMicrochip} />,
   key: PathsEnum.ROUTES,
   link: getLink(PathsEnum.ROUTES),
 });
 
 const usage = (hasLeftColumnCollapsed) => ({
-  position: 2,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '2', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
+  position: 6,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
   icon: <FontAwesomeIcon icon={faChartBar} />,
   key: PathsEnum.USAGE,
   link: getLink(PathsEnum.USAGE),
 });
 
-const config = (hasLeftColumnCollapsed) => ({
-  position: 3,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Config</CollapsedTitle> : 'Config',
-  icon: <FontAwesomeIcon icon={faFile} />,
-  key: PathsEnum.CONFIG,
-  link: getLink(PathsEnum.CONFIG),
-});
-
-const separator1 = {
-  position: 4,
-  key: 'separator1',
-  className: 'c-menu-item--separator pointer-events-none !h-[1rem]',
-};
-
-const projects = (hasLeftColumnCollapsed) => ({
-  position: 5,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Projects</CollapsedTitle> : 'Projects',
-  icon: <FontAwesomeIcon icon={faFolderOpen} />,
-  key: PathsEnum.PROJECTS,
-  link: getLink(PathsEnum.PROJECTS),
-});
-
-const keys = (hasLeftColumnCollapsed) => ({
-  position: 6,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
-  icon: <FontAwesomeIcon icon={faKey} />,
-  key: PathsEnum.CREDENTIALS,
-  link: getLink(PathsEnum.CREDENTIALS),
-});
-
-const groups = (hasLeftColumnCollapsed) => ({
-  position: 7,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
-  icon: <FontAwesomeIcon icon={faLayerGroup} />,
-  key: PathsEnum.GROUPS,
-  link: getLink(PathsEnum.GROUPS),
-});
-
-const separator2 = {
-  position: 8,
-  key: 'separator2',
-  className: 'c-menu-item--separator pointer-events-none !h-[1rem]',
-};
-
 const tracing = (hasLeftColumnCollapsed) => ({
-  position: 9,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '8', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
+  position: 7,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
   icon: <FontAwesomeIcon icon={faRoute} />,
   key: PathsEnum.TRACING,
   link: getLink(PathsEnum.TRACING),
 });
 
+const groups = (hasLeftColumnCollapsed) => ({
+  position: 10,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
+  icon: <FontAwesomeIcon icon={faLayerGroup} />,
+  key: PathsEnum.GROUPS,
+  link: getLink(PathsEnum.GROUPS),
+});
+
+const keys = (hasLeftColumnCollapsed) => ({
+  position: 11,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
+  icon: <FontAwesomeIcon icon={faKey} />,
+  key: PathsEnum.CREDENTIALS,
+  link: getLink(PathsEnum.CREDENTIALS),
+});
+
+// ALL ROUTES
 const allRoutes = (hasLeftColumnCollapsed) => [
+  setupHeader(hasLeftColumnCollapsed),
+  projects(hasLeftColumnCollapsed),
+
+  separator1,
+  monitorHeader(hasLeftColumnCollapsed),
   routes(hasLeftColumnCollapsed),
   usage(hasLeftColumnCollapsed),
-  config(hasLeftColumnCollapsed),
-  separator1,
-  projects(hasLeftColumnCollapsed),
-  keys(hasLeftColumnCollapsed),
-  groups(hasLeftColumnCollapsed),
-  separator2,
   tracing(hasLeftColumnCollapsed),
-];
 
-/** Utils components */
+  separator2,
+  manageHeader(hasLeftColumnCollapsed),
+  groups(hasLeftColumnCollapsed),
+  keys(hasLeftColumnCollapsed),
+];
 
 export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps = {} }) {
   const { mac } = keyboardKeys;

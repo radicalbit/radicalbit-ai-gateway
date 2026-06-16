@@ -179,22 +179,22 @@ const useNavigateNavBarWithKeyboard = () => {
 
       if ((isMac && e.ctrlKey && e.code === 'Digit1')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.ROUTES}`);
+        navigate(`/${PathsEnum.PROJECTS}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit2')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.COSTS}`);
+        navigate(`/${PathsEnum.ROUTES}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit3')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.CONFIG}`);
+        navigate(`/${PathsEnum.USAGE}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit4')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.PROJECTS}`);
+        navigate(`/${PathsEnum.TRACING}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit5')) {
@@ -205,11 +205,6 @@ const useNavigateNavBarWithKeyboard = () => {
       if ((isMac && e.ctrlKey && e.code === 'Digit6')) {
         e.preventDefault();
         navigate(`/${PathsEnum.GROUPS}`);
-      }
-
-      if ((isMac && e.ctrlKey && e.code === 'Digit7')) {
-        e.preventDefault();
-        navigate(`/${PathsEnum.TRACING}`);
       }
     };
 
