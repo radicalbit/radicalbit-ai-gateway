@@ -33,7 +33,7 @@ function FeedbacksReadyToServe() {
     return <Alert closable message={backendError} showIcon type="error" />;
   }
 
-  return <Alert closable message="Publish request submitted for approval. The admin has been notified." showIcon type="warning" />;
+  return <Alert closable message="Publish request submitted for approval." showIcon type="warning" />;
 }
 
 export default Feedbacks;
