@@ -34,7 +34,7 @@ class ProjectConfigDAOTest(DatabaseIntegration):
                 config_file='# a',
                 config_status=ConfigStatus.DRAFT.value,
                 created_at=now,
-                updated_at=now,
+                updated_at=None,
             )
         )
         b = self.insert(
@@ -44,7 +44,7 @@ class ProjectConfigDAOTest(DatabaseIntegration):
                 config_file='# b',
                 config_status=ConfigStatus.DRAFT.value,
                 created_at=now,
-                updated_at=now,
+                updated_at=None,
             )
         )
         return a.uuid, b.uuid
@@ -70,6 +70,30 @@ class ProjectConfigDAOTest(DatabaseIntegration):
         updated = self.dao.get_by_uuid(a_id)
         assert updated.config_file == 'new'
         assert updated.config_status == ConfigStatus.DRAFT.value
+
+    def test_seeded_configs_have_null_updated_at(self):
+        p = self._project()
+        a_id, b_id = self._seed_two(p.uuid)
+        assert self.dao.get_by_uuid(a_id).updated_at is None
+        assert self.dao.get_by_uuid(b_id).updated_at is None
+
+    def test_update_config_file_sets_updated_at(self):
+        p = self._project()
+        a_id, _ = self._seed_two(p.uuid)
+        self.dao.update_config_file(a_id, 'saved')
+        assert self.dao.get_by_uuid(a_id).updated_at is not None
+
+    def test_set_status_keeps_updated_at_null(self):
+        p = self._project()
+        a_id, _ = self._seed_two(p.uuid)
+        self.dao.set_status(a_id, ConfigStatus.READY_TO_SERVE)
+        assert self.dao.get_by_uuid(a_id).updated_at is None
+
+    def test_serve_keeps_config_updated_at_null(self):
+        p = self._project()
+        a_id, _ = self._seed_two(p.uuid)
+        self.dao.serve(a_id)
+        assert self.dao.get_by_uuid(a_id).updated_at is None
 
     def test_serve_sets_served_ref_and_first_served_at(self):
         p = self._project()

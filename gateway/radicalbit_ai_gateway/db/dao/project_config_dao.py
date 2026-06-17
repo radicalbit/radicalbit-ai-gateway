@@ -64,7 +64,6 @@ class ProjectConfigDAO:
             return session.execute(query).rowcount
 
     def set_status(self, config_uuid: UUID, status: ConfigStatus) -> int:
-        now = datetime.datetime.now(tz=_UTC)
         with self.db.begin_session() as session:
             query = (
                 update(ProjectConfig)
@@ -72,7 +71,7 @@ class ProjectConfigDAO:
                     ProjectConfig.uuid == config_uuid,
                     ProjectConfig.deleted_at.is_(None),
                 )
-                .values(config_status=status.value, updated_at=now)
+                .values(config_status=status.value)
             )
             return session.execute(query).rowcount
 
@@ -102,12 +101,12 @@ class ProjectConfigDAO:
                     ProjectConfig.config_status == ConfigStatus.SERVED.value,
                     ProjectConfig.deleted_at.is_(None),
                 )
-                .values(config_status=ConfigStatus.DRAFT.value, updated_at=now)
+                .values(config_status=ConfigStatus.DRAFT.value)
             )
             session.execute(
                 update(ProjectConfig)
                 .where(ProjectConfig.uuid == config_uuid)
-                .values(config_status=ConfigStatus.SERVED.value, updated_at=now)
+                .values(config_status=ConfigStatus.SERVED.value)
             )
             session.execute(
                 update(Project)
@@ -139,7 +138,7 @@ class ProjectConfigDAO:
             session.execute(
                 update(ProjectConfig)
                 .where(ProjectConfig.uuid == config_uuid)
-                .values(config_status=ConfigStatus.DRAFT.value, updated_at=now)
+                .values(config_status=ConfigStatus.DRAFT.value)
             )
             session.execute(
                 update(Project)
@@ -160,6 +159,6 @@ class ProjectConfigDAO:
                     ProjectConfig.project_uuid == project_uuid,
                     ProjectConfig.deleted_at.is_(None),
                 )
-                .values(deleted_at=now, updated_at=now)
+                .values(deleted_at=now)
             )
             return session.execute(query).rowcount
