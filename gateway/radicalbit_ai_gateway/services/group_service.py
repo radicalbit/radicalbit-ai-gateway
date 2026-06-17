@@ -51,6 +51,20 @@ class GroupService:
             return
         raise RouteNotFoundError(f'Route {project_name}/{route_name} not exists')
 
+    def cleanup_orphaned_associations(
+        self, project_uuid: UUID, project_name: str
+    ) -> int:
+        """Drop the project's group↔route associations whose route_name is not
+        present in the currently served config. Must be called after the newly
+        served config has been registered in project_configs. Returns the number
+        of deleted associations.
+        """
+        entry = self._project_configs.get(project_name)
+        valid_route_names = list(entry.config.routes) if entry else []
+        return self.group_dao.delete_orphaned_associations(
+            project_uuid, valid_route_names
+        )
+
     def _get_group(
         self, group_uuid: UUID, include_routes: bool = False, include_keys: bool = False
     ) -> GroupFullOut:

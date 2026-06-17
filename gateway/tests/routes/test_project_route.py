@@ -152,11 +152,29 @@ class TestProjectRoute(unittest.TestCase):
             uuid=pid, served_config_uuid=cid, configs=[served, other]
         )
         self.project_service.serve_config = MagicMock(return_value=out)
+        self.group_service.cleanup_orphaned_associations = MagicMock(return_value=0)
         res = self.client.patch(f'{self.prefix}/projects/{pid}/configs/{cid}/serve')
         assert res.status_code == 200
         self.project_service.serve_config.assert_called_once_with(pid, cid)
         self.deregister.assert_awaited_once_with(pid)
         self.register.assert_awaited_once_with(pid, out.name, _VALID)
+
+    def test_serve_config_cleans_up_orphaned_associations(self):
+        pid, cid = uuid.uuid4(), uuid.uuid4()
+        served = db_mock.get_sample_config_slot_out(
+            uuid=cid, slot=Slot.A, config_file=_VALID, config_status=ConfigStatus.SERVED
+        )
+        other = db_mock.get_sample_config_slot_out(uuid=uuid.uuid4(), slot=Slot.B)
+        out = db_mock.get_sample_project_out(
+            uuid=pid, served_config_uuid=cid, configs=[served, other]
+        )
+        self.project_service.serve_config = MagicMock(return_value=out)
+        self.group_service.cleanup_orphaned_associations = MagicMock(return_value=2)
+        res = self.client.patch(f'{self.prefix}/projects/{pid}/configs/{cid}/serve')
+        assert res.status_code == 200
+        self.group_service.cleanup_orphaned_associations.assert_called_once_with(
+            pid, out.name
+        )
 
     def test_unserve_config_deregisters(self):
         pid, cid = uuid.uuid4(), uuid.uuid4()
