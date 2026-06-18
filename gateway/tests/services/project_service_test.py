@@ -1,5 +1,7 @@
+import io
 from unittest.mock import MagicMock
 import uuid
+import zipfile
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -9,6 +11,7 @@ from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
+from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import (
     ProjectConfigFileIn,
@@ -201,6 +204,41 @@ class ProjectServiceTest(DatabaseIntegration):
         out, a, _ = self._create()
         with pytest.raises(ProjectNotFoundError):
             self.svc.get_config(uuid.uuid4(), a)
+
+    # --- export ---
+
+    def test_export_config_returns_zip(self):
+        out, a, _ = self._create()
+        content, filename = self.svc.export_config(out.uuid, a)
+        assert filename == 'proj_slot_A_draft.zip'
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            names = archive.namelist()
+            assert names == ['proj_slot_A_draft.yaml']
+            assert archive.read(names[0]).decode() == out.configs[0].config_file
+
+    def test_export_config_served_label(self):
+        out, a, _ = self._create()
+        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        self.svc.approve_config(out.uuid, a)
+        self.svc.serve_config(out.uuid, a)
+        _, filename = self.svc.export_config(out.uuid, a)
+        assert filename == 'proj_slot_A_served.zip'
+
+    def test_export_config_empty_raises(self):
+        project = self.insert(
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='export-empty')
+        )
+        config = self.insert(
+            db_mock.get_sample_project_config(
+                project_uuid=project.uuid, slot=Slot.A, config_file=None
+            )
+        )
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.export_config(project.uuid, config.uuid)
+
+    def test_export_config_not_found(self):
+        with pytest.raises(ProjectNotFoundError):
+            self.svc.export_config(uuid.uuid4(), uuid.uuid4())
 
     # --- listing / filters ---
 

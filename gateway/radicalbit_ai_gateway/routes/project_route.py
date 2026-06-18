@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -182,6 +182,23 @@ class ProjectRoute:
             )
             logger.info('Generated config %s for project %s', config_uuid, project_uuid)
             return GenerateConfigOut(config_file=yaml_str)
+
+        @router.get(
+            '/projects/{project_uuid}/configs/{config_uuid}/export',
+            status_code=200,
+        )
+        def export_config(project_uuid: UUID, config_uuid: UUID):
+            content, filename = project_service.export_config(
+                project_uuid, config_uuid
+            )
+            logger.info('Exported config %s for project %s', config_uuid, project_uuid)
+            return Response(
+                content=content,
+                media_type='application/zip',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{filename}"'
+                },
+            )
 
         @router.patch(
             '/projects/{project_uuid}/configs/{config_uuid}/unserve',

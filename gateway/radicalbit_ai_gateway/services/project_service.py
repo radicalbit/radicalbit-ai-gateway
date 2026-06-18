@@ -1,4 +1,7 @@
+import io
+import re
 from uuid import UUID
+import zipfile
 
 from sqlalchemy.exc import IntegrityError
 
@@ -25,6 +28,11 @@ from radicalbit_ai_gateway.utils.yaml_utils import (
     get_default_config_template,
     validate_gateway_config,
 )
+
+
+def _sanitize_filename(name: str) -> str:
+    sanitized = re.sub(r'[^A-Za-z0-9_-]+', '_', name).strip('_')
+    return sanitized or 'config'
 
 
 class ProjectService:
@@ -179,6 +187,30 @@ class ProjectService:
         return ConfigSlotOut.from_config(
             self._get_config_or_raise(project_uuid, config_uuid)
         )
+
+    def export_config(
+        self, project_uuid: UUID, config_uuid: UUID
+    ) -> tuple[bytes, str]:
+        project = self._get_project_or_raise(project_uuid)
+        config = self._get_config_or_raise(project_uuid, config_uuid)
+        if not config.config_file:
+            raise ProjectConfigValidationError(
+                f'Config {config_uuid} has no configuration to export'
+            )
+
+        status_label = (
+            'served'
+            if config.config_status == ConfigStatus.SERVED.value
+            else 'draft'
+        )
+        slug = _sanitize_filename(
+            f'{project.name}_slot_{Slot(config.slot).value}_{status_label}'
+        )
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(f'{slug}.yaml', config.config_file)
+        return buffer.getvalue(), f'{slug}.zip'
 
     def validate_exists(self, project_uuid: UUID) -> None:
         if not self.project_dao.get_by_uuid(project_uuid):
