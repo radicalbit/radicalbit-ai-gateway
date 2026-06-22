@@ -188,9 +188,7 @@ class ProjectService:
             self._get_config_or_raise(project_uuid, config_uuid)
         )
 
-    def export_config(
-        self, project_uuid: UUID, config_uuid: UUID
-    ) -> tuple[bytes, str]:
+    def export_config(self, project_uuid: UUID, config_uuid: UUID) -> tuple[bytes, str]:
         project = self._get_project_or_raise(project_uuid)
         config = self._get_config_or_raise(project_uuid, config_uuid)
         if not config.config_file:
@@ -199,9 +197,7 @@ class ProjectService:
             )
 
         status_label = (
-            'served'
-            if config.config_status == ConfigStatus.SERVED.value
-            else 'draft'
+            'served' if config.config_status == ConfigStatus.SERVED.value else 'draft'
         )
         slug = _sanitize_filename(
             f'{project.name}_slot_{Slot(config.slot).value}_{status_label}'

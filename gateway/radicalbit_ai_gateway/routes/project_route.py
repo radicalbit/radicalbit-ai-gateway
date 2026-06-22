@@ -188,16 +188,12 @@ class ProjectRoute:
             status_code=200,
         )
         def export_config(project_uuid: UUID, config_uuid: UUID):
-            content, filename = project_service.export_config(
-                project_uuid, config_uuid
-            )
+            content, filename = project_service.export_config(project_uuid, config_uuid)
             logger.info('Exported config %s for project %s', config_uuid, project_uuid)
             return Response(
                 content=content,
                 media_type='application/zip',
-                headers={
-                    'Content-Disposition': f'attachment; filename="{filename}"'
-                },
+                headers={'Content-Disposition': f'attachment; filename="{filename}"'},
             )
 
         @router.patch(
