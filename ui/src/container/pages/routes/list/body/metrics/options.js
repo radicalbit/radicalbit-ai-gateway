@@ -14,7 +14,14 @@ const GRANULARITY_LABEL = {
   months: 'month',
 };
 
-function sparklineOption(chart, formatter) {
+// Sparkline line colors from the design-system "Visualization Colors" (Light row).
+const SPARKLINE_COLOR = {
+  mostRequested: '#006FFA', // Chart 5 Light (blue)
+  topCost: '#D16900', // Chart 4 Light (orange)
+  topError: '#B61CD4', // Chart 2 Light (purple)
+};
+
+function sparklineOption(chart, formatter, color) {
   const isSinglePoint = chart.data.length === 1;
 
   return {
@@ -36,8 +43,9 @@ function sparklineOption(chart, formatter) {
         smooth: true,
         showSymbol: isSinglePoint,
         symbolSize: isSinglePoint ? 6 : 4,
-        lineStyle: { width: 2 },
-        areaStyle: { opacity: 0.1 },
+        ...(color ? { itemStyle: { color } } : {}),
+        lineStyle: { width: 2, ...(color ? { color } : {}) },
+        areaStyle: { opacity: 0.1, ...(color ? { color } : {}) },
       },
     ],
     tooltip: {
@@ -61,4 +69,6 @@ function formatIncrement(value) {
   return `${sign}${Math.round(value)}%`;
 }
 
-export { GRANULARITY_LABEL, ReactEChartsCore, echarts, formatIncrement, sparklineOption };
+export {
+  GRANULARITY_LABEL, ReactEChartsCore, SPARKLINE_COLOR, echarts, formatIncrement, sparklineOption,
+};

@@ -26,7 +26,6 @@ function CreateModal() {
             </>
           )}
           title="Create credential"
-          titleColor="primary"
         />
       )}
       onCancel={hideModal}

@@ -30,7 +30,6 @@ function CreateProjectInner() {
         <SectionTitle
           subtitle="Create a new project to organize your resources"
           title="Create project"
-          titleColor="primary"
         />
       )}
       onCancel={hideModal}

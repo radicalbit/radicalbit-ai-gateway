@@ -27,7 +27,6 @@ function Header() {
         </div>
       )}
       title="Associate groups"
-      titleColor="primary"
     />
   );
 }

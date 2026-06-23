@@ -40,11 +40,11 @@ function TimeFilterTag() {
   const to = searchParams.get('to');
 
   if (!from && !to) {
-    return <Tag animated="default" size="large" type="full">REAL TIME</Tag>;
+    return <Tag size="large" type="full">REAL TIME</Tag>;
   }
 
   if (from && !to) {
-    return <Tag animated="default" size="large" type="full">REAL TIME</Tag>;
+    return <Tag size="large" type="full">REAL TIME</Tag>;
   }
 
   return false;

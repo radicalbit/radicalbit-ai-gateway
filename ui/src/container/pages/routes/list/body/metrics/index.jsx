@@ -5,7 +5,7 @@ import TopCost from './04-top-cost';
 
 function Metrics() {
   return (
-    <div className="flex gap-8 p-8 overflow-x-auto">
+    <div className="flex gap-8 py-8 overflow-x-auto">
       <RoutesCounter />
 
       <MostRequested />

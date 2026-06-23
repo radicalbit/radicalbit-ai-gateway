@@ -1,7 +1,7 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetCostsChartStreamWithRange } from '@State/usage/vertical-hooks';
-import { Board, Radio, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
+import { Board, Button, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import { BarChart } from 'echarts/charts';
 import {
@@ -74,7 +74,6 @@ function CostsGraphInner() {
             </>
           )}
           size="xsmall"
-          type="secondary-light"
         />
       </div>
     );
@@ -152,26 +151,26 @@ function GroupByTabs() {
   const [searchParams, setSearchParams] = useSearchParams();
   const groupBy = searchParams.get('groupBy') || GROUP_BY.groups.key;
 
-  const handleOnChangeGroupBy = (e) => {
-    setSearchParams((prev) => {
-      prev.set('groupBy', e.target.value);
-      return prev;
-    });
-  };
-
   return (
-    <div className="absolute right-4 top-4 z-10">
-      <Radio.Group
-        className="c-echart-radio-button"
-        onChange={handleOnChangeGroupBy}
-        value={groupBy}
-      >
-        <Radio.Button value={GROUP_BY.groups.key}>{GROUP_BY.groups.label}</Radio.Button>
+    <div className="absolute right-4 top-4 z-10 flex gap-2">
+      {Object.values(GROUP_BY).map(({ key, label }) => {
+        const handleOnClick = () => {
+          setSearchParams((prev) => {
+            prev.set('groupBy', key);
+            return prev;
+          });
+        };
 
-        <Radio.Button value={GROUP_BY.credentials.key}>{GROUP_BY.credentials.label}</Radio.Button>
-
-        <Radio.Button value={GROUP_BY.models.key}>{GROUP_BY.models.label}</Radio.Button>
-      </Radio.Group>
+        return (
+          <Button
+            key={key}
+            onClick={handleOnClick}
+            type={groupBy === key ? 'primary' : 'text'}
+          >
+            {label}
+          </Button>
+        );
+      })}
     </div>
   );
 }

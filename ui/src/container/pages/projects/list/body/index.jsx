@@ -40,7 +40,7 @@ function ProjectsList() {
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      <div className="flex flex-row items-center gap-4 pl-4 pt-4">
+      <div className="flex flex-row items-center gap-4">
         <Search
           allowClear={{ clearIcon: <FontAwesomeIcon icon={faCircleXmark} /> }}
           onChange={handleSearchChange}

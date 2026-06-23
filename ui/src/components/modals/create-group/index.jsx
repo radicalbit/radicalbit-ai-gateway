@@ -29,7 +29,6 @@ function CreateGroupInner() {
         <SectionTitle
           subtitle="Each group can be associated with routes and credentials"
           title="Create group"
-          titleColor="primary"
         />
       )}
       onCancel={hideModal}

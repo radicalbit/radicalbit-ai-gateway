@@ -22,7 +22,7 @@ function Consumptions() {
 
   if (!projectUuid) {
     return (
-      <div className="flex flex-col gap-4 h-full p-4">
+      <div className="flex flex-col gap-4 h-full py-4">
         <div className="flex flex-row items-center gap-4">
           <FormField label="Project">
             <ProjectFilter />
@@ -35,7 +35,7 @@ function Consumptions() {
   }
 
   return (
-    <div className="flex flex-col gap-4 h-full p-4">
+    <div className="flex flex-col gap-4 h-full py-4">
       <div className="flex flex-row items-center gap-4">
         <FormField label="Project">
           <ProjectFilter />

@@ -28,7 +28,7 @@ export default ({ xAxisData, series = [], granularity, total }) => ({
     axisLine: {
       show: true,
       lineStyle: {
-        color: '#dedede',
+        color: '#e4e4dd',
         width: 1,
       },
     },
