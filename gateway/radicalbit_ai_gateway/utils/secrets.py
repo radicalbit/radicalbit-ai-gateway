@@ -78,7 +78,10 @@ def resolve_secrets_from_string(
 
     def secret_constructor(loader, node):
         key = loader.construct_scalar(node)
-        return provider.get_secret(key)
+        value = provider.get_secret(key)
+        if not str(value).strip():
+            raise SecretNotFoundError(key, 'value is empty')
+        return value
 
     loader = yaml.SafeLoader(yaml_content)
     loader.add_constructor('!secret', secret_constructor)
