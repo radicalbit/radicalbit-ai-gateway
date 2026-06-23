@@ -1,4 +1,3 @@
-
 import pytest
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
