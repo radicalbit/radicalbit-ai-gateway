@@ -3,11 +3,13 @@ from importlib.resources import files
 import re
 
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 import yaml
 
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.utils.exceptions import ProjectConfigValidationError
+from radicalbit_ai_gateway.utils.secrets import get_secret_provider
 
 _KNOWN_CONFIG_FIELDS = sorted(
     set(GatewayConfig.model_fields) | set(GatewayRouteConfig.model_fields)
@@ -28,7 +30,7 @@ def _find_key_line(yaml_str: str, key: str) -> int | None:
     return None
 
 
-def _format_validation_error(err: dict, yaml_str: str) -> str:
+def _format_validation_error(err: ErrorDetails, yaml_str: str) -> str:
     loc = '.'.join(str(p) for p in err['loc'])
     msg = err['msg']
     if err['type'] == 'extra_forbidden' and err['loc']:
@@ -61,6 +63,45 @@ def check_no_literal_secrets(yaml_content: str) -> list[str]:
     return violations
 
 
+def extract_secret_references(yaml_content: str) -> list[tuple[str, int | None]]:
+    """Return ``(key, line_number)`` for every ``!secret KEY`` in *yaml_content*."""
+    refs: list[tuple[str, int | None]] = []
+    loader = yaml.SafeLoader(yaml_content)
+
+    def _collector(loader, node):
+        key = loader.construct_scalar(node)
+        line = node.start_mark.line + 1 if node.start_mark else None
+        refs.append((key, line))
+        return '__secret_placeholder__'
+
+    loader.add_constructor('!secret', _collector)
+    try:
+        loader.get_single_data()
+    finally:
+        loader.dispose()
+    return refs
+
+
+def check_secret_references(yaml_content: str) -> list[str]:
+    """Validate that every ``!secret`` reference points to an existing,
+    non-empty key in ``secrets.yaml``.
+
+    Returns a (possibly empty) list of human-readable violation strings.
+    """
+    refs = extract_secret_references(yaml_content)
+    if not refs:
+        return []
+
+    provider = get_secret_provider()
+    violations: list[str] = []
+    for key, line in refs:
+        error = provider.validate_secret(key)
+        if error:
+            loc = f'line {line}: ' if line else ''
+            violations.append(f'{loc}!secret {key} - {error}')
+    return violations
+
+
 def parse_yaml_with_secret_placeholders(yaml_content: str) -> dict:
     loader = yaml.SafeLoader(yaml_content)
 
@@ -88,6 +129,12 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
             raise ProjectConfigValidationError(
                 f'Config contains literal secrets: {violations}. Use !secret references instead.'
             )
+        secret_violations = check_secret_references(yaml_str)
+        if secret_violations:
+            raise ProjectConfigValidationError(
+                f'Config references invalid secrets: {"; ".join(secret_violations)}. '
+                'Ensure all !secret keys exist and have non-empty values.'
+            )
     try:
         GatewayConfig.model_validate(parsed)
     except (ValidationError, KeyError, TypeError) as e:
@@ -96,7 +143,7 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
                 _format_validation_error(err, yaml_str) for err in e.errors()
             )
             raise ProjectConfigValidationError(
-                f'Invalid gateway configuration — {len(e.errors())} error(s): {details}'
+                f'Invalid gateway configuration - {len(e.errors())} error(s): {details}'
             ) from e
         raise ProjectConfigValidationError(f'Invalid gateway configuration: {e}') from e
     return yaml_str
