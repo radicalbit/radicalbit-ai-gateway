@@ -1,4 +1,3 @@
-import { useInitDarkMode, useIsDarkMode, useSetDarkMode } from '@Components/dark-mode/hooks';
 import RedirectingToLogin from '@Components/error-page/redirecting-to-login';
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import Logo from '@Components/logo';
@@ -118,7 +117,7 @@ function AppInner() {
   };
 
   useNavigateNavBarWithKeyboard();
-  useSwitchLightAndDarkModeWithKeyboard();
+  // useSwitchLightAndDarkModeWithKeyboard();
 
   return (
     <>
@@ -213,29 +212,29 @@ const useNavigateNavBarWithKeyboard = () => {
   }, [navigate]);
 };
 
-function useSwitchLightAndDarkModeWithKeyboard() {
-  const isDarkMode = useIsDarkMode();
-  const { enableDarkMode, enableLightMode } = useSetDarkMode();
+// function useSwitchLightAndDarkModeWithKeyboard() {
+//   const isDarkMode = useIsDarkMode();
+//   const { enableDarkMode, enableLightMode } = useSetDarkMode();
 
-  useInitDarkMode();
+//   useInitDarkMode();
 
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if (event.ctrlKey && event.shiftKey && event.code === 'KeyL') {
-        event.preventDefault();
+//   useEffect(() => {
+//     function handleKeyDown(event) {
+//       if (event.ctrlKey && event.shiftKey && event.code === 'KeyL') {
+//         event.preventDefault();
 
-        if (isDarkMode) {
-          enableLightMode();
-        } else {
-          enableDarkMode();
-        }
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [enableDarkMode, enableLightMode, isDarkMode]);
-}
+//         if (isDarkMode) {
+//           enableLightMode();
+//         } else {
+//           enableDarkMode();
+//         }
+//       }
+//     }
+//     window.addEventListener('keydown', handleKeyDown);
+//     return () => {
+//       window.removeEventListener('keydown', handleKeyDown);
+//     };
+//   }, [enableDarkMode, enableLightMode, isDarkMode]);
+// }
 
 export default App;

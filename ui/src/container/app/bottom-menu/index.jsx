@@ -1,10 +1,11 @@
 import { Menu } from '@radicalbit/radicalbit-design-system';
-import { useGetDarkLightModeItem } from './hooks';
+// import { useGetDarkLightModeItem } from './hooks';
 
 export default function BottomMenu() {
-  const darkLightModeItem = useGetDarkLightModeItem();
+  // const darkLightModeItem = useGetDarkLightModeItem();
 
-  const items = [darkLightModeItem].filter(Boolean);
+  // const items = [darkLightModeItem].filter(Boolean);
+  const items = [];
 
   return (
     <Menu

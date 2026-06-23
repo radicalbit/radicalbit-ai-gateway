@@ -13,7 +13,7 @@ function Analytics({ record }) {
   };
 
   return (
-    <DataTableAction>
+    <DataTableAction noHide>
       <Tooltip title="Open route analytics">
         <FontAwesomeIcon className="p-4" icon={faChartLine} onClick={handleOnClick} />
       </Tooltip>

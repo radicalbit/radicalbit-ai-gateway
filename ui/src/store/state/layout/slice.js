@@ -1,12 +1,12 @@
 import { createAction, createSlice } from '@reduxjs/toolkit';
 
 const initialState = {
-  hasHeaderContentDark: true,
+  hasHeaderContentDark: false,
   hasHeaderLeftContentDark: false,
   hasHeaderRightContentDark: false,
-  hasHeaderSecondaryContentDark: true,
+  hasHeaderSecondaryContentDark: false,
   hasLeftContentDark: false,
-  hasMainContentDark: true,
+  hasMainContentDark: false,
   hasRightContentDark: false,
   hasSecondaryContentDark: false,
   hasHeader: true,
