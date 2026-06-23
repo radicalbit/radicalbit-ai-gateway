@@ -63,61 +63,72 @@ def check_no_literal_secrets(yaml_content: str) -> list[str]:
     return violations
 
 
-def extract_secret_references(yaml_content: str) -> list[tuple[str, int | None]]:
-    """Return ``(key, line_number)`` for every ``!secret KEY`` in *yaml_content*."""
+def _parse_yaml_with_secrets(
+    yaml_content: str,
+) -> tuple[dict, list[tuple[str, int | None]]]:
+    """Parse *yaml_content*, replacing ``!secret`` tags with placeholders.
+
+    Returns ``(parsed_dict, secret_refs)`` where *secret_refs* is a list of
+    ``(key, line_number)`` for every ``!secret`` reference found.
+    """
     refs: list[tuple[str, int | None]] = []
     loader = yaml.SafeLoader(yaml_content)
 
-    def _collector(loader, node):
+    def secret_constructor(loader, node):
         key = loader.construct_scalar(node)
         line = node.start_mark.line + 1 if node.start_mark else None
         refs.append((key, line))
         return '__secret_placeholder__'
 
-    loader.add_constructor('!secret', _collector)
+    loader.add_constructor('!secret', secret_constructor)
     try:
-        loader.get_single_data()
+        data = loader.get_single_data()
     finally:
         loader.dispose()
+    return data, refs
+
+
+def extract_secret_references(yaml_content: str) -> list[tuple[str, int | None]]:
+    """Return ``(key, line_number)`` for every ``!secret KEY`` in *yaml_content*."""
+    _, refs = _parse_yaml_with_secrets(yaml_content)
     return refs
 
 
-def check_secret_references(yaml_content: str) -> list[str]:
+def check_secret_references(
+    yaml_content: str,
+    *,
+    _refs: list[tuple[str, int | None]] | None = None,
+) -> list[str]:
     """Validate that every ``!secret`` reference points to an existing,
     non-empty key in ``secrets.yaml``.
 
     Returns a (possibly empty) list of human-readable violation strings.
     """
-    refs = extract_secret_references(yaml_content)
+    refs = _refs if _refs is not None else extract_secret_references(yaml_content)
     if not refs:
         return []
 
     provider = get_secret_provider()
     violations: list[str] = []
-    for key, line in refs:
-        error = provider.validate_secret(key)
-        if error:
-            loc = f'line {line}: ' if line else ''
-            violations.append(f'{loc}!secret {key} - {error}')
+    try:
+        for key, line in refs:
+            error = provider.validate_secret(key)
+            if error:
+                loc = f'line {line}: ' if line else ''
+                violations.append(f'{loc}!secret {key} - {error}')
+    except OSError as e:
+        return [f'Cannot read secrets file: {e}']
     return violations
 
 
 def parse_yaml_with_secret_placeholders(yaml_content: str) -> dict:
-    loader = yaml.SafeLoader(yaml_content)
-
-    def secret_constructor(loader, node):
-        return '__secret_placeholder__'
-
-    loader.add_constructor('!secret', secret_constructor)
-    try:
-        return loader.get_single_data()
-    finally:
-        loader.dispose()
+    data, _ = _parse_yaml_with_secrets(yaml_content)
+    return data
 
 
 def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
     try:
-        parsed = parse_yaml_with_secret_placeholders(yaml_str)
+        parsed, secret_refs = _parse_yaml_with_secrets(yaml_str)
     except yaml.YAMLError as e:
         mark = getattr(e, 'problem_mark', None)
         location = f' (line {mark.line + 1}, column {mark.column + 1})' if mark else ''
@@ -129,7 +140,7 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
             raise ProjectConfigValidationError(
                 f'Config contains literal secrets: {violations}. Use !secret references instead.'
             )
-        secret_violations = check_secret_references(yaml_str)
+        secret_violations = check_secret_references(yaml_str, _refs=secret_refs)
         if secret_violations:
             raise ProjectConfigValidationError(
                 f'Config references invalid secrets: {"; ".join(secret_violations)}. '

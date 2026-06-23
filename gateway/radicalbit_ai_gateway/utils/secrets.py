@@ -23,7 +23,7 @@ class SecretProvider(ABC):
             value = self.get_secret(key)
         except SecretNotFoundError:
             return 'not found'
-        if value is None or str(value).strip() == '':
+        if not str(value).strip():
             return 'has an empty value'
         return None
 
