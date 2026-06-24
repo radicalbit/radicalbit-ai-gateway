@@ -42,6 +42,7 @@ from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import GuardrailClass, GuardrailWhereType
 from radicalbit_ai_gateway.models.model import ENABLE_PROMPT_CACHE_PARAM, Model
+from radicalbit_ai_gateway.preprocessing import run_preprocessing
 from radicalbit_ai_gateway.routing import (
     DeterministicRouter,
     SemanticRouter,
@@ -660,6 +661,10 @@ class GatewayRoute:
                     selected_model_id=model_selected.model_id,
                 )
             )
+
+        # Preprocessing plugins: transform messages before input guardrails.
+        # No-op when no plugins are registered; fail-closed if a plugin raises.
+        messages = await run_preprocessing(messages)
 
         guardrails_input_triggered = False
         guardrails_block_triggered = (
