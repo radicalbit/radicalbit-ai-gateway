@@ -235,3 +235,31 @@ class TestProjectRoute(unittest.TestCase):
         res = self.client.delete(f'{self.prefix}/projects/{pid}')
         assert res.status_code == 200
         self.deregister.assert_not_awaited()
+
+    # --- route_meta ---
+
+    def _get_endpoint(self, path_suffix: str, method: str = 'PATCH') -> object:
+        """Return the endpoint function for a given path suffix and method."""
+        for route in self.client.app.routes:
+            if hasattr(route, 'path') and route.path.endswith(path_suffix):
+                if method.upper() in getattr(route, 'methods', set()):
+                    return route.endpoint
+        msg = f'No route found for {method} ...{path_suffix}'
+        raise AssertionError(msg)
+
+    def test_config_mutation_routes_have_entity_uuid_param(self):
+        config_routes = [
+            ('configs/{config_uuid}', 'PATCH'),
+            ('configs/{config_uuid}/approve', 'PATCH'),
+            ('configs/{config_uuid}/cancel-approval', 'PATCH'),
+            ('configs/{config_uuid}/serve', 'PATCH'),
+            ('configs/{config_uuid}/unserve', 'PATCH'),
+            ('configs/{config_uuid}/generate-config', 'POST'),
+        ]
+        for path_suffix, method in config_routes:
+            endpoint = self._get_endpoint(path_suffix, method)
+            meta = getattr(endpoint, '_route_meta', None)
+            assert meta is not None, f'{path_suffix} missing _route_meta'
+            assert meta.get('entity_uuid_param') == 'project_uuid', (
+                f'{path_suffix} missing entity_uuid_param'
+            )

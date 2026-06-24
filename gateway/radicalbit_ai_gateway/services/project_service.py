@@ -139,6 +139,8 @@ class ProjectService:
                 f'Config {config_uuid} must be approved before serving'
             )
 
+        validate_gateway_config(config.config_file, check_secrets=True)
+
         served = self.project_config_dao.serve(config_uuid)
         if served is None:
             raise ProjectInternalError(

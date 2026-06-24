@@ -158,3 +158,38 @@ def test_resolve_secrets_from_string_missing_secret_raises(secrets_path):
     )
     with pytest.raises(Exception, match='NONEXISTENT_KEY'):
         resolve_secrets_from_string(yaml_with_unknown, provider=provider)
+
+
+# --- validate_secret tests ---
+
+
+def test_validate_secret_returns_none_for_valid_key(secrets_path):
+    provider = FileSecretProvider(secrets_path)
+    assert provider.validate_secret('OPENAI_API_KEY') is None
+
+
+def test_validate_secret_returns_error_for_missing_key(secrets_path):
+    provider = FileSecretProvider(secrets_path)
+    error = provider.validate_secret('NONEXISTENT')
+    assert error is not None
+    assert 'not found' in error
+
+
+def test_validate_secret_returns_error_for_empty_value():
+    with tempfile.NamedTemporaryFile('w+', suffix='.yaml', delete=False) as f:
+        f.write('EMPTY_SECRET: ""\n')
+        f.flush()
+        provider = FileSecretProvider(f.name)
+        error = provider.validate_secret('EMPTY_SECRET')
+        assert error is not None
+        assert 'empty' in error
+
+
+def test_validate_secret_returns_error_for_whitespace_only_value():
+    with tempfile.NamedTemporaryFile('w+', suffix='.yaml', delete=False) as f:
+        f.write('BLANK_SECRET: "   "\n')
+        f.flush()
+        provider = FileSecretProvider(f.name)
+        error = provider.validate_secret('BLANK_SECRET')
+        assert error is not None
+        assert 'empty' in error

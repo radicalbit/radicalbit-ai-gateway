@@ -21,6 +21,20 @@ def test_returns_same_function_object():
     assert wrapped is original
 
 
+def test_entity_uuid_param():
+    @route_meta(
+        entity_type='PROJECT',
+        entity_uuid_param='project_uuid',
+    )
+    def handler():
+        pass
+
+    assert handler._route_meta == {
+        'entity_type': 'PROJECT',
+        'entity_uuid_param': 'project_uuid',
+    }
+
+
 def test_empty_kwargs():
     @route_meta()
     def handler():
