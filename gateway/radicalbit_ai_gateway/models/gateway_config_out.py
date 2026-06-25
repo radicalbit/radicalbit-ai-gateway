@@ -203,7 +203,6 @@ class GatewayRouteConfigOut(GatewayRouteConfig):
     guardrails: list[GuardrailOut] | None
     caching: AnyCachingOut | None
     routing: AnyRoutingConfigOut | None
-    extension: dict | None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
