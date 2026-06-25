@@ -13,18 +13,16 @@ def _clean_registry():
 
 
 def _route(extension):
-    return GatewayRouteConfig(
-        route_name='r', chat_models=['m'], extension=extension
-    )
+    return GatewayRouteConfig(route_name='r', chat_models=['m'], extension=extension)
 
 
 def test_registered_validator_receives_extension():
     seen = []
     register_extension_validator(seen.append)
 
-    _route({'privacy_tracing_enabled': True})
+    _route({'fake_enabled': True})
 
-    assert seen == [{'privacy_tracing_enabled': True}]
+    assert seen == [{'fake_enabled': True}]
 
 
 def test_validator_error_fails_config_validation():

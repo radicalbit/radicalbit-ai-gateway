@@ -92,7 +92,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
     unhandled_exception_handler,
 )
 from radicalbit_ai_gateway.utils.filtering_exporter import FilteringExporter
-from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_project_route_registrar,
 )
@@ -114,6 +113,7 @@ from radicalbit_ai_gateway.utils.responses_translation import (
 from radicalbit_ai_gateway.utils.streaming_response import (
     StreamingResponseWithStatusCode,
 )
+from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     ensure_endpoint_category,

@@ -1,10 +1,3 @@
-"""Generic registry for wrapping the OTLP span exporter at startup.
-
-Plugins register a wrapper at import time; ``lifespan`` applies the registered
-wrappers around each ``OTLPSpanExporter`` when it builds the span processors.
-The core carries no knowledge of what the wrappers do.
-"""
-
 from collections.abc import Callable
 
 from opentelemetry.sdk.trace.export import SpanExporter
