@@ -1,4 +1,9 @@
-from pydantic import BaseModel, ConfigDict, Field
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
@@ -10,6 +15,7 @@ from radicalbit_ai_gateway.models.limiting import (
     RateLimiting,
     TokenLimiting,
 )
+from radicalbit_ai_gateway.utils.config_hooks import get_extension_validators
 
 
 class GatewayRouteConfig(BaseModel):
@@ -57,6 +63,29 @@ class GatewayRouteConfig(BaseModel):
         default=None,
         description='Name of a top-level routing config.',
     )
+    extension: dict | None = Field(
+        default=None,
+        description=(
+            'Free-form configuration consumed by enterprise plugins/extensions. '
+            'Opaque to the core gateway, which never reads or interprets it; '
+            'enabled plugins validate their own keys.'
+        ),
+    )
+
+    @model_validator(mode='after')
+    def run_extension_validators(self) -> Self:
+        """Run registered plugin validators against ``extension``.
+
+        Plugins register validators via
+        ``radicalbit_ai_gateway.utils.config_hooks.register_extension_validator``.
+        A validator raises ValueError on invalid config, which surfaces as a
+        normal config validation error.
+        """
+        if not self.extension:
+            return self
+        for validate in get_extension_validators():
+            validate(self.extension)
+        return self
 
     def get_token_limiter(self) -> TokenLimiter:
         return TokenLimiter(

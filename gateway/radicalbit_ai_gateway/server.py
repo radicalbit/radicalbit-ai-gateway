@@ -92,6 +92,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     unhandled_exception_handler,
 )
 from radicalbit_ai_gateway.utils.filtering_exporter import FilteringExporter
+from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_project_route_registrar,
 )
@@ -246,17 +247,14 @@ async def lifespan(app: FastAPI):
 
     processors = []
 
+    def _build_processor(exporter: OTLPSpanExporter) -> BatchSpanProcessor:
+        for wrap in get_exporter_wrappers():
+            exporter = wrap(exporter)
+        return BatchSpanProcessor(FilteringExporter(exporter))
+
     if app_config.telemetry_config.collector_base_url:
         endpoint = _otlp_endpoint(app_config.telemetry_config.collector_base_url)
-        processors.append(
-            BatchSpanProcessor(
-                FilteringExporter(
-                    OTLPSpanExporter(
-                        endpoint=endpoint,
-                    )
-                )
-            )
-        )
+        processors.append(_build_processor(OTLPSpanExporter(endpoint=endpoint)))
         logger.info('Configured otel-collector for url: %s', endpoint)
 
     for exp_cfg in app_config.telemetry_config.otlp_exporters:
@@ -265,14 +263,7 @@ async def lifespan(app: FastAPI):
             headers['Authorization'] = f'Bearer {exp_cfg.api_key}'
         endpoint = _otlp_endpoint(exp_cfg.url)
         processors.append(
-            BatchSpanProcessor(
-                FilteringExporter(
-                    OTLPSpanExporter(
-                        endpoint=endpoint,
-                        headers=headers,
-                    )
-                )
-            )
+            _build_processor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
         )
         logger.info('Configured extra processor for url: %s', endpoint)
 
