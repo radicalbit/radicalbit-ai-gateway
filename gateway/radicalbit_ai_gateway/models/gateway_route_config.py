@@ -59,9 +59,7 @@ class GatewayRouteConfig(BaseModel):
     )
     extension: dict | None = Field(
         default=None,
-        description=(
-            'Extension configuration for the route.'
-        ),
+        description=('Extension configuration for the route.'),
     )
 
     def get_token_limiter(self) -> TokenLimiter:

@@ -15,7 +15,8 @@ def _clean_registry():
 def _config(extension):
     """Build a config the way it is loaded in production: validation of a
     route's ``extension`` happens at GatewayConfig load time, not on bare
-    GatewayRouteConfig construction."""
+    GatewayRouteConfig construction.
+    """
     return GatewayConfig(
         chat_models=[{'model_id': 'm', 'model': 'openai/gpt-4o'}],
         routes={'r': {'chat_models': ['m'], 'extension': extension}},
