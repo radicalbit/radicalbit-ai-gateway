@@ -95,9 +95,14 @@ from radicalbit_ai_gateway.utils.filtering_exporter import FilteringExporter
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_project_route_registrar,
 )
+from radicalbit_ai_gateway.utils.logging_hooks import apply_log_filters
 from radicalbit_ai_gateway.utils.open_ai_types import (
     CompletionCreateParams,
     ResponseCreateParamsCustom,
+)
+from radicalbit_ai_gateway.utils.request_context import (
+    reset_route_context,
+    set_current_route_config,
 )
 from radicalbit_ai_gateway.utils.responses_streaming import (
     build_skeleton_response,
@@ -297,6 +302,9 @@ app.state.token_validator = ApiKeyValidator(key_service=key_service)
 # load plugins
 init_plugins(app)
 
+# Attach plugin-registered log filters, now that plugins have registered them.
+apply_log_filters(logger)
+
 # middleware
 app.add_middleware(
     CORSMiddleware,
@@ -365,8 +373,8 @@ app.include_router(
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.error('Validation error: %s', exc.errors())
-    logger.error('Body: %s', await request.body())
+    errors = [{'loc': e.get('loc'), 'type': e.get('type')} for e in exc.errors()]
+    logger.error('Validation error: %s', errors)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={'detail': exc.errors(), 'body': (await request.body()).decode()},
@@ -512,6 +520,7 @@ def otel_metrics_decorator(func):
 @otel_metrics_decorator
 @workflow(name='chat_completions')
 @ensure_endpoint_category
+@reset_route_context
 async def chat_completions(
     request: Request,
     completion_create_params: CompletionCreateParams,
@@ -528,6 +537,8 @@ async def chat_completions(
             f'The route name [{route_key}] was not found in the config'
         )
     route_name = route.gateway_route_config.route_name
+    # Publish the route config for per-route log filtering (cleared by the decorator).
+    set_current_route_config(route.gateway_route_config)
     # Mark the root workflow span with ENDPOINT category
     set_operation_category(OperationCategory.ENDPOINT)
 
@@ -825,14 +836,13 @@ async def embeddings(
 @otel_metrics_decorator
 @workflow(name='responses')
 @ensure_endpoint_category
+@reset_route_context
 async def responses(
     request: Request,
     response_create_params: ResponseCreateParamsCustom,
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
     request_uuid: str = Depends(set_request_uuid),
 ):
-    logger.debug('Responses API request: %s', response_create_params)
-
     # Mark the root workflow span with ENDPOINT category
     set_operation_category(OperationCategory.ENDPOINT)
 
@@ -851,6 +861,10 @@ async def responses(
             f'The route name [{route_key}] was not found in the config'
         )
     route_name = route.gateway_route_config.route_name
+    # Publish the route config for per-route log filtering (cleared by the decorator).
+    # Logged after resolution so the request dump is subject to that filtering.
+    set_current_route_config(route.gateway_route_config)
+    logger.debug('Responses API request: %s', response_create_params)
     request.state.otel_route_name = route_name
 
     # Set early trace attributes
