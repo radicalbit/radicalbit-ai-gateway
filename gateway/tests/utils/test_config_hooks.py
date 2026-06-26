@@ -2,7 +2,12 @@ import pytest
 
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.utils import config_hooks
-from radicalbit_ai_gateway.utils.config_hooks import register_extension_validator
+from radicalbit_ai_gateway.utils.config_hooks import (
+    ExtensionConfig,
+    register_extension_schema,
+    register_extension_slice_validator,
+    register_extension_validator,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -47,3 +52,54 @@ def test_no_extension_is_a_noop():
     register_extension_validator(lambda extension: 1 / 0)
 
     _config(None)
+
+
+class _MyConfig(ExtensionConfig):
+    threshold: int = 5
+    secret: str | None = None
+
+
+def test_schema_validates_known_keys():
+    register_extension_schema('my_plugin', _MyConfig)
+
+    _config({'my_plugin': {'threshold': 3}})
+
+
+def test_schema_rejects_unknown_key():
+    register_extension_schema('my_plugin', _MyConfig)
+
+    with pytest.raises(Exception) as exc_info:
+        _config({'my_plugin': {'typo': 1}})
+    assert 'typo' in str(exc_info.value)
+
+
+def test_schema_rejects_bad_type():
+    register_extension_schema('my_plugin', _MyConfig)
+
+    with pytest.raises(Exception):
+        _config({'my_plugin': {'threshold': 'not-an-int'}})
+
+
+def test_schema_noop_when_key_absent():
+    register_extension_schema('my_plugin', _MyConfig)
+
+    _config({'other_plugin': {'whatever': 1}})
+
+
+def test_schema_accepts_secret_placeholder_for_str_field():
+    # ``!secret`` resolves to a string before validation (a placeholder during
+    # the validate pass); a str-typed field must accept it.
+    register_extension_schema('my_plugin', _MyConfig)
+
+    _config({'my_plugin': {'secret': '__secret_placeholder__'}})
+
+
+def test_slice_validator_runs_only_when_key_present():
+    seen = []
+    register_extension_slice_validator('my_plugin', seen.append)
+
+    _config({'other_plugin': {'a': 1}})
+    assert seen == []
+
+    _config({'my_plugin': {'a': 1}})
+    assert seen == [{'a': 1}]

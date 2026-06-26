@@ -27,11 +27,13 @@ import re
 
 from fastapi import status
 from langchain_core.messages import BaseMessage
-from pydantic import BaseModel, ConfigDict
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.config_hooks import register_extension_validator
+from radicalbit_ai_gateway.utils.config_hooks import (
+    ExtensionConfig,
+    register_extension_slice_validator,
+)
 from radicalbit_ai_gateway.utils.exceptions import AppError, GatewayError
 
 app_config = get_app_config()
@@ -54,17 +56,16 @@ class PreprocessingError(GatewayError):
         )
 
 
-class PreprocessingConfig(BaseModel):
-    """Base schema for a plugin's ``extension`` slice.
+class PreprocessingConfig(ExtensionConfig):
+    """Base schema for a preprocessing plugin's ``extension`` slice.
 
-    Forbids unknown keys (``extra='forbid'``), so a route may only set the
-    parameters a plugin declares. Subclass to add plugin-specific fields::
+    Inherits ``extra='forbid'`` from :class:`ExtensionConfig` (a route may only
+    set the parameters a plugin declares) and adds the opt-in ``enabled`` flag.
+    Subclass to add plugin-specific fields::
 
         class MyConfig(PreprocessingConfig):
             threshold: int = 5
     """
-
-    model_config = ConfigDict(extra='forbid')
 
     enabled: bool = False
 
@@ -167,12 +168,7 @@ def register_preprocessing_plugin(plugin: PreprocessingPlugin) -> None:
     ) -> list[BaseMessage]:
         return await plugin.preprocess(messages, config)
 
-    def _validate(extension: dict) -> None:
-        config = extension.get(key)
-        if config is not None:
-            plugin.validate(config)
-
-    register_extension_validator(_validate)
+    register_extension_slice_validator(key, plugin.validate)
     _registered.append((key, plugin, _run))
     logger.info('Registered preprocessing plugin: %s', key)
 
