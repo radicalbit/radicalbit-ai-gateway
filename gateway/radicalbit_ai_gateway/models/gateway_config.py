@@ -20,6 +20,7 @@ from radicalbit_ai_gateway.models.routing import (
     RoutingRuleType,
     SemanticRoutingConfig,
 )
+from radicalbit_ai_gateway.utils.config_hooks import get_extension_validators
 
 
 def get_model_from_model_id(
@@ -316,4 +317,24 @@ class GatewayConfig(BaseModel):
                     f"Route '{route_name}': budget routing requires budget_limiting to be configured."
                 )
 
+        return self
+
+    @model_validator(mode='after')
+    def validate_route_extensions(self) -> Self:
+        """Run registered plugin validators against each route's ``extension``.
+
+        Plugins register validators via
+        ``radicalbit_ai_gateway.utils.config_hooks.register_extension_validator``.
+        A validator raises ValueError on invalid config, which surfaces as a
+        normal config validation error. Validation runs once here at config-load
+        time rather than on every ``GatewayRouteConfig`` construction.
+        """
+        validators = get_extension_validators()
+        if not validators:
+            return self
+        for route in self.routes.values():
+            if not route.extension:
+                continue
+            for validate in validators:
+                validate(route.extension)
         return self
