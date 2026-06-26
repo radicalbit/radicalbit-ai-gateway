@@ -665,7 +665,9 @@ class GatewayRoute:
         # Preprocessing plugins: transform messages before input guardrails.
         # No-op when no plugins are registered; fail-closed if a plugin raises.
         set_operation_category(OperationCategory.PREPROCESSING)
-        messages = await run_preprocessing(messages)
+        messages = await run_preprocessing(
+            messages, self.gateway_route_config.extension
+        )
 
         guardrails_input_triggered = False
         guardrails_block_triggered = (

@@ -7,22 +7,31 @@ reach the input guardrails. Plugins register an implementation at import time
 Contract:
 - A plugin implements :class:`PreprocessingPlugin` and registers an instance via
   :func:`register_preprocessing_plugin`.
-- ``preprocess`` takes the messages and returns the same structure
-  (``list[BaseMessage]``) so the chain composes.
-- Plugins run in registration order. With no plugins registered the chain is a
-  no-op and messages pass through unchanged.
+- ``preprocess`` takes the messages and the plugin's own slice of the route's
+  ``extension`` config, and returns the same structure (``list[BaseMessage]``)
+  so the chain composes.
+- Per-route, opt-in: a plugin runs only when its config key is present in the
+  route's ``extension`` and it is enabled there (see
+  :meth:`PreprocessingPlugin.is_enabled`). Plugins run in the order their keys
+  appear in ``extension`` (route config order); with none enabled the chain is
+  a no-op.
+- A plugin validates its own ``extension`` slice at config-load time by
+  overriding :meth:`PreprocessingPlugin.validate`.
 - Fail-closed: if a plugin raises, the chain stops and the request is aborted.
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 import logging
+import re
 
 from fastapi import status
 from langchain_core.messages import BaseMessage
+from pydantic import BaseModel, ConfigDict
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.config_hooks import register_extension_validator
 from radicalbit_ai_gateway.utils.exceptions import AppError, GatewayError
 
 app_config = get_app_config()
@@ -45,12 +54,60 @@ class PreprocessingError(GatewayError):
         )
 
 
+class PreprocessingConfig(BaseModel):
+    """Base schema for a plugin's ``extension`` slice.
+
+    Forbids unknown keys (``extra='forbid'``), so a route may only set the
+    parameters a plugin declares. Subclass to add plugin-specific fields::
+
+        class MyConfig(PreprocessingConfig):
+            threshold: int = 5
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
+    enabled: bool = False
+
+
 class PreprocessingPlugin(ABC):
     """Implemented by plugins that want to transform incoming chat messages."""
 
+    #: Optional schema for this plugin's ``extension`` slice. When set, the
+    #: default :meth:`validate` checks the slice against it, rejecting unknown
+    #: keys and invalid types. Subclass :class:`PreprocessingConfig`.
+    config_schema: type[PreprocessingConfig] | None = None
+
+    def is_enabled(self, config: dict | None) -> bool:
+        """Whether this plugin runs for a route, given its config slice.
+
+        Default: opt-in — runs only when the slice has a truthy ``enabled``
+        flag. Override for custom gating.
+        """
+        return isinstance(config, dict) and bool(config.get('enabled', False))
+
+    def validate(self, config: dict) -> None:
+        """Validate this plugin's own ``extension`` slice at config-load time.
+
+        Called once per route that declares a slice for this plugin (its config
+        key is present), via the extension validator registered in
+        :func:`register_preprocessing_plugin`. Raise ``ValueError`` on invalid
+        config to fail config validation.
+
+        Default: validate against :attr:`config_schema` if set (which rejects
+        unknown keys); otherwise a no-op. Override for custom validation.
+        """
+        if self.config_schema is not None:
+            self.config_schema.model_validate(config)
+
     @abstractmethod
-    async def preprocess(self, messages: list[BaseMessage]) -> list[BaseMessage]:
+    async def preprocess(
+        self, messages: list[BaseMessage], config: dict | None
+    ) -> list[BaseMessage]:
         """Transform *messages* and return the same structure.
+
+        *config* is this plugin's slice of the route's ``extension`` config
+        (the value under this plugin's key); ``None`` when the route declares
+        no slice for it. Read route-specific settings from it as needed.
 
         Each message's ``content`` can take two shapes, and an implementation
         that edits text should handle both:
@@ -81,10 +138,17 @@ class PreprocessingPlugin(ABC):
         ...
 
 
-# Registry of (plugin name, task-wrapped runner). Chain order == registration
-# order (i.e. plugin load order).
-_PluginRunner = Callable[[list[BaseMessage]], Awaitable[list[BaseMessage]]]
-_registered: list[tuple[str, _PluginRunner]] = []
+def _config_key(plugin: PreprocessingPlugin) -> str:
+    """Resolve a plugin's ``extension`` config key: the snake_case form of the
+    class name (e.g. ``MyPlugin`` -> ``my_plugin``).
+    """
+    return re.sub(r'(?<!^)(?=[A-Z])', '_', type(plugin).__name__).lower()
+
+
+# Registry of (config key, plugin, task-wrapped runner). Chain order ==
+# registration order (i.e. plugin load order).
+_PluginRunner = Callable[[list[BaseMessage], dict | None], Awaitable[list[BaseMessage]]]
+_registered: list[tuple[str, PreprocessingPlugin, _PluginRunner]] = []
 
 
 def register_preprocessing_plugin(plugin: PreprocessingPlugin) -> None:
@@ -92,21 +156,32 @@ def register_preprocessing_plugin(plugin: PreprocessingPlugin) -> None:
 
     Call from a plugin module at import time. The plugin runs in the order it
     was registered, relative to other preprocessing plugins. Its ``preprocess``
-    method is wrapped with a traceloop ``task`` span named ``preprocess.<Plugin>``
+    method is wrapped with a traceloop ``task`` span named ``preprocess.<key>``
     once, here, rather than per request.
     """
-    name = type(plugin).__name__
+    key = _config_key(plugin)
 
-    @task(name=f'preprocess.{name}')
-    async def _run(messages: list[BaseMessage]) -> list[BaseMessage]:
-        return await plugin.preprocess(messages)
+    @task(name=f'preprocess.{key}')
+    async def _run(
+        messages: list[BaseMessage], config: dict | None
+    ) -> list[BaseMessage]:
+        return await plugin.preprocess(messages, config)
 
-    _registered.append((name, _run))
-    logger.info('Registered preprocessing plugin: %s', name)
+    def _validate(extension: dict) -> None:
+        config = extension.get(key)
+        if config is not None:
+            plugin.validate(config)
+
+    register_extension_validator(_validate)
+    _registered.append((key, plugin, _run))
+    logger.info('Registered preprocessing plugin: %s', key)
 
 
 async def _invoke(
-    name: str, run: _PluginRunner, messages: list[BaseMessage]
+    key: str,
+    run: _PluginRunner,
+    messages: list[BaseMessage],
+    config: dict | None,
 ) -> list[BaseMessage]:
     """Run one plugin's task-wrapped runner with fail-closed error wrapping.
 
@@ -114,24 +189,62 @@ async def _invoke(
     any other exception is wrapped in :class:`PreprocessingError`.
     """
     try:
-        return await run(messages)
+        return await run(messages, config)
     except AppError:
         # The plugin raised a structured gateway error on purpose; let it through.
         raise
     except Exception as e:
         raise PreprocessingError(
             'A preprocessing step failed.',
-            log_message=f'preprocessing plugin {name} failed: {e}',
+            log_message=f'preprocessing plugin {key} failed: {e}',
         ) from e
 
 
-@workflow(name='run_preprocessing')
-async def run_preprocessing(messages: list[BaseMessage]) -> list[BaseMessage]:
-    """Run the preprocessing chain over *messages*.
+def _enabled_chain(
+    extension: dict | None,
+) -> list[tuple[str, _PluginRunner, dict | None]]:
+    """Resolve the ordered ``(key, runner, config)`` chain for *extension*.
 
-    No-op when no plugins are registered. Fail-closed per plugin via
-    :func:`_invoke`.
+    A plugin is included only when its config key is present in *extension* and
+    :meth:`PreprocessingPlugin.is_enabled` returns True for its slice. The order
+    follows the keys' order in *extension* (the route's config order). Extension
+    keys that are not registered preprocessing plugins are ignored.
     """
-    for name, run in _registered:
-        messages = await _invoke(name, run, messages)
+    by_key = extension if isinstance(extension, dict) else {}
+    registered = {key: (plugin, run) for key, plugin, run in _registered}
+    chain: list[tuple[str, _PluginRunner, dict | None]] = []
+    for key, config in by_key.items():
+        entry = registered.get(key)
+        if entry is None:
+            continue
+        plugin, run = entry
+        if plugin.is_enabled(config):
+            chain.append((key, run, config))
+    return chain
+
+
+@workflow(name='run_preprocessing')
+async def _run_chain(
+    messages: list[BaseMessage],
+    chain: list[tuple[str, _PluginRunner, dict | None]],
+) -> list[BaseMessage]:
+    """Run a resolved preprocessing *chain*, fail-closed per plugin."""
+    for key, run, config in chain:
+        messages = await _invoke(key, run, messages, config)
     return messages
+
+
+async def run_preprocessing(
+    messages: list[BaseMessage], extension: dict | None = None
+) -> list[BaseMessage]:
+    """Run the preprocessing chain over *messages* for a route's *extension*.
+
+    Each plugin's slice is passed to ``preprocess``; plugins run in the route's
+    config order (see :func:`_enabled_chain`). When no plugin is enabled this is
+    a no-op that returns *messages* unchanged **without** opening a workflow
+    span; otherwise the chain runs inside the ``run_preprocessing`` workflow.
+    """
+    chain = _enabled_chain(extension)
+    if not chain:
+        return messages
+    return await _run_chain(messages, chain)
