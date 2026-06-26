@@ -22,9 +22,11 @@ from fastapi import status
 from langchain_core.messages import BaseMessage
 from traceloop.sdk.decorators import task, workflow
 
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import AppError, GatewayError
 
-logger = logging.getLogger('radicalbit_ai_gateway')
+app_config = get_app_config()
+logger = logging.getLogger(app_config.log_config.logger_name)
 
 
 class PreprocessingError(GatewayError):
