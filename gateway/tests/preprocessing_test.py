@@ -5,7 +5,6 @@ import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
     PreprocessingError,
     PreprocessingPlugin,
-    get_preprocessing_plugins,
     register_preprocessing_plugin,
     run_preprocessing,
 )
@@ -67,7 +66,7 @@ async def test_chain_runs_in_registration_order():
     register_preprocessing_plugin(_Suffix('-b'))
     out = await run_preprocessing([HumanMessage(content='x')])
     assert out[0].content == 'x-a-b'
-    assert len(get_preprocessing_plugins()) == 2
+    assert len(preprocessing_module._registered) == 2
 
 
 async def test_failing_plugin_is_fail_closed():

@@ -16,7 +16,6 @@ Contract:
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 import logging
 
 from fastapi import status
@@ -80,21 +79,10 @@ class PreprocessingPlugin(ABC):
         ...
 
 
-@dataclass
-class _Entry:
-    """A registered plugin plus its task-wrapped runner.
-
-    ``runner`` is decorated with :func:`task` once at registration (using a
-    per-plugin span name) so the wrapper is built at startup, not per request.
-    """
-
-    name: str
-    plugin: PreprocessingPlugin
-    runner: Callable[[list[BaseMessage]], Awaitable[list[BaseMessage]]]
-
-
-# Registry. Chain order == registration order (i.e. plugin load order).
-_registered: list[_Entry] = []
+# Registry of (plugin name, task-wrapped runner). Chain order == registration
+# order (i.e. plugin load order).
+_PluginRunner = Callable[[list[BaseMessage]], Awaitable[list[BaseMessage]]]
+_registered: list[tuple[str, _PluginRunner]] = []
 
 
 def register_preprocessing_plugin(plugin: PreprocessingPlugin) -> None:
@@ -106,23 +94,17 @@ def register_preprocessing_plugin(plugin: PreprocessingPlugin) -> None:
     once, here, rather than per request.
     """
     name = type(plugin).__name__
-    span_name = f'preprocess.{name}'
 
-    @task(name=span_name)
+    @task(name=f'preprocess.{name}')
     async def _run(messages: list[BaseMessage]) -> list[BaseMessage]:
         return await plugin.preprocess(messages)
 
-    _registered.append(_Entry(name=name, plugin=plugin, runner=_run))
+    _registered.append((name, _run))
     logger.info('Registered preprocessing plugin: %s', name)
 
 
-def get_preprocessing_plugins() -> list[PreprocessingPlugin]:
-    """Return the registered preprocessing plugins, in chain order."""
-    return [entry.plugin for entry in _registered]
-
-
-async def _invoke_entry(
-    entry: _Entry, messages: list[BaseMessage]
+async def _invoke(
+    name: str, run: _PluginRunner, messages: list[BaseMessage]
 ) -> list[BaseMessage]:
     """Run one plugin's task-wrapped runner with fail-closed error wrapping.
 
@@ -130,14 +112,14 @@ async def _invoke_entry(
     any other exception is wrapped in :class:`PreprocessingError`.
     """
     try:
-        return await entry.runner(messages)
+        return await run(messages)
     except AppError:
         # The plugin raised a structured gateway error on purpose; let it through.
         raise
     except Exception as e:
         raise PreprocessingError(
             'A preprocessing step failed.',
-            log_message=f'preprocessing plugin {entry.name} failed: {e}',
+            log_message=f'preprocessing plugin {name} failed: {e}',
         ) from e
 
 
@@ -146,9 +128,8 @@ async def run_preprocessing(messages: list[BaseMessage]) -> list[BaseMessage]:
     """Run the preprocessing chain over *messages*.
 
     No-op when no plugins are registered. Fail-closed per plugin via
-    :func:`_invoke_entry`.
+    :func:`_invoke`.
     """
-    current = messages
-    for entry in _registered:
-        current = await _invoke_entry(entry, current)
-    return current
+    for name, run in _registered:
+        messages = await _invoke(name, run, messages)
+    return messages
