@@ -9,6 +9,7 @@ class OperationCategory(str, Enum):
     ENDPOINT = 'endpoint'
     AUTH = 'auth'
     ROUTING = 'routing'
+    PREPROCESSING = 'preprocessing'
     GUARDRAIL_INPUT = 'guardrail_input'
     GUARDRAIL_OUTPUT = 'guardrail_output'
     CACHE = 'cache'

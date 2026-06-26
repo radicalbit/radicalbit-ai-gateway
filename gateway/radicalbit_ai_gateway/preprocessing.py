@@ -19,6 +19,7 @@ import logging
 
 from fastapi import status
 from langchain_core.messages import BaseMessage
+from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.utils.exceptions import AppError, GatewayError
 
@@ -96,6 +97,7 @@ def get_preprocessing_plugins() -> list[PreprocessingPlugin]:
     return list(_registered)
 
 
+@workflow(name='run_preprocessing')
 async def run_preprocessing(messages: list[BaseMessage]) -> list[BaseMessage]:
     """Run the preprocessing chain over *messages*.
 
@@ -107,7 +109,7 @@ async def run_preprocessing(messages: list[BaseMessage]) -> list[BaseMessage]:
     for plugin in get_preprocessing_plugins():
         name = type(plugin).__name__
         try:
-            current = await plugin.preprocess(current)
+            current = await task(name=f'preprocess.{name}')(plugin.preprocess)(current)
         except AppError:
             # The plugin raised a structured gateway error on purpose; let it through.
             raise
