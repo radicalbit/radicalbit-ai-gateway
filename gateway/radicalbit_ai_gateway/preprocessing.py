@@ -23,7 +23,6 @@ Contract:
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 import logging
-import re
 
 from fastapi import status
 from langchain_core.messages import BaseMessage
@@ -140,10 +139,11 @@ class PreprocessingPlugin(ABC):
 
 
 def _config_key(plugin: PreprocessingPlugin) -> str:
-    """Resolve a plugin's ``extension`` config key: the snake_case form of the
-    class name (e.g. ``MyPlugin`` -> ``my_plugin``).
+    """Resolve a plugin's ``extension`` config key: its top-level package name,
+    which equals the entry-point name used in ``ENABLED_PLUGINS`` (e.g. a plugin
+    in package ``uppercase_preprocessor`` keys on ``uppercase_preprocessor``).
     """
-    return re.sub(r'(?<!^)(?=[A-Z])', '_', type(plugin).__name__).lower()
+    return type(plugin).__module__.partition('.')[0]
 
 
 # Registry of (config key, plugin, task-wrapped runner). Chain order ==
@@ -152,15 +152,21 @@ _PluginRunner = Callable[[list[BaseMessage], dict | None], Awaitable[list[BaseMe
 _registered: list[tuple[str, PreprocessingPlugin, _PluginRunner]] = []
 
 
-def register_preprocessing_plugin(plugin: PreprocessingPlugin) -> None:
+def register_preprocessing_plugin(
+    plugin: PreprocessingPlugin, name: str | None = None
+) -> None:
     """Register a preprocessing plugin to join the chain.
 
     Call from a plugin module at import time. The plugin runs in the order it
     was registered, relative to other preprocessing plugins. Its ``preprocess``
     method is wrapped with a traceloop ``task`` span named ``preprocess.<key>``
     once, here, rather than per request.
+
+    The plugin's ``extension`` config key defaults to its package name (see
+    :func:`_config_key`); pass *name* to override it (e.g. in tests where several
+    plugin classes share one module).
     """
-    key = _config_key(plugin)
+    key = name or _config_key(plugin)
 
     @task(name=f'preprocess.{key}')
     async def _run(
