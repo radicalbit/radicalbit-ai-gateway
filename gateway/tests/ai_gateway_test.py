@@ -994,6 +994,7 @@ async def test_preprocessing_runs_before_prompt_injection():
     finally:
         preprocessing_module._registered.clear()
         config_hooks._extension_validators.clear()
+        config_hooks._known_extension_keys.clear()
 
     # The plugin only ever saw the client message — no injected system prompt.
     assert seen == [('HumanMessage', 'hello')]
@@ -1061,6 +1062,7 @@ async def test_preprocessing_includes_client_sent_system_prompt():
     finally:
         preprocessing_module._registered.clear()
         config_hooks._extension_validators.clear()
+        config_hooks._known_extension_keys.clear()
 
     # The plugin saw the client's own system message (and the human message);
     # the route-configured prompt was NOT yet present.

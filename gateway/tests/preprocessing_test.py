@@ -24,9 +24,11 @@ def _clear_registry():
     """
     preprocessing_module._registered.clear()
     config_hooks._extension_validators.clear()
+    config_hooks._known_extension_keys.clear()
     yield
     preprocessing_module._registered.clear()
     config_hooks._extension_validators.clear()
+    config_hooks._known_extension_keys.clear()
 
 
 def _config(extension):
@@ -233,7 +235,9 @@ def test_plugin_validate_passes_on_valid_slice():
 
 def test_validate_not_called_when_slice_absent():
     register_preprocessing_plugin(Validating(), name='validating')
-    # No 'validating' key and no extension at all: validate must not run.
+    register_preprocessing_plugin(Upper(), name='other')
+    # 'validating' slice absent (only the other, claimed key is present) and no
+    # extension at all: its validate must not run (it would raise).
     _config({'other': {'enabled': True}})
     _config(None)
 

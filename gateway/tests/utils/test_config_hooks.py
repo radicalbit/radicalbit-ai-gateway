@@ -13,8 +13,10 @@ from radicalbit_ai_gateway.utils.config_hooks import (
 @pytest.fixture(autouse=True)
 def _clean_registry():
     config_hooks._extension_validators.clear()
+    config_hooks._known_extension_keys.clear()
     yield
     config_hooks._extension_validators.clear()
+    config_hooks._known_extension_keys.clear()
 
 
 def _config(extension):
@@ -80,10 +82,12 @@ def test_schema_rejects_bad_type():
         _config({'my_plugin': {'threshold': 'not-an-int'}})
 
 
-def test_schema_noop_when_key_absent():
+def test_unknown_key_is_rejected():
     register_extension_schema('my_plugin', _MyConfig)
 
-    _config({'other_plugin': {'whatever': 1}})
+    with pytest.raises(Exception) as exc_info:
+        _config({'other_plugin': {'whatever': 1}})
+    assert 'other_plugin' in str(exc_info.value)
 
 
 def test_schema_accepts_secret_placeholder_for_str_field():
@@ -98,7 +102,10 @@ def test_slice_validator_runs_only_when_key_present():
     seen = []
     register_extension_slice_validator('my_plugin', seen.append)
 
-    _config({'other_plugin': {'a': 1}})
+    # A different, unclaimed key is rejected rather than silently skipped.
+    with pytest.raises(Exception) as exc_info:
+        _config({'other_plugin': {'a': 1}})
+    assert 'other_plugin' in str(exc_info.value)
     assert seen == []
 
     _config({'my_plugin': {'a': 1}})
