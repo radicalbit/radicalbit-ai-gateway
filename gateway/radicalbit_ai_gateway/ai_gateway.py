@@ -640,9 +640,18 @@ class GatewayRoute:
         if not self.chat_invoker:
             raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
 
-        # Prepare request for processing
+        # Preprocessing plugins: transform the raw client messages first, before
+        # routing and before the configured system prompt is injected, so plugins
+        # only ever see the client's messages. No-op when no plugin is enabled;
+        # fail-closed if a plugin raises.
+        set_operation_category(OperationCategory.PREPROCESSING)
+        messages = await run_preprocessing(
+            messages, self.gateway_route_config.extension
+        )
+
+        # Prepare request for processing: route on the preprocessed messages.
         set_operation_category(OperationCategory.ROUTING)
-        model_selected = await self._select_and_prepare_chat_model(messages)
+        model_selected = await self._select_chat_model(messages)
 
         if self.router and self.gateway_route_config.routing:
             emit_event(
@@ -662,12 +671,9 @@ class GatewayRoute:
                 )
             )
 
-        # Preprocessing plugins: transform messages before input guardrails.
-        # No-op when no plugins are registered; fail-closed if a plugin raises.
-        set_operation_category(OperationCategory.PREPROCESSING)
-        messages = await run_preprocessing(
-            messages, self.gateway_route_config.extension
-        )
+        # Inject the route's configured system prompt AFTER preprocessing, so
+        # preprocessing plugins can never see or modify it.
+        self._apply_config_prompt(messages, model_selected)
 
         guardrails_input_triggered = False
         guardrails_block_triggered = (
@@ -807,19 +813,30 @@ class GatewayRoute:
         )
 
     @task(name='select_model')
-    async def _select_and_prepare_chat_model(
-        self, messages: list[BaseMessage]
-    ) -> Model:
-        """Select chat model and prepare messages with config prompt."""
+    async def _select_chat_model(self, messages: list[BaseMessage]) -> Model:
+        """Select the chat model for this request based on the routing config."""
         if self.router:
             model_selected = await self.router.select_model(messages)
         else:
             model_selected = self._chat_models[0]
 
+        logger.debug('Selected chat model: %s', model_selected.model_id)
+
+        return model_selected
+
+    @task(name='apply_config_prompt')
+    def _apply_config_prompt(
+        self, messages: list[BaseMessage], model_selected: Model
+    ) -> None:
+        """Prepend the route's configured system prompt to *messages* in place.
+
+        Runs *after* preprocessing so the configured prompt is never exposed to
+        preprocessing plugins.
+        """
         config_prompt, role = model_selected.effective_prompt, model_selected.role
 
         logger.debug(
-            'Selected chat model: %s with config prompt: %s and role: %s',
+            'Config prompt for model %s: %s and role: %s',
             model_selected.model_id,
             config_prompt,
             role,
@@ -847,8 +864,6 @@ class GatewayRoute:
                     content=config_prompt, role=role, tool_calls=[], tool_call_id=None
                 )
             messages[:] = [system_msg, *messages]
-
-        return model_selected
 
     def _get_first_embedding_model(self) -> Model | None:
         """Return the first embedding model"""

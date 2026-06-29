@@ -1,8 +1,8 @@
 """Preprocessing plugins.
 
-A hook that lets plugins transform the incoming chat messages *before* they
-reach the input guardrails. Plugins register an implementation at import time
-(during ``discover_plugins()``).
+A hook that lets plugins transform the incoming chat messages *before* model
+selection and the input guardrails. Plugins register an implementation at import
+time (during ``discover_plugins()``).
 
 Contract:
 - A plugin implements :class:`PreprocessingPlugin` and registers an instance via
@@ -10,6 +10,9 @@ Contract:
 - ``preprocess`` takes the messages and the plugin's own slice of the route's
   ``extension`` config, and returns the same structure (``list[BaseMessage]``)
   so the chain composes.
+- Plugins receive only the **client's** chat messages. The route's configured
+  system prompt is injected *after* preprocessing runs, so it is never passed to
+  a plugin and cannot be modified by one.
 - Per-route, opt-in: a plugin runs only when its config key is present in the
   route's ``extension`` and it is enabled there (see
   :meth:`PreprocessingPlugin.is_enabled`). Plugins run in the order their keys
@@ -104,6 +107,9 @@ class PreprocessingPlugin(ABC):
         self, messages: list[BaseMessage], config: dict | None
     ) -> list[BaseMessage]:
         """Transform *messages* and return the same structure.
+
+        *messages* are the client's chat messages only; the route's configured
+        system prompt is injected after preprocessing and is never present here.
 
         *config* is this plugin's slice of the route's ``extension`` config
         (the value under this plugin's key); ``None`` when the route declares
