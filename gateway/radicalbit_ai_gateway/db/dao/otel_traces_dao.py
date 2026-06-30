@@ -405,9 +405,14 @@ class OtelTracesDAO:
         trace_agg = (
             select(
                 T.c['TraceId'].label('trace_id'),
-                F.anyIf(T.c['Timestamp'], T.c['ParentSpanId'] == '').label(
-                    'root_timestamp'
-                ),
+                # nullIf converts the epoch default (returned by anyIf when a
+                # trace has no root span, i.e. no span with an empty
+                # ParentSpanId) to NULL, so rootless traces can be filtered out
+                # below instead of bucketing to 1970 and exploding the range.
+                F.nullIf(
+                    F.anyIf(T.c['Timestamp'], T.c['ParentSpanId'] == ''),
+                    text('toDateTime(0)'),
+                ).label('root_timestamp'),
                 F.anyIf(T.c['StatusCode'], T.c['ParentSpanId'] == '').label(
                     'root_status'
                 ),
@@ -423,8 +428,9 @@ class OtelTracesDAO:
             .group_by(T.c['TraceId'])
         ).subquery('trace_agg')
 
-        # Filter by route names on the aggregated root span route_name
-        outer_conditions = []
+        # Drop traces with no root span: their root_timestamp is NULL (see the
+        # nullIf above) and they would otherwise bucket to the Unix epoch.
+        outer_conditions = [trace_agg.c.root_timestamp.isnot(None)]
         if route_names:
             outer_conditions.append(trace_agg.c.route_name.in_(route_names))
 
