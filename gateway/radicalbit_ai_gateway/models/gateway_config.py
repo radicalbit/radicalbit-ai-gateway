@@ -8,7 +8,7 @@ try:
 except ImportError:
     from typing_extensions import Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from radicalbit_ai_gateway.models.caching import CacheConfig, SemanticCaching
 from radicalbit_ai_gateway.models.fallback import FallbackModelType
@@ -20,7 +20,11 @@ from radicalbit_ai_gateway.models.routing import (
     RoutingRuleType,
     SemanticRoutingConfig,
 )
-from radicalbit_ai_gateway.utils.config_hooks import get_extension_validators
+from radicalbit_ai_gateway.utils.config_hooks import (
+    build_route_plugins_model,
+    get_known_plugin_keys,
+    get_plugins_validators,
+)
 
 
 def get_model_from_model_id(
@@ -320,21 +324,39 @@ class GatewayConfig(BaseModel):
         return self
 
     @model_validator(mode='after')
-    def validate_route_extensions(self) -> Self:
-        """Run registered plugin validators against each route's ``extension``.
+    def validate_route_plugins(self) -> Self:
+        """Validate each route's ``plugins`` against the registered plugins.
 
-        Plugins register validators via
-        ``radicalbit_ai_gateway.utils.config_hooks.register_extension_validator``.
-        A validator raises ValueError on invalid config, which surfaces as a
-        normal config validation error. Validation runs once here at config-load
-        time rather than on every ``GatewayRouteConfig`` construction.
+        ``plugins`` is typed ``dict`` in the route model because its allowed
+        keys are only known once plugins register. Here, at config-load time, we
+        build a model whose fields are exactly the keys plugins claimed
+        (``extra='forbid'``) so a ``plugins`` key no plugin claims — a typo'd
+        or stale plugin name — is rejected instead of being silently ignored.
+        Each plugin's per-slice validator (registered via
+        ``register_plugin_config_validator``) then validates its slice's
+        contents. Validation runs once here rather than on every
+        ``GatewayRouteConfig`` construction.
         """
-        validators = get_extension_validators()
+        validators = get_plugins_validators()
         if not validators:
             return self
-        for route in self.routes.values():
-            if not route.extension:
+        known_keys = get_known_plugin_keys()
+        # Gate unknown keys only when some plugin declared one. With only raw,
+        # whole-``plugins`` validators (no declared key) there is nothing to
+        # gate against, so those keep validating the dict themselves.
+        plugins_model = build_route_plugins_model(known_keys) if known_keys else None
+        for route_name, route in self.routes.items():
+            if not route.plugins:
                 continue
+            if plugins_model is not None:
+                try:
+                    plugins_model.model_validate(route.plugins)
+                except ValidationError as exc:
+                    unknown = sorted(str(e['loc'][0]) for e in exc.errors())
+                    raise ValueError(
+                        f"Route '{route_name}': unknown 'plugins' key(s) "
+                        f'{unknown}; valid keys: {sorted(known_keys)}'
+                    ) from exc
             for validate in validators:
-                validate(route.extension)
+                validate(route.plugins)
         return self

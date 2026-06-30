@@ -3,7 +3,8 @@ import logging
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
-logger = logging.getLogger('radicalbit_ai_gateway')
+app_config = get_app_config()
+logger = logging.getLogger(app_config.log_config.logger_name)
 
 _EP_GROUP = 'radicalbit_ai_gateway.plugins'
 _plugin_modules: dict[str, object] = {}
