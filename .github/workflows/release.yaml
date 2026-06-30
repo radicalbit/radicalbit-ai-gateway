@@ -11,10 +11,10 @@ concurrency:
 env:
   PYTHON_VERSION: "3.11"
   UV_VERSION: "0.7.13"
-  APP_IMAGE: ${{ vars.IMAGE_PREFIX }}/radicalbit-ai-gateway
-  MIGRATIONS_IMAGE: ${{ vars.IMAGE_PREFIX }}/radicalbit-ai-gateway-migrations
-  CLICKHOUSE_MIGRATIONS_IMAGE: ${{ vars.IMAGE_PREFIX }}/radicalbit-ai-gateway-clickhouse-migrations
-  WORKER_IMAGE: ${{ vars.IMAGE_PREFIX }}/metrics-worker
+  APP_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway
+  MIGRATIONS_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway-migrations
+  CLICKHOUSE_MIGRATIONS_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway-clickhouse-migrations
+  WORKER_IMAGE: ${{ secrets.IMAGE_PREFIX }}/metrics-worker
 
 jobs:
   prep:
@@ -81,7 +81,7 @@ jobs:
       - name: Log in to container registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ vars.REGISTRY_HOST }}
+          registry: ${{ secrets.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Build and push app image by digest
@@ -154,7 +154,7 @@ jobs:
       - name: Log in to container registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ vars.REGISTRY_HOST }}
+          registry: ${{ secrets.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Create and push app manifest
