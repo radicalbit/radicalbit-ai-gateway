@@ -84,13 +84,3 @@ def register_extension_slice_validator(
                 validate_slice(config)
 
     register_extension_validator(_validate)
-
-
-def register_extension_schema(key: str, schema: type[ExtensionConfig]) -> None:
-    """Validate the ``extension[key]`` slice against *schema* at config-load time.
-
-    The one-call path for any plugin that needs extra config fields: define an
-    :class:`ExtensionConfig` subclass and register it under the plugin's key.
-    Unknown keys and invalid types are rejected.
-    """
-    register_extension_slice_validator(key, schema.model_validate)

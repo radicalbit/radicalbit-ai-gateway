@@ -4,7 +4,6 @@ from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.utils import config_hooks
 from radicalbit_ai_gateway.utils.config_hooks import (
     ExtensionConfig,
-    register_extension_schema,
     register_extension_slice_validator,
     register_extension_validator,
 )
@@ -62,13 +61,13 @@ class _MyConfig(ExtensionConfig):
 
 
 def test_schema_validates_known_keys():
-    register_extension_schema('my_plugin', _MyConfig)
+    register_extension_slice_validator('my_plugin', _MyConfig.model_validate)
 
     _config({'my_plugin': {'threshold': 3}})
 
 
 def test_schema_rejects_unknown_key():
-    register_extension_schema('my_plugin', _MyConfig)
+    register_extension_slice_validator('my_plugin', _MyConfig.model_validate)
 
     with pytest.raises(Exception) as exc_info:
         _config({'my_plugin': {'typo': 1}})
@@ -76,14 +75,14 @@ def test_schema_rejects_unknown_key():
 
 
 def test_schema_rejects_bad_type():
-    register_extension_schema('my_plugin', _MyConfig)
+    register_extension_slice_validator('my_plugin', _MyConfig.model_validate)
 
     with pytest.raises(Exception):
         _config({'my_plugin': {'threshold': 'not-an-int'}})
 
 
 def test_unknown_key_is_rejected():
-    register_extension_schema('my_plugin', _MyConfig)
+    register_extension_slice_validator('my_plugin', _MyConfig.model_validate)
 
     with pytest.raises(Exception) as exc_info:
         _config({'other_plugin': {'whatever': 1}})
@@ -93,7 +92,7 @@ def test_unknown_key_is_rejected():
 def test_schema_accepts_secret_placeholder_for_str_field():
     # ``!secret`` resolves to a string before validation (a placeholder during
     # the validate pass); a str-typed field must accept it.
-    register_extension_schema('my_plugin', _MyConfig)
+    register_extension_slice_validator('my_plugin', _MyConfig.model_validate)
 
     _config({'my_plugin': {'secret': '__secret_placeholder__'}})
 

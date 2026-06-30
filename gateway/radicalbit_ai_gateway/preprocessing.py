@@ -152,11 +152,11 @@ def _config_key(plugin: PreprocessingPlugin) -> str:
     return type(plugin).__module__.partition('.')[0]
 
 
-# Registry of (config key, plugin, task-wrapped runner) in registration order.
-# The executed chain is NOT registry order: per request it is reordered to the
-# route's ``extension`` key order (see ``_enabled_chain``).
+# Registry of config key -> (plugin, task-wrapped runner). The executed chain is
+# NOT registry order: per request it follows the route's ``extension`` key order
+# (see ``_enabled_chain``). Last registration per key wins.
 _PluginRunner = Callable[[list[BaseMessage], dict | None], Awaitable[list[BaseMessage]]]
-_registered: list[tuple[str, PreprocessingPlugin, _PluginRunner]] = []
+_registered: dict[str, tuple[PreprocessingPlugin, _PluginRunner]] = {}
 
 
 def register_preprocessing_plugin(
@@ -183,7 +183,7 @@ def register_preprocessing_plugin(
         return await plugin.preprocess(messages, config)
 
     register_extension_slice_validator(key, plugin.validate)
-    _registered.append((key, plugin, _run))
+    _registered[key] = (plugin, _run)
     logger.info('Registered preprocessing plugin: %s', key)
 
 
@@ -221,10 +221,9 @@ def _enabled_chain(
     keys that are not registered preprocessing plugins are ignored.
     """
     by_key = extension if isinstance(extension, dict) else {}
-    registered = {key: (plugin, run) for key, plugin, run in _registered}
     chain: list[tuple[str, _PluginRunner, dict | None]] = []
     for key, config in by_key.items():
-        entry = registered.get(key)
+        entry = _registered.get(key)
         if entry is None:
             continue
         plugin, run = entry
