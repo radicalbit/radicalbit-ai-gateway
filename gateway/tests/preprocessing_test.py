@@ -17,25 +17,25 @@ from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
 
 @pytest.fixture(autouse=True)
 def _clear_registry():
-    """Each test starts with empty preprocessing and extension-validator registries.
+    """Each test starts with empty preprocessing and plugins-validator registries.
 
-    Registering a plugin also registers an extension validator, so both globals
+    Registering a plugin also registers an plugins validator, so both globals
     must be reset between tests.
     """
     preprocessing_module._registered.clear()
-    config_hooks._extension_validators.clear()
-    config_hooks._known_extension_keys.clear()
+    config_hooks._plugins_validators.clear()
+    config_hooks._known_plugin_keys.clear()
     yield
     preprocessing_module._registered.clear()
-    config_hooks._extension_validators.clear()
-    config_hooks._known_extension_keys.clear()
+    config_hooks._plugins_validators.clear()
+    config_hooks._known_plugin_keys.clear()
 
 
-def _config(extension):
-    """Build a GatewayConfig as in production (extension validated at load)."""
+def _config(plugins):
+    """Build a GatewayConfig as in production (plugins validated at load)."""
     return GatewayConfig(
         chat_models=[{'model_id': 'm', 'model': 'openai/gpt-4o'}],
-        routes={'r': {'chat_models': ['m'], 'extension': extension}},
+        routes={'r': {'chat_models': ['m'], 'plugins': plugins}},
     )
 
 
@@ -104,7 +104,7 @@ class BadRequest(PreprocessingPlugin):
 
 
 def _on(key: str, **extra) -> dict:
-    """Extension that enables *key* with optional plugin-specific settings."""
+    """Plugins that enables *key* with optional plugin-specific settings."""
     return {key: {'enabled': True, **extra}}
 
 
@@ -162,7 +162,7 @@ async def test_plugin_reads_route_specific_config():
 async def test_enabled_subset_runs():
     register_preprocessing_plugin(Suffix(), name='suffix')
     register_preprocessing_plugin(Upper(), name='upper')
-    # Only suffix enabled: upper is skipped (its key absent from extension).
+    # Only suffix enabled: upper is skipped (its key absent from plugins).
     out = await run_preprocessing(
         [HumanMessage(content='x')], _on('suffix', suffix='-a')
     )
@@ -170,17 +170,17 @@ async def test_enabled_subset_runs():
 
 
 async def test_runs_in_extension_key_order():
-    # Registration order is suffix, upper — but extension lists upper first.
+    # Registration order is suffix, upper — but plugins lists upper first.
     register_preprocessing_plugin(Suffix(), name='suffix')
     register_preprocessing_plugin(Upper(), name='upper')
-    extension = {**_on('upper'), **_on('suffix', suffix='-z')}
-    out = await run_preprocessing([HumanMessage(content='ab')], extension)
+    plugins = {**_on('upper'), **_on('suffix', suffix='-z')}
+    out = await run_preprocessing([HumanMessage(content='ab')], plugins)
     # upper ran first, then suffix: 'AB' -> 'AB-z'
     assert out[0].content == 'AB-z'
 
-    # Reversed extension order -> reversed chain: 'ab-z' -> 'AB-Z'
-    extension = {**_on('suffix', suffix='-z'), **_on('upper')}
-    out = await run_preprocessing([HumanMessage(content='ab')], extension)
+    # Reversed plugins order -> reversed chain: 'ab-z' -> 'AB-Z'
+    plugins = {**_on('suffix', suffix='-z'), **_on('upper')}
+    out = await run_preprocessing([HumanMessage(content='ab')], plugins)
     assert out[0].content == 'AB-Z'
 
 
@@ -208,9 +208,9 @@ async def test_chain_stops_after_failure():
     register_preprocessing_plugin(Boom(), name='boom')
     register_preprocessing_plugin(Upper(), name='upper')
     messages = [HumanMessage(content='hello')]
-    extension = {**_on('boom'), **_on('upper')}
+    plugins = {**_on('boom'), **_on('upper')}
     with pytest.raises(PreprocessingError):
-        await run_preprocessing(messages, extension)
+        await run_preprocessing(messages, plugins)
     # second plugin never ran
     assert messages[0].content == 'hello'
 
@@ -237,7 +237,7 @@ def test_validate_not_called_when_slice_absent():
     register_preprocessing_plugin(Validating(), name='validating')
     register_preprocessing_plugin(Upper(), name='other')
     # 'validating' slice absent (only the other, claimed key is present) and no
-    # extension at all: its validate must not run (it would raise).
+    # plugins at all: its validate must not run (it would raise).
     _config({'other': {'enabled': True}})
     _config(None)
 

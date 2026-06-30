@@ -21,9 +21,9 @@ from radicalbit_ai_gateway.models.routing import (
     SemanticRoutingConfig,
 )
 from radicalbit_ai_gateway.utils.config_hooks import (
-    build_route_extension_model,
-    get_extension_validators,
-    get_known_extension_keys,
+    build_route_plugins_model,
+    get_known_plugin_keys,
+    get_plugins_validators,
 )
 
 
@@ -324,41 +324,39 @@ class GatewayConfig(BaseModel):
         return self
 
     @model_validator(mode='after')
-    def validate_route_extensions(self) -> Self:
-        """Validate each route's ``extension`` against the registered plugins.
+    def validate_route_plugins(self) -> Self:
+        """Validate each route's ``plugins`` against the registered plugins.
 
-        ``extension`` is typed ``dict`` in the route model because its allowed
+        ``plugins`` is typed ``dict`` in the route model because its allowed
         keys are only known once plugins register. Here, at config-load time, we
         build a model whose fields are exactly the keys plugins claimed
-        (``extra='forbid'``) so an ``extension`` key no plugin claims — a typo'd
+        (``extra='forbid'``) so a ``plugins`` key no plugin claims — a typo'd
         or stale plugin name — is rejected instead of being silently ignored.
         Each plugin's per-slice validator (registered via
-        ``register_extension_slice_validator``) then validates its slice's
+        ``register_plugin_config_validator``) then validates its slice's
         contents. Validation runs once here rather than on every
         ``GatewayRouteConfig`` construction.
         """
-        validators = get_extension_validators()
+        validators = get_plugins_validators()
         if not validators:
             return self
-        known_keys = get_known_extension_keys()
+        known_keys = get_known_plugin_keys()
         # Gate unknown keys only when some plugin declared one. With only raw,
-        # whole-``extension`` validators (no declared key) there is nothing to
+        # whole-``plugins`` validators (no declared key) there is nothing to
         # gate against, so those keep validating the dict themselves.
-        extension_model = (
-            build_route_extension_model(known_keys) if known_keys else None
-        )
+        plugins_model = build_route_plugins_model(known_keys) if known_keys else None
         for route_name, route in self.routes.items():
-            if not route.extension:
+            if not route.plugins:
                 continue
-            if extension_model is not None:
+            if plugins_model is not None:
                 try:
-                    extension_model.model_validate(route.extension)
+                    plugins_model.model_validate(route.plugins)
                 except ValidationError as exc:
                     unknown = sorted(str(e['loc'][0]) for e in exc.errors())
                     raise ValueError(
-                        f"Route '{route_name}': unknown 'extension' key(s) "
+                        f"Route '{route_name}': unknown 'plugins' key(s) "
                         f'{unknown}; valid keys: {sorted(known_keys)}'
                     ) from exc
             for validate in validators:
-                validate(route.extension)
+                validate(route.plugins)
         return self

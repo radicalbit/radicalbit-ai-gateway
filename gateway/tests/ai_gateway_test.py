@@ -967,7 +967,7 @@ async def test_preprocessing_runs_before_prompt_injection():
     route_cfg = GatewayRouteConfig(
         route_name='r',
         chat_models=['m'],
-        extension={'spy': {'enabled': True}},
+        plugins={'spy': {'enabled': True}},
     )
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -993,8 +993,8 @@ async def test_preprocessing_runs_before_prompt_injection():
         )
     finally:
         preprocessing_module._registered.clear()
-        config_hooks._extension_validators.clear()
-        config_hooks._known_extension_keys.clear()
+        config_hooks._plugins_validators.clear()
+        config_hooks._known_plugin_keys.clear()
 
     # The plugin only ever saw the client message — no injected system prompt.
     assert seen == [('HumanMessage', 'hello')]
@@ -1032,7 +1032,7 @@ async def test_preprocessing_includes_client_sent_system_prompt():
     route_cfg = GatewayRouteConfig(
         route_name='r',
         chat_models=['m'],
-        extension={'spy': {'enabled': True}},
+        plugins={'spy': {'enabled': True}},
     )
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -1061,8 +1061,8 @@ async def test_preprocessing_includes_client_sent_system_prompt():
         )
     finally:
         preprocessing_module._registered.clear()
-        config_hooks._extension_validators.clear()
-        config_hooks._known_extension_keys.clear()
+        config_hooks._plugins_validators.clear()
+        config_hooks._known_plugin_keys.clear()
 
     # The plugin saw the client's own system message (and the human message);
     # the route-configured prompt was NOT yet present.

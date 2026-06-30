@@ -645,9 +645,7 @@ class GatewayRoute:
         # only ever see the client's messages. No-op when no plugin is enabled;
         # fail-closed if a plugin raises.
         set_operation_category(OperationCategory.PREPROCESSING)
-        messages = await run_preprocessing(
-            messages, self.gateway_route_config.extension
-        )
+        messages = await run_preprocessing(messages, self.gateway_route_config.plugins)
 
         # Prepare request for processing: route on the preprocessed messages.
         set_operation_category(OperationCategory.ROUTING)
