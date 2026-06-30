@@ -152,8 +152,9 @@ def _config_key(plugin: PreprocessingPlugin) -> str:
     return type(plugin).__module__.partition('.')[0]
 
 
-# Registry of (config key, plugin, task-wrapped runner). Chain order ==
-# registration order (i.e. plugin load order).
+# Registry of (config key, plugin, task-wrapped runner) in registration order.
+# The executed chain is NOT registry order: per request it is reordered to the
+# route's ``extension`` key order (see ``_enabled_chain``).
 _PluginRunner = Callable[[list[BaseMessage], dict | None], Awaitable[list[BaseMessage]]]
 _registered: list[tuple[str, PreprocessingPlugin, _PluginRunner]] = []
 
@@ -163,8 +164,9 @@ def register_preprocessing_plugin(
 ) -> None:
     """Register a preprocessing plugin to join the chain.
 
-    Call from a plugin module at import time. The plugin runs in the order it
-    was registered, relative to other preprocessing plugins. Its ``preprocess``
+    Call from a plugin module at import time. Plugins run in the order their
+    keys appear in the route's ``extension`` config (route config order), not in
+    registration order; see :func:`_enabled_chain`. Its ``preprocess``
     method is wrapped with a traceloop ``task`` span named ``preprocess.<key>``
     once, here, rather than per request.
 

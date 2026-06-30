@@ -673,7 +673,7 @@ class GatewayRoute:
 
         # Inject the route's configured system prompt AFTER preprocessing, so
         # preprocessing plugins can never see or modify it.
-        self._apply_config_prompt(messages, model_selected)
+        await self._apply_config_prompt(messages, model_selected)
 
         guardrails_input_triggered = False
         guardrails_block_triggered = (
@@ -825,7 +825,7 @@ class GatewayRoute:
         return model_selected
 
     @task(name='apply_config_prompt')
-    def _apply_config_prompt(
+    async def _apply_config_prompt(
         self, messages: list[BaseMessage], model_selected: Model
     ) -> None:
         """Prepend the route's configured system prompt to *messages* in place.
