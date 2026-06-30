@@ -955,6 +955,52 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         assert len(res) == 1
         assert res[0].total_requests == 1
 
+    def test_get_traces_chart_data_excludes_rootless_traces(self):
+        """A trace with no root span must not bucket to the Unix epoch.
+
+        Regression: anyIf over a trace with no empty-ParentSpanId span returns
+        the epoch default (toDateTime(0)), which weekly-bucketed to 1969 and
+        blew the chart range up to thousands of buckets.
+        """
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        test_spans = [
+            # Normal trace with a root span
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t1',
+                span_id='span-root',
+                status_code='Unset',
+                parent_span_id='',
+            ),
+            # Orphan trace: only a child span, no root span
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t2',
+                span_id='span-orphan-child',
+                status_code='Unset',
+                parent_span_id='span-missing-root',
+            ),
+        ]
+        self.insert(test_spans)
+
+        res = self.otel_traces_dao.get_traces_chart_data(
+            project_uuid=TEST_PROJECT_UUID,
+            route_names=None,
+            _from=base_time,
+            _to=base_time + datetime.timedelta(hours=1),
+            granularity='weeks',
+            timezone_offset_seconds=0,
+        )
+
+        # Only the trace with a root span is counted; the orphan is dropped.
+        assert len(res) == 1
+        assert res[0].total_requests == 1
+        # No bucket should land at/near the Unix epoch.
+        assert all(p.timestamp > 0 for p in res)
+
     # --- get_latencies ---
 
     def test_get_latencies_empty(self):
