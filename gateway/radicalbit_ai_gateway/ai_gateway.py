@@ -1073,7 +1073,9 @@ class GatewayRoute:
                 last_human_idx = idx
 
         last_human = messages[last_human_idx] if last_human_idx != -1 else None
-        messages_for_cache: list[BaseMessage] = messages[last_human_idx:] if last_human_idx != -1 else []
+        messages_for_cache: list[BaseMessage] = (
+            messages[last_human_idx:] if last_human_idx != -1 else []
+        )
         user_content = (
             ContentUtils.extract_text_content(last_human.content) if last_human else ''
         )
