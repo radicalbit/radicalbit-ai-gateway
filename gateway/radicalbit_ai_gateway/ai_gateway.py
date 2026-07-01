@@ -1066,11 +1066,16 @@ class GatewayRoute:
         cached_response = None
         embeddings = None
         cache_key = ''
-        # Use only the last user message (HumanMessage) for cache/embedding
-        last_human: HumanMessage | None = next(
-            (m for m in reversed(messages) if isinstance(m, HumanMessage)), None
+        # Use messages from the last user message (HumanMessage) to the end for cache/embedding
+        last_human_idx = -1
+        for idx, m in enumerate(messages):
+            if isinstance(m, HumanMessage):
+                last_human_idx = idx
+
+        last_human = messages[last_human_idx] if last_human_idx != -1 else None
+        messages_for_cache: list[BaseMessage] = (
+            messages[last_human_idx:] if last_human_idx != -1 else []
         )
-        messages_for_cache: list[BaseMessage] = [last_human] if last_human else []
         user_content = (
             ContentUtils.extract_text_content(last_human.content) if last_human else ''
         )
