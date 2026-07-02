@@ -7,10 +7,10 @@ from typing import Protocol
 
 import httpx
 from langchain_core.messages import BaseMessage
+from opentelemetry import trace
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
-from opentelemetry import trace
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
