@@ -210,11 +210,15 @@ class GatewayRoute:
                     or prepared.guardrails_block_triggered
                 ):
                     headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
+                if output.guardrails_triggered or prepared.guardrails_input_triggered:
+                    headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
                 return InvokeResponse(content=content, headers=headers)
             content = prepared.cached_response.model_copy(update={'model': route_name})
             headers: dict[str, str] = {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
             if prepared.guardrails_block_triggered:
                 headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
+            if prepared.guardrails_input_triggered:
+                headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
             return InvokeResponse(content=content, headers=headers)
 
         # Process the request
@@ -263,6 +267,8 @@ class GatewayRoute:
         headers: dict[str, str] = {}
         if output.guardrails_block_triggered or prepared.guardrails_block_triggered:
             headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
+        if output.guardrails_triggered or prepared.guardrails_input_triggered:
+            headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
         return InvokeResponse(
             content=output.response.model_copy(update={'model': route_name}),
             headers=headers,
@@ -369,8 +375,17 @@ class GatewayRoute:
                 **kwargs,
             )
         ], {
-            'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED': 'true'
-        } if prepared.guardrails_block_triggered else {}
+            **(
+                {'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED': 'true'}
+                if prepared.guardrails_block_triggered
+                else {}
+            ),
+            **(
+                {'X-RB-AIGATEWAY-GUARDRAILS-WARN': 'true'}
+                if prepared.guardrails_input_triggered
+                else {}
+            ),
+        }
 
     async def invoke_stream(
         self,
