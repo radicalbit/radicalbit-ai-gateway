@@ -8,6 +8,7 @@ from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.project_table import Project
+from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 
@@ -35,6 +36,19 @@ class ProjectDAOTest(DatabaseIntegration):
                 .values(served_config_uuid=config.uuid)
             )
         return self.project_dao.get_by_uuid(project.uuid)
+
+    def _insert_project_with_config(self, name: str, status: ConfigStatus) -> Project:
+        """Insert a project plus a single config slot in the given status."""
+        project = db_mock.get_sample_project(uuid=uuid.uuid4(), name=name)
+        self.project_dao.insert(project)
+        self.insert(
+            db_mock.get_sample_project_config(
+                project_uuid=project.uuid,
+                config_file='some-yaml',
+                config_status=status,
+            )
+        )
+        return project
 
     def test_insert(self):
         project = db_mock.get_sample_project()
@@ -121,6 +135,83 @@ class ProjectDAOTest(DatabaseIntegration):
         )
         result = self.project_dao.get_all_filtered(ProjectFilter.WITH_USAGE)
         assert len(result) == 1 and result[0].name == 'was-served'
+
+    def test_get_all_by_config_status_no_filter_returns_all(self):
+        self._insert_project_with_config('draft', ConfigStatus.DRAFT)
+        self._insert_project_with_config('served', ConfigStatus.SERVED)
+        assert len(self.project_dao.get_all_by_config_status(None)) == 2
+
+    def test_get_all_by_config_status_saved(self):
+        self._insert_project_with_config('draft', ConfigStatus.DRAFT)
+        self._insert_project_with_config('served', ConfigStatus.SERVED)
+        result = self.project_dao.get_all_by_config_status(ConfigStatus.DRAFT)
+        assert len(result) == 1 and result[0].name == 'draft'
+
+    def test_get_all_by_config_status_only_saved_excludes_untouched_drafts(self):
+        # Seeded (never saved) draft: DRAFT with a NULL updated_at.
+        seeded = db_mock.get_sample_project(uuid=uuid.uuid4(), name='seeded')
+        self.project_dao.insert(seeded)
+        self.insert(
+            db_mock.get_sample_project_config(
+                project_uuid=seeded.uuid,
+                config_file=None,
+                config_status=ConfigStatus.DRAFT,
+                updated_at=None,
+            )
+        )
+        # Genuinely saved draft: DRAFT with a populated updated_at.
+        self._insert_project_with_config('saved', ConfigStatus.DRAFT)
+
+        # Without only_saved both projects match on DRAFT...
+        assert len(self.project_dao.get_all_by_config_status(ConfigStatus.DRAFT)) == 2
+        # ...but only the saved one qualifies as "Saved".
+        result = self.project_dao.get_all_by_config_status(
+            ConfigStatus.DRAFT, only_saved=True
+        )
+        assert len(result) == 1 and result[0].name == 'saved'
+
+    def test_get_all_by_config_status_request_to_publish(self):
+        self._insert_project_with_config('ready', ConfigStatus.READY_TO_SERVE)
+        self._insert_project_with_config('draft', ConfigStatus.DRAFT)
+        result = self.project_dao.get_all_by_config_status(ConfigStatus.READY_TO_SERVE)
+        assert len(result) == 1 and result[0].name == 'ready'
+
+    def test_get_all_by_config_status_published(self):
+        self._insert_project_with_config('served', ConfigStatus.SERVED)
+        self._insert_project_with_config('draft', ConfigStatus.DRAFT)
+        result = self.project_dao.get_all_by_config_status(ConfigStatus.SERVED)
+        assert len(result) == 1 and result[0].name == 'served'
+
+    def test_get_all_by_config_status_matches_any_slot(self):
+        project = db_mock.get_sample_project(uuid=uuid.uuid4(), name='two-slots')
+        self.project_dao.insert(project)
+        self.insert(
+            db_mock.get_sample_project_config(
+                project_uuid=project.uuid,
+                slot=Slot.A,
+                config_file='served-yaml',
+                config_status=ConfigStatus.SERVED,
+            )
+        )
+        self.insert(
+            db_mock.get_sample_project_config(
+                project_uuid=project.uuid,
+                slot=Slot.B,
+                config_file='draft-yaml',
+                config_status=ConfigStatus.DRAFT,
+            )
+        )
+        served = self.project_dao.get_all_by_config_status(ConfigStatus.SERVED)
+        draft = self.project_dao.get_all_by_config_status(ConfigStatus.DRAFT)
+        assert [p.uuid for p in served] == [project.uuid]
+        assert [p.uuid for p in draft] == [project.uuid]
+
+    def test_get_all_by_config_status_excludes_deleted(self):
+        project = self._insert_project_with_config('deleted', ConfigStatus.SERVED)
+        self.project_dao.soft_delete(project.uuid)
+        assert (
+            list(self.project_dao.get_all_by_config_status(ConfigStatus.SERVED)) == []
+        )
 
     def test_soft_delete(self):
         project = db_mock.get_sample_project()

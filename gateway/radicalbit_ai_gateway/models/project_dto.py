@@ -26,6 +26,31 @@ class ProjectFilter(str, Enum):
         return None
 
 
+class ConfigListFilter(str, Enum):
+    ALL = 'all'
+    PUBLISHED = 'published'
+    REQUEST_TO_PUBLISH = 'request_to_publish'
+    SAVED = 'saved'
+
+    @classmethod
+    def _missing_(cls, value: object):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value == value.lower():
+                    return member
+        return None
+
+    def to_config_status(self) -> ConfigStatus | None:
+        """Map a UI status tab to the underlying config status, or None
+        for ALL (no filtering).
+        """
+        return {
+            ConfigListFilter.PUBLISHED: ConfigStatus.SERVED,
+            ConfigListFilter.REQUEST_TO_PUBLISH: ConfigStatus.READY_TO_SERVE,
+            ConfigListFilter.SAVED: ConfigStatus.DRAFT,
+        }.get(self)
+
+
 class ProjectIn(BaseModel, validate_assignment=True):
     name: str
     description: str | None = None

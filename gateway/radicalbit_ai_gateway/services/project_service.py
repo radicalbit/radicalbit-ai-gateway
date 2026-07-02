@@ -12,6 +12,7 @@ from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import (
+    ConfigListFilter,
     ConfigSlotOut,
     ProjectConfigFileIn,
     ProjectFilter,
@@ -244,6 +245,16 @@ class ProjectService:
         self, project_filter: ProjectFilter | None = None
     ) -> list[ProjectOut]:
         projects = self.project_dao.get_all_filtered(project_filter)
+        return [self._build_out(project) for project in projects]
+
+    def get_configs(
+        self, config_filter: ConfigListFilter | None = None
+    ) -> list[ProjectOut]:
+        status = config_filter.to_config_status() if config_filter else None
+        only_saved = config_filter == ConfigListFilter.SAVED
+        projects = self.project_dao.get_all_by_config_status(
+            status, only_saved=only_saved
+        )
         return [self._build_out(project) for project in projects]
 
     def get_all_active(self) -> list[ProjectOut]:

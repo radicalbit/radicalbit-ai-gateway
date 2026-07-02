@@ -332,7 +332,7 @@ app.include_router(
     ),
     prefix=prefix,
 )
-app.include_router(ConfigsRoute.get_configs_router(), prefix=prefix)
+app.include_router(ConfigsRoute.get_configs_router(project_service), prefix=prefix)
 app.include_router(
     UsageRoute.get_usage_router(
         event_service=event_service,
