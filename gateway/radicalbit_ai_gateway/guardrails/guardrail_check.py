@@ -10,6 +10,7 @@ from langchain_core.messages import BaseMessage
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
+from opentelemetry import trace
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
@@ -321,7 +322,18 @@ class GuardrailCheck:
                 'context': _context_words(blob, span=(first_res.start, first_res.end)),
             }
             self._reason_payload_ctx.set(reason)
-            return reason
+
+            try:
+                span = trace.get_current_span()
+                if span.is_recording():
+                    span.set_attribute('guardrail.presidio.matched_value', val)
+                    span.set_attribute(
+                        'guardrail.presidio.entity_type', first_res.entity_type
+                    )
+            except Exception:
+                pass
+
+            return True
 
         return False
 
