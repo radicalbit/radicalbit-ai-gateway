@@ -13,6 +13,20 @@ class SecretProvider(ABC):
         """Resolve a secret by key. Raises SecretNotFoundError if unavailable."""
         ...
 
+    def validate_secret(self, key: str) -> str | None:
+        """Check that *key* exists and has a non-empty value.
+
+        Returns ``None`` when valid, or a short error description otherwise.
+        The actual secret value is never exposed.
+        """
+        try:
+            value = self.get_secret(key)
+        except SecretNotFoundError:
+            return 'not found'
+        if not str(value).strip():
+            return 'has an empty value'
+        return None
+
 
 class FileSecretProvider(SecretProvider):
     def __init__(self, secrets_path: str | Path):
@@ -64,7 +78,10 @@ def resolve_secrets_from_string(
 
     def secret_constructor(loader, node):
         key = loader.construct_scalar(node)
-        return provider.get_secret(key)
+        value = provider.get_secret(key)
+        if not str(value).strip():
+            raise SecretNotFoundError(key, 'value is empty')
+        return value
 
     loader = yaml.SafeLoader(yaml_content)
     loader.add_constructor('!secret', secret_constructor)

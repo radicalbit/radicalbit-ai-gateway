@@ -57,6 +57,10 @@ class GatewayRouteConfig(BaseModel):
         default=None,
         description='Name of a top-level routing config.',
     )
+    plugins: dict | None = Field(
+        default=None,
+        description=('Plugins configuration for the route.'),
+    )
 
     def get_token_limiter(self) -> TokenLimiter:
         return TokenLimiter(

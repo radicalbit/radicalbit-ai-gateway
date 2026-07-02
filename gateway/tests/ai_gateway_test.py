@@ -2,7 +2,7 @@ import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from freezegun import freeze_time
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from openai.types import CreateEmbeddingResponse
 from openai.types.chat.chat_completion import ChatCompletion
 import pook
@@ -28,8 +28,17 @@ from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
+from radicalbit_ai_gateway.models.credentials import Credentials
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
+from radicalbit_ai_gateway.models.model import Model
+import radicalbit_ai_gateway.preprocessing as preprocessing_module
+from radicalbit_ai_gateway.preprocessing import (
+    PreprocessingPlugin,
+    register_preprocessing_plugin,
+)
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.utils import config_hooks
 from radicalbit_ai_gateway.utils.exceptions import (
     BudgetLimitExceededError,
     GatewayBadRequest,
@@ -931,3 +940,142 @@ async def test_cache_hit_flag_set_on_request_state(
         assert len(pook.pending_mocks()) == 0
 
     pook.disable_network()
+
+
+@pytest.mark.asyncio
+async def test_preprocessing_runs_before_prompt_injection():
+    """Preprocessing sees only the client messages, and the route's configured
+    system prompt is injected afterwards (so plugins can never modify it).
+    """
+    seen = []
+
+    class Spy(PreprocessingPlugin):
+        async def preprocess(self, messages, config):
+            # Snapshot exactly what the plugin receives, then transform client text.
+            seen.extend((type(m).__name__, m.content) for m in messages)
+            for m in messages:
+                if isinstance(m.content, str):
+                    m.content = m.content.upper()
+            return messages
+
+    chat_model = Model(
+        model_id='m',
+        model='openai/gpt-4o',
+        credentials=Credentials(api_key='sk-123'),
+        prompt='You are a helpful assistant.',
+    )
+    route_cfg = GatewayRouteConfig(
+        route_name='r',
+        chat_models=['m'],
+        plugins={'spy': {'enabled': True}},
+    )
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[chat_model],
+        embedding_models=None,
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        cost_service=MagicMock(spec_set=CostService),
+        gateway_cache=None,
+    )
+
+    try:
+        register_preprocessing_plugin(Spy(), name='spy')
+        result = await ai_gateway._prepare_and_validate_request(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='rb-key',
+            group_name='test-group',
+            route_name='r',
+            messages=[HumanMessage(content='hello')],
+            tools=[],
+            tool_choice=None,
+        )
+    finally:
+        preprocessing_module._registered.clear()
+        config_hooks._plugins_validators.clear()
+        config_hooks._known_plugin_keys.clear()
+
+    # The plugin only ever saw the client message — no injected system prompt.
+    assert seen == [('HumanMessage', 'hello')]
+
+    # The final messages start with the untouched system prompt, followed by the
+    # client message the plugin transformed.
+    messages = result.redacted_messages
+    assert isinstance(messages[0], SystemMessage)
+    assert messages[0].content == 'You are a helpful assistant.'
+    assert messages[1].content == 'HELLO'
+
+
+@pytest.mark.asyncio
+async def test_preprocessing_includes_client_sent_system_prompt():
+    """A system message the *client* sends is part of the incoming messages, so
+    preprocessing sees and may transform it; only the *route-configured* prompt
+    (injected afterwards) is shielded from plugins.
+    """
+    seen = []
+
+    class Spy(PreprocessingPlugin):
+        async def preprocess(self, messages, config):
+            seen.extend((type(m).__name__, m.content) for m in messages)
+            for m in messages:
+                if isinstance(m.content, str):
+                    m.content = m.content.upper()
+            return messages
+
+    chat_model = Model(
+        model_id='m',
+        model='openai/gpt-4o',
+        credentials=Credentials(api_key='sk-123'),
+        prompt='Route prompt.',
+    )
+    route_cfg = GatewayRouteConfig(
+        route_name='r',
+        chat_models=['m'],
+        plugins={'spy': {'enabled': True}},
+    )
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[chat_model],
+        embedding_models=None,
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        cost_service=MagicMock(spec_set=CostService),
+        gateway_cache=None,
+    )
+
+    try:
+        register_preprocessing_plugin(Spy(), name='spy')
+        result = await ai_gateway._prepare_and_validate_request(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='rb-key',
+            group_name='test-group',
+            route_name='r',
+            messages=[
+                SystemMessage(content='client system'),
+                HumanMessage(content='hello'),
+            ],
+            tools=[],
+            tool_choice=None,
+        )
+    finally:
+        preprocessing_module._registered.clear()
+        config_hooks._plugins_validators.clear()
+        config_hooks._known_plugin_keys.clear()
+
+    # The plugin saw the client's own system message (and the human message);
+    # the route-configured prompt was NOT yet present.
+    assert seen == [
+        ('SystemMessage', 'client system'),
+        ('HumanMessage', 'hello'),
+    ]
+
+    # Final order: route prompt prepended (untouched), then the client's
+    # system + human messages, both transformed by the plugin.
+    messages = result.redacted_messages
+    assert [(type(m).__name__, m.content) for m in messages] == [
+        ('SystemMessage', 'Route prompt.'),
+        ('SystemMessage', 'CLIENT SYSTEM'),
+        ('HumanMessage', 'HELLO'),
+    ]

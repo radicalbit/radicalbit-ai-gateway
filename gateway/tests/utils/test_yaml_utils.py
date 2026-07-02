@@ -1,8 +1,11 @@
 import pytest
 
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import ProjectConfigValidationError
 from radicalbit_ai_gateway.utils.yaml_utils import (
     check_no_literal_secrets,
+    check_secret_references,
+    extract_secret_references,
     parse_yaml_with_secret_placeholders,
     validate_gateway_config,
 )
@@ -132,3 +135,136 @@ def test_validate_gateway_config_extra_field_includes_line():
     with pytest.raises(ProjectConfigValidationError) as exc_info:
         validate_gateway_config(yaml_with_typo, check_secrets=False)
     assert "'rout' (line 6)" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# extract_secret_references
+# ---------------------------------------------------------------------------
+
+
+def test_extract_secret_references_finds_keys_with_lines():
+    yaml_content = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    credentials:\n'
+        '      api_key: !secret MY_KEY\n'
+        'cache:\n'
+        '  redis_host: !secret REDIS_HOST\n'
+    )
+    refs = extract_secret_references(yaml_content)
+    keys = {k for k, _ in refs}
+    assert keys == {'MY_KEY', 'REDIS_HOST'}
+    assert all(line is not None for _, line in refs)
+
+
+def test_extract_secret_references_returns_empty_for_no_secrets():
+    yaml_content = 'chat_models:\n  - model_id: m1\nroutes: {}\n'
+    assert extract_secret_references(yaml_content) == []
+
+
+# ---------------------------------------------------------------------------
+# check_secret_references
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _secrets_file_with_empty(tmp_path):
+    """Point the app config at a secrets file that has a valid key,
+    an empty key, and is missing other keys.
+    """
+    secrets = tmp_path / 'secrets.yaml'
+    secrets.write_text('VALID_KEY: some-value\nEMPTY_KEY: ""\n')
+    original = get_app_config().gateway_secrets_path
+    get_app_config().gateway_secrets_path = secrets
+    yield
+    get_app_config().gateway_secrets_path = original
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_check_secret_references_valid():
+    yaml_content = 'value: !secret VALID_KEY\n'
+    assert check_secret_references(yaml_content) == []
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_check_secret_references_missing_key():
+    yaml_content = 'value: !secret NONEXISTENT\n'
+    violations = check_secret_references(yaml_content)
+    assert len(violations) == 1
+    assert 'NONEXISTENT' in violations[0]
+    assert 'not found' in violations[0]
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_check_secret_references_empty_value():
+    yaml_content = 'value: !secret EMPTY_KEY\n'
+    violations = check_secret_references(yaml_content)
+    assert len(violations) == 1
+    assert 'EMPTY_KEY' in violations[0]
+    assert 'empty' in violations[0]
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_check_secret_references_multiple_violations():
+    yaml_content = (
+        'a: !secret NONEXISTENT\nb: !secret EMPTY_KEY\nc: !secret VALID_KEY\n'
+    )
+    violations = check_secret_references(yaml_content)
+    assert len(violations) == 2
+
+
+# ---------------------------------------------------------------------------
+# validate_gateway_config — secret reference validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_validate_gateway_config_rejects_missing_secret():
+    yaml_str = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    credentials:\n'
+        '      api_key: !secret NONEXISTENT\n'
+        'routes:\n'
+        '  default-route:\n'
+        '    chat_models: [m1]\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_str, check_secrets=True)
+    assert 'NONEXISTENT' in str(exc_info.value)
+    assert 'not found' in str(exc_info.value)
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_validate_gateway_config_rejects_empty_secret():
+    yaml_str = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    credentials:\n'
+        '      api_key: !secret EMPTY_KEY\n'
+        'routes:\n'
+        '  default-route:\n'
+        '    chat_models: [m1]\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_str, check_secrets=True)
+    assert 'EMPTY_KEY' in str(exc_info.value)
+    assert 'empty' in str(exc_info.value)
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_validate_gateway_config_skips_secret_check_when_disabled():
+    yaml_str = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    credentials:\n'
+        '      api_key: !secret NONEXISTENT\n'
+        'routes:\n'
+        '  default-route:\n'
+        '    chat_models: [m1]\n'
+    )
+    # Should NOT raise — secret validation is off
+    validate_gateway_config(yaml_str, check_secrets=False)

@@ -95,9 +95,14 @@ from radicalbit_ai_gateway.utils.filtering_exporter import FilteringExporter
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_project_route_registrar,
 )
+from radicalbit_ai_gateway.utils.logging_hooks import apply_log_filters
 from radicalbit_ai_gateway.utils.open_ai_types import (
     CompletionCreateParams,
     ResponseCreateParamsCustom,
+)
+from radicalbit_ai_gateway.utils.request_context import (
+    reset_route_context,
+    set_current_route_config,
 )
 from radicalbit_ai_gateway.utils.responses_streaming import (
     build_skeleton_response,
@@ -113,6 +118,7 @@ from radicalbit_ai_gateway.utils.responses_translation import (
 from radicalbit_ai_gateway.utils.streaming_response import (
     StreamingResponseWithStatusCode,
 )
+from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     ensure_endpoint_category,
@@ -246,17 +252,14 @@ async def lifespan(app: FastAPI):
 
     processors = []
 
+    def _build_processor(exporter: OTLPSpanExporter) -> BatchSpanProcessor:
+        for wrap in get_exporter_wrappers():
+            exporter = wrap(exporter)
+        return BatchSpanProcessor(FilteringExporter(exporter))
+
     if app_config.telemetry_config.collector_base_url:
         endpoint = _otlp_endpoint(app_config.telemetry_config.collector_base_url)
-        processors.append(
-            BatchSpanProcessor(
-                FilteringExporter(
-                    OTLPSpanExporter(
-                        endpoint=endpoint,
-                    )
-                )
-            )
-        )
+        processors.append(_build_processor(OTLPSpanExporter(endpoint=endpoint)))
         logger.info('Configured otel-collector for url: %s', endpoint)
 
     for exp_cfg in app_config.telemetry_config.otlp_exporters:
@@ -265,14 +268,7 @@ async def lifespan(app: FastAPI):
             headers['Authorization'] = f'Bearer {exp_cfg.api_key}'
         endpoint = _otlp_endpoint(exp_cfg.url)
         processors.append(
-            BatchSpanProcessor(
-                FilteringExporter(
-                    OTLPSpanExporter(
-                        endpoint=endpoint,
-                        headers=headers,
-                    )
-                )
-            )
+            _build_processor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
         )
         logger.info('Configured extra processor for url: %s', endpoint)
 
@@ -305,6 +301,9 @@ app.state.token_validator = ApiKeyValidator(key_service=key_service)
 
 # load plugins
 init_plugins(app)
+
+# Attach plugin-registered log filters, now that plugins have registered them.
+apply_log_filters(logger)
 
 # middleware
 app.add_middleware(
@@ -374,8 +373,8 @@ app.include_router(
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.error('Validation error: %s', exc.errors())
-    logger.error('Body: %s', await request.body())
+    errors = [{'loc': e.get('loc'), 'type': e.get('type')} for e in exc.errors()]
+    logger.error('Validation error: %s', errors)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={'detail': exc.errors(), 'body': (await request.body()).decode()},
@@ -521,6 +520,7 @@ def otel_metrics_decorator(func):
 @otel_metrics_decorator
 @workflow(name='chat_completions')
 @ensure_endpoint_category
+@reset_route_context
 async def chat_completions(
     request: Request,
     completion_create_params: CompletionCreateParams,
@@ -537,6 +537,8 @@ async def chat_completions(
             f'The route name [{route_key}] was not found in the config'
         )
     route_name = route.gateway_route_config.route_name
+    # Publish the route config for per-route log filtering (cleared by the decorator).
+    set_current_route_config(route.gateway_route_config)
     # Mark the root workflow span with ENDPOINT category
     set_operation_category(OperationCategory.ENDPOINT)
 
@@ -651,6 +653,8 @@ async def chat_completions(
             headers = {}
             if prepared.guardrails_block_triggered:
                 headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
+            if prepared.guardrails_input_triggered:
+                headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
             if prepared.cached_response:
                 headers['X-RB-AIGATEWAY-CACHE-HIT'] = 'true'
 
@@ -834,14 +838,13 @@ async def embeddings(
 @otel_metrics_decorator
 @workflow(name='responses')
 @ensure_endpoint_category
+@reset_route_context
 async def responses(
     request: Request,
     response_create_params: ResponseCreateParamsCustom,
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
     request_uuid: str = Depends(set_request_uuid),
 ):
-    logger.debug('Responses API request: %s', response_create_params)
-
     # Mark the root workflow span with ENDPOINT category
     set_operation_category(OperationCategory.ENDPOINT)
 
@@ -860,6 +863,10 @@ async def responses(
             f'The route name [{route_key}] was not found in the config'
         )
     route_name = route.gateway_route_config.route_name
+    # Publish the route config for per-route log filtering (cleared by the decorator).
+    # Logged after resolution so the request dump is subject to that filtering.
+    set_current_route_config(route.gateway_route_config)
+    logger.debug('Responses API request: %s', response_create_params)
     request.state.otel_route_name = route_name
 
     # Set early trace attributes

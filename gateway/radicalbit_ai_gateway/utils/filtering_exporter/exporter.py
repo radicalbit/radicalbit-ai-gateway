@@ -50,7 +50,7 @@ class FilteringExporter(SpanExporter):
 
     def __init__(self, wrapped: SpanExporter):
         self._wrapped = wrapped
-        self._remap: dict[int, int] = FIFOCache(maxsize=_REMAP_CACHE_SIZE)
+        self._remap: FIFOCache[int, int] = FIFOCache(maxsize=_REMAP_CACHE_SIZE)
 
     # ------------------------------------------------------------------
     # Phase helpers — each handles one step of the export pipeline

@@ -42,6 +42,7 @@ from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import GuardrailClass, GuardrailWhereType
 from radicalbit_ai_gateway.models.model import ENABLE_PROMPT_CACHE_PARAM, Model
+from radicalbit_ai_gateway.preprocessing import run_preprocessing
 from radicalbit_ai_gateway.routing import (
     DeterministicRouter,
     SemanticRouter,
@@ -209,11 +210,15 @@ class GatewayRoute:
                     or prepared.guardrails_block_triggered
                 ):
                     headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
+                if output.guardrails_triggered or prepared.guardrails_input_triggered:
+                    headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
                 return InvokeResponse(content=content, headers=headers)
             content = prepared.cached_response.model_copy(update={'model': route_name})
             headers: dict[str, str] = {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
             if prepared.guardrails_block_triggered:
                 headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
+            if prepared.guardrails_input_triggered:
+                headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
             return InvokeResponse(content=content, headers=headers)
 
         # Process the request
@@ -262,6 +267,8 @@ class GatewayRoute:
         headers: dict[str, str] = {}
         if output.guardrails_block_triggered or prepared.guardrails_block_triggered:
             headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
+        if output.guardrails_triggered or prepared.guardrails_input_triggered:
+            headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
         return InvokeResponse(
             content=output.response.model_copy(update={'model': route_name}),
             headers=headers,
@@ -368,8 +375,17 @@ class GatewayRoute:
                 **kwargs,
             )
         ], {
-            'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED': 'true'
-        } if prepared.guardrails_block_triggered else {}
+            **(
+                {'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED': 'true'}
+                if prepared.guardrails_block_triggered
+                else {}
+            ),
+            **(
+                {'X-RB-AIGATEWAY-GUARDRAILS-WARN': 'true'}
+                if prepared.guardrails_input_triggered
+                else {}
+            ),
+        }
 
     async def invoke_stream(
         self,
@@ -639,9 +655,16 @@ class GatewayRoute:
         if not self.chat_invoker:
             raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
 
-        # Prepare request for processing
+        # Preprocessing plugins: transform the raw client messages first, before
+        # routing and before the configured system prompt is injected, so plugins
+        # only ever see the client's messages. No-op when no plugin is enabled;
+        # fail-closed if a plugin raises.
+        set_operation_category(OperationCategory.PREPROCESSING)
+        messages = await run_preprocessing(messages, self.gateway_route_config.plugins)
+
+        # Prepare request for processing: route on the preprocessed messages.
         set_operation_category(OperationCategory.ROUTING)
-        model_selected = await self._select_and_prepare_chat_model(messages)
+        model_selected = await self._select_chat_model(messages)
 
         if self.router and self.gateway_route_config.routing:
             emit_event(
@@ -660,6 +683,10 @@ class GatewayRoute:
                     selected_model_id=model_selected.model_id,
                 )
             )
+
+        # Inject the route's configured system prompt AFTER preprocessing, so
+        # preprocessing plugins can never see or modify it.
+        self._apply_config_prompt(messages, model_selected)
 
         guardrails_input_triggered = False
         guardrails_block_triggered = (
@@ -799,19 +826,29 @@ class GatewayRoute:
         )
 
     @task(name='select_model')
-    async def _select_and_prepare_chat_model(
-        self, messages: list[BaseMessage]
-    ) -> Model:
-        """Select chat model and prepare messages with config prompt."""
+    async def _select_chat_model(self, messages: list[BaseMessage]) -> Model:
+        """Select the chat model for this request based on the routing config."""
         if self.router:
             model_selected = await self.router.select_model(messages)
         else:
             model_selected = self._chat_models[0]
 
+        logger.debug('Selected chat model: %s', model_selected.model_id)
+
+        return model_selected
+
+    def _apply_config_prompt(
+        self, messages: list[BaseMessage], model_selected: Model
+    ) -> None:
+        """Prepend the route's configured system prompt to *messages* in place.
+
+        Runs *after* preprocessing so the configured prompt is never exposed to
+        preprocessing plugins.
+        """
         config_prompt, role = model_selected.effective_prompt, model_selected.role
 
         logger.debug(
-            'Selected chat model: %s with config prompt: %s and role: %s',
+            'Config prompt for model %s: %s and role: %s',
             model_selected.model_id,
             config_prompt,
             role,
@@ -839,8 +876,6 @@ class GatewayRoute:
                     content=config_prompt, role=role, tool_calls=[], tool_call_id=None
                 )
             messages[:] = [system_msg, *messages]
-
-        return model_selected
 
     def _get_first_embedding_model(self) -> Model | None:
         """Return the first embedding model"""
@@ -1046,11 +1081,16 @@ class GatewayRoute:
         cached_response = None
         embeddings = None
         cache_key = ''
-        # Use only the last user message (HumanMessage) for cache/embedding
-        last_human: HumanMessage | None = next(
-            (m for m in reversed(messages) if isinstance(m, HumanMessage)), None
+        # Use messages from the last user message (HumanMessage) to the end for cache/embedding
+        last_human_idx = -1
+        for idx, m in enumerate(messages):
+            if isinstance(m, HumanMessage):
+                last_human_idx = idx
+
+        last_human = messages[last_human_idx] if last_human_idx != -1 else None
+        messages_for_cache: list[BaseMessage] = (
+            messages[last_human_idx:] if last_human_idx != -1 else []
         )
-        messages_for_cache: list[BaseMessage] = [last_human] if last_human else []
         user_content = (
             ContentUtils.extract_text_content(last_human.content) if last_human else ''
         )
