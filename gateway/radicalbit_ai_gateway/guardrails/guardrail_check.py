@@ -321,7 +321,7 @@ class GuardrailCheck:
                 'context': _context_words(blob, span=(first_res.start, first_res.end)),
             }
             self._reason_payload_ctx.set(reason)
-            return True
+            return reason
 
         return False
 
