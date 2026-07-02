@@ -653,8 +653,10 @@ async def chat_completions(
             headers = {}
             if prepared.guardrails_block_triggered:
                 headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
+                headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-TRIGGERED'] = 'true'
             if prepared.guardrails_input_triggered:
                 headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
+                headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-WARN'] = 'true'
             if prepared.cached_response:
                 headers['X-RB-AIGATEWAY-CACHE-HIT'] = 'true'
 
