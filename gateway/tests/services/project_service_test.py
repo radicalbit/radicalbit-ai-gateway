@@ -210,10 +210,10 @@ class ProjectServiceTest(DatabaseIntegration):
     def test_export_config_returns_zip(self):
         out, a, _ = self._create()
         content, filename = self.svc.export_config(out.uuid, a)
-        assert filename == 'proj_slot_A_draft.zip'
+        assert filename == 'proj_config.zip'
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             names = archive.namelist()
-            assert names == ['proj_slot_A_draft.yaml']
+            assert names == ['proj_config_A_draft.yaml']
             assert archive.read(names[0]).decode() == out.configs[0].config_file
 
     def test_export_config_served_label(self):
@@ -221,8 +221,54 @@ class ProjectServiceTest(DatabaseIntegration):
         self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
         self.svc.approve_config(out.uuid, a)
         self.svc.serve_config(out.uuid, a)
-        _, filename = self.svc.export_config(out.uuid, a)
-        assert filename == 'proj_slot_A_served.zip'
+        content, filename = self.svc.export_config(out.uuid, a)
+        assert filename == 'proj_config.zip'
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            assert archive.namelist() == ['proj_config_A_served.yaml']
+
+    def test_export_all_configs_returns_zip_with_both_slots(self):
+        out, a, b = self._create()
+        content, filename = self.svc.export_all_configs(out.uuid)
+        assert filename == 'proj_config.zip'
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            assert archive.namelist() == [
+                'proj_config_A_draft.yaml',
+                'proj_config_B_draft.yaml',
+            ]
+
+    def test_export_all_configs_skips_empty_slots(self):
+        project = self.insert(
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='partial')
+        )
+        self.insert(
+            db_mock.get_sample_project_config(
+                project_uuid=project.uuid, slot=Slot.A, config_file=_VALID
+            )
+        )
+        self.insert(
+            db_mock.get_sample_project_config(
+                project_uuid=project.uuid, slot=Slot.B, config_file=None
+            )
+        )
+        content, _ = self.svc.export_all_configs(project.uuid)
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            assert archive.namelist() == ['partial_config_A_draft.yaml']
+
+    def test_export_all_configs_empty_raises(self):
+        project = self.insert(
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name='all-empty')
+        )
+        self.insert(
+            db_mock.get_sample_project_config(
+                project_uuid=project.uuid, slot=Slot.A, config_file=None
+            )
+        )
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.export_all_configs(project.uuid)
+
+    def test_export_all_configs_not_found(self):
+        with pytest.raises(ProjectNotFoundError):
+            self.svc.export_all_configs(uuid.uuid4())
 
     def test_export_config_empty_raises(self):
         project = self.insert(

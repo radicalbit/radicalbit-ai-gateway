@@ -127,14 +127,14 @@ class TestProjectRoute(unittest.TestCase):
     def test_export_config_returns_zip(self):
         pid, cid = uuid.uuid4(), uuid.uuid4()
         self.project_service.export_config = MagicMock(
-            return_value=(b'zip-bytes', 'proj_slot_A_draft.zip')
+            return_value=(b'zip-bytes', 'proj_config.zip')
         )
         res = self.client.get(f'{self.prefix}/projects/{pid}/configs/{cid}/export')
         assert res.status_code == 200
         assert res.headers['content-type'] == 'application/zip'
         assert (
             res.headers['content-disposition']
-            == 'attachment; filename="proj_slot_A_draft.zip"'
+            == 'attachment; filename="proj_config.zip"'
         )
         assert res.content == b'zip-bytes'
         self.project_service.export_config.assert_called_once_with(pid, cid)
@@ -153,6 +153,37 @@ class TestProjectRoute(unittest.TestCase):
             side_effect=ProjectConfigValidationError('empty')
         )
         res = self.client.get(f'{self.prefix}/projects/{pid}/configs/{cid}/export')
+        assert res.status_code == 400
+
+    def test_export_all_configs_returns_zip(self):
+        pid = uuid.uuid4()
+        self.project_service.export_all_configs = MagicMock(
+            return_value=(b'zip-bytes', 'proj_config.zip')
+        )
+        res = self.client.get(f'{self.prefix}/projects/{pid}/configs/export')
+        assert res.status_code == 200
+        assert res.headers['content-type'] == 'application/zip'
+        assert (
+            res.headers['content-disposition']
+            == 'attachment; filename="proj_config.zip"'
+        )
+        assert res.content == b'zip-bytes'
+        self.project_service.export_all_configs.assert_called_once_with(pid)
+
+    def test_export_all_configs_not_found(self):
+        pid = uuid.uuid4()
+        self.project_service.export_all_configs = MagicMock(
+            side_effect=ProjectNotFoundError('nope')
+        )
+        res = self.client.get(f'{self.prefix}/projects/{pid}/configs/export')
+        assert res.status_code == 404
+
+    def test_export_all_configs_empty_returns_400(self):
+        pid = uuid.uuid4()
+        self.project_service.export_all_configs = MagicMock(
+            side_effect=ProjectConfigValidationError('empty')
+        )
+        res = self.client.get(f'{self.prefix}/projects/{pid}/configs/export')
         assert res.status_code == 400
 
     def test_approve_config(self):

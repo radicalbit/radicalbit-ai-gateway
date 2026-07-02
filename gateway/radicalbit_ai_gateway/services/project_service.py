@@ -188,6 +188,15 @@ class ProjectService:
             self._get_config_or_raise(project_uuid, config_uuid)
         )
 
+    @staticmethod
+    def _config_entry_name(project_name: str, config: ProjectConfig) -> str:
+        status_label = (
+            'served' if config.config_status == ConfigStatus.SERVED.value else 'draft'
+        )
+        return _sanitize_filename(
+            f'{project_name}_config_{Slot(config.slot).value}_{status_label}'
+        )
+
     def export_config(self, project_uuid: UUID, config_uuid: UUID) -> tuple[bytes, str]:
         project = self._get_project_or_raise(project_uuid)
         config = self._get_config_or_raise(project_uuid, config_uuid)
@@ -196,17 +205,32 @@ class ProjectService:
                 f'Config {config_uuid} has no configuration to export'
             )
 
-        status_label = (
-            'served' if config.config_status == ConfigStatus.SERVED.value else 'draft'
-        )
-        slug = _sanitize_filename(
-            f'{project.name}_slot_{Slot(config.slot).value}_{status_label}'
-        )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
+            entry = self._config_entry_name(project.name, config)
+            archive.writestr(f'{entry}.yaml', config.config_file)
+        zip_name = _sanitize_filename(f'{project.name}_config')
+        return buffer.getvalue(), f'{zip_name}.zip'
+
+    def export_all_configs(self, project_uuid: UUID) -> tuple[bytes, str]:
+        project = self._get_project_or_raise(project_uuid)
+        configs = [
+            config
+            for config in self.project_config_dao.list_by_project(project_uuid)
+            if config.config_file
+        ]
+        if not configs:
+            raise ProjectConfigValidationError(
+                f'Project {project_uuid} has no configuration to export'
+            )
 
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(f'{slug}.yaml', config.config_file)
-        return buffer.getvalue(), f'{slug}.zip'
+            for config in configs:
+                entry = self._config_entry_name(project.name, config)
+                archive.writestr(f'{entry}.yaml', config.config_file)
+        zip_name = _sanitize_filename(f'{project.name}_config')
+        return buffer.getvalue(), f'{zip_name}.zip'
 
     def validate_exists(self, project_uuid: UUID) -> None:
         if not self.project_dao.get_by_uuid(project_uuid):

@@ -196,6 +196,19 @@ class ProjectRoute:
                 headers={'Content-Disposition': f'attachment; filename="{filename}"'},
             )
 
+        @router.get(
+            '/projects/{project_uuid}/configs/export',
+            status_code=200,
+        )
+        def export_all_configs(project_uuid: UUID):
+            content, filename = project_service.export_all_configs(project_uuid)
+            logger.info('Exported all configs for project %s', project_uuid)
+            return Response(
+                content=content,
+                media_type='application/zip',
+                headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+            )
+
         @router.patch(
             '/projects/{project_uuid}/configs/{config_uuid}/unserve',
             status_code=200,
