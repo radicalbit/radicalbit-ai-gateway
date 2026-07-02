@@ -567,7 +567,37 @@ class GuardrailCheck:
         - value: str (for starts_with/ends_with/contains)
         - pattern: str (for regex)
         """
-        if not isinstance(guardrail.parameters, CheckParameter):
+        if not isinstance(guardrail.parameters, CheckParameter | RedactParameter):
+            return None
+
+        if guardrail.type == GuardrailType.PRESIDIO_ANALYZER:
+            blob = _blob_from_messages(messages)
+            if not blob:
+                return None
+            try:
+                analyzer = self._presidio_engine.get_analyzer(
+                    guardrail.parameters.backend, guardrail.parameters.ahds
+                )
+                results = analyzer.analyze(
+                    text=blob,
+                    entities=guardrail.parameters.entities,
+                    language=guardrail.parameters.language,
+                )
+                if results:
+                    first_res = results[0]
+                    val = blob[first_res.start : first_res.end]
+                    return (
+                        {
+                            'kind': 'presidio',
+                            'entity_type': first_res.entity_type,
+                            'value': val,
+                            'message_index': 0,
+                            'span': (first_res.start, first_res.end),
+                        },
+                        blob,
+                    )
+            except Exception as e:
+                logger.warning('Failed to find presidio match for reason: %s', e)
             return None
 
         values = guardrail.parameters.values or []
@@ -675,6 +705,17 @@ class GuardrailCheck:
             return None
         kind = reason_payload.get('kind')
         mi = reason_payload.get('message_index')
+        if kind == 'presidio':
+            et = reason_payload.get('entity_type')
+            val = reason_payload.get('value')
+            if et is not None and val is not None:
+                s = f'presidio entity_type={_trunc(repr(et))} value={_trunc(repr(val))}'
+            else:
+                return None
+            excerpt = reason_payload.get('context')
+            if isinstance(excerpt, str) and excerpt:
+                s += f' context="{_trunc(excerpt, max_len=120)}"'
+            return s
         if kind in ('starts_with', 'ends_with', 'contains'):
             val = reason_payload.get('value')
             if kind and val is not None and mi is not None:
