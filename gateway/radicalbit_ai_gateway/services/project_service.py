@@ -251,9 +251,12 @@ class ProjectService:
         self, config_filter: ConfigListFilter | None = None
     ) -> list[ProjectOut]:
         status = config_filter.to_config_status() if config_filter else None
-        only_saved = config_filter == ConfigListFilter.SAVED
+        # "Draft" must exclude EMPTY slots (freshly seeded template with a NULL
+        # updated_at), otherwise it would match every project since a DRAFT slot
+        # always exists.
+        exclude_empty = config_filter == ConfigListFilter.DRAFT
         projects = self.project_dao.get_all_by_config_status(
-            status, only_saved=only_saved
+            status, exclude_empty=exclude_empty
         )
         return [self._build_out(project) for project in projects]
 

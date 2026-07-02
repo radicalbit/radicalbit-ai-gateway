@@ -311,13 +311,13 @@ class ProjectServiceTest(DatabaseIntegration):
         self.svc.approve_config(served.uuid, a)
         self.svc.serve_config(served.uuid, a)
 
-        # saved-only: slot A saved (still DRAFT), never approved/served.
-        saved_proj, sa, _ = self._create(name='saved')
+        # draft-only: slot A saved (still DRAFT), never approved/served.
+        draft_proj, da, _ = self._create(name='draft')
         self.svc.update_config(
-            saved_proj.uuid, sa, ProjectConfigFileIn(config_file=_VALID)
+            draft_proj.uuid, da, ProjectConfigFileIn(config_file=_VALID)
         )
 
-        # untouched: both slots are seeded DRAFT with a NULL updated_at.
+        # untouched: both slots are EMPTY (seeded DRAFT with a NULL updated_at).
         self._create(name='untouched')
 
         assert len(self.svc.get_configs(None)) == 3
@@ -326,8 +326,8 @@ class ProjectServiceTest(DatabaseIntegration):
         published = self.svc.get_configs(ConfigListFilter.PUBLISHED)
         assert [p.uuid for p in published] == [served.uuid]
 
-        # "Saved" only matches the genuinely saved draft, not the seeded ones.
-        saved = self.svc.get_configs(ConfigListFilter.SAVED)
-        assert [p.uuid for p in saved] == [saved_proj.uuid]
+        # "Draft" only matches the genuine draft, not the EMPTY seeded ones.
+        draft = self.svc.get_configs(ConfigListFilter.DRAFT)
+        assert [p.uuid for p in draft] == [draft_proj.uuid]
 
         assert self.svc.get_configs(ConfigListFilter.REQUEST_TO_PUBLISH) == []

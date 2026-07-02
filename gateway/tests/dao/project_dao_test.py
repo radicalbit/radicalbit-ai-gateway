@@ -147,8 +147,8 @@ class ProjectDAOTest(DatabaseIntegration):
         result = self.project_dao.get_all_by_config_status(ConfigStatus.DRAFT)
         assert len(result) == 1 and result[0].name == 'draft'
 
-    def test_get_all_by_config_status_only_saved_excludes_untouched_drafts(self):
-        # Seeded (never saved) draft: DRAFT with a NULL updated_at.
+    def test_get_all_by_config_status_exclude_empty_excludes_untouched_drafts(self):
+        # EMPTY slot: DRAFT with a NULL updated_at (freshly seeded template).
         seeded = db_mock.get_sample_project(uuid=uuid.uuid4(), name='seeded')
         self.project_dao.insert(seeded)
         self.insert(
@@ -159,16 +159,16 @@ class ProjectDAOTest(DatabaseIntegration):
                 updated_at=None,
             )
         )
-        # Genuinely saved draft: DRAFT with a populated updated_at.
-        self._insert_project_with_config('saved', ConfigStatus.DRAFT)
+        # Genuine DRAFT: DRAFT with a populated updated_at.
+        self._insert_project_with_config('draft', ConfigStatus.DRAFT)
 
-        # Without only_saved both projects match on DRAFT...
+        # Without exclude_empty both projects match on DRAFT...
         assert len(self.project_dao.get_all_by_config_status(ConfigStatus.DRAFT)) == 2
-        # ...but only the saved one qualifies as "Saved".
+        # ...but only the non-empty one qualifies as a real DRAFT.
         result = self.project_dao.get_all_by_config_status(
-            ConfigStatus.DRAFT, only_saved=True
+            ConfigStatus.DRAFT, exclude_empty=True
         )
-        assert len(result) == 1 and result[0].name == 'saved'
+        assert len(result) == 1 and result[0].name == 'draft'
 
     def test_get_all_by_config_status_request_to_publish(self):
         self._insert_project_with_config('ready', ConfigStatus.READY_TO_SERVE)

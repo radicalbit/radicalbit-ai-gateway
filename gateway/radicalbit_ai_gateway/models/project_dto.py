@@ -30,7 +30,7 @@ class ConfigListFilter(str, Enum):
     ALL = 'all'
     PUBLISHED = 'published'
     REQUEST_TO_PUBLISH = 'request_to_publish'
-    SAVED = 'saved'
+    DRAFT = 'draft'
 
     @classmethod
     def _missing_(cls, value: object):
@@ -47,7 +47,7 @@ class ConfigListFilter(str, Enum):
         return {
             ConfigListFilter.PUBLISHED: ConfigStatus.SERVED,
             ConfigListFilter.REQUEST_TO_PUBLISH: ConfigStatus.READY_TO_SERVE,
-            ConfigListFilter.SAVED: ConfigStatus.DRAFT,
+            ConfigListFilter.DRAFT: ConfigStatus.DRAFT,
         }.get(self)
 
 

@@ -78,15 +78,15 @@ class ProjectDAO:
             return session.scalars(stmt).all()
 
     def get_all_by_config_status(
-        self, config_status: ConfigStatus | None = None, *, only_saved: bool = False
+        self, config_status: ConfigStatus | None = None, *, exclude_empty: bool = False
     ) -> Sequence[Project]:
         """Return non-deleted projects, optionally restricted to those having at
         least one non-deleted config slot in the given status.
 
-        When ``only_saved`` is set, the matching slot must also have been
-        actually saved (``updated_at`` populated): freshly seeded slots start as
-        DRAFT with a NULL ``updated_at`` (the empty template), so this
-        distinguishes a genuinely "Saved" draft from an untouched one.
+        When ``exclude_empty`` is set, the matching slot must also have content
+        (``updated_at`` populated): freshly seeded slots start as DRAFT with a
+        NULL ``updated_at`` (the EMPTY template state), so this distinguishes a
+        genuine DRAFT from an untouched EMPTY slot.
         """
         with self.db.begin_session() as session:
             stmt = select(Project).where(Project.deleted_at.is_(None))
@@ -96,7 +96,7 @@ class ProjectDAO:
                     ProjectConfig.config_status == config_status.value,
                     ProjectConfig.deleted_at.is_(None),
                 ]
-                if only_saved:
+                if exclude_empty:
                     conditions.append(ProjectConfig.updated_at.is_not(None))
                 has_matching_config = (
                     select(ProjectConfig.uuid).where(*conditions).exists()
