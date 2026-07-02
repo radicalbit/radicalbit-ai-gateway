@@ -310,8 +310,20 @@ class GuardrailCheck:
                 'Presidio analyze failed on type=%s: %s', type(blob).__name__, e
             )
             return False
+        if results:
+            first_res = results[0]
+            val = blob[first_res.start : first_res.end]
+            reason = {
+                'kind': 'presidio',
+                'entity_type': first_res.entity_type,
+                'value': val,
+                'message_index': 0,
+                'context': _context_words(blob, span=(first_res.start, first_res.end)),
+            }
+            self._reason_payload_ctx.set(reason)
+            return True
 
-        return bool(results)
+        return False
 
     @task(name='check_judge')
     async def _check_judge(
@@ -567,37 +579,7 @@ class GuardrailCheck:
         - value: str (for starts_with/ends_with/contains)
         - pattern: str (for regex)
         """
-        if not isinstance(guardrail.parameters, CheckParameter | RedactParameter):
-            return None
-
-        if guardrail.type == GuardrailType.PRESIDIO_ANALYZER:
-            blob = _blob_from_messages(messages)
-            if not blob:
-                return None
-            try:
-                analyzer = self._presidio_engine.get_analyzer(
-                    guardrail.parameters.backend, guardrail.parameters.ahds
-                )
-                results = analyzer.analyze(
-                    text=blob,
-                    entities=guardrail.parameters.entities,
-                    language=guardrail.parameters.language,
-                )
-                if results:
-                    first_res = results[0]
-                    val = blob[first_res.start : first_res.end]
-                    return (
-                        {
-                            'kind': 'presidio',
-                            'entity_type': first_res.entity_type,
-                            'value': val,
-                            'message_index': 0,
-                            'span': (first_res.start, first_res.end),
-                        },
-                        blob,
-                    )
-            except Exception as e:
-                logger.warning('Failed to find presidio match for reason: %s', e)
+        if not isinstance(guardrail.parameters, CheckParameter):
             return None
 
         values = guardrail.parameters.values or []
