@@ -46,6 +46,7 @@ dependencies = [
     "langchain-mistralai>=1.1.2",
     "azure-health-deidentification>=1.0.0b3",
     "azure-identity>=1.21.0",
+    "python-multipart>=0.0.20",
 ]
 
 [project.scripts]

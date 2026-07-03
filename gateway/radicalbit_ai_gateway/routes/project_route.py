@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, File, Query, Request, Response, UploadFile
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -208,6 +208,20 @@ class ProjectRoute:
                 media_type='application/zip',
                 headers={'Content-Disposition': f'attachment; filename="{filename}"'},
             )
+
+        @router.post(
+            '/projects/{project_uuid}/configs/{config_uuid}/import',
+            status_code=200,
+            response_model=ProjectOut,
+        )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
+        async def import_config(
+            project_uuid: UUID, config_uuid: UUID, file: UploadFile = File(...)
+        ):
+            content = await file.read()
+            project = project_service.import_config(project_uuid, config_uuid, content)
+            logger.info('Imported config %s for project %s', config_uuid, project_uuid)
+            return project
 
         @router.patch(
             '/projects/{project_uuid}/configs/{config_uuid}/unserve',

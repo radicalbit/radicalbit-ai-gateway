@@ -186,6 +186,49 @@ class TestProjectRoute(unittest.TestCase):
         res = self.client.get(f'{self.prefix}/projects/{pid}/configs/export')
         assert res.status_code == 400
 
+    # --- import ---
+
+    def test_import_config_returns_project(self):
+        pid, cid = uuid.uuid4(), uuid.uuid4()
+        self.project_service.import_config = MagicMock(
+            return_value=db_mock.get_sample_project_out(uuid=pid)
+        )
+        res = self.client.post(
+            f'{self.prefix}/projects/{pid}/configs/{cid}/import',
+            files={'file': ('c.yaml', b'yaml-bytes', 'application/x-yaml')},
+        )
+        assert res.status_code == 200
+        self.project_service.import_config.assert_called_once_with(
+            pid, cid, b'yaml-bytes'
+        )
+
+    def test_import_config_not_found(self):
+        pid, cid = uuid.uuid4(), uuid.uuid4()
+        self.project_service.import_config = MagicMock(
+            side_effect=ProjectNotFoundError('nope')
+        )
+        res = self.client.post(
+            f'{self.prefix}/projects/{pid}/configs/{cid}/import',
+            files={'file': ('c.yaml', b'yaml-bytes', 'application/x-yaml')},
+        )
+        assert res.status_code == 404
+
+    def test_import_config_invalid_returns_400(self):
+        pid, cid = uuid.uuid4(), uuid.uuid4()
+        self.project_service.import_config = MagicMock(
+            side_effect=ProjectConfigValidationError('invalid')
+        )
+        res = self.client.post(
+            f'{self.prefix}/projects/{pid}/configs/{cid}/import',
+            files={'file': ('c.yaml', b'yaml-bytes', 'application/x-yaml')},
+        )
+        assert res.status_code == 400
+
+    def test_import_config_missing_file_returns_422(self):
+        pid, cid = uuid.uuid4(), uuid.uuid4()
+        res = self.client.post(f'{self.prefix}/projects/{pid}/configs/{cid}/import')
+        assert res.status_code == 422
+
     def test_approve_config(self):
         pid, cid = uuid.uuid4(), uuid.uuid4()
         self.project_service.approve_config = MagicMock(
