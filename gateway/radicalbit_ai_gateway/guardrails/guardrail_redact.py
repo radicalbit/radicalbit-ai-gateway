@@ -7,6 +7,7 @@ from langchain_core.messages import BaseMessage
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
+from radicalbit_ai_gateway.guardrails.guardrail_check import _filter_messages_by_roles
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
 from radicalbit_ai_gateway.models.event_payload import GuardrailEventPayload
@@ -204,7 +205,7 @@ class GuardrailRedact:
         if not redact_guardrails:
             return messages
 
-        messages_to_redact = messages
+        messages_to_redact = list(messages)
 
         for guardrail in redact_guardrails:
             logger.debug(
@@ -221,9 +222,31 @@ class GuardrailRedact:
                     f'Unknown guardrail type: {guardrail.type}', guardrail
                 )
 
-            redacted_messages, was_redacted = await redact_fn(
-                messages_to_redact, guardrail.parameters
+            # Filter to only the roles this guardrail is scoped to.
+            # Indices track positions so we can reintegrate after redacting.
+            filtered_indexed = [
+                (i, m)
+                for i, m in enumerate(messages_to_redact)
+                if m in _filter_messages_by_roles([m], guardrail.message_roles)
+            ]
+
+            if not filtered_indexed:
+                logger.debug(
+                    'Guardrail %s: no messages match message_roles=%s — skipping.',
+                    guardrail.name,
+                    guardrail.message_roles,
+                )
+                continue
+
+            filtered_only = [m for _, m in filtered_indexed]
+            redacted_filtered, was_redacted = await redact_fn(
+                filtered_only, guardrail.parameters
             )
+
+            # Reintegrate redacted messages into their original positions
+            result = list(messages_to_redact)
+            for (orig_idx, _), redacted_msg in zip(filtered_indexed, redacted_filtered):
+                result[orig_idx] = redacted_msg
 
             if was_redacted:
                 attrs = {
@@ -264,7 +287,7 @@ class GuardrailRedact:
 
                 logger.warning(log_message)
 
-            messages_to_redact = redacted_messages
+            messages_to_redact = result
 
         return messages_to_redact
 

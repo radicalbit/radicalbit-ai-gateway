@@ -6,7 +6,13 @@ import re
 from typing import Protocol
 
 import httpx
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from opentelemetry import trace
 from traceloop.sdk.decorators import task, workflow
 
@@ -23,6 +29,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     Guardrail,
     GuardrailBehaviorType,
     GuardrailClass,
+    GuardrailMessageRole,
     GuardrailParameter,
     GuardrailsAIParameter,
     GuardrailType,
@@ -119,6 +126,36 @@ def _blob_from_messages(messages: list[BaseMessage]) -> str:
     """Build a single text blob from messages (safe for spaCy/Presidio)."""
     texts = _texts_from_messages(messages)
     return '\n'.join(texts) if texts else ''
+
+
+# ---------------------------------------------------------------------------
+# Role-based message filtering
+# ---------------------------------------------------------------------------
+
+_ROLE_TO_TYPE: dict[GuardrailMessageRole, type[BaseMessage]] = {
+    GuardrailMessageRole.USER:      HumanMessage,
+    GuardrailMessageRole.SYSTEM:    SystemMessage,
+    GuardrailMessageRole.TOOL:      ToolMessage,
+    GuardrailMessageRole.ASSISTANT: AIMessage,
+}
+
+
+def _filter_messages_by_roles(
+    messages: list[BaseMessage],
+    roles: list[GuardrailMessageRole] | None,
+) -> list[BaseMessage]:
+    """Return only the messages whose LangChain type matches the given roles.
+
+    When *roles* is ``None`` or empty the function defaults to ``[USER]``
+    (backward-compatible: the gateway historically only scanned user messages).
+    """
+    effective = roles or [GuardrailMessageRole.USER]
+    allowed = tuple(
+        _ROLE_TO_TYPE[r] for r in effective if r in _ROLE_TO_TYPE
+    )
+    if not allowed:
+        return []
+    return [m for m in messages if isinstance(m, allowed)]
 
 
 class GuardrailCheck:
@@ -538,10 +575,21 @@ class GuardrailCheck:
                     f'Unknown guardrail type: {guardrail.type}', guardrail
                 )
 
+            # Filter messages to the roles configured for this guardrail.
+            # Default: [user] for backward compatibility.
+            filtered_messages = _filter_messages_by_roles(messages, guardrail.message_roles)
+            if not filtered_messages:
+                logger.debug(
+                    'Guardrail %s: no messages match message_roles=%s — skipping.',
+                    guardrail.name,
+                    guardrail.message_roles,
+                )
+                continue
+
             try:
                 token = self._reason_payload_ctx.set(None)
                 is_triggered = await check_function(
-                    messages,
+                    filtered_messages,
                     guardrail.parameters,
                     route_config,
                     **kwargs,
@@ -885,9 +933,12 @@ class GuardrailCheck:
             check_function = self._guardrail_check_mapping.get(guardrail.type)
             if not check_function:
                 continue
+            filtered_messages = _filter_messages_by_roles(messages, guardrail.message_roles)
+            if not filtered_messages:
+                continue
             try:
                 if await check_function(
-                    messages, guardrail.parameters, route_config, **kwargs
+                    filtered_messages, guardrail.parameters, route_config, **kwargs
                 ):
                     return True
             except Exception:
