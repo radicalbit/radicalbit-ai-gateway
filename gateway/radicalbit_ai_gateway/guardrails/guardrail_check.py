@@ -7,6 +7,7 @@ from typing import Protocol
 
 import httpx
 from langchain_core.messages import BaseMessage
+from opentelemetry import trace
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
@@ -310,8 +311,31 @@ class GuardrailCheck:
                 'Presidio analyze failed on type=%s: %s', type(blob).__name__, e
             )
             return False
+        if results:
+            first_res = results[0]
+            val = blob[first_res.start : first_res.end]
+            reason = {
+                'kind': 'presidio',
+                'entity_type': first_res.entity_type,
+                'value': val,
+                'message_index': 0,
+                'context': _context_words(blob, span=(first_res.start, first_res.end)),
+            }
+            self._reason_payload_ctx.set(reason)
 
-        return bool(results)
+            try:
+                span = trace.get_current_span()
+                if span.is_recording():
+                    span.set_attribute('guardrail.presidio.matched_value', val)
+                    span.set_attribute(
+                        'guardrail.presidio.entity_type', first_res.entity_type
+                    )
+            except Exception:
+                pass
+
+            return True
+
+        return False
 
     @task(name='check_judge')
     async def _check_judge(
@@ -675,6 +699,17 @@ class GuardrailCheck:
             return None
         kind = reason_payload.get('kind')
         mi = reason_payload.get('message_index')
+        if kind == 'presidio':
+            et = reason_payload.get('entity_type')
+            val = reason_payload.get('value')
+            if et is not None and val is not None:
+                s = f'presidio entity_type={_trunc(repr(et))} value={_trunc(repr(val))}'
+            else:
+                return None
+            excerpt = reason_payload.get('context')
+            if isinstance(excerpt, str) and excerpt:
+                s += f' context="{_trunc(excerpt, max_len=120)}"'
+            return s
         if kind in ('starts_with', 'ends_with', 'contains'):
             val = reason_payload.get('value')
             if kind and val is not None and mi is not None:
