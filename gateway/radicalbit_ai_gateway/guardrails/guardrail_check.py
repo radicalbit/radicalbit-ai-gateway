@@ -133,9 +133,9 @@ def _blob_from_messages(messages: list[BaseMessage]) -> str:
 # ---------------------------------------------------------------------------
 
 _ROLE_TO_TYPE: dict[GuardrailMessageRole, type[BaseMessage]] = {
-    GuardrailMessageRole.USER:      HumanMessage,
-    GuardrailMessageRole.SYSTEM:    SystemMessage,
-    GuardrailMessageRole.TOOL:      ToolMessage,
+    GuardrailMessageRole.USER: HumanMessage,
+    GuardrailMessageRole.SYSTEM: SystemMessage,
+    GuardrailMessageRole.TOOL: ToolMessage,
     GuardrailMessageRole.ASSISTANT: AIMessage,
 }
 
@@ -150,9 +150,7 @@ def _filter_messages_by_roles(
     (backward-compatible: the gateway historically only scanned user messages).
     """
     effective = roles or [GuardrailMessageRole.USER]
-    allowed = tuple(
-        _ROLE_TO_TYPE[r] for r in effective if r in _ROLE_TO_TYPE
-    )
+    allowed = tuple(_ROLE_TO_TYPE[r] for r in effective if r in _ROLE_TO_TYPE)
     if not allowed:
         return []
     return [m for m in messages if isinstance(m, allowed)]
@@ -577,7 +575,9 @@ class GuardrailCheck:
 
             # Filter messages to the roles configured for this guardrail.
             # Default: [user] for backward compatibility.
-            filtered_messages = _filter_messages_by_roles(messages, guardrail.message_roles)
+            filtered_messages = _filter_messages_by_roles(
+                messages, guardrail.message_roles
+            )
             if not filtered_messages:
                 logger.debug(
                     'Guardrail %s: no messages match message_roles=%s — skipping.',
@@ -933,7 +933,9 @@ class GuardrailCheck:
             check_function = self._guardrail_check_mapping.get(guardrail.type)
             if not check_function:
                 continue
-            filtered_messages = _filter_messages_by_roles(messages, guardrail.message_roles)
+            filtered_messages = _filter_messages_by_roles(
+                messages, guardrail.message_roles
+            )
             if not filtered_messages:
                 continue
             try:
