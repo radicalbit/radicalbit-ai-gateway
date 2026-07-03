@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, File, Query, Request, Response, UploadFile
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -32,6 +32,9 @@ from radicalbit_ai_gateway.utils.exceptions import ProjectConfigValidationError
 app_config = get_app_config()
 
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+MAX_IMPORT_BYTES = 2 * 1024 * 1024  # 2 MB
+_ALLOWED_IMPORT_SUFFIXES = ('.yaml', '.yml')
 
 
 @dataclass
@@ -208,6 +211,29 @@ class ProjectRoute:
                 media_type='application/zip',
                 headers={'Content-Disposition': f'attachment; filename="{filename}"'},
             )
+
+        @router.post(
+            '/projects/{project_uuid}/configs/{config_uuid}/import',
+            status_code=200,
+            response_model=ProjectOut,
+        )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
+        async def import_config(
+            project_uuid: UUID, config_uuid: UUID, file: UploadFile = File(...)
+        ):
+            filename = file.filename or ''
+            if not filename.lower().endswith(_ALLOWED_IMPORT_SUFFIXES):
+                raise ProjectConfigValidationError(
+                    'Only .yaml or .yml files can be imported'
+                )
+            if file.size is not None and file.size > MAX_IMPORT_BYTES:
+                raise ProjectConfigValidationError(
+                    f'Uploaded file exceeds the {MAX_IMPORT_BYTES // (1024 * 1024)} MB limit'
+                )
+            content = await file.read()
+            project = project_service.import_config(project_uuid, config_uuid, content)
+            logger.info('Imported config %s for project %s', config_uuid, project_uuid)
+            return project
 
         @router.patch(
             '/projects/{project_uuid}/configs/{config_uuid}/unserve',

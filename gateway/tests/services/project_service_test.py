@@ -286,6 +286,38 @@ class ProjectServiceTest(DatabaseIntegration):
         with pytest.raises(ProjectNotFoundError):
             self.svc.export_config(uuid.uuid4(), uuid.uuid4())
 
+    # --- import ---
+
+    def test_import_config_writes_draft(self):
+        out, a, _ = self._create()
+        res = self.svc.import_config(out.uuid, a, _VALID.encode())
+        ca = next(c for c in res.configs if c.uuid == a)
+        assert ca.config_file == _VALID
+        assert ca.config_status == ConfigStatus.DRAFT
+        assert ca.updated_at is not None
+
+    def test_import_config_into_served_raises(self):
+        out, a, _ = self._create()
+        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        self.svc.approve_config(out.uuid, a)
+        self.svc.serve_config(out.uuid, a)
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.import_config(out.uuid, a, _VALID.encode())
+
+    def test_import_config_invalid_yaml_raises(self):
+        out, a, _ = self._create()
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.import_config(out.uuid, a, b'::not yaml::')
+
+    def test_import_config_non_utf8_raises(self):
+        out, a, _ = self._create()
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.import_config(out.uuid, a, b'\xff\xfe')
+
+    def test_import_config_not_found(self):
+        with pytest.raises(ProjectNotFoundError):
+            self.svc.import_config(uuid.uuid4(), uuid.uuid4(), _VALID.encode())
+
     # --- listing / filters ---
 
     def test_get_all_and_filters(self):

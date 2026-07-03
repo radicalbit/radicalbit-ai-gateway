@@ -233,6 +233,31 @@ class ProjectService:
             )
         return self._build_configs_zip(project.name, configs)
 
+    def import_config(
+        self, project_uuid: UUID, config_uuid: UUID, content: bytes
+    ) -> ProjectOut:
+        self._get_project_or_raise(project_uuid)
+        config = self._get_config_or_raise(project_uuid, config_uuid)
+        if config.config_status == ConfigStatus.SERVED.value:
+            raise ProjectConfigValidationError(
+                f'Config {config_uuid} is served and cannot be overwritten by import'
+            )
+        try:
+            config_file = content.decode('utf-8')
+        except UnicodeDecodeError as e:
+            raise ProjectConfigValidationError(
+                'Uploaded file is not valid UTF-8 text'
+            ) from e
+
+        validate_gateway_config(config_file, check_secrets=True)
+
+        rows_updated = self.project_config_dao.update_config_file(
+            config_uuid, config_file
+        )
+        if rows_updated == 0:
+            raise ProjectNotFoundError(f'Config {config_uuid} not found')
+        return self._build_out_or_raise(project_uuid)
+
     def validate_exists(self, project_uuid: UUID) -> None:
         if not self.project_dao.get_by_uuid(project_uuid):
             raise ProjectNotFoundError(f'Project with UUID {project_uuid} not found')
