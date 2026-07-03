@@ -48,7 +48,7 @@ from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute
+from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
@@ -332,7 +332,13 @@ app.include_router(
     ),
     prefix=prefix,
 )
-app.include_router(ConfigsRoute.get_configs_router(project_service), prefix=prefix)
+app.include_router(
+    ConfigsRoute.get_configs_router(
+        project_service,
+        config=getattr(app.state, 'configs_route_config', ConfigsRouteConfig()),
+    ),
+    prefix=prefix,
+)
 app.include_router(
     UsageRoute.get_usage_router(
         event_service=event_service,
