@@ -146,11 +146,19 @@ def _filter_messages_by_roles(
 ) -> list[BaseMessage]:
     """Return only the messages whose LangChain type matches the given roles.
 
-    When *roles* is ``None`` or empty the function defaults to ``[USER]``
-    (backward-compatible: the gateway historically only scanned user messages).
+    When *roles* is ``None`` (not configured) the function returns all messages
+    unchanged — preserving the original gateway behavior where all messages in
+    the list are scanned regardless of type.
+
+    When *roles* is an explicit list (even empty) only messages whose type
+    matches an entry in the list are returned.  An empty list returns nothing.
     """
-    effective = roles or [GuardrailMessageRole.USER]
-    allowed = tuple(_ROLE_TO_TYPE[r] for r in effective if r in _ROLE_TO_TYPE)
+    if roles is None:
+        # Not configured: original behavior — no filtering.
+        return messages
+    if not roles:
+        return []
+    allowed = tuple(_ROLE_TO_TYPE[r] for r in roles if r in _ROLE_TO_TYPE)
     if not allowed:
         return []
     return [m for m in messages if isinstance(m, allowed)]

@@ -31,8 +31,8 @@ class GuardrailMessageRole(str, Enum):
 
     Supported roles: user, system, tool, assistant.
     ``function`` is intentionally excluded — it is deprecated by OpenAI.
-    When ``message_roles`` is not set on a guardrail, only ``user`` messages
-    are scanned (backward-compatible default).
+    When ``message_roles`` is not set on a guardrail, all messages in the
+    list are scanned (original gateway behavior, no role filtering).
     """
 
     USER = 'USER'
@@ -214,10 +214,11 @@ class Guardrail(BaseModel):
         description=(
             'Message roles to apply the guardrail to. '
             'Supported values: user, system, tool, assistant. '
-            'If not set, defaults to [user] (backward-compatible). '
-            'Use a list to target multiple roles, e.g. [user, tool].'
+            'If not set (default), all messages are scanned regardless of role — '
+            'preserving the original gateway behavior. '
+            'Set explicitly to restrict scanning to specific roles, e.g. [user, tool].'
         ),
-        examples=[['user'], ['user', 'tool'], ['system']],
+        examples=[['user'], ['user', 'tool'], ['system'], ['tool']],
     )
 
     @field_validator('type', 'where', 'behavior', mode='before')

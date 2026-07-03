@@ -40,15 +40,15 @@ ALL_MESSAGES = [HUMAN, SYSTEM, TOOL, AI]
 
 
 class TestFilterMessagesByRoles:
-    def test_default_none_returns_only_human(self):
-        """None → defaults to [USER] for backward compatibility."""
+    def test_default_none_returns_all_messages(self):
+        """None (not configured) → no filtering, all messages returned."""
         result = _filter_messages_by_roles(ALL_MESSAGES, None)
-        assert result == [HUMAN]
+        assert result == ALL_MESSAGES
 
-    def test_empty_list_returns_only_human(self):
-        """Empty list → same default as None."""
+    def test_empty_list_returns_nothing(self):
+        """Explicit empty list → nothing passes through."""
         result = _filter_messages_by_roles(ALL_MESSAGES, [])
-        assert result == [HUMAN]
+        assert result == []
 
     def test_user_only(self):
         result = _filter_messages_by_roles(ALL_MESSAGES, [GuardrailMessageRole.USER])
@@ -254,27 +254,27 @@ class TestApplyGuardrailsRoleFiltering:
             )
 
     @pytest.mark.asyncio
-    async def test_default_none_only_scans_user(self):
-        """Default (None) must only scan user messages — backward compat."""
+    async def test_default_none_scans_all_messages(self):
+        """Default (None) scans all message types — original gateway behavior."""
         guardrail = _make_guardrail(None, [BLOCKED_KEYWORD])
         engine = _make_check_engine(guardrail)
         route = _make_route_config()
-        # keyword in tool but NOT in user → must not trigger
+        # keyword in tool message → MUST trigger because None = no filtering
         messages = [
             HumanMessage(content=SAFE_CONTENT),
             ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
         ]
-        result = await engine.apply_guardrails(
-            route_config=route,
-            messages=messages,
-            where=GuardrailWhereType.INPUT,
-            **COMMON_KWARGS,
-        )
-        assert result is None
+        with pytest.raises(GuardrailBadRequest):
+            await engine.apply_guardrails(
+                route_config=route,
+                messages=messages,
+                where=GuardrailWhereType.INPUT,
+                **COMMON_KWARGS,
+            )
 
     @pytest.mark.asyncio
     async def test_default_none_triggers_on_user_message(self):
-        """Default (None) triggers when keyword IS in user message."""
+        """Default (None) also triggers when keyword is in user message."""
         guardrail = _make_guardrail(None, [BLOCKED_KEYWORD])
         engine = _make_check_engine(guardrail)
         route = _make_route_config()
@@ -286,3 +286,21 @@ class TestApplyGuardrailsRoleFiltering:
                 where=GuardrailWhereType.INPUT,
                 **COMMON_KWARGS,
             )
+
+    @pytest.mark.asyncio
+    async def test_explicit_user_only_does_not_scan_tool(self):
+        """Explicit [USER] scope: keyword in tool message → must NOT trigger."""
+        guardrail = _make_guardrail([GuardrailMessageRole.USER], [BLOCKED_KEYWORD])
+        engine = _make_check_engine(guardrail)
+        route = _make_route_config()
+        messages = [
+            HumanMessage(content=SAFE_CONTENT),
+            ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
+        ]
+        result = await engine.apply_guardrails(
+            route_config=route,
+            messages=messages,
+            where=GuardrailWhereType.INPUT,
+            **COMMON_KWARGS,
+        )
+        assert result is None
