@@ -66,9 +66,7 @@ class TestConfigsRoute(unittest.TestCase):
         app.include_router(router, prefix=self.prefix)
         client = TestClient(app)
 
-        res = client.get(
-            f'{self.prefix}/configs/projects', params={'status': 'draft'}
-        )
+        res = client.get(f'{self.prefix}/configs/projects', params={'status': 'draft'})
         assert res.status_code == 200
         assert res.json() == jsonable_encoder([out])
         assert captured['is_request'] is True
