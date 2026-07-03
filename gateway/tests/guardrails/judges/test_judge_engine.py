@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from langchain_core.language_models import BaseLanguageModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import PromptTemplate
 import pytest
 
@@ -74,7 +74,7 @@ class TestJudgeEngine:
     # extract_content_for_judge tests (INPUT vs OUTPUT)
     # -----------------------------------------------------
     def test_extract_content_input_default(self):
-        """Default behavior (no where) -> INPUT (human only)."""
+        """Default behavior (no where) -> INPUT: extracts all messages."""
         messages = [
             HumanMessage(content='Hello'),
             HumanMessage(content='How are you?'),
@@ -82,15 +82,33 @@ class TestJudgeEngine:
         result = extract_content_for_judge(messages)
         assert result == 'Hello\nHow are you?'
 
-    def test_extract_content_input_ignores_ai(self):
-        """INPUT must ignore AI messages."""
+    def test_extract_content_input_includes_all_message_types(self):
+        """INPUT includes all message types — role filtering is done upstream."""
         messages = [
             HumanMessage(content='Hello'),
             AIMessage(content='Assistant output'),
             HumanMessage(content='How are you?'),
         ]
         result = extract_content_for_judge(messages, where=GuardrailWhereType.INPUT)
-        assert result == 'Hello\nHow are you?'
+        assert result == 'Hello\nAssistant output\nHow are you?'
+
+    def test_extract_content_input_includes_tool_messages(self):
+        """INPUT includes ToolMessage content — typical for tool-role guardrail checks."""
+        messages = [
+            HumanMessage(content='User request'),
+            ToolMessage(content='Tool result with Zeiss data', tool_call_id='c1'),
+        ]
+        result = extract_content_for_judge(messages, where=GuardrailWhereType.INPUT)
+        assert result == 'User request\nTool result with Zeiss data'
+
+    def test_extract_content_input_includes_system_messages(self):
+        """INPUT includes SystemMessage content when passed."""
+        messages = [
+            SystemMessage(content='System context'),
+            HumanMessage(content='User request'),
+        ]
+        result = extract_content_for_judge(messages, where=GuardrailWhereType.INPUT)
+        assert result == 'System context\nUser request'
 
     def test_extract_content_output_picks_ai(self):
         """OUTPUT must pick AI messages (assistant output)."""
@@ -689,8 +707,12 @@ class TestJudgeEngine:
         result = extract_media_blocks_for_judge(messages)
         assert result == []
 
-    def test_extract_media_blocks_ignores_ai_messages_for_input(self):
-        """Media blocks in AI messages are ignored for INPUT phase."""
+    def test_extract_media_blocks_includes_all_message_types_for_input(self):
+        """Media blocks in all message types are included for INPUT phase.
+
+        Role filtering is applied upstream; the extractor processes whatever
+        messages it receives without further type discrimination.
+        """
         image_block = {
             'type': 'image_url',
             'image_url': {'url': 'data:image/png;base64,abc'},
@@ -702,7 +724,7 @@ class TestJudgeEngine:
         result = extract_media_blocks_for_judge(
             messages, where=GuardrailWhereType.INPUT
         )
-        assert result == []
+        assert result == [image_block]
 
     def test_extract_media_blocks_output_picks_last_ai_message(self):
         """Media blocks from the last AI message are returned for OUTPUT phase."""
