@@ -33,6 +33,9 @@ app_config = get_app_config()
 
 logger = logging.getLogger(app_config.log_config.logger_name)
 
+MAX_IMPORT_BYTES = 2 * 1024 * 1024  # 2 MB
+_ALLOWED_IMPORT_SUFFIXES = ('.yaml', '.yml')
+
 
 @dataclass
 class ProjectRouteConfig:
@@ -218,6 +221,15 @@ class ProjectRoute:
         async def import_config(
             project_uuid: UUID, config_uuid: UUID, file: UploadFile = File(...)
         ):
+            filename = file.filename or ''
+            if not filename.lower().endswith(_ALLOWED_IMPORT_SUFFIXES):
+                raise ProjectConfigValidationError(
+                    'Only .yaml or .yml files can be imported'
+                )
+            if file.size is not None and file.size > MAX_IMPORT_BYTES:
+                raise ProjectConfigValidationError(
+                    f'Uploaded file exceeds the {MAX_IMPORT_BYTES // (1024 * 1024)} MB limit'
+                )
             content = await file.read()
             project = project_service.import_config(project_uuid, config_uuid, content)
             logger.info('Imported config %s for project %s', config_uuid, project_uuid)
