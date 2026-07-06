@@ -300,6 +300,9 @@ def get_sample_project(
     )
 
 
+_UNSET = object()
+
+
 def get_sample_project_config(
     project_uuid: uuid.UUID,
     slot: Slot = Slot.A,
@@ -307,6 +310,7 @@ def get_sample_project_config(
     config_status: ConfigStatus = ConfigStatus.DRAFT,
     uuid: uuid.UUID | None = None,
     deleted_at: datetime.datetime | None = None,
+    updated_at=_UNSET,
 ) -> ProjectConfig:
     now = datetime.datetime.now(tz=UTC)
     return ProjectConfig(
@@ -316,7 +320,7 @@ def get_sample_project_config(
         config_file=config_file,
         config_status=config_status.value,
         created_at=now,
-        updated_at=now,
+        updated_at=now if updated_at is _UNSET else updated_at,
         deleted_at=deleted_at,
     )
 
