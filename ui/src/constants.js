@@ -13,6 +13,7 @@ const ModalsEnum = {
 
 const PathsEnum = {
   CONFIG: 'config',
+  CONFIGURATIONS: 'configs',
   COSTS: 'costs',
   GROUPS: 'groups',
   CREDENTIALS: 'credentials',
@@ -27,6 +28,7 @@ const SEARCH_PARAMS = {
   groups: 'searchGroup',
   credentials: 'searchCredential',
   projects: 'searchProject',
+  configurations: 'searchConfiguration',
 };
 
 const SortOrderEnum = {
@@ -76,9 +78,24 @@ const DATE_FORMAT = ' DD MMM YYYY, HH:mm:ss';
 const DATE_FORMAT_SHORT = ' DD MMM YYYY';
 
 const ConfigStatusEnum = {
+  EMPTY: 'EMPTY',
   DRAFT: 'DRAFT',
   READY_TO_SERVE: 'READY_TO_SERVE',
   SERVED: 'SERVED',
+};
+
+const ConfigListFilterEnum = {
+  ALL: 'all',
+  PUBLISHED: 'published',
+  REQUEST_TO_PUBLISH: 'request_to_publish',
+  DRAFT: 'draft',
+};
+
+const CONFIG_LIST_FILTER_LABELS = {
+  [ConfigListFilterEnum.ALL]: 'All',
+  [ConfigListFilterEnum.PUBLISHED]: 'Published',
+  [ConfigListFilterEnum.REQUEST_TO_PUBLISH]: 'Request to Publish',
+  [ConfigListFilterEnum.DRAFT]: 'Draft',
 };
 
 const SlotEnum = {
@@ -92,6 +109,8 @@ const ProjectStatusEnum = {
 };
 
 export {
+  ConfigListFilterEnum,
+  CONFIG_LIST_FILTER_LABELS,
   ConfigStatusEnum,
   CHART_COLORS,
   DATE_FORMAT,

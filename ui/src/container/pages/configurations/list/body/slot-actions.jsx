@@ -1,85 +1,57 @@
 import SuccessMessage from '@Components/success-message';
-import DeleteProject from '@Container/pages/projects/list/delete-project';
-import useGetVisibleConfig from '@Container/pages/projects/use-get-visible-config';
 import useModals, { modals } from '@Hooks/use-modals';
 import { ConfigStatusEnum } from '@Src/constants';
 import {
   useApproveConfigMutation,
   useCancelApprovalMutation,
-  useGetProjectQuery,
   useServeConfigMutation,
   useUnserveConfigMutation,
 } from '@State/projects/api';
 import {
   faCircleStop,
   faCodePullRequest,
+  faEllipsisVertical,
   faPenToSquare,
   faPlay,
   faStop,
-  faTrash,
 } from '@fortawesome/free-solid-svg-icons';
-import { FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
+import {
+  Button, Dropdown, FontAwesomeIcon,
+} from '@radicalbit/radicalbit-design-system';
 
-export const useGetThreeDotsMenuItems = (uuid) => {
-  const { data, isLoading, isError, isSuccess } = useGetProjectQuery(uuid, { skip: !uuid });
+function SlotActions({ projectUuid, projectName, config }) {
+  const items = useSlotMenuItems({ projectUuid, projectName, config });
 
-  const configs = data?.configs ?? [];
-  const visibleConfig = useGetVisibleConfig(configs);
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+  };
 
-  const editConfigItem = useEditConfigItem(uuid);
-  const visibleConfigActions = useVisibleConfigItems(uuid, visibleConfig);
-  const deleteProjectItems = useDeleteProjectItems(uuid);
-
-  if (!uuid) {
-    return [];
+  if (!items.length) {
+    return false;
   }
 
-  if (isLoading || !isSuccess || isError || !data) {
-    return [];
-  }
+  return (
+    <Dropdown className="c-project-config-menu" menu={{ items }}>
+      <Button onClick={handleOnClick} type="text">
+        <FontAwesomeIcon icon={faEllipsisVertical} />
+      </Button>
+    </Dropdown>
+  );
+}
 
-  const configurationGroupItems = [editConfigItem, ...visibleConfigActions].filter(Boolean);
-
-  const configurationGroup = configurationGroupItems.length
-    ? {
-      key: 'configuration-group',
-      type: 'group',
-      label: 'Configuration',
-      children: configurationGroupItems,
-    }
-    : false;
-
-  return [
-    configurationGroup,
-    ...deleteProjectItems,
-  ].filter(Boolean);
-};
-
-const useEditConfigItem = (uuid) => {
+const useSlotMenuItems = ({ projectUuid, projectName, config }) => {
   const { showModal } = useModals();
 
-  const handleOnClick = () => {
-    showModal(modals.EDIT_PROJECT_CONFIG, { uuid });
-  };
-
-  return {
-    key: 'edit-configuration',
-    icon: <FontAwesomeIcon icon={faPenToSquare} />,
-    label: 'Edit Configuration',
-    onClick: handleOnClick,
-  };
-};
-
-const useVisibleConfigItems = (uuid, config) => {
-  const { data: project } = useGetProjectQuery(uuid, { skip: !uuid });
-
   const configUuid = config?.uuid;
-  const projectName = project?.name ?? '';
 
   const [triggerApprove, approveArgs] = useApproveConfigMutation({ fixedCacheKey: `approve-config-${configUuid}` });
   const [triggerCancel, cancelArgs] = useCancelApprovalMutation({ fixedCacheKey: `cancel-approval-${configUuid}` });
   const [triggerServe, serveArgs] = useServeConfigMutation({ fixedCacheKey: `serve-config-${configUuid}` });
   const [triggerUnserve, unserveArgs] = useUnserveConfigMutation({ fixedCacheKey: `unserve-config-${configUuid}` });
+
+  const handleOnEdit = () => {
+    showModal(modals.EDIT_PROJECT_CONFIG, { uuid: projectUuid });
+  };
 
   const handleOnApprove = async () => {
     if (approveArgs.isLoading) {
@@ -87,7 +59,7 @@ const useVisibleConfigItems = (uuid, config) => {
     }
 
     await triggerApprove({
-      projectUuid: uuid,
+      projectUuid,
       configUuid,
       successMessage: <SuccessMessage prefix="Configuration for" strong={projectName} suffix="sent for publish" />,
     });
@@ -99,7 +71,7 @@ const useVisibleConfigItems = (uuid, config) => {
     }
 
     await triggerCancel({
-      projectUuid: uuid,
+      projectUuid,
       configUuid,
       successMessage: <SuccessMessage prefix="Publish request for" strong={projectName} suffix="cancelled" />,
     });
@@ -111,7 +83,7 @@ const useVisibleConfigItems = (uuid, config) => {
     }
 
     await triggerServe({
-      projectUuid: uuid,
+      projectUuid,
       configUuid,
       successMessage: <SuccessMessage prefix="Configuration for" strong={projectName} suffix="served" />,
     });
@@ -123,7 +95,7 @@ const useVisibleConfigItems = (uuid, config) => {
     }
 
     await triggerUnserve({
-      projectUuid: uuid,
+      projectUuid,
       configUuid,
       successMessage: <SuccessMessage prefix="Configuration for" strong={projectName} suffix="unserved" />,
     });
@@ -133,7 +105,14 @@ const useVisibleConfigItems = (uuid, config) => {
     return [];
   }
 
-  const items = [];
+  const items = [
+    {
+      key: `edit-config-${configUuid}`,
+      icon: <FontAwesomeIcon icon={faPenToSquare} />,
+      label: 'Edit Configuration',
+      onClick: handleOnEdit,
+    },
+  ];
 
   if (config.configStatus === ConfigStatusEnum.DRAFT && config.configFile) {
     items.push({
@@ -172,17 +151,4 @@ const useVisibleConfigItems = (uuid, config) => {
   return items;
 };
 
-const useDeleteProjectItems = (uuid) => [
-  { type: 'divider', key: 'configuration-divider' },
-  {
-    key: 'delete-project',
-    label: (
-      <DeleteProject uuid={uuid}>
-        <div className="is-error flex items-center gap-2">
-          <FontAwesomeIcon icon={faTrash} />
-
-          Delete project
-        </div>
-      </DeleteProject>
-    ),
-  }];
+export default SlotActions;

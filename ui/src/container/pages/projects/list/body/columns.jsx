@@ -1,6 +1,7 @@
 import ConfigStatusTag from '@Container/pages/projects/components/config-status-tag';
 import ProjectStatusTag from '@Container/pages/projects/components/project-status-tag';
 import { useGetThreeDotsMenuItems } from '@Container/pages/projects/list/body/three-dots-menu';
+import useGetVisibleConfig from '@Container/pages/projects/use-get-visible-config';
 import { DATE_FORMAT, DATE_FORMAT_SHORT } from '@Src/constants';
 import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons';
 import {
@@ -22,7 +23,7 @@ const getColumns = () => [
   },
 
   {
-    title: 'Projects Name',
+    title: 'Projects',
     dataIndex: 'name',
     key: 'name',
     render: (value, { description }) => (
@@ -61,21 +62,11 @@ const getColumns = () => [
     title: 'Configurations',
     dataIndex: 'configs',
     key: 'configs',
-    render: (configs = []) => (
-      <div className="flex flex-col gap-1">
-        {configs.map((config) => (
-          <div key={config.uuid} className="flex items-center gap-4">
-            <span>{`Slot ${config.slot}`}</span>
-
-            <ConfigStatusTag configStatus={config.configStatus} />
-          </div>
-        ))}
-      </div>
-    ),
+    render: (configs) => <ConfigurationCell configs={configs} />,
   },
 
   {
-    title: '',
+    title: 'Actions',
     dataIndex: 'uuid',
     key: 'actions',
     width: '100px',
@@ -93,6 +84,22 @@ const getColumns = () => [
     width: '10px',
   },
 ];
+
+function ConfigurationCell({ configs }) {
+  const config = useGetVisibleConfig(configs);
+
+  if (!config) {
+    return '--';
+  }
+
+  return (
+    <div className="flex items-center gap-4">
+      <span>{`Slot ${config.slot}`}</span>
+
+      <ConfigStatusTag config={config} />
+    </div>
+  );
+}
 
 function Actions({ uuid }) {
   const items = useGetThreeDotsMenuItems(uuid);
