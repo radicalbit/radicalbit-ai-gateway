@@ -26,6 +26,23 @@ class GuardrailWhereType(str, Enum):
     IO = 'IO'
 
 
+class GuardrailMessageRole(str, Enum):
+    """Message roles that guardrails can be scoped to.
+
+    Supported roles: user, system, tool, assistant.
+    ``function`` is intentionally excluded — it is deprecated by OpenAI.
+    When ``message_roles`` is not set (default), no filtering is applied:
+      - Regex and Presidio (PII) scan all messages in the chat history.
+      - LLM Judge scans only human (user) messages in the INPUT phase,
+        preserving original gateway behavior.
+    """
+
+    USER = 'USER'
+    SYSTEM = 'SYSTEM'
+    TOOL = 'TOOL'
+    ASSISTANT = 'ASSISTANT'
+
+
 class GuardrailBehaviorType(str, Enum):
     BLOCK = 'BLOCK'
     WARN = 'WARN'
@@ -194,10 +211,32 @@ class Guardrail(BaseModel):
         default=True,
         description='Whether the guardrail is enabled or disabled.',
     )
+    message_roles: list[GuardrailMessageRole] | None = Field(
+        default=None,
+        description=(
+            'Message roles to apply the guardrail to. '
+            'Supported values: user, system, tool, assistant. '
+            'If not set (default), no role filtering is applied: '
+            'Regex/Presidio scan all messages, while LLM Judge scans only '
+            'human/user messages in the INPUT phase (preserving original behavior). '
+            'Set explicitly to restrict scanning to specific roles, e.g. [user, tool].'
+        ),
+        examples=[['user'], ['user', 'tool'], ['system'], ['tool']],
+    )
 
     @field_validator('type', 'where', 'behavior', mode='before')
     def validate_lower_case_enum(cls, value: GuardrailBehaviorType) -> str:
         return value.upper()
+
+    @field_validator('message_roles', mode='before')
+    @classmethod
+    def validate_message_roles(cls, value):
+        """Normalise message_roles values to uppercase strings."""
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return [v.upper() if isinstance(v, str) else v for v in value]
+        return value
 
     def guardrail_class(self):
         if self.type in [
