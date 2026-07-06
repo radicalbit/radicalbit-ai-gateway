@@ -31,8 +31,10 @@ class GuardrailMessageRole(str, Enum):
 
     Supported roles: user, system, tool, assistant.
     ``function`` is intentionally excluded — it is deprecated by OpenAI.
-    When ``message_roles`` is not set on a guardrail, all messages in the
-    list are scanned (original gateway behavior, no role filtering).
+    When ``message_roles`` is not set (default), no filtering is applied:
+      - Regex and Presidio (PII) scan all messages in the chat history.
+      - LLM Judge scans only human (user) messages in the INPUT phase,
+        preserving original gateway behavior.
     """
 
     USER = 'USER'
@@ -214,8 +216,9 @@ class Guardrail(BaseModel):
         description=(
             'Message roles to apply the guardrail to. '
             'Supported values: user, system, tool, assistant. '
-            'If not set (default), all messages are scanned regardless of role — '
-            'preserving the original gateway behavior. '
+            'If not set (default), no role filtering is applied: '
+            'Regex/Presidio scan all messages, while LLM Judge scans only '
+            'human/user messages in the INPUT phase (preserving original behavior). '
             'Set explicitly to restrict scanning to specific roles, e.g. [user, tool].'
         ),
         examples=[['user'], ['user', 'tool'], ['system'], ['tool']],

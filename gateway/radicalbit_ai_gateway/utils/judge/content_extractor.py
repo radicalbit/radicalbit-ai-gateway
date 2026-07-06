@@ -15,13 +15,15 @@ _MEDIA_TYPES = frozenset({'image_url', 'image', 'file'})
 def extract_content_for_judge(messages: list[BaseMessage], **kwargs) -> str:
     """Extract text content from messages based on guardrail phase.
 
-    For INPUT phase: extracts content from all messages provided (role
-    filtering is handled upstream by ``_filter_messages_by_roles``).
+    For INPUT phase: extracts content from messages (filtering by role is
+    handled upstream by ``_filter_messages_by_roles`` if configured; otherwise,
+    falls back to extracting from human/user messages for backward compatibility).
     For OUTPUT phase: extracts content from the last AI (assistant) message.
 
     Args:
         messages: List of LangChain messages.
         **kwargs: Must include 'where' (GuardrailWhereType) to determine phase.
+            Can include 'message_roles' to determine if role filtering is active.
 
     Returns:
         Extracted text content as a string. Returns empty string if no
@@ -32,6 +34,7 @@ def extract_content_for_judge(messages: list[BaseMessage], **kwargs) -> str:
         return ''
 
     where = kwargs.get('where')
+    message_roles = kwargs.get('message_roles')
     if isinstance(where, GuardrailWhereType):
         where_value = where.value
     else:
@@ -40,7 +43,7 @@ def extract_content_for_judge(messages: list[BaseMessage], **kwargs) -> str:
     if where_value == GuardrailWhereType.OUTPUT.value:
         return _extract_output_content(messages)
 
-    return _extract_input_content(messages)
+    return _extract_input_content(messages, message_roles)
 
 
 def _extract_output_content(messages: list[BaseMessage]) -> str:
@@ -53,15 +56,19 @@ def _extract_output_content(messages: list[BaseMessage]) -> str:
     return ''
 
 
-def _extract_input_content(messages: list[BaseMessage]) -> str:
-    """Extract content from all provided messages for INPUT phase.
+def _extract_input_content(
+    messages: list[BaseMessage], message_roles: list | None
+) -> str:
+    """Extract content from provided messages for INPUT phase.
 
-    Role-based filtering (e.g. user-only, tool-only) is applied upstream
-    by ``_filter_messages_by_roles`` before the messages reach this function.
-    No additional type filtering is performed here.
+    If message_roles is None (not configured), falls back to original behavior
+    of only scanning human (user) messages. Otherwise, scans all provided messages
+    since filtering is handled upstream.
     """
     parts: list[str] = []
     for m in messages:
+        if message_roles is None and _get_message_type(m) != 'human':
+            continue
         text = _get_message_text(m)
         if text:
             parts.append(text)
@@ -83,12 +90,14 @@ def _get_message_type(msg: BaseMessage) -> str:
 def extract_media_blocks_for_judge(messages: list[BaseMessage], **kwargs) -> list[dict]:
     """Extract image and file content blocks from messages based on guardrail phase.
 
-    For INPUT phase: collects media blocks from all human messages.
+    For INPUT phase: collects media blocks from messages (filtering by role is
+    handled upstream if configured; otherwise, falls back to human messages).
     For OUTPUT phase: collects media blocks from the last AI message.
 
     Args:
         messages: List of LangChain messages.
         **kwargs: Accepts 'where' (GuardrailWhereType) to determine phase.
+            Can include 'message_roles'.
 
     Returns:
         List of content block dicts with type in {image_url, image, file}.
@@ -99,6 +108,7 @@ def extract_media_blocks_for_judge(messages: list[BaseMessage], **kwargs) -> lis
         return []
 
     where = kwargs.get('where')
+    message_roles = kwargs.get('message_roles')
     if isinstance(where, GuardrailWhereType):
         where_value = where.value
     else:
@@ -106,16 +116,21 @@ def extract_media_blocks_for_judge(messages: list[BaseMessage], **kwargs) -> lis
 
     if where_value == GuardrailWhereType.OUTPUT.value:
         return _extract_output_media_blocks(messages)
-    return _extract_input_media_blocks(messages)
+    return _extract_input_media_blocks(messages, message_roles)
 
 
-def _extract_input_media_blocks(messages: list[BaseMessage]) -> list[dict]:
-    """Extract media blocks from all provided messages for INPUT phase.
+def _extract_input_media_blocks(
+    messages: list[BaseMessage], message_roles: list | None
+) -> list[dict]:
+    """Extract media blocks from provided messages for INPUT phase.
 
-    Role-based filtering is applied upstream; no additional type filtering here.
+    If message_roles is None (not configured), falls back to original behavior
+    of only scanning human (user) messages. Otherwise, scans all provided messages.
     """
     blocks: list[dict] = []
     for m in messages:
+        if message_roles is None and _get_message_type(m) != 'human':
+            continue
         blocks.extend(_get_media_blocks(m))
     return blocks
 

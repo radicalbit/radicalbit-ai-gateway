@@ -600,6 +600,7 @@ class GuardrailCheck:
                     filtered_messages,
                     guardrail.parameters,
                     route_config,
+                    message_roles=guardrail.message_roles,
                     **kwargs,
                 )
             except Exception as e:
@@ -948,7 +949,11 @@ class GuardrailCheck:
                 continue
             try:
                 if await check_function(
-                    filtered_messages, guardrail.parameters, route_config, **kwargs
+                    filtered_messages,
+                    guardrail.parameters,
+                    route_config,
+                    message_roles=guardrail.message_roles,
+                    **kwargs,
                 ):
                     return True
             except Exception:

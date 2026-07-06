@@ -89,7 +89,11 @@ class TestJudgeEngine:
             AIMessage(content='Assistant output'),
             HumanMessage(content='How are you?'),
         ]
-        result = extract_content_for_judge(messages, where=GuardrailWhereType.INPUT)
+        result = extract_content_for_judge(
+            messages,
+            where=GuardrailWhereType.INPUT,
+            message_roles=['USER', 'ASSISTANT'],
+        )
         assert result == 'Hello\nAssistant output\nHow are you?'
 
     def test_extract_content_input_includes_tool_messages(self):
@@ -98,7 +102,9 @@ class TestJudgeEngine:
             HumanMessage(content='User request'),
             ToolMessage(content='Tool result with Zeiss data', tool_call_id='c1'),
         ]
-        result = extract_content_for_judge(messages, where=GuardrailWhereType.INPUT)
+        result = extract_content_for_judge(
+            messages, where=GuardrailWhereType.INPUT, message_roles=['USER', 'TOOL']
+        )
         assert result == 'User request\nTool result with Zeiss data'
 
     def test_extract_content_input_includes_system_messages(self):
@@ -107,7 +113,9 @@ class TestJudgeEngine:
             SystemMessage(content='System context'),
             HumanMessage(content='User request'),
         ]
-        result = extract_content_for_judge(messages, where=GuardrailWhereType.INPUT)
+        result = extract_content_for_judge(
+            messages, where=GuardrailWhereType.INPUT, message_roles=['USER', 'SYSTEM']
+        )
         assert result == 'System context\nUser request'
 
     def test_extract_content_output_picks_ai(self):
@@ -722,7 +730,9 @@ class TestJudgeEngine:
             AIMessage(content=[{'type': 'text', 'text': 'AI text'}, image_block]),
         ]
         result = extract_media_blocks_for_judge(
-            messages, where=GuardrailWhereType.INPUT
+            messages,
+            where=GuardrailWhereType.INPUT,
+            message_roles=['USER', 'ASSISTANT'],
         )
         assert result == [image_block]
 
