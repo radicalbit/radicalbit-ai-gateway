@@ -345,4 +345,3 @@ async def test_judge_span_attributes():
         'guardrail.judge.prompt_ref', 'business_context_check.md'
     )
     mock_span.set_attribute.assert_any_call('guardrail.judge.model_id', 'm1')
-
