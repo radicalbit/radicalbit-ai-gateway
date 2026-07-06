@@ -1,6 +1,6 @@
 import { PathsEnum } from '@Src/constants';
 import {
-  faChartBar, faFolderOpen, faKey, faLayerGroup, faMicrochip, faRoute,
+  faChartBar, faFolderOpen, faKey, faLayerGroup, faMicrochip, faRoute, faSliders,
 } from '@fortawesome/free-solid-svg-icons';
 import { Button, FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
 import { Link } from 'react-router-dom';
@@ -48,8 +48,8 @@ const groupHeader = (key, label, position, hasLeftColumnCollapsed) => {
 };
 
 const setupHeader = (hasLeftColumnCollapsed) => groupHeader('setup-header', 'Setup', 1, hasLeftColumnCollapsed);
-const monitorHeader = (hasLeftColumnCollapsed) => groupHeader('monitor-header', 'Monitor', 4, hasLeftColumnCollapsed);
-const manageHeader = (hasLeftColumnCollapsed) => groupHeader('manage-header', 'Manage', 9, hasLeftColumnCollapsed);
+const monitorHeader = (hasLeftColumnCollapsed) => groupHeader('monitor-header', 'Monitor', 5, hasLeftColumnCollapsed);
+const manageHeader = (hasLeftColumnCollapsed) => groupHeader('manage-header', 'Manage', 10, hasLeftColumnCollapsed);
 
 // GROUPS SEPARATOR
 const separator = (key, position) => ({
@@ -57,8 +57,8 @@ const separator = (key, position) => ({
   key,
   className: 'c-menu-item--separator pointer-events-none !h-[1rem]',
 });
-const separator1 = separator('separator1', 3);
-const separator2 = separator('separator2', 8);
+const separator1 = separator('separator1', 4);
+const separator2 = separator('separator2', 9);
 
 // GROUPS ITEMS
 const projects = (hasLeftColumnCollapsed) => ({
@@ -69,8 +69,16 @@ const projects = (hasLeftColumnCollapsed) => ({
   link: getLink(PathsEnum.PROJECTS),
 });
 
+const configurations = (hasLeftColumnCollapsed) => ({
+  position: 3,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle>Configurations</CollapsedTitle> : 'Configurations',
+  icon: <FontAwesomeIcon icon={faSliders} />,
+  key: PathsEnum.CONFIGURATIONS,
+  link: getLink(PathsEnum.CONFIGURATIONS),
+});
+
 const routes = (hasLeftColumnCollapsed) => ({
-  position: 5,
+  position: 6,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '2', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
   icon: <FontAwesomeIcon icon={faMicrochip} />,
   key: PathsEnum.ROUTES,
@@ -78,7 +86,7 @@ const routes = (hasLeftColumnCollapsed) => ({
 });
 
 const usage = (hasLeftColumnCollapsed) => ({
-  position: 6,
+  position: 7,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
   icon: <FontAwesomeIcon icon={faChartBar} />,
   key: PathsEnum.USAGE,
@@ -86,7 +94,7 @@ const usage = (hasLeftColumnCollapsed) => ({
 });
 
 const tracing = (hasLeftColumnCollapsed) => ({
-  position: 7,
+  position: 8,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
   icon: <FontAwesomeIcon icon={faRoute} />,
   key: PathsEnum.TRACING,
@@ -94,7 +102,7 @@ const tracing = (hasLeftColumnCollapsed) => ({
 });
 
 const groups = (hasLeftColumnCollapsed) => ({
-  position: 10,
+  position: 11,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
   icon: <FontAwesomeIcon icon={faLayerGroup} />,
   key: PathsEnum.GROUPS,
@@ -102,7 +110,7 @@ const groups = (hasLeftColumnCollapsed) => ({
 });
 
 const keys = (hasLeftColumnCollapsed) => ({
-  position: 11,
+  position: 12,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
   icon: <FontAwesomeIcon icon={faKey} />,
   key: PathsEnum.CREDENTIALS,
@@ -113,6 +121,7 @@ const keys = (hasLeftColumnCollapsed) => ({
 const allRoutes = (hasLeftColumnCollapsed) => [
   setupHeader(hasLeftColumnCollapsed),
   projects(hasLeftColumnCollapsed),
+  configurations(hasLeftColumnCollapsed),
 
   separator1,
   monitorHeader(hasLeftColumnCollapsed),

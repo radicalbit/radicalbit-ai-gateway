@@ -21,6 +21,14 @@ import {
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import getColumns from './columns';
+import DeployStatusTabs, { DEPLOY_STATUS_ALL, DEPLOY_STATUS_QP } from './deploy-status-tabs';
+
+const filterProjects = (data, { searchValue, deployStatus }) => data.filter((project) => {
+  const matchesSearch = !searchValue || project.name.toLowerCase().includes(searchValue.toLowerCase());
+  const matchesDeployStatus = deployStatus === DEPLOY_STATUS_ALL || project.projectStatus === deployStatus;
+
+  return matchesSearch && matchesDeployStatus;
+});
 
 function ProjectsList() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -49,6 +57,8 @@ function ProjectsList() {
           value={searchValue}
         />
 
+        <DeployStatusTabs />
+
         <ProjectsCount searchValue={searchValue} />
       </div>
 
@@ -58,10 +68,11 @@ function ProjectsList() {
 }
 
 function ProjectsCount({ searchValue }) {
+  const [searchParams] = useSearchParams();
+  const deployStatus = searchParams.get(DEPLOY_STATUS_QP) || DEPLOY_STATUS_ALL;
+
   const { data = [], isSuccess } = useGetProjectsQuery();
-  const filteredData = searchValue
-    ? data.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
-    : data;
+  const filteredData = filterProjects(data, { searchValue, deployStatus });
   const count = filteredData.length;
 
   if (!isSuccess) {
@@ -121,11 +132,12 @@ function ProjectsTable({ searchValue }) {
 }
 
 function IsSuccess({ searchValue }) {
+  const [searchParams] = useSearchParams();
+  const deployStatus = searchParams.get(DEPLOY_STATUS_QP) || DEPLOY_STATUS_ALL;
+
   const { data = [] } = useGetProjectsQuery();
 
-  const filteredData = searchValue
-    ? data.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
-    : data;
+  const filteredData = filterProjects(data, { searchValue, deployStatus });
 
   const sortedData = useMemo(
     () => [...filteredData].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '')),

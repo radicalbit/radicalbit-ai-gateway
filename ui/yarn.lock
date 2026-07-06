@@ -575,10 +575,10 @@
     uuid "^10.0.0"
     yup "^1.4.0"
 
-"@radicalbit/radicalbit-design-system@2.16.0":
-  version "2.16.0"
-  resolved "https://registry.yarnpkg.com/@radicalbit/radicalbit-design-system/-/radicalbit-design-system-2.16.0.tgz#147c02e33b540465192229680cee51c824bbbc58"
-  integrity sha512-kd8ievopar8JYAMaTMoT8HJO3qXnoBZPZNIOneillJp48FyKXUOonP3gI0JRLbjqsn43YwCaAO2dp2Og+TENxw==
+"@radicalbit/radicalbit-design-system@2.18.2":
+  version "2.18.2"
+  resolved "https://registry.yarnpkg.com/@radicalbit/radicalbit-design-system/-/radicalbit-design-system-2.18.2.tgz#c1b637f8cf3aae97decbf39442b9c864f3df3965"
+  integrity sha512-Jj2/Mh71uV+IlOj7IdOTSb8KGC2NcTWc9bm4wYXTX/PaDH9PUBbSUyQ8ehbaQ1RPAmLYTA5fOib52z7ScC5vsA==
   dependencies:
     "@babel/polyfill" "7.12.1"
     "@fortawesome/fontawesome-svg-core" "6.7.2"

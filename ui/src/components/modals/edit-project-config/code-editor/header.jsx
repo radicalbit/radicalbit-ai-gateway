@@ -33,7 +33,7 @@ function HeaderSlot({ active, config, onSelectConfig }) {
       <Board
         main={(
           <NewHeader
-            details={{ one: <ConfigStatusTag configStatus={config.configStatus} /> }}
+            details={{ one: <ConfigStatusTag config={config} /> }}
             title={<SectionTitle size="small" title={`Slot ${config.slot}`} />}
           />
         )}

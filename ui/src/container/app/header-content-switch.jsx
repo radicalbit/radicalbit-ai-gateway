@@ -1,3 +1,4 @@
+import ConfigurationsListHeader from '@Container/pages/configurations/list/header';
 import GroupsListHeader from '@Container/pages/groups/list/header/';
 import KeysListHeader from '@Container/pages/keys/list/header';
 import ProjectsListHeader from '@Container/pages/projects/list/header';
@@ -32,6 +33,8 @@ export default function MainHeaderContentSwitch() {
       <Route element={<UsageListHeader />} path={`/${PathsEnum.USAGE}`} />
 
       <Route element={<ProjectsListHeader />} path={`/${PathsEnum.PROJECTS}`} />
+
+      <Route element={<ConfigurationsListHeader />} path={`/${PathsEnum.CONFIGURATIONS}`} />
     </Routes>
   );
 }
