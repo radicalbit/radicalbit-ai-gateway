@@ -1,7 +1,29 @@
 import axios from 'axios';
 import { API_BASE_URL } from './config';
 
-export const customBaseQuery = () => async ({ baseUrl, url, method, data, headers = {} }) => {
+const DEFAULT_DOWNLOAD_FILENAME = 'download.zip';
+
+const parseFilenameFromContentDisposition = (contentDisposition) => {
+  if (!contentDisposition) {
+    return DEFAULT_DOWNLOAD_FILENAME;
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const asciiMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  if (asciiMatch?.[1]) {
+    return asciiMatch[1];
+  }
+
+  return DEFAULT_DOWNLOAD_FILENAME;
+};
+
+export const customBaseQuery = () => async ({
+  baseUrl, url, method, data, headers = {}, responseType,
+}) => {
   const resolvedBaseUrl = baseUrl !== undefined ? baseUrl : API_BASE_URL;
 
   try {
@@ -10,8 +32,14 @@ export const customBaseQuery = () => async ({ baseUrl, url, method, data, header
       method,
       data,
       headers,
+      responseType,
       withCredentials: true,
     });
+
+    if (responseType === 'blob') {
+      const filename = parseFilenameFromContentDisposition(result.headers['content-disposition']);
+      return { data: { blob: result.data, filename } };
+    }
 
     if (result.headers['x-total-count'] !== undefined) {
       return {

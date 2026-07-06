@@ -14,6 +14,7 @@ from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_dto import (
+    ConfigListFilter,
     ProjectConfigFileIn,
     ProjectFilter,
     ProjectIn,
@@ -334,3 +335,31 @@ class ProjectServiceTest(DatabaseIntegration):
         assert served.uuid not in [p.uuid for p in dev]
         active = self.svc.get_all_active()
         assert [p.uuid for p in active] == [served.uuid]
+
+    def test_get_configs_filters_by_status(self):
+        # served-only: slot A served, slot B left as the untouched seed.
+        served, a, _ = self._create(name='served')
+        self.svc.update_config(served.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        self.svc.approve_config(served.uuid, a)
+        self.svc.serve_config(served.uuid, a)
+
+        # draft-only: slot A saved (still DRAFT), never approved/served.
+        draft_proj, da, _ = self._create(name='draft')
+        self.svc.update_config(
+            draft_proj.uuid, da, ProjectConfigFileIn(config_file=_VALID)
+        )
+
+        # untouched: both slots are EMPTY (seeded DRAFT with a NULL updated_at).
+        self._create(name='untouched')
+
+        assert len(self.svc.get_configs(None)) == 3
+        assert len(self.svc.get_configs(ConfigListFilter.ALL)) == 3
+
+        published = self.svc.get_configs(ConfigListFilter.PUBLISHED)
+        assert [p.uuid for p in published] == [served.uuid]
+
+        # "Draft" only matches the genuine draft, not the EMPTY seeded ones.
+        draft = self.svc.get_configs(ConfigListFilter.DRAFT)
+        assert [p.uuid for p in draft] == [draft_proj.uuid]
+
+        assert self.svc.get_configs(ConfigListFilter.REQUEST_TO_PUBLISH) == []

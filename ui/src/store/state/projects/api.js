@@ -170,6 +170,59 @@ export const projectsApiSlice = apiService.injectEndpoints({
         return [];
       },
     }),
+
+    importConfig: builder.mutation({
+      query: ({ projectUuid, configUuid, data }) => ({
+        url: `/projects/${projectUuid}/configs/${configUuid}/import`,
+        method: 'patch',
+        data,
+      }),
+      invalidatesTags: (result, error, { projectUuid, configUuid }) => {
+        if (result) {
+          return [
+            { type: API_TAGS.PROJECTS, id: LIST_ID },
+            { type: API_TAGS.PROJECTS, id: projectUuid },
+            { type: API_TAGS.PROJECTS, id: `config-${configUuid}` },
+          ];
+        }
+
+        return [];
+      },
+    }),
+
+    exportConfig: builder.query({
+      query: ({ projectUuid, configUuid }) => ({
+        url: `/projects/${projectUuid}/configs/${configUuid}/export`,
+        method: 'get',
+        responseType: 'blob',
+      }),
+    }),
+
+    exportAllConfigs: builder.query({
+      query: ({ projectUuid }) => ({
+        url: `/projects/${projectUuid}/configs/export`,
+        method: 'get',
+        responseType: 'blob',
+      }),
+    }),
+
+    getAllConfigurations: builder.query({
+      providesTags: () => [{ type: API_TAGS.PROJECTS, id: LIST_ID }],
+      query: ({ status } = {}) => {
+        const searchParams = new URLSearchParams();
+
+        if (status) {
+          searchParams.set('status', status);
+        }
+
+        const queryString = searchParams.toString();
+
+        return {
+          url: queryString ? `/configs/projects?${queryString}` : '/configs/projects',
+          method: 'get',
+        };
+      },
+    }),
   }),
 });
 
@@ -186,6 +239,10 @@ export const {
   useCancelApprovalMutation,
   useServeConfigMutation,
   useUnserveConfigMutation,
+  useImportConfigMutation,
+  useLazyExportConfigQuery,
+  useLazyExportAllConfigsQuery,
+  useGetAllConfigurationsQuery,
 } = projectsApiSlice;
 
 export const selectors = {};

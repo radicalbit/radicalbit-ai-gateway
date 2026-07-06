@@ -1,3 +1,4 @@
+import ConfigurationsList from '@Container/pages/configurations/list/body';
 import GroupsList from '@Container/pages/groups/list/body';
 import KeysList from '@Container/pages/keys/list/body';
 import ProjectsList from '@Container/pages/projects/list/body';
@@ -55,6 +56,11 @@ export default function MainHeaderContentSwitch() {
       <Route
         element={<ProjectsList />}
         path={`/${PathsEnum.PROJECTS}`}
+      />
+
+      <Route
+        element={<ConfigurationsList />}
+        path={`/${PathsEnum.CONFIGURATIONS}`}
       />
 
       <Route
