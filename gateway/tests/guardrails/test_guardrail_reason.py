@@ -269,3 +269,80 @@ async def test_reason_is_available_for_judge_guardrail():
     assert exc.value.reason['value'] == 'BUSINESS_CONTEXT'
     assert 'business_context_check.md' in (exc.value.reason.get('prompt_ref') or '')
     assert isinstance(exc.value.reason.get('reasoning'), str)
+
+
+@pytest.mark.asyncio
+async def test_judge_span_attributes():
+    class _DummyJudgeEngine:
+        async def execute_judge(self, **kwargs):
+            class _R:
+                triggered = True
+                reasoning = 'disallowed context'
+                violation_type = 'BUSINESS_CONTEXT'
+
+            return _R()
+
+    gr = Guardrail(
+        name='gr_judge',
+        type=GuardrailType.JUDGE,
+        where=GuardrailWhereType.INPUT,
+        behavior=GuardrailBehaviorType.BLOCK,
+        parameters=JudgeParameter(
+            prompt_ref='business_context_check.md', model_id='m1'
+        ),
+    )
+
+    cost_service: CostService = MagicMock(spec_set=CostService)
+    chk = GuardrailCheck(
+        presidio_engine=PresidioEngine(),
+        judge_engine=_DummyJudgeEngine(),
+        cost_service=cost_service,
+        guardrails_by_name={'gr_judge': gr},
+    )
+
+    m1 = Model(
+        model_id='m1',
+        model='mock/gateway',
+        credentials=None,
+        params={'latency_ms': 0},
+    )
+    chk._chat_models_by_id = {'m1': m1}
+    cfg = _route_config_with_guardrails(['gr_judge'])
+
+    mock_span = MagicMock()
+    mock_span.is_recording.return_value = True
+
+    with (
+        patch(
+            'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event',
+            autospec=True,
+        ),
+        patch(
+            'radicalbit_ai_gateway.guardrails.guardrail_check.trace.get_current_span',
+            return_value=mock_span,
+        ),
+        pytest.raises(GuardrailBadRequest),
+    ):
+        await chk.apply_guardrails(
+            request_uuid='r',
+            api_key_uuid='k',
+            group_uuid='g',
+            api_key_name='kn',
+            group_name='gn',
+            route_config=cfg,
+            messages=[HumanMessage(content='Some business context here')],
+            where=GuardrailWhereType.INPUT,
+        )
+
+    # Verify that mock_span.set_attribute was called with the correct attributes
+    mock_span.set_attribute.assert_any_call(
+        'guardrail.judge.violation_type', 'BUSINESS_CONTEXT'
+    )
+    mock_span.set_attribute.assert_any_call(
+        'guardrail.judge.reasoning', 'disallowed context'
+    )
+    mock_span.set_attribute.assert_any_call(
+        'guardrail.judge.prompt_ref', 'business_context_check.md'
+    )
+    mock_span.set_attribute.assert_any_call('guardrail.judge.model_id', 'm1')
+

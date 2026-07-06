@@ -453,6 +453,35 @@ class GuardrailCheck:
                         ),
                     }
                 )
+
+                try:
+                    span = kwargs.get('parent_span') or trace.get_current_span()
+                    span_context = span.get_span_context() if span else None
+                    logger.info(
+                        'CHECK_JUDGE TELEMETRY: span_id=%s, name=%s, is_recording=%s',
+                        hex(span_context.span_id) if span_context else None,
+                        getattr(span, 'name', None),
+                        span.is_recording() if span else False,
+                    )
+                    if span and span.is_recording():
+                        span.set_attribute(
+                            'guardrail.judge.violation_type',
+                            getattr(result, 'violation_type', '') or '',
+                        )
+                        span.set_attribute(
+                            'guardrail.judge.reasoning',
+                            getattr(result, 'reasoning', '') or '',
+                        )
+                        span.set_attribute(
+                            'guardrail.judge.prompt_ref',
+                            params.prompt_ref or '',
+                        )
+                        span.set_attribute(
+                            'guardrail.judge.model_id',
+                            params.model_id or '',
+                        )
+                except Exception as telemetry_err:
+                    logger.error('CHECK_JUDGE TELEMETRY ERROR: %s', telemetry_err)
             return result.triggered
 
     @task(name='check_guardrails_ai')
@@ -554,6 +583,7 @@ class GuardrailCheck:
             'project_name': project_name,
             'route_name': route_config.route_name,
             'where': where,
+            'parent_span': trace.get_current_span(),
         }
 
         check_guardrails = self._get_guardrails_for_route(
@@ -866,6 +896,55 @@ class GuardrailCheck:
         )
         guardrails_triggered_counter.add(1, {'route_name': route_name, **attrs})
 
+        # Capture telemetry tracing attributes for triggered guardrails on the active span
+        try:
+            span = trace.get_current_span()
+            if span and span.is_recording():
+                span.set_attribute('guardrail.triggered.name', guardrail.name)
+                span.set_attribute('guardrail.triggered.type', guardrail.type.name)
+                span.set_attribute('guardrail.triggered.where', where.name)
+                span.set_attribute(
+                    'guardrail.triggered.behavior', guardrail.behavior.name
+                )
+
+                # Expose specific match reason details (value/pattern) to tracing attributes
+                reason_payload = (
+                    reason_payload_override
+                    if isinstance(reason_payload_override, dict)
+                    and reason_payload_override
+                    else self._build_check_guardrail_reason_payload(guardrail, messages)
+                )
+                if reason_payload:
+                    if 'value' in reason_payload and reason_payload['value']:
+                        span.set_attribute(
+                            'guardrail.triggered.value', str(reason_payload['value'])
+                        )
+                    if 'pattern' in reason_payload and reason_payload['pattern']:
+                        span.set_attribute(
+                            'guardrail.triggered.pattern',
+                            str(reason_payload['pattern']),
+                        )
+                    if (
+                        'entity_type' in reason_payload
+                        and reason_payload['entity_type']
+                    ):
+                        span.set_attribute(
+                            'guardrail.triggered.entity_type',
+                            str(reason_payload['entity_type']),
+                        )
+                    if 'reasoning' in reason_payload and reason_payload['reasoning']:
+                        span.set_attribute(
+                            'guardrail.triggered.reasoning',
+                            str(reason_payload['reasoning']),
+                        )
+                    if 'context' in reason_payload and reason_payload['context']:
+                        span.set_attribute(
+                            'guardrail.triggered.context',
+                            str(reason_payload['context']),
+                        )
+        except Exception:
+            pass
+
         # Expose structured details via GuardrailBadRequest.reason (surfaced in error.param.reason),
         # and also append a readable reason to logs for easier debugging.
         reason_payload = (
@@ -936,6 +1015,7 @@ class GuardrailCheck:
             'group_name': group_name,
             'route_name': route_config.route_name,
             'where': where,
+            'parent_span': trace.get_current_span(),
         }
 
         for guardrail in check_guardrails:
