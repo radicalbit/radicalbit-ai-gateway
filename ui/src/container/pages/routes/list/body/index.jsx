@@ -74,7 +74,7 @@ function ProjectSelected() {
       <div className="flex flex-col gap-4">
         <Metrics />
 
-        <div className="flex flex-row items-end gap-4 pl-4">
+        <div className="flex flex-row items-end gap-4">
           <FormField label="Project">
             <ProjectFilter />
           </FormField>

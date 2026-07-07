@@ -1,45 +1,44 @@
-import useModals from '@Hooks/use-modals';
+import useModals, { modals } from '@Hooks/use-modals';
 import { useGetProjectQuery } from '@State/projects/api';
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-const ACTIVE_CONFIG_QP = 'activeConfigUuid';
+const LEGACY_ACTIVE_CONFIG_QP = 'activeConfigUuid';
 
 /**
  * Resolves the currently active config slot for the edit-project-config modal.
  *
- * The active slot is tracked in the `activeConfigUuid` query param. When the QP
- * holds a value we use it; otherwise the first config in the array (Slot A) is
- * active. The QP is seeded with the default on mount so the rest of the tree
- * always has a concrete uuid to key form writes/submit on.
+ * The active slot is tracked inside the modal payload (`activeConfigUuid`). When
+ * the payload holds a value we use it; otherwise the first config in the array
+ * (Slot A) is active. Keeping it in the payload means it is cleared automatically
+ * by `hideModal` (which drops the whole `modal` query param).
  */
 const useGetActiveConfig = () => {
-  const { modalPayload } = useModals();
+  const { showModal, modalPayload } = useModals();
   const projectUuid = modalPayload?.data?.uuid;
+  const activeConfigUuid = modalPayload?.data?.activeConfigUuid;
+
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: project } = useGetProjectQuery(projectUuid, { skip: !projectUuid });
   const configs = project?.configs ?? [];
 
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeConfigUuid = searchParams.get(ACTIVE_CONFIG_QP);
-
-  const defaultConfigUuid = configs[0]?.uuid;
   const activeConfig = configs.find((c) => c.uuid === activeConfigUuid) ?? configs[0];
 
+  // Drop any leftover standalone `activeConfigUuid` query param (legacy: the
+  // active slot now lives in the modal payload). `showModal` preserves existing
+  // params, so an orphan one would otherwise stick to the URL.
   useEffect(() => {
-    if (!activeConfigUuid && defaultConfigUuid) {
+    if (searchParams.has(LEGACY_ACTIVE_CONFIG_QP)) {
       setSearchParams((prev) => {
-        prev.set(ACTIVE_CONFIG_QP, defaultConfigUuid);
+        prev.delete(LEGACY_ACTIVE_CONFIG_QP);
         return prev;
       }, { replace: true });
     }
-  }, [activeConfigUuid, defaultConfigUuid, setSearchParams]);
+  }, [searchParams, setSearchParams]);
 
   const selectConfig = (uuid) => {
-    setSearchParams((prev) => {
-      prev.set(ACTIVE_CONFIG_QP, uuid);
-      return prev;
-    });
+    showModal(modals.EDIT_PROJECT_CONFIG, { uuid: projectUuid, activeConfigUuid: uuid });
   };
 
   return {
