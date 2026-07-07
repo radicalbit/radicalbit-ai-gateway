@@ -135,7 +135,7 @@ const useVisibleConfigItems = (uuid, config) => {
 
   const items = [];
 
-  if (config.configStatus === ConfigStatusEnum.DRAFT && config.configFile) {
+  if (config.configStatus === ConfigStatusEnum.DRAFT && config.updatedAt && config.configFile) {
     items.push({
       key: `approve-config-${configUuid}`,
       icon: <FontAwesomeIcon icon={faCodePullRequest} />,
