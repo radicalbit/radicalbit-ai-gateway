@@ -26,7 +26,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   const configs = data?.configs ?? [];
   const visibleConfig = useGetVisibleConfig(configs);
 
-  const editConfigItem = useEditConfigItem(uuid);
+  const editConfigItem = useEditConfigItem(uuid, visibleConfig);
   const visibleConfigActions = useVisibleConfigItems(uuid, visibleConfig);
   const deleteProjectItems = useDeleteProjectItems(uuid);
 
@@ -55,11 +55,11 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   ].filter(Boolean);
 };
 
-const useEditConfigItem = (uuid) => {
+const useEditConfigItem = (uuid, visibleConfig) => {
   const { showModal } = useModals();
 
   const handleOnClick = () => {
-    showModal(modals.EDIT_PROJECT_CONFIG, { uuid });
+    showModal(modals.EDIT_PROJECT_CONFIG, { uuid, activeConfigUuid: visibleConfig?.uuid });
   };
 
   return {

@@ -50,7 +50,7 @@ const useSlotMenuItems = ({ projectUuid, projectName, config }) => {
   const [triggerUnserve, unserveArgs] = useUnserveConfigMutation({ fixedCacheKey: `unserve-config-${configUuid}` });
 
   const handleOnEdit = () => {
-    showModal(modals.EDIT_PROJECT_CONFIG, { uuid: projectUuid });
+    showModal(modals.EDIT_PROJECT_CONFIG, { uuid: projectUuid, activeConfigUuid: configUuid });
   };
 
   const handleOnApprove = async () => {
