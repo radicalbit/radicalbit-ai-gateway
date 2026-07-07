@@ -14,10 +14,27 @@ function Actions({ config, projectUuid }) {
     case ConfigStatusEnum.SERVED:
       return <ActionsServed config={config} projectUuid={projectUuid} />;
 
-    case ConfigStatusEnum.DRAFT:
+    case ConfigStatusEnum.DRAFT: {
+      if (config.updatedAt) {
+        return <ActionsDraft config={config} projectUuid={projectUuid} />;
+      }
+
+      return <ActionsEmpty config={config} projectUuid={projectUuid} />;
+    }
+
     default:
-      return <ActionsDraft config={config} projectUuid={projectUuid} />;
+      return <ActionsEmpty config={config} projectUuid={projectUuid} />;
   }
+}
+
+function ActionsEmpty({ config, projectUuid }) {
+  return (
+    <div className="flex gap-4 items-center">
+      <Close />
+
+      <Save config={config} projectUuid={projectUuid} />
+    </div>
+  );
 }
 
 function ActionsDraft({ config, projectUuid }) {

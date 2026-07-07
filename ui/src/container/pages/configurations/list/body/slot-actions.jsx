@@ -114,7 +114,7 @@ const useSlotMenuItems = ({ projectUuid, projectName, config }) => {
     },
   ];
 
-  if (config.configStatus === ConfigStatusEnum.DRAFT && config.configFile) {
+  if (config.configStatus === ConfigStatusEnum.DRAFT && config.updatedAt && config.configFile) {
     items.push({
       key: `approve-config-${configUuid}`,
       icon: <FontAwesomeIcon icon={faCodePullRequest} />,
