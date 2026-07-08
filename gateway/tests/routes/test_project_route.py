@@ -193,7 +193,7 @@ class TestProjectRoute(unittest.TestCase):
         self.project_service.import_config = MagicMock(
             return_value=db_mock.get_sample_project_out(uuid=pid)
         )
-        res = self.client.post(
+        res = self.client.patch(
             f'{self.prefix}/projects/{pid}/configs/{cid}/import',
             files={'file': ('c.yaml', b'yaml-bytes', 'application/x-yaml')},
         )
@@ -207,7 +207,7 @@ class TestProjectRoute(unittest.TestCase):
         self.project_service.import_config = MagicMock(
             side_effect=ProjectNotFoundError('nope')
         )
-        res = self.client.post(
+        res = self.client.patch(
             f'{self.prefix}/projects/{pid}/configs/{cid}/import',
             files={'file': ('c.yaml', b'yaml-bytes', 'application/x-yaml')},
         )
@@ -218,7 +218,7 @@ class TestProjectRoute(unittest.TestCase):
         self.project_service.import_config = MagicMock(
             side_effect=ProjectConfigValidationError('invalid')
         )
-        res = self.client.post(
+        res = self.client.patch(
             f'{self.prefix}/projects/{pid}/configs/{cid}/import',
             files={'file': ('c.yaml', b'yaml-bytes', 'application/x-yaml')},
         )
@@ -226,13 +226,13 @@ class TestProjectRoute(unittest.TestCase):
 
     def test_import_config_missing_file_returns_422(self):
         pid, cid = uuid.uuid4(), uuid.uuid4()
-        res = self.client.post(f'{self.prefix}/projects/{pid}/configs/{cid}/import')
+        res = self.client.patch(f'{self.prefix}/projects/{pid}/configs/{cid}/import')
         assert res.status_code == 422
 
     def test_import_config_wrong_extension_returns_400(self):
         pid, cid = uuid.uuid4(), uuid.uuid4()
         self.project_service.import_config = MagicMock()
-        res = self.client.post(
+        res = self.client.patch(
             f'{self.prefix}/projects/{pid}/configs/{cid}/import',
             files={'file': ('c.json', b'{}', 'application/json')},
         )
@@ -243,7 +243,7 @@ class TestProjectRoute(unittest.TestCase):
         pid, cid = uuid.uuid4(), uuid.uuid4()
         self.project_service.import_config = MagicMock()
         oversized = b'x' * (2 * 1024 * 1024 + 1)
-        res = self.client.post(
+        res = self.client.patch(
             f'{self.prefix}/projects/{pid}/configs/{cid}/import',
             files={'file': ('c.yaml', oversized, 'application/x-yaml')},
         )
