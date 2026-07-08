@@ -212,7 +212,7 @@ class ProjectRoute:
                 headers={'Content-Disposition': f'attachment; filename="{filename}"'},
             )
 
-        @router.post(
+        @router.patch(
             '/projects/{project_uuid}/configs/{config_uuid}/import',
             status_code=200,
             response_model=ProjectOut,
