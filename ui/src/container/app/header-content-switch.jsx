@@ -1,3 +1,4 @@
+import AlertsListHeader from '@Container/pages/alerts/list/header';
 import ConfigurationsListHeader from '@Container/pages/configurations/list/header';
 import GroupsListHeader from '@Container/pages/groups/list/header/';
 import KeysListHeader from '@Container/pages/keys/list/header';
@@ -35,6 +36,10 @@ export default function MainHeaderContentSwitch() {
       <Route element={<ProjectsListHeader />} path={`/${PathsEnum.PROJECTS}`} />
 
       <Route element={<ConfigurationsListHeader />} path={`/${PathsEnum.CONFIGURATIONS}`} />
+
+      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}`} />
+
+      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}/:uuid`} />
     </Routes>
   );
 }

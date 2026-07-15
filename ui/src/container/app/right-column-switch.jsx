@@ -1,3 +1,4 @@
+import AlertDetail from '@Container/pages/alerts/detail/body';
 import GroupDetail from '@Container/pages/groups/detail/body';
 import RouteDetail from '@Container/pages/routes/detail/body';
 import { PathsEnum } from '@Src/constants';
@@ -14,6 +15,11 @@ export default function RightColumnContentSwitch() {
       <Route
         element={<GroupDetail />}
         path={`/${PathsEnum.GROUPS}/:uuid`}
+      />
+
+      <Route
+        element={<AlertDetail />}
+        path={`/${PathsEnum.ALERTS}/:uuid`}
       />
     </Routes>
   );

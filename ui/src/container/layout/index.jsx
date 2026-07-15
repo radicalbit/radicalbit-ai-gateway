@@ -118,6 +118,14 @@ const keys = (hasLeftColumnCollapsed) => ({
   link: getLink(PathsEnum.CREDENTIALS),
 });
 
+const alerts = (hasLeftColumnCollapsed) => ({
+  position: 13,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle>Alert</CollapsedTitle> : 'Alert',
+  icon: <Lucide icon={Settings2} size="md" />,
+  key: PathsEnum.ALERTS,
+  link: getLink(PathsEnum.ALERTS),
+});
+
 // ALL ROUTES
 const allRoutes = (hasLeftColumnCollapsed) => [
   setupHeader(hasLeftColumnCollapsed),
@@ -134,6 +142,7 @@ const allRoutes = (hasLeftColumnCollapsed) => [
   manageHeader(hasLeftColumnCollapsed),
   groups(hasLeftColumnCollapsed),
   keys(hasLeftColumnCollapsed),
+  alerts(hasLeftColumnCollapsed),
 ];
 
 export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps = {} }) {

@@ -1,3 +1,4 @@
+import AlertDetailHeader from '@Container/pages/alerts/detail/header';
 import GroupDetailHeader from '@Container/pages/groups/detail/header';
 import RouteDetailHeader from '@Container/pages/routes/detail/header';
 import { PathsEnum } from '@Src/constants';
@@ -14,6 +15,11 @@ export default function RightAltContentSwitch() {
       <Route
         element={<GroupDetailHeader />}
         path={`/${PathsEnum.GROUPS}/:uuid`}
+      />
+
+      <Route
+        element={<AlertDetailHeader />}
+        path={`/${PathsEnum.ALERTS}/:uuid`}
       />
     </Routes>
   );
