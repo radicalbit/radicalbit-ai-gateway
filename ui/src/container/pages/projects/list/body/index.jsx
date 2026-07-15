@@ -95,52 +95,20 @@ function ProjectsCount({ searchValue }) {
 }
 
 function ProjectsTable({ searchValue }) {
-  const { data = [], isError, isLoading, isSuccess, refetch } = useGetProjectsQuery();
+  const {
+    data = [], isError, isLoading, isFetching, isSuccess, refetch,
+  } = useGetProjectsQuery();
 
   if (isLoading) {
     return <DataTable loading />;
   }
 
   if (isError) {
-    return (
-      <div className="flex justify-center h-full">
-        <Board
-          main={(
-            <Void
-              actions={<Button onClick={refetch}>Retry</Button>}
-              description={(
-                <>
-                  This might be temporary
-                  <br />
-                  please retry later
-                </>
-              )}
-              image={<FontAwesomeIcon icon={faWarning} />}
-              title="Unable to load projects"
-            />
-          )}
-          width="100%"
-        />
-      </div>
-    );
+    return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
   if (!data?.length) {
-    return (
-      <div className="flex justify-center h-full">
-        <Board
-          main={(
-            <Void
-              description="No projects found."
-              image={<FontAwesomeIcon icon={faInbox} />}
-              title="Projects"
-            />
-          )}
-          suffix={<CreateProjectButton />}
-          width="100%"
-        />
-      </div>
-    );
+    return <IsEmpty />;
   }
 
   if (!isSuccess) {
@@ -148,6 +116,48 @@ function ProjectsTable({ searchValue }) {
   }
 
   return <IsSuccess searchValue={searchValue} />;
+}
+
+function IsError({ isFetching, refetch }) {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
+            description={(
+              <>
+                This might be temporary
+                <br />
+                please retry later
+              </>
+            )}
+            image={<FontAwesomeIcon icon={faWarning} />}
+            title="Unable to load projects"
+          />
+        )}
+        width="100%"
+      />
+    </div>
+  );
+}
+
+function IsEmpty() {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            description="No projects found."
+            image={<FontAwesomeIcon icon={faInbox} />}
+            title="Projects"
+          />
+        )}
+        suffix={<CreateProjectButton />}
+        width="100%"
+      />
+    </div>
+  );
 }
 
 function IsSuccess({ searchValue }) {

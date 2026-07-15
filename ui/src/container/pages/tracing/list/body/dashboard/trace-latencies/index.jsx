@@ -18,26 +18,11 @@ function TraceLatencies() {
   }
 
   if (isError) {
-    return (
-      <Board
-        header={<SectionTitle title="Trace latencies" />}
-        main={<SomethingWentWrong size="small" />}
-      />
-    );
+    return <IsError />;
   }
 
   if (!data) {
-    return (
-      <Board
-        header={<SectionTitle title="Trace latencies" />}
-        main={(
-          <Void
-            description="No trace latency data available yet."
-            title="Trace latencies"
-          />
-        )}
-      />
-    );
+    return <IsEmpty />;
   }
 
   if (!isSuccess) {
@@ -53,6 +38,29 @@ function TraceLatencies() {
           dataSource={[data]}
           pagination={false}
           rowKey="trace-latencies"
+        />
+      )}
+    />
+  );
+}
+
+function IsError() {
+  return (
+    <Board
+      header={<SectionTitle title="Trace latencies" />}
+      main={<SomethingWentWrong size="small" />}
+    />
+  );
+}
+
+function IsEmpty() {
+  return (
+    <Board
+      header={<SectionTitle title="Trace latencies" />}
+      main={(
+        <Void
+          description="No trace latency data available yet."
+          title="Trace latencies"
         />
       )}
     />

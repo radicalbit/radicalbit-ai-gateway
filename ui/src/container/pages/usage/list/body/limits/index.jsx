@@ -57,31 +57,11 @@ function DataContent() {
     ? searchParams.get('windowStatuses').split(',')
     : [];
 
-  const { data, isLoading, isError, refetch } = useGetLimitsStreamWithRange({ routes, windowStatuses });
+  const { data, isLoading, isError, isFetching, refetch } = useGetLimitsStreamWithRange({ routes, windowStatuses });
   const dataSource = data || [];
 
   if (isError) {
-    return (
-      <div className="flex justify-center h-full">
-        <Board
-          main={(
-            <Void
-              actions={<Button onClick={refetch}>Retry</Button>}
-              description={(
-                <>
-                  This might be temporary
-                  <br />
-                  please retry later
-                </>
-              )}
-              image={<FontAwesomeIcon icon={faWarning} />}
-              title="Unable to load usage data"
-            />
-          )}
-          width="100%"
-        />
-      </div>
-    );
+    return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
   return (
@@ -92,6 +72,30 @@ function DataContent() {
       pagination={false}
       rowKey={({ routeName: key }) => key}
     />
+  );
+}
+
+function IsError({ isFetching, refetch }) {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
+            description={(
+              <>
+                This might be temporary
+                <br />
+                please retry later
+              </>
+            )}
+            image={<FontAwesomeIcon icon={faWarning} />}
+            title="Unable to load usage data"
+          />
+        )}
+        width="100%"
+      />
+    </div>
   );
 }
 

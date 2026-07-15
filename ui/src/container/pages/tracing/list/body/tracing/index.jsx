@@ -18,7 +18,9 @@ function Tracing() {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get('tracing-table-page')) || 1;
 
-  const { data, isError, isLoading, isSuccess, refetch } = useGetTracesWithRange({ page: currentPage });
+  const {
+    data, isError, isLoading, isFetching, isSuccess, refetch,
+  } = useGetTracesWithRange({ page: currentPage });
   const items = data?.items || [];
 
   const handleTableChange = (pagination) => {
@@ -42,27 +44,7 @@ function Tracing() {
   }
 
   if (isError) {
-    return (
-      <div className="flex justify-center h-full">
-        <Board
-          main={(
-            <Void
-              actions={<Button onClick={refetch}>Retry</Button>}
-              description={(
-                <>
-                  This might be temporary
-                  <br />
-                  please retry later
-                </>
-              )}
-              image={<FontAwesomeIcon icon={faWarning} />}
-              title="Unable to load traces"
-            />
-          )}
-          width="100%"
-        />
-      </div>
-    );
+    return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
   if (!isSuccess) {
@@ -114,6 +96,30 @@ function Tracing() {
         />
       )}
     />
+  );
+}
+
+function IsError({ isFetching, refetch }) {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
+            description={(
+              <>
+                This might be temporary
+                <br />
+                please retry later
+              </>
+            )}
+            image={<FontAwesomeIcon icon={faWarning} />}
+            title="Unable to load traces"
+          />
+        )}
+        width="100%"
+      />
+    </div>
   );
 }
 

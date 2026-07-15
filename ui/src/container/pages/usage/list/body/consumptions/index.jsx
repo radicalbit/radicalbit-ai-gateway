@@ -70,27 +70,7 @@ function DataContent() {
   }
 
   if (isError) {
-    return (
-      <div className="flex justify-center h-full">
-        <Board
-          main={(
-            <Void
-              actions={<Button onClick={refetch}>Retry</Button>}
-              description={(
-                <>
-                  This might be temporary
-                  <br />
-                  please retry later
-                </>
-              )}
-              image={<FontAwesomeIcon icon={faWarning} />}
-              title="Unable to load usage data"
-            />
-          )}
-          width="100%"
-        />
-      </div>
-    );
+    return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
   if (!isSuccess) {
@@ -116,6 +96,30 @@ function DataContent() {
         </div>
       </div>
     </>
+  );
+}
+
+function IsError({ isFetching, refetch }) {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
+            description={(
+              <>
+                This might be temporary
+                <br />
+                please retry later
+              </>
+            )}
+            image={<FontAwesomeIcon icon={faWarning} />}
+            title="Unable to load usage data"
+          />
+        )}
+        width="100%"
+      />
+    </div>
   );
 }
 

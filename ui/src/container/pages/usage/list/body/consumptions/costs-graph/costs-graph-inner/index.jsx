@@ -59,25 +59,7 @@ function CostsGraphInner() {
   }
 
   if (!data?.data?.length) {
-    return (
-      <div className="relative">
-        <Board
-          main={(
-            <>
-              <Void
-                description="No cost data available yet. Chart will appear automatically when some data arrived."
-                style={chartWidthAndHeight}
-                title="Cost Analysis Overview"
-              />
-
-              <GroupByTabs />
-            </>
-          )}
-          size="xsmall"
-          type="secondary-light"
-        />
-      </div>
-    );
+    return <IsEmpty />;
   }
 
   if (!isSuccess) {
@@ -85,6 +67,28 @@ function CostsGraphInner() {
   }
 
   return <IsSuccess />;
+}
+
+function IsEmpty() {
+  return (
+    <div className="relative">
+      <Board
+        main={(
+          <>
+            <Void
+              description="No cost data available yet. Chart will appear automatically when some data arrived."
+              style={chartWidthAndHeight}
+              title="Cost Analysis Overview"
+            />
+
+            <GroupByTabs />
+          </>
+        )}
+        size="xsmall"
+        type="secondary-light"
+      />
+    </div>
+  );
 }
 
 function IsSuccess() {

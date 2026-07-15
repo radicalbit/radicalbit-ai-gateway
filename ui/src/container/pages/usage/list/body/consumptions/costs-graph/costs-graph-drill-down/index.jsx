@@ -52,17 +52,7 @@ function CostsGraphDrillDown() {
   }
 
   if (!data?.data?.length) {
-    return (
-      <div className="relative">
-        <Void
-          description="No cost data available yet. Chart will appear automatically when some data arrived."
-          style={chartWidthAndHeight}
-          title="Cost Analysis Overview"
-        />
-
-        <BackButton />
-      </div>
-    );
+    return <IsEmpty />;
   }
 
   if (!isSuccess) {
@@ -70,6 +60,20 @@ function CostsGraphDrillDown() {
   }
 
   return <IsSuccess />;
+}
+
+function IsEmpty() {
+  return (
+    <div className="relative">
+      <Void
+        description="No cost data available yet. Chart will appear automatically when some data arrived."
+        style={chartWidthAndHeight}
+        title="Cost Analysis Overview"
+      />
+
+      <BackButton />
+    </div>
+  );
 }
 
 function IsSuccess() {

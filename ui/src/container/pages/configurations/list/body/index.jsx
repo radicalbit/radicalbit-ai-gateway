@@ -58,51 +58,20 @@ function ConfigurationsTable({ searchValue }) {
   const [searchParams] = useSearchParams();
   const status = searchParams.get(STATUS_QP) || ConfigListFilterEnum.ALL;
 
-  const { data = [], isError, isLoading, isSuccess, refetch } = useGetAllConfigurationsQuery({ status });
+  const {
+    data = [], isError, isLoading, isFetching, isSuccess, refetch,
+  } = useGetAllConfigurationsQuery({ status });
 
   if (isLoading) {
     return <DataTable loading />;
   }
 
   if (isError) {
-    return (
-      <div className="flex justify-center h-full">
-        <Board
-          main={(
-            <Void
-              actions={<Button onClick={refetch}>Retry</Button>}
-              description={(
-                <>
-                  This might be temporary
-                  <br />
-                  please retry later
-                </>
-              )}
-              image={<FontAwesomeIcon icon={faWarning} />}
-              title="Unable to load configurations"
-            />
-          )}
-          width="100%"
-        />
-      </div>
-    );
+    return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
   if (!data?.length) {
-    return (
-      <div className="flex justify-center h-full">
-        <Board
-          main={(
-            <Void
-              description="No configurations found."
-              image={<FontAwesomeIcon icon={faInbox} />}
-              title="Configurations"
-            />
-          )}
-          width="100%"
-        />
-      </div>
-    );
+    return <IsEmpty />;
   }
 
   if (!isSuccess) {
@@ -145,6 +114,47 @@ function IsSuccess({ searchValue, status }) {
       rowKey={({ uuid }) => uuid}
       scroll={{ y: 'calc(100vh - 10rem)' }}
     />
+  );
+}
+
+function IsError({ isFetching, refetch }) {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
+            description={(
+              <>
+                This might be temporary
+                <br />
+                please retry later
+              </>
+            )}
+            image={<FontAwesomeIcon icon={faWarning} />}
+            title="Unable to load configurations"
+          />
+        )}
+        width="100%"
+      />
+    </div>
+  );
+}
+
+function IsEmpty() {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            description="No configurations found."
+            image={<FontAwesomeIcon icon={faInbox} />}
+            title="Configurations"
+          />
+        )}
+        width="100%"
+      />
+    </div>
   );
 }
 

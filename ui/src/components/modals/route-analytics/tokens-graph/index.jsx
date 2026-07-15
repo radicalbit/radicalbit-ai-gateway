@@ -42,12 +42,7 @@ function TokensGraph({ routeName }) {
   }
 
   if (isError) {
-    return (
-      <Board
-        main={<SomethingWentWrong size="xsmall" style={chartWidthAndHeight} />}
-        size="xsmall"
-      />
-    );
+    return <IsError />;
   }
 
   if (!data.data?.length) {
@@ -59,6 +54,15 @@ function TokensGraph({ routeName }) {
   }
 
   return <IsSuccess routeName={routeName} />;
+}
+
+function IsError() {
+  return (
+    <Board
+      main={<SomethingWentWrong size="xsmall" style={chartWidthAndHeight} />}
+      size="xsmall"
+    />
+  );
 }
 
 function IsEmpty() {

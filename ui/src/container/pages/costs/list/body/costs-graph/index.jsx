@@ -45,12 +45,7 @@ function CostsGraph({ routeName }) {
   }
 
   if (isError) {
-    return (
-      <Board
-        main={<SomethingWentWrong size="small" style={chartWidthAndHeight} />}
-        size="xsmall"
-      />
-    );
+    return <IsError />;
   }
 
   if (!data.length) {
@@ -62,6 +57,15 @@ function CostsGraph({ routeName }) {
   }
 
   return <IsSuccess routeName={routeName} />;
+}
+
+function IsError() {
+  return (
+    <Board
+      main={<SomethingWentWrong size="small" style={chartWidthAndHeight} />}
+      size="xsmall"
+    />
+  );
 }
 
 function IsEmpty() {
