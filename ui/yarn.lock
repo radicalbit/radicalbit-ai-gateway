@@ -575,10 +575,10 @@
     uuid "^10.0.0"
     yup "^1.4.0"
 
-"@radicalbit/radicalbit-design-system@2.18.2":
-  version "2.18.2"
-  resolved "https://registry.yarnpkg.com/@radicalbit/radicalbit-design-system/-/radicalbit-design-system-2.18.2.tgz#c1b637f8cf3aae97decbf39442b9c864f3df3965"
-  integrity sha512-Jj2/Mh71uV+IlOj7IdOTSb8KGC2NcTWc9bm4wYXTX/PaDH9PUBbSUyQ8ehbaQ1RPAmLYTA5fOib52z7ScC5vsA==
+"@radicalbit/radicalbit-design-system@2.18.3":
+  version "2.18.3"
+  resolved "https://registry.yarnpkg.com/@radicalbit/radicalbit-design-system/-/radicalbit-design-system-2.18.3.tgz#783277122e70a7860e6056f1e3d29708b5e537f6"
+  integrity sha512-UhqZfwPEKvM4fETlW5u2xnW9fChGAvuRHmkt2KHVWqub3faSmBqgYEyIXSnJ/G8ui1fplbqcG9Mm7t3jdt0fuA==
   dependencies:
     "@babel/polyfill" "7.12.1"
     "@fortawesome/fontawesome-svg-core" "6.7.2"
@@ -3370,6 +3370,11 @@ lru-cache@^5.1.1:
   integrity sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==
   dependencies:
     yallist "^3.0.2"
+
+lucide-react@^1.21.0:
+  version "1.24.0"
+  resolved "https://registry.yarnpkg.com/lucide-react/-/lucide-react-1.24.0.tgz#5f6da7f37d9107d192e54b7654a99b3468a212c6"
+  integrity sha512-YT6mBD8lGKkg4nM39enlm94/sfJIiW0YKUT60fBy4YK8tai31ylg1VhGNWxkpSKHo9UagfnZqwIff3HTDQwXeA==
 
 make-dir@^2.1.0:
   version "2.1.0"
