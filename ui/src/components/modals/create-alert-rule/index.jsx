@@ -5,8 +5,11 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { schema } from './schema';
 import StepA from './step-a';
+import StepAActions from './step-a/actions';
 import StepB from './step-b';
+import StepBActions from './step-b/actions';
 import StepC from './step-c';
+import StepCActions from './step-c/actions';
 
 const INITIAL_VALUES = { recipients: [], enabled: false, __metadata: { step: 0 } };
 
@@ -17,6 +20,8 @@ const STEP_SUBTITLES = [
 ];
 
 const STEP_COMPONENTS = [<StepA />, <StepB />, <StepC />];
+
+const STEP_ACTIONS = [<StepAActions />, <StepBActions />, <StepCActions />];
 
 function CreateAlertRule() {
   return (
@@ -32,10 +37,12 @@ function CreateAlertRuleInner() {
   const step = form?.__metadata?.step ?? 0;
 
   const stepComponent = STEP_COMPONENTS[step];
+  const stepActions = STEP_ACTIONS[step];
   const subtitle = STEP_SUBTITLES[step];
 
   return (
     <RbitModal
+      actions={stepActions}
       closable
       header={(
         <SectionTitle
