@@ -2,7 +2,6 @@ import { Popup, usePopup } from '@Components/popup';
 import { DETAIL_LAYOUT_CONFIGURATION, MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/groups/detail/header/three-dots-menu';
 import useModals, { modals } from '@Hooks/use-modals';
-import Logo from '@Img/logo.png';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import {
   useGetGroupsQuery,
@@ -11,7 +10,9 @@ import {
   useAddKeysToGroupMutation,
   useAddRoutesToGroupMutation,
 } from '@State/groups/api';
-import { faCircleXmark, faPlus } from '@fortawesome/free-solid-svg-icons';
+import {
+  faCircleXmark, faInbox, faPlus, faWarning,
+} from '@fortawesome/free-solid-svg-icons';
 import {
   Board, Button, DataTable, FontAwesomeIcon, Search, Spin, Void,
 } from '@radicalbit/radicalbit-design-system';
@@ -94,7 +95,11 @@ function GroupsTable({ searchValue }) {
   useInitLayoutConfigurations();
 
   if (isError) {
-    return <IsError refetch={refetch} />;
+    return (
+      <div className="flex justify-center h-full">
+        <IsError refetch={refetch} />
+      </div>
+    );
   }
 
   if (!isSuccess) {
@@ -103,7 +108,7 @@ function GroupsTable({ searchValue }) {
 
   if (data.length === 0) {
     return (
-      <div className="flex justify-center" style={{ height: 'calc(100vh - 20%)' }}>
+      <div className="flex justify-center h-full">
         <IsEmpty />
       </div>
     );
@@ -182,7 +187,6 @@ function IsEmpty() {
 
   return (
     <Board
-      borderType="none"
       main={(
         <Void
           actions={<Button onClick={handleOnClick} prefix={<FontAwesomeIcon icon={faPlus} />} type="primary">Create groups</Button>}
@@ -193,10 +197,11 @@ function IsEmpty() {
               Each group can be associated with routes and keys
             </>
           )}
-          image={<img alt="Logo" src={Logo} />}
+          image={<FontAwesomeIcon icon={faInbox} />}
           title="Groups"
         />
       )}
+      width="100%"
     />
   );
 }
@@ -214,10 +219,11 @@ function IsError({ refetch }) {
               please retry later
             </>
           )}
-          image={<img alt="Logo" src={Logo} />}
+          image={<FontAwesomeIcon icon={faWarning} />}
           title="Unable to load groups"
         />
       )}
+      width="100%"
     />
   );
 }

@@ -1,8 +1,10 @@
-import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import TimeFilter from '@Components/time-filter';
 import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetCostsSummaryStreamWithRange } from '@State/usage/vertical-hooks';
-import { Board, FormField, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
+import { faWarning } from '@fortawesome/free-solid-svg-icons';
+import {
+  Board, Button, FontAwesomeIcon, FormField, Skeleton, Void,
+} from '@radicalbit/radicalbit-design-system';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
@@ -61,14 +63,34 @@ function DataContent() {
     ? searchParams.get('routes').split(',')
     : [];
 
-  const { isError, isFetching, isSuccess } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
+  const { isError, isFetching, isSuccess, refetch } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
 
   if (isFetching) {
     return <Skeleton.Node active style={{ height: '20rem', width: '100%' }} />;
   }
 
   if (isError) {
-    <Board main={<SomethingWentWrong />} />;
+    return (
+      <div className="flex justify-center h-full">
+        <Board
+          main={(
+            <Void
+              actions={<Button onClick={refetch}>Retry</Button>}
+              description={(
+                <>
+                  This might be temporary
+                  <br />
+                  please retry later
+                </>
+              )}
+              image={<FontAwesomeIcon icon={faWarning} />}
+              title="Unable to load usage data"
+            />
+          )}
+          width="100%"
+        />
+      </div>
+    );
   }
 
   if (!isSuccess) {

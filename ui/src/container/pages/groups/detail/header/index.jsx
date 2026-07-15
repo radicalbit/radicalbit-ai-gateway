@@ -3,7 +3,7 @@ import { useGetGroupQuery } from '@State/groups/api';
 import { faArrowLeft } from '@fortawesome/free-solid-svg-icons';
 import {
   FontAwesomeIcon, NewHeader,
-  RelativeDateTime, SectionTitle,
+  RelativeDateTime, SectionTitle, Skeleton,
 } from '@radicalbit/radicalbit-design-system';
 import { useNavigate, useParams } from 'react-router-dom';
 import ThreeDotsMenu from './three-dots-menu';
@@ -47,7 +47,11 @@ function GroupDetailHeader() {
 }
 
 function IsLoading() {
-  return 'Loading...';
+  return (
+    <NewHeader
+      title={<Skeleton active paragraph={{ rows: 1 }} title={false} />}
+    />
+  );
 }
 
 function IsError({ error }) {

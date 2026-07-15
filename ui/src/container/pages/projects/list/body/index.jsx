@@ -1,4 +1,3 @@
-import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { CreateProjectButton } from '@Container/pages/projects/list/header';
 import { SEARCH_PARAMS } from '@Src/constants';
 import {
@@ -9,9 +8,10 @@ import {
   useServeConfigMutation,
   useUnserveConfigMutation,
 } from '@State/projects/api';
-import { faCircleXmark } from '@fortawesome/free-solid-svg-icons';
+import { faCircleXmark, faInbox, faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
+  Button,
   DataTable,
   FontAwesomeIcon,
   Search,
@@ -95,7 +95,7 @@ function ProjectsCount({ searchValue }) {
 }
 
 function ProjectsTable({ searchValue }) {
-  const { data = [], isError, isLoading, isSuccess } = useGetProjectsQuery();
+  const { data = [], isError, isLoading, isSuccess, refetch } = useGetProjectsQuery();
 
   if (isLoading) {
     return <DataTable loading />;
@@ -103,24 +103,43 @@ function ProjectsTable({ searchValue }) {
 
   if (isError) {
     return (
-      <Board
-        main={<SomethingWentWrong size="small" />}
-      />
+      <div className="flex justify-center h-full">
+        <Board
+          main={(
+            <Void
+              actions={<Button onClick={refetch}>Retry</Button>}
+              description={(
+                <>
+                  This might be temporary
+                  <br />
+                  please retry later
+                </>
+              )}
+              image={<FontAwesomeIcon icon={faWarning} />}
+              title="Unable to load projects"
+            />
+          )}
+          width="100%"
+        />
+      </div>
     );
   }
 
   if (!data?.length) {
     return (
-      <Board
-        borderType="none"
-        main={(
-          <Void
-            description="No projects found."
-            title="Projects"
-          />
-        )}
-        suffix={<CreateProjectButton />}
-      />
+      <div className="flex justify-center h-full">
+        <Board
+          main={(
+            <Void
+              description="No projects found."
+              image={<FontAwesomeIcon icon={faInbox} />}
+              title="Projects"
+            />
+          )}
+          suffix={<CreateProjectButton />}
+          width="100%"
+        />
+      </div>
     );
   }
 

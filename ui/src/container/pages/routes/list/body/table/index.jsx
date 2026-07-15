@@ -1,13 +1,14 @@
-import Logo from '@Img/logo.png';
-import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { Popup, usePopup } from '@Components/popup';
 import { useGetThreeDotsMenuItems } from '@Container/pages/routes/detail/header/three-dots-menu';
 import { PathsEnum } from '@Src/constants.js';
 import { useGetRoutesWithRange } from '@Src/store/state/routes/vertical-hooks';
 import { useAddGroupsToRouteMutation } from '@State/routes/api';
+import { faInbox, faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
+  Button,
   DataTable,
+  FontAwesomeIcon,
   Spin,
   Void,
 } from '@radicalbit/radicalbit-design-system';
@@ -30,7 +31,11 @@ function RoutesTable({ searchValue }) {
   }
 
   if (isError) {
-    return <IsError error={error} refetch={refetch} />;
+    return (
+      <div className="flex justify-center h-full">
+        <IsError error={error} refetch={refetch} />
+      </div>
+    );
   }
 
   if (!isSuccess) {
@@ -115,18 +120,32 @@ function IsError({ error, refetch }) {
         main={(
           <Void
             description="This project has no routes yet."
-            image={<img alt="Logo" src={Logo} />}
-            style={{ height: '50vh' }}
+            image={<FontAwesomeIcon icon={faInbox} />}
             title="No routes"
           />
         )}
+        width="100%"
       />
     );
   }
 
   return (
     <Board
-      main={<SomethingWentWrong refetch={refetch} style={{ height: '50vh' }} />}
+      main={(
+        <Void
+          actions={<Button onClick={refetch}>Retry</Button>}
+          description={(
+            <>
+              This might be temporary
+              <br />
+              please retry later
+            </>
+          )}
+          image={<FontAwesomeIcon icon={faWarning} />}
+          title="Unable to load routes"
+        />
+      )}
+      width="100%"
     />
   );
 }

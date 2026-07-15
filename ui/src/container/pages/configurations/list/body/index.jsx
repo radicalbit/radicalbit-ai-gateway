@@ -1,11 +1,11 @@
-import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import useModals, { modals } from '@Hooks/use-modals';
 import { ConfigListFilterEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useGetAllConfigurationsQuery } from '@State/projects/api';
-import { faCircleXmark } from '@fortawesome/free-solid-svg-icons';
+import { faCircleXmark, faInbox, faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
+  Button,
   DataTable,
   FontAwesomeIcon,
   Search,
@@ -58,27 +58,50 @@ function ConfigurationsTable({ searchValue }) {
   const [searchParams] = useSearchParams();
   const status = searchParams.get(STATUS_QP) || ConfigListFilterEnum.ALL;
 
-  const { data = [], isError, isLoading, isSuccess } = useGetAllConfigurationsQuery({ status });
+  const { data = [], isError, isLoading, isSuccess, refetch } = useGetAllConfigurationsQuery({ status });
 
   if (isLoading) {
     return <DataTable loading />;
   }
 
   if (isError) {
-    return <Board main={<SomethingWentWrong size="small" />} />;
+    return (
+      <div className="flex justify-center h-full">
+        <Board
+          main={(
+            <Void
+              actions={<Button onClick={refetch}>Retry</Button>}
+              description={(
+                <>
+                  This might be temporary
+                  <br />
+                  please retry later
+                </>
+              )}
+              image={<FontAwesomeIcon icon={faWarning} />}
+              title="Unable to load configurations"
+            />
+          )}
+          width="100%"
+        />
+      </div>
+    );
   }
 
   if (!data?.length) {
     return (
-      <Board
-        borderType="none"
-        main={(
-          <Void
-            description="No configurations found."
-            title="Configurations"
-          />
-        )}
-      />
+      <div className="flex justify-center h-full">
+        <Board
+          main={(
+            <Void
+              description="No configurations found."
+              image={<FontAwesomeIcon icon={faInbox} />}
+              title="Configurations"
+            />
+          )}
+          width="100%"
+        />
+      </div>
     );
   }
 

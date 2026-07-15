@@ -1,6 +1,8 @@
-import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { useGetLimitsStreamWithRange } from '@State/usage/vertical-hooks';
-import { Board, DataTable, FormField, Void } from '@radicalbit/radicalbit-design-system';
+import { faWarning } from '@fortawesome/free-solid-svg-icons';
+import {
+  Board, Button, DataTable, FontAwesomeIcon, FormField, Void,
+} from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
 import ProjectFilter from '../project-filter';
 import RoutesFilter from '../routes-filter';
@@ -55,11 +57,31 @@ function DataContent() {
     ? searchParams.get('windowStatuses').split(',')
     : [];
 
-  const { data, isLoading, isError } = useGetLimitsStreamWithRange({ routes, windowStatuses });
+  const { data, isLoading, isError, refetch } = useGetLimitsStreamWithRange({ routes, windowStatuses });
   const dataSource = data || [];
 
   if (isError) {
-    <Board main={<SomethingWentWrong />} />;
+    return (
+      <div className="flex justify-center h-full">
+        <Board
+          main={(
+            <Void
+              actions={<Button onClick={refetch}>Retry</Button>}
+              description={(
+                <>
+                  This might be temporary
+                  <br />
+                  please retry later
+                </>
+              )}
+              image={<FontAwesomeIcon icon={faWarning} />}
+              title="Unable to load usage data"
+            />
+          )}
+          width="100%"
+        />
+      </div>
+    );
   }
 
   return (

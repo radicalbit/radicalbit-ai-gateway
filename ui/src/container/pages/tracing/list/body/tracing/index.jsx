@@ -1,7 +1,15 @@
-import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetTracesWithRange } from '@Src/store/state/tracing/vertical-hooks';
-import { Board, DataTable, SectionTitle, Skeleton } from '@radicalbit/radicalbit-design-system';
+import { faWarning } from '@fortawesome/free-solid-svg-icons';
+import {
+  Board,
+  Button,
+  DataTable,
+  FontAwesomeIcon,
+  SectionTitle,
+  Skeleton,
+  Void,
+} from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
 import columns from './columns';
 
@@ -10,7 +18,7 @@ function Tracing() {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get('tracing-table-page')) || 1;
 
-  const { data, isError, isLoading, isSuccess } = useGetTracesWithRange({ page: currentPage });
+  const { data, isError, isLoading, isSuccess, refetch } = useGetTracesWithRange({ page: currentPage });
   const items = data?.items || [];
 
   const handleTableChange = (pagination) => {
@@ -35,10 +43,25 @@ function Tracing() {
 
   if (isError) {
     return (
-      <Board
-        header={<SectionTitle title="Traces" />}
-        main={<SomethingWentWrong size="small" />}
-      />
+      <div className="flex justify-center h-full">
+        <Board
+          main={(
+            <Void
+              actions={<Button onClick={refetch}>Retry</Button>}
+              description={(
+                <>
+                  This might be temporary
+                  <br />
+                  please retry later
+                </>
+              )}
+              image={<FontAwesomeIcon icon={faWarning} />}
+              title="Unable to load traces"
+            />
+          )}
+          width="100%"
+        />
+      </div>
     );
   }
 

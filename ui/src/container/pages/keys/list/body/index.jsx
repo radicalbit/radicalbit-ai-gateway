@@ -2,12 +2,13 @@ import { Popup, usePopup } from '@Components/popup';
 import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
 import useModals, { modals } from '@Hooks/use-modals';
-import Logo from '@Img/logo.png';
 import {
   useGetKeysQuery, useDeleteKeyMutation, useEditKeyMutation, useAddGroupToKeyMutation,
 } from '@State/keys/api';
 import { SEARCH_PARAMS } from '@Src/constants';
-import { faCircleXmark, faPlus } from '@fortawesome/free-solid-svg-icons';
+import {
+  faCircleXmark, faInbox, faPlus, faWarning,
+} from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
   Button,
@@ -93,7 +94,11 @@ function KeysTable({ searchValue }) {
   }
 
   if (isError) {
-    return <IsError refetch={refetch} />;
+    return (
+      <div className="flex justify-center h-full">
+        <IsError refetch={refetch} />
+      </div>
+    );
   }
 
   if (!isSuccess) {
@@ -102,10 +107,7 @@ function KeysTable({ searchValue }) {
 
   if (data.length === 0) {
     return (
-      <div
-        className="flex justify-center"
-        style={{ height: 'calc(100vh - 20%)' }}
-      >
+      <div className="flex justify-center h-full">
         <IsEmpty />
       </div>
     );
@@ -185,7 +187,6 @@ function IsEmpty() {
 
   return (
     <Board
-      borderType="none"
       main={(
         <Void
           actions={<Button onClick={handleOnClick} prefix={<FontAwesomeIcon icon={faPlus} />} type="primary">Create credential</Button>}
@@ -196,10 +197,11 @@ function IsEmpty() {
               Please note that we do not display your credentials again after you generate them.
             </>
           )}
-          image={<img alt="Logo" src={Logo} />}
+          image={<FontAwesomeIcon icon={faInbox} />}
           title="Credentials"
         />
       )}
+      width="100%"
     />
   );
 }
@@ -217,10 +219,11 @@ function IsError({ refetch }) {
               please retry later
             </>
           )}
-          image={<img alt="Logo" src={Logo} />}
+          image={<FontAwesomeIcon icon={faWarning} />}
           title="Unable to load credentials"
         />
       )}
+      width="100%"
     />
   );
 }
