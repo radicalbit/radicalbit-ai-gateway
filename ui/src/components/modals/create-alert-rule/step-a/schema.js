@@ -12,13 +12,8 @@ const schema = yup.object().shape({
     .max(200, 'Description max length is 200 characters')
     .test('min-length', 'Description min length is 3 characters', (value) => !value || value.length >= 3)
     .nullable(),
-  project: yup.string().required('Project is required'),
-  route: yup.string().required('Route is required'),
-  event: yup.string().required('Event is required'),
-  recipients: yup.array()
-    .of(yup.string())
-    .min(1, 'At least one recipient is required')
-    .required('At least one recipient is required'),
 });
 
-export { schema };
+const paths = ['name', 'description'];
+
+export { schema, paths };

@@ -1,4 +1,6 @@
-import { faTrash, faWarning } from '@fortawesome/free-solid-svg-icons';
+import {
+  faCircleCheck, faCircleXmark, faTrash, faWarning,
+} from '@fortawesome/free-solid-svg-icons';
 import {
   DataTableAction, FontAwesomeIcon, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
@@ -22,6 +24,14 @@ const columns = [
         <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
       </Truncate>
     ),
+  },
+  {
+    title: 'Active',
+    dataIndex: 'enabled',
+    key: 'enabled',
+    width: '80px',
+    align: 'center',
+    render: (enabled) => <Enabled enabled={enabled} />,
   },
   {
     title: 'Description',
@@ -98,6 +108,26 @@ function Actions({ uuid, name }) {
         </DeleteAlert>
       </span>
     </DataTableAction>
+  );
+}
+
+function Enabled({ enabled }) {
+  if (enabled) {
+    return (
+      <Tooltip title="Enabled">
+        <span className="is-success">
+          <FontAwesomeIcon icon={faCircleCheck} />
+        </span>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Tooltip title="Disabled">
+      <span className="opacity-50">
+        <FontAwesomeIcon icon={faCircleXmark} />
+      </span>
+    </Tooltip>
   );
 }
 

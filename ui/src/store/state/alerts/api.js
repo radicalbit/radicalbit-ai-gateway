@@ -85,6 +85,21 @@ export const alertsApiSlice = apiService.injectEndpoints({
       },
     }),
 
+    createAlert: builder.mutation({
+      query: ({ data }) => ({
+        url: '/rule',
+        method: 'post',
+        data,
+      }),
+      invalidatesTags: (result, error) => {
+        if (!error) {
+          return [API_TAGS.ALERTS];
+        }
+
+        return [];
+      },
+    }),
+
     editAlert: builder.mutation({
       query: ({ uuid, data }) => ({
         url: `/rule/${uuid}`,
@@ -120,6 +135,7 @@ export const {
   useGetAlertsQuery,
   useGetAlertQuery,
   useGetAlertableEventsQuery,
+  useCreateAlertMutation,
   useToggleAlertMutation,
   useEditAlertMutation,
   useDeleteAlertMutation,

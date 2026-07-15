@@ -88,7 +88,7 @@ function RowWithSpinner({ children, ...other }) {
     ? (
       <tr {...other}>
         {/* IF scroll={{ y: 'calc(100vh - 10rem)' }} is defined, colSpan must be === columns.length */}
-        <td colSpan={12}>
+        <td colSpan={13}>
           <Spin spinning />
         </td>
       </tr>

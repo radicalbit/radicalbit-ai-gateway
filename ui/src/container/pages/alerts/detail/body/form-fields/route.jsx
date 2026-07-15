@@ -8,7 +8,7 @@ function Route() {
   const route = form?.route;
 
   const { data = [], isLoading } = useGetRoutesQuery({ projectUuid }, { skip: !projectUuid });
-  const options = data.map(({ name }) => ({ label: name, value: name }));
+  const options = data.map(({ routeName }) => ({ label: routeName, value: routeName }));
 
   const handleOnChange = (value) => {
     write('route', value);
