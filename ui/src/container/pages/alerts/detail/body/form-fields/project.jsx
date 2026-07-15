@@ -11,7 +11,6 @@ function Project() {
 
   const handleOnChange = (value) => {
     write('project', value);
-    // Route and event depend on the project: reset them when it changes.
     write('route', undefined);
     write('event', undefined);
   };

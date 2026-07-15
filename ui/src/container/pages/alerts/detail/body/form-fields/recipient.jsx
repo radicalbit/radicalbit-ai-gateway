@@ -1,29 +1,37 @@
 import { useFormbitContext } from '@radicalbit/formbit';
-import { FormField, TextArea } from '@radicalbit/radicalbit-design-system';
+import { FormField, Select } from '@radicalbit/radicalbit-design-system';
+import { useState } from 'react';
 
-// Recipients are stored as an array of strings; the textarea edits them as a
-// comma/newline separated list. No domain validation (per product spec).
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const isValidEmail = (email) => EMAIL_REGEX.test(email);
+
 function Recipient() {
   const { error, form, write } = useFormbitContext();
   const recipients = form?.recipients ?? [];
-  const value = recipients.join(', ');
+  const [invalidMessage, setInvalidMessage] = useState('');
 
-  const handleOnChange = ({ target: { value: nextValue } }) => {
-    const parsed = nextValue
-      .split(/[,\n]/)
-      .map((recipient) => recipient.trim())
-      .filter(Boolean);
+  const handleOnChange = (nextValues) => {
+    const trimmed = nextValues.map((email) => email.trim()).filter(Boolean);
+    const valid = trimmed.filter(isValidEmail);
+    const invalid = trimmed.filter((email) => !isValidEmail(email));
 
-    write('recipients', parsed);
+    write('recipients', valid);
+    setInvalidMessage(invalid.length > 0 ? `Invalid email${invalid.length > 1 ? 's' : ''}: ${invalid.join(', ')}` : '');
   };
 
+  const message = invalidMessage || error('recipients');
+
   return (
-    <FormField label="Recipient" message={error('recipients')} required>
-      <TextArea
+    <FormField label="Recipient" message={message} required>
+      <Select
+        mode="tags"
         onChange={handleOnChange}
-        placeholder="Email@email.com, Email@email.com"
-        rows={3}
-        value={value}
+        open={false}
+        placeholder="Type an email and press Enter"
+        suffixIcon={null}
+        tokenSeparators={[',', ' ', '\n']}
+        value={recipients}
       />
     </FormField>
   );

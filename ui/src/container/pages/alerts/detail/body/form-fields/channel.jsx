@@ -6,7 +6,6 @@ const CHANNEL_OPTIONS = Object.values(AlertChannelEnum).map((value) => ({
   value,
 }));
 
-// Channel is fixed to EMAIL on the FE (single, disabled option). See AlertChannelEnum.
 function Channel() {
   return (
     <FormField label="Channel">

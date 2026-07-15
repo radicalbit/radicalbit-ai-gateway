@@ -1,6 +1,5 @@
 import { API_TAGS, apiService } from '@Src/store/apis';
 
-// TODO: remove mock once the backend GET /rules endpoint (AG-838) is available.
 const MOCKED_ALERTS = [
   {
     uuid: '9f1c2e0a-3b4d-4e5f-8a90-1b2c3d4e5f60',
@@ -34,7 +33,6 @@ const MOCKED_ALERTS = [
   },
 ];
 
-// TODO: remove mock once the backend alertable-events endpoint (AG-841) is available.
 const MOCKED_ALERTABLE_EVENTS = {
   guardrail: [
     { event: 'guardrail-input-pii', label: 'Guardrail: PII (input)' },
@@ -52,30 +50,12 @@ export const alertsApiSlice = apiService.injectEndpoints({
   endpoints: (builder) => ({
     getAlerts: builder.query({
       providesTags: () => [API_TAGS.ALERTS],
-      // TODO: restore the real endpoint once AG-838 is ready.
-      // query: () => ({
-      //   url: '/rules',
-      //   method: 'get',
-      // }),
-      // The 600ms delay is only here so isFetching stays true long enough to be
-      // observable (e.g. the Retry button loading state) while we run on the mock.
-      queryFn: async () => {
-        await new Promise((resolve) => { setTimeout(resolve, 600); });
-
-        return { data: MOCKED_ALERTS };
-      },
+      queryFn: () => ({ data: MOCKED_ALERTS }),
     }),
 
     getAlert: builder.query({
       providesTags: (result) => [`${API_TAGS.ALERTS}-${result?.uuid}`],
-      // TODO: restore the real endpoint once AG-839/858 are ready.
-      // query: (uuid) => ({
-      //   url: `/rule/${uuid}`,
-      //   method: 'get',
-      // }),
-      queryFn: async (uuid) => {
-        await new Promise((resolve) => { setTimeout(resolve, 400); });
-
+      queryFn: (uuid) => {
         const alert = MOCKED_ALERTS.find(({ uuid: alertUuid }) => alertUuid === uuid);
 
         if (!alert) {
@@ -87,16 +67,7 @@ export const alertsApiSlice = apiService.injectEndpoints({
     }),
 
     getAlertableEvents: builder.query({
-      // TODO: restore the real endpoint once AG-841 is ready.
-      // query: ({ projectUuid, routeName }) => ({
-      //   url: `/projects/${projectUuid}/routes/${routeName}/alertable-events`,
-      //   method: 'get',
-      // }),
-      queryFn: async () => {
-        await new Promise((resolve) => { setTimeout(resolve, 300); });
-
-        return { data: MOCKED_ALERTABLE_EVENTS };
-      },
+      queryFn: () => ({ data: MOCKED_ALERTABLE_EVENTS }),
     }),
 
     toggleAlert: builder.mutation({

@@ -109,10 +109,6 @@ const ProjectStatusEnum = {
   PROD: 'PROD',
 };
 
-// Alert notification rules. Scope/channel/time-aggregation are currently fixed on
-// the FE (single option each) but modelled as enums because the backend will
-// broaden them later. The BE receives the enum value (e.g. 'ROUTE'); the FE shows
-// the label (e.g. 'Route').
 const AlertScopeEnum = {
   ROUTE: 'ROUTE',
 };

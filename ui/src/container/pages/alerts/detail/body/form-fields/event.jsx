@@ -2,8 +2,6 @@ import { useGetAlertableEventsQuery } from '@State/alerts/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
 
-// alertable-events groups events by family (guardrail/caching/fallback). We flatten
-// them into a single option list; the family is not part of the DTO.
 const toOptions = (alertableEvents = {}) => Object.values(alertableEvents)
   .flat()
   .map(({ event, label }) => ({ label, value: event }));

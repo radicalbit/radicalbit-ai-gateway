@@ -12,7 +12,6 @@ function Route() {
 
   const handleOnChange = (value) => {
     write('route', value);
-    // Event depends on the route: reset it when the route changes.
     write('event', undefined);
   };
 
