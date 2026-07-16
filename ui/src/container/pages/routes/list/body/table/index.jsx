@@ -2,16 +2,16 @@ import { Popup, usePopup } from '@Components/popup';
 import { useGetThreeDotsMenuItems } from '@Container/pages/routes/detail/header/three-dots-menu';
 import { PathsEnum } from '@Src/constants.js';
 import { useGetRoutesWithRange } from '@Src/store/state/routes/vertical-hooks';
+import Lucide from '@Components/lucide';
 import { useAddGroupsToRouteMutation } from '@State/routes/api';
-import { faInbox, faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
   Button,
   DataTable,
-  FontAwesomeIcon,
   Spin,
   Void,
 } from '@radicalbit/radicalbit-design-system';
+import { Inbox, TriangleAlert } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import columns from './columns';
 
@@ -120,7 +120,7 @@ function IsError({ error, refetch }) {
         main={(
           <Void
             description="This project has no routes yet."
-            image={<FontAwesomeIcon icon={faInbox} />}
+            image={<Lucide icon={Inbox} />}
             title="No routes"
           />
         )}
@@ -141,7 +141,7 @@ function IsError({ error, refetch }) {
               please retry later
             </>
           )}
-          image={<FontAwesomeIcon icon={faWarning} />}
+          image={<Lucide icon={TriangleAlert} />}
           title="Unable to load routes"
         />
       )}

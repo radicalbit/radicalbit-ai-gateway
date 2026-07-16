@@ -2,8 +2,8 @@ import { ProjectStatusEnum } from '@Src/constants';
 import { Tag } from '@radicalbit/radicalbit-design-system';
 
 const PROJECT_STATUS_TAG = {
-  [ProjectStatusEnum.DEV]: { label: 'Dev', type: 'secondary-light' },
-  [ProjectStatusEnum.PROD]: { label: 'Prod', type: 'full' },
+  [ProjectStatusEnum.DEV]: { label: 'DEV', type: 'secondary' },
+  [ProjectStatusEnum.PROD]: { label: 'PROD', type: 'full' },
 };
 
 function ProjectStatusTag({ projectStatus }) {
@@ -13,7 +13,7 @@ function ProjectStatusTag({ projectStatus }) {
     return false;
   }
 
-  return <Tag type={tag.type}>{tag.label}</Tag>;
+  return <Tag size="large" type={tag.type}>{tag.label}</Tag>;
 }
 
 export default ProjectStatusTag;

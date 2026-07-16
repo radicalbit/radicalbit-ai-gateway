@@ -1,6 +1,7 @@
+import Lucide from '@Components/lucide';
 import { useGetEventsByRouteWithRange } from '@Src/store/state/routes/vertical-hooks';
-import { faCheckCircle } from '@fortawesome/free-solid-svg-icons';
-import { Button, FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
+import { Button } from '@radicalbit/radicalbit-design-system';
+import { CircleCheck } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
 const useGetCachingItem = () => {
@@ -28,7 +29,7 @@ const useGetCachingItem = () => {
     label: (
       <div className="flex justify-start items-center gap-4">
         <Button shape="circle" {...type}>
-          <FontAwesomeIcon icon={faCheckCircle} />
+          <Lucide icon={CircleCheck} />
         </Button>
 
         <div>Caching</div>

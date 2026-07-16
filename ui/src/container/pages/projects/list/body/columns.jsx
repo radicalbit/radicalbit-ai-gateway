@@ -1,18 +1,18 @@
+import Lucide from '@Components/lucide';
 import ConfigStatusTag from '@Container/pages/projects/components/config-status-tag';
 import ProjectStatusTag from '@Container/pages/projects/components/project-status-tag';
 import { useGetThreeDotsMenuItems } from '@Container/pages/projects/list/body/three-dots-menu';
 import useGetVisibleConfig from '@Container/pages/projects/use-get-visible-config';
 import { DATE_FORMAT, DATE_FORMAT_SHORT } from '@Src/constants';
-import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons';
 import {
   Button,
   DataTableAction,
   Dropdown,
-  FontAwesomeIcon,
   RelativeDateTime,
   SectionTitle,
   Truncate,
 } from '@radicalbit/radicalbit-design-system';
+import { EllipsisVertical } from 'lucide-react';
 
 const getColumns = () => [
   {
@@ -66,10 +66,10 @@ const getColumns = () => [
   },
 
   {
-    title: 'Actions',
+    title: '',
     dataIndex: 'uuid',
     key: 'actions',
-    width: '100px',
+    width: '30px',
     render: (uuid) => (
       <DataTableAction noHide>
         <Actions uuid={uuid} />
@@ -115,7 +115,7 @@ function Actions({ uuid }) {
   return (
     <Dropdown className="c-project-config-menu" menu={{ items }}>
       <Button onClick={handleOnClick} type="text">
-        <FontAwesomeIcon icon={faEllipsisVertical} />
+        <Lucide icon={EllipsisVertical} />
       </Button>
     </Dropdown>
   );

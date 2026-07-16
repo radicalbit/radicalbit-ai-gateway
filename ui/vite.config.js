@@ -26,7 +26,10 @@ export default defineConfig(({ mode }) => {
       include: ['@radicalbit/radicalbit-design-system'],
     },
     resolve: {
+      dedupe: ['react', 'react-dom'],
       alias: {
+        react: path.resolve(__dirname, 'node_modules/react'),
+        'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
         '@Api': path.resolve(__dirname, 'src/api/'),
         '@Components': path.resolve(__dirname, 'src/components/'),
         '@Container': path.resolve(__dirname, 'src/container/'),

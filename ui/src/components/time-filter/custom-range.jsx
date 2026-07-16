@@ -1,8 +1,9 @@
-import { faXmarkCircle } from '@fortawesome/free-solid-svg-icons';
-import { FontAwesomeIcon, RangePicker } from '@radicalbit/radicalbit-design-system';
+import Lucide from '@Components/lucide';
+import { RangePicker } from '@radicalbit/radicalbit-design-system';
 import dayjs from 'dayjs';
 import localeData from 'dayjs/plugin/localeData';
 import weekday from 'dayjs/plugin/weekday';
+import { CircleX } from 'lucide-react';
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -58,9 +59,9 @@ function SuffixIcon() {
   };
 
   return (
-    <FontAwesomeIcon
+    <Lucide
       className="anticon anticon-close-circle"
-      icon={faXmarkCircle}
+      icon={CircleX}
       onClick={handleOnClick}
     />
   );

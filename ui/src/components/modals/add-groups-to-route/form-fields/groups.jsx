@@ -1,15 +1,15 @@
 import useModals from '@Hooks/use-modals';
 import { PathsEnum } from '@Src/constants';
+import Lucide from '@Components/lucide';
 import { useGetAssociableGroupsByRouteQuery } from '@State/routes/api';
-import { faSearch } from '@fortawesome/free-solid-svg-icons';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
   Alert,
-  FontAwesomeIcon,
   FormField,
   Select,
   Skeleton,
 } from '@radicalbit/radicalbit-design-system';
+import { Search } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 function Groups() {
@@ -64,7 +64,7 @@ function GroupsInner({ groups }) {
               Select one or more groups
             </div>
 
-            <FontAwesomeIcon icon={faSearch} />
+            <Lucide icon={Search} />
           </div>
         )}
       />

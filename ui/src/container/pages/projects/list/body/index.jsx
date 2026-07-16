@@ -1,3 +1,4 @@
+import Lucide from '@Components/lucide';
 import { CreateProjectButton } from '@Container/pages/projects/list/header';
 import { SEARCH_PARAMS } from '@Src/constants';
 import {
@@ -8,16 +9,15 @@ import {
   useServeConfigMutation,
   useUnserveConfigMutation,
 } from '@State/projects/api';
-import { faCircleXmark, faInbox, faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
   Button,
   DataTable,
-  FontAwesomeIcon,
   Search,
   Spin,
   Void,
 } from '@radicalbit/radicalbit-design-system';
+import { CircleX, Inbox, TriangleAlert } from 'lucide-react';
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import getColumns from './columns';
@@ -50,7 +50,7 @@ function ProjectsList() {
     <div className="flex flex-col gap-4 h-full">
       <div className="flex flex-row items-center gap-4">
         <Search
-          allowClear={{ clearIcon: <FontAwesomeIcon icon={faCircleXmark} /> }}
+          allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
           onChange={handleSearchChange}
           placeholder="Search projects by name"
           style={{ width: '300px' }}
@@ -132,7 +132,7 @@ function IsError({ isFetching, refetch }) {
                 please retry later
               </>
             )}
-            image={<FontAwesomeIcon icon={faWarning} />}
+            image={<Lucide icon={TriangleAlert} />}
             title="Unable to load projects"
           />
         )}
@@ -149,7 +149,7 @@ function IsEmpty() {
         main={(
           <Void
             description="No projects found."
-            image={<FontAwesomeIcon icon={faInbox} />}
+            image={<Lucide icon={Inbox} />}
             title="Projects"
           />
         )}

@@ -1,7 +1,8 @@
-import { faMoon, faSun } from '@fortawesome/free-solid-svg-icons';
-import { FontAwesomeIcon, Tooltip } from '@radicalbit/radicalbit-design-system';
+import Lucide from '@Components/lucide';
+import { Tooltip } from '@radicalbit/radicalbit-design-system';
 import { CollapsedTitle } from '@Container/layout';
 import { useInitDarkMode, useIsDarkMode, useSetDarkMode } from '@Components/dark-mode/hooks';
+import { Moon, Sun } from 'lucide-react';
 
 function DarkMode({ darkActions, lightActions }) {
   const isDarkMode = useIsDarkMode();
@@ -12,14 +13,14 @@ function DarkMode({ darkActions, lightActions }) {
   if (isDarkMode) {
     return (
       <Tooltip placement="bottomLeft" title={<TooltipTitle title="Light mode" />}>
-        <FontAwesomeIcon icon={faSun} onClick={enableDarkMode} />
+        <Lucide icon={Sun} onClick={enableDarkMode} />
       </Tooltip>
     );
   }
 
   return (
     <Tooltip placement="bottomLeft" title={<TooltipTitle title="Dark mode" />}>
-      <FontAwesomeIcon icon={faMoon} onClick={enableLightMode} />
+      <Lucide icon={Moon} onClick={enableLightMode} />
     </Tooltip>
 
   );

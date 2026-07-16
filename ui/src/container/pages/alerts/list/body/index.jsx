@@ -1,10 +1,11 @@
+import Lucide from '@Components/lucide';
 import { DETAIL_LAYOUT_CONFIGURATION, MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetAlertsQuery, useDeleteAlertMutation } from '@State/alerts/api';
 import { PathsEnum } from '@Src/constants';
-import { faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
-  Board, Button, DataTable, FontAwesomeIcon, Spin, Void,
+  Board, Button, DataTable, Spin, Void,
 } from '@radicalbit/radicalbit-design-system';
+import { TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -109,7 +110,7 @@ function IsError({ refetch, isFetching }) {
               please retry later
             </>
           )}
-          image={<FontAwesomeIcon icon={faWarning} />}
+          image={<Lucide icon={TriangleAlert} />}
           title="Unable to load alert rules"
         />
       )}

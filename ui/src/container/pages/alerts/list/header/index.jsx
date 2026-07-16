@@ -1,12 +1,12 @@
+import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetAlertsQuery } from '@State/alerts/api';
-import { faPlus, faSliders } from '@fortawesome/free-solid-svg-icons';
 import {
   Button,
-  FontAwesomeIcon,
   NewHeader,
   SectionTitle,
 } from '@radicalbit/radicalbit-design-system';
+import { Plus, SlidersHorizontal } from 'lucide-react';
 
 function AlertsListHeader() {
   const { data = [] } = useGetAlertsQuery();
@@ -20,7 +20,7 @@ function AlertsListHeader() {
       title={(
         <SectionTitle
           title="Alert Notification"
-          titlePrefix={<FontAwesomeIcon icon={faSliders} />}
+          titlePrefix={<Lucide icon={SlidersHorizontal} />}
         />
       )}
     />
@@ -35,7 +35,7 @@ function CreateAlertRuleButton() {
   };
 
   return (
-    <Button onClick={handleOnClick} prefix={<FontAwesomeIcon icon={faPlus} />} type="primary">
+    <Button onClick={handleOnClick} prefix={<Lucide icon={Plus} />} type="primary">
       Create Rule
     </Button>
   );

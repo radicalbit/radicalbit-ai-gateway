@@ -1,10 +1,11 @@
+import Lucide from '@Components/lucide';
 import { PathsEnum } from '@Src/constants';
 import { useGetAlertQuery } from '@State/alerts/api';
-import { faWarning } from '@fortawesome/free-solid-svg-icons';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
-  Board, Button, Collapse, FontAwesomeIcon, FormField, Skeleton, Spinner, Void,
+  Board, Button, Collapse, FormField, Skeleton, Spinner, Void,
 } from '@radicalbit/radicalbit-design-system';
+import { TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Channel from './form-fields/channel';
@@ -163,7 +164,7 @@ function IsError({ refetch, error }) {
                 might be deleted
               </>
             )}
-            image={<FontAwesomeIcon icon={faWarning} />}
+            image={<Lucide icon={TriangleAlert} />}
             title="Alert rule not found"
           />
         )}
@@ -190,7 +191,7 @@ function IsError({ refetch, error }) {
               please retry later
             </>
           )}
-          image={<FontAwesomeIcon icon={faWarning} />}
+          image={<Lucide icon={TriangleAlert} />}
           title="Unable to load alert rule"
         />
       )}

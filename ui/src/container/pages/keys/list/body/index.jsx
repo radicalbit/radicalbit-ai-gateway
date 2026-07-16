@@ -1,4 +1,5 @@
 import { Popup, usePopup } from '@Components/popup';
+import Lucide from '@Components/lucide';
 import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
 import useModals, { modals } from '@Hooks/use-modals';
@@ -7,17 +8,14 @@ import {
 } from '@State/keys/api';
 import { SEARCH_PARAMS } from '@Src/constants';
 import {
-  faCircleXmark, faInbox, faPlus, faWarning,
-} from '@fortawesome/free-solid-svg-icons';
-import {
   Board,
   Button,
   DataTable,
-  FontAwesomeIcon,
   Search,
   Spin,
   Void,
 } from '@radicalbit/radicalbit-design-system';
+import { CircleX, Inbox, Plus, TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -43,7 +41,7 @@ function KeysList() {
     <div className="flex flex-col gap-4 h-full">
       <div className="flex flex-row items-center gap-4">
         <Search
-          allowClear={{ clearIcon: <FontAwesomeIcon icon={faCircleXmark} /> }}
+          allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
           onChange={handleSearchChange}
           placeholder="Search credentials by name"
           style={{ width: '300px' }}
@@ -189,7 +187,7 @@ function IsEmpty() {
     <Board
       main={(
         <Void
-          actions={<Button onClick={handleOnClick} prefix={<FontAwesomeIcon icon={faPlus} />} type="primary">Create credential</Button>}
+          actions={<Button onClick={handleOnClick} prefix={<Lucide icon={Plus} />} type="primary">Create credential</Button>}
           description={(
             <>
               Looks like you have to create your first credential.
@@ -197,7 +195,7 @@ function IsEmpty() {
               Please note that we do not display your credentials again after you generate them.
             </>
           )}
-          image={<FontAwesomeIcon icon={faInbox} />}
+          image={<Lucide icon={Inbox} />}
           title="Credentials"
         />
       )}
@@ -219,7 +217,7 @@ function IsError({ refetch }) {
               please retry later
             </>
           )}
-          image={<FontAwesomeIcon icon={faWarning} />}
+          image={<Lucide icon={TriangleAlert} />}
           title="Unable to load credentials"
         />
       )}

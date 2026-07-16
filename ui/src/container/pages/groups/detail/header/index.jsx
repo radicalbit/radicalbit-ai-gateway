@@ -1,10 +1,11 @@
+import Lucide from '@Components/lucide';
 import { DATE_FORMAT, PathsEnum } from '@Src/constants';
 import { useGetGroupQuery } from '@State/groups/api';
-import { faArrowLeft } from '@fortawesome/free-solid-svg-icons';
 import {
-  FontAwesomeIcon, NewHeader,
+  NewHeader,
   RelativeDateTime, SectionTitle, Skeleton,
 } from '@radicalbit/radicalbit-design-system';
+import { ArrowLeft } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ThreeDotsMenu from './three-dots-menu';
 
@@ -35,7 +36,7 @@ function GroupDetailHeader() {
   return (
     <NewHeader
       details={{ one: <ThreeDotsMenu /> }}
-      prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={handleOnClick} />}
+      prefix={<Lucide icon={ArrowLeft} onClick={handleOnClick} />}
       title={(
         <SectionTitle
           subtitle={<Subtitle />}
@@ -66,7 +67,7 @@ function IsError({ error }) {
   if (status === 404) {
     return (
       <NewHeader
-        prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={handleOnBack} />}
+        prefix={<Lucide icon={ArrowLeft} onClick={handleOnBack} />}
         title={(
           <SectionTitle
             subtitle="--"

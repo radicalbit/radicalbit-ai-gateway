@@ -1,10 +1,11 @@
+import Lucide from '@Components/lucide';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import { useGenerateConfigMutation } from '@State/projects/api';
-import { faPaperPlane } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
-  Button, FontAwesomeIcon, NewHeader, Spin, TextArea,
+  Button, NewHeader, Spin, TextArea,
 } from '@radicalbit/radicalbit-design-system';
+import { Send } from 'lucide-react';
 
 const TEXTAREA_ROWS = 3;
 
@@ -68,7 +69,7 @@ function PromptInput({
                     onClick={handleOnGenerate}
                     type="primary"
                   >
-                    <FontAwesomeIcon icon={faPaperPlane} />
+                    <Lucide icon={Send} />
                   </Button>
                 )}
               </>

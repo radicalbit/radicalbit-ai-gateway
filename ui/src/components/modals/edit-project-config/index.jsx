@@ -1,17 +1,19 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
+import Lucide from '@Components/lucide';
 import { notificationErrorJson } from '@Helpers/notificationUtils';
 import useModals from '@Hooks/use-modals';
 import { actions as notificationActions } from '@State/notification';
 import { useGetProjectQuery, useImportConfigMutation, useLazyExportAllConfigsQuery, useLazyExportConfigQuery } from '@State/projects/api';
-import { faArrowLeft, faFileExport, faFileImport, faFolderOpen } from '@fortawesome/free-solid-svg-icons';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
   Button,
   Dropdown,
-  FontAwesomeIcon,
   NewHeader, RbitModal, SectionTitle, Skeleton,
   Upload,
 } from '@radicalbit/radicalbit-design-system';
+import {
+  ArrowLeft, FileDown, FileUp, FolderOpen,
+} from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import Chatbot from './chatbot';
@@ -72,7 +74,7 @@ function Header() {
   if (isLoading) {
     return (
       <NewHeader
-        prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={hideModal} />}
+        prefix={<Lucide icon={ArrowLeft} onClick={hideModal} />}
         title={<Skeleton.Input active />}
       />
     );
@@ -86,8 +88,8 @@ function Header() {
           two: <ExportButton />,
         }
       }
-      prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={hideModal} />}
-      title={<SectionTitle subtitle={subtitle} title={title} titlePrefix={<FontAwesomeIcon icon={faFolderOpen} />} />}
+      prefix={<Lucide icon={ArrowLeft} onClick={hideModal} />}
+      title={<SectionTitle subtitle={subtitle} title={title} titlePrefix={<Lucide icon={FolderOpen} />} />}
     />
   );
 }
@@ -137,7 +139,7 @@ function ImportButton() {
       disabled={isLoading}
       showUploadList={false}
     >
-      <Button disabled={isLoading} icon={<FontAwesomeIcon icon={faFileImport} />} loading={isLoading} onClick={() => {}}>
+      <Button disabled={isLoading} icon={<Lucide icon={FileDown} />} loading={isLoading} onClick={() => {}}>
         Import
       </Button>
     </Upload>
@@ -196,7 +198,7 @@ function ExportButton() {
 
   return (
     <Dropdown menu={{ items }} trigger={['hover']}>
-      <Button icon={<FontAwesomeIcon icon={faFileExport} />} loading={isExporting}>
+      <Button icon={<Lucide icon={FileUp} />} loading={isExporting}>
         Export
       </Button>
     </Dropdown>

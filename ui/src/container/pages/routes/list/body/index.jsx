@@ -1,3 +1,4 @@
+import Lucide from '@Components/lucide';
 import { DETAIL_LAYOUT_CONFIGURATION, MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import usePersistQueryParams from '@Hooks/use-persistence-query-params';
 import { DEFAULT_POLLING_INTERVAL, SEARCH_PARAMS } from '@Src/constants';
@@ -5,10 +6,10 @@ import {
   useGetEventsByRouteWithRange,
   useGetMetricsWithRange, useGetRouteByNameWithRange, useGetRoutesWithRange,
 } from '@Src/store/state/routes/vertical-hooks';
-import { faCircleXmark } from '@fortawesome/free-solid-svg-icons';
 import {
-  FontAwesomeIcon, FormField, Search, Void,
+  FormField, Search, Void,
 } from '@radicalbit/radicalbit-design-system';
+import { CircleX } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useDispatch } from 'react-redux';
 import {
@@ -80,7 +81,7 @@ function ProjectSelected() {
           </FormField>
 
           <Search
-            allowClear={{ clearIcon: <FontAwesomeIcon icon={faCircleXmark} /> }}
+            allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
             onChange={handleSearchChange}
             placeholder="Search routes by name"
             style={{ width: '350px' }}

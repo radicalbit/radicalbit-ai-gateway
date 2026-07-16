@@ -1,9 +1,10 @@
+import Lucide from '@Components/lucide';
 import { PathsEnum } from '@Src/constants';
 import { useGetAlertQuery, useToggleAlertMutation } from '@State/alerts/api';
-import { faArrowLeft } from '@fortawesome/free-solid-svg-icons';
 import {
-  FontAwesomeIcon, NewHeader, SectionTitle, Skeleton, Switch,
+  NewHeader, SectionTitle, Skeleton, Switch,
 } from '@radicalbit/radicalbit-design-system';
+import { ArrowLeft } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 function AlertDetailHeader() {
@@ -34,7 +35,7 @@ function AlertDetailHeader() {
   return (
     <NewHeader
       details={{ one: <EnabledToggle /> }}
-      prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={handleOnBack} />}
+      prefix={<Lucide icon={ArrowLeft} onClick={handleOnBack} />}
       title={(
         <SectionTitle
           subtitle={description ?? '--'}
@@ -81,7 +82,7 @@ function IsError({ error, onBack }) {
   if (status === 404) {
     return (
       <NewHeader
-        prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={onBack} />}
+        prefix={<Lucide icon={ArrowLeft} onClick={onBack} />}
         title={<SectionTitle subtitle="--" title="--" />}
       />
     );

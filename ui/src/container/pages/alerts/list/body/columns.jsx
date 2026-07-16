@@ -1,9 +1,10 @@
+import Lucide from '@Components/lucide';
 import {
-  faCircleCheck, faCircleXmark, faTrash, faWarning,
-} from '@fortawesome/free-solid-svg-icons';
-import {
-  DataTableAction, FontAwesomeIcon, Tooltip, Truncate,
+  DataTableAction, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
+import {
+  CircleCheck, CircleX, TriangleAlert, Trash2,
+} from 'lucide-react';
 import DeleteAlert from '../delete-alert';
 
 const columns = [
@@ -104,7 +105,7 @@ function Actions({ uuid, name }) {
     <DataTableAction noHide>
       <span onClick={handleOnClick} role="presentation">
         <DeleteAlert name={name} uuid={uuid}>
-          <FontAwesomeIcon className="px-4" icon={faTrash} />
+          <Lucide className="px-4" icon={Trash2} />
         </DeleteAlert>
       </span>
     </DataTableAction>
@@ -116,7 +117,7 @@ function Enabled({ enabled }) {
     return (
       <Tooltip title="Enabled">
         <span className="is-success">
-          <FontAwesomeIcon icon={faCircleCheck} />
+          <Lucide icon={CircleCheck} />
         </span>
       </Tooltip>
     );
@@ -125,7 +126,7 @@ function Enabled({ enabled }) {
   return (
     <Tooltip title="Disabled">
       <span className="opacity-50">
-        <FontAwesomeIcon icon={faCircleXmark} />
+        <Lucide icon={CircleX} />
       </span>
     </Tooltip>
   );
@@ -139,7 +140,7 @@ function DisabledReason({ disabledReason }) {
   return (
     <Tooltip title={disabledReason}>
       <span className="is-error">
-        <FontAwesomeIcon icon={faWarning} />
+        <Lucide icon={TriangleAlert} />
       </span>
     </Tooltip>
   );

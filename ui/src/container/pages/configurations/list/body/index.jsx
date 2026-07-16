@@ -1,16 +1,16 @@
+import Lucide from '@Components/lucide';
 import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import useModals, { modals } from '@Hooks/use-modals';
 import { ConfigListFilterEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useGetAllConfigurationsQuery } from '@State/projects/api';
-import { faCircleXmark, faInbox, faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
   Button,
   DataTable,
-  FontAwesomeIcon,
   Search,
   Void,
 } from '@radicalbit/radicalbit-design-system';
+import { CircleX, Inbox, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
@@ -37,7 +37,7 @@ function ConfigurationsList() {
     <div className="flex flex-col gap-4 h-full">
       <div className="flex flex-row items-center gap-4">
         <Search
-          allowClear={{ clearIcon: <FontAwesomeIcon icon={faCircleXmark} /> }}
+          allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
           onChange={handleSearchChange}
           placeholder="Search by project name"
           style={{ width: '300px' }}
@@ -131,7 +131,7 @@ function IsError({ isFetching, refetch }) {
                 please retry later
               </>
             )}
-            image={<FontAwesomeIcon icon={faWarning} />}
+            image={<Lucide icon={TriangleAlert} />}
             title="Unable to load configurations"
           />
         )}
@@ -148,7 +148,7 @@ function IsEmpty() {
         main={(
           <Void
             description="No configurations found."
-            image={<FontAwesomeIcon icon={faInbox} />}
+            image={<Lucide icon={Inbox} />}
             title="Configurations"
           />
         )}

@@ -1,6 +1,7 @@
+import Lucide from '@Components/lucide';
 import TimeFilter from '@Components/time-filter';
-import { faMicrochip } from '@fortawesome/free-solid-svg-icons';
-import { FontAwesomeIcon, NewHeader, SectionTitle } from '@radicalbit/radicalbit-design-system';
+import { NewHeader, SectionTitle } from '@radicalbit/radicalbit-design-system';
+import { Cpu } from 'lucide-react';
 
 function RoutesListHeader() {
   return (
@@ -10,7 +11,7 @@ function RoutesListHeader() {
         <SectionTitle
           subtitle="Active routes currently served by the gateway. Only served configurations appear here."
           title="Routes"
-          titlePrefix={<FontAwesomeIcon icon={faMicrochip} />}
+          titlePrefix={<Lucide icon={Cpu} />}
         />
       )}
     />

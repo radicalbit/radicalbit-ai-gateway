@@ -1,4 +1,5 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
+import Lucide from '@Components/lucide';
 import { useGetGroupQuery } from '@State/groups/api';
 import { useGetKeyQuery } from '@State/keys/api';
 import {
@@ -6,8 +7,7 @@ import {
   useGetCostsByKeyStreamWithRange,
   useGetCostsByModelStreamWithRange,
 } from '@State/usage/vertical-hooks';
-import { faArrowLeft } from '@fortawesome/free-solid-svg-icons';
-import { Button, FontAwesomeIcon, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
+import { Button, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import { BarChart } from 'echarts/charts';
 import {
@@ -19,6 +19,7 @@ import {
 } from 'echarts/components';
 import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
+import { ArrowLeft } from 'lucide-react';
 import { useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
@@ -129,7 +130,7 @@ function BackButton() {
   return (
     <div className="absolute right-8 top-4 z-10">
       <Button onClick={handleOnClick} suffix={<Label />} type="primary">
-        <FontAwesomeIcon icon={faArrowLeft} />
+        <Lucide icon={ArrowLeft} />
       </Button>
     </div>
   );

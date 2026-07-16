@@ -1,11 +1,12 @@
+import Lucide from '@Components/lucide';
 import { ROUTE_DETAIL_TABS } from '@Container/pages/routes/detail/body';
 import useModals, { modals } from '@Hooks/use-modals';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useGetGroupQuery } from '@State/groups/api';
-import { faPlus } from '@fortawesome/free-solid-svg-icons';
 import {
-  Button, Collapse, DataTable, FontAwesomeIcon,
+  Button, Collapse, DataTable,
 } from '@radicalbit/radicalbit-design-system';
+import { Plus } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import columns from './columns';
 
@@ -48,7 +49,7 @@ function LabelRoute() {
       <div className="flex justify-between items-center">
         <strong>{`${count} Associated route`}</strong>
 
-        <Button icon={<FontAwesomeIcon icon={faPlus} />} onClick={handleOnClick}>Associate routes</Button>
+        <Button icon={<Lucide icon={Plus} />} onClick={handleOnClick}>Associate routes</Button>
       </div>
     );
   }
@@ -57,7 +58,7 @@ function LabelRoute() {
     <div className="flex justify-between items-center">
       <strong>{`${count} Associated routes`}</strong>
 
-      <Button icon={<FontAwesomeIcon icon={faPlus} />} onClick={handleOnClick}>Associate routes</Button>
+      <Button icon={<Lucide icon={Plus} />} onClick={handleOnClick}>Associate routes</Button>
     </div>
   );
 }

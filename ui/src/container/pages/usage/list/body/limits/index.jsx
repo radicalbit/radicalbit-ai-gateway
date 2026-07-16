@@ -1,8 +1,9 @@
+import Lucide from '@Components/lucide';
 import { useGetLimitsStreamWithRange } from '@State/usage/vertical-hooks';
-import { faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
-  Board, Button, DataTable, FontAwesomeIcon, FormField, Void,
+  Board, Button, DataTable, FormField, Void,
 } from '@radicalbit/radicalbit-design-system';
+import { TriangleAlert } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import ProjectFilter from '../project-filter';
 import RoutesFilter from '../routes-filter';
@@ -89,7 +90,7 @@ function IsError({ isFetching, refetch }) {
                 please retry later
               </>
             )}
-            image={<FontAwesomeIcon icon={faWarning} />}
+            image={<Lucide icon={TriangleAlert} />}
             title="Unable to load usage data"
           />
         )}

@@ -1,7 +1,8 @@
-import { faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
+import Lucide from '@Components/lucide';
 import {
-  FontAwesomeIcon, NewHeader, SectionTitle, TextArea,
+  NewHeader, SectionTitle, TextArea,
 } from '@radicalbit/radicalbit-design-system';
+import { WandSparkles } from 'lucide-react';
 
 const TEXTAREA_ROWS = 4;
 
@@ -14,7 +15,7 @@ function ChatbotServed() {
             size="small"
             subtitle="AI can make mistakes, please check the answer"
             title="Generate Configuration"
-            titlePrefix={<FontAwesomeIcon icon={faWandMagicSparkles} />}
+            titlePrefix={<Lucide icon={WandSparkles} />}
           />
         )}
         />

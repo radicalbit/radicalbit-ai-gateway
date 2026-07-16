@@ -1,15 +1,15 @@
+import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetTracesWithRange } from '@Src/store/state/tracing/vertical-hooks';
-import { faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
   Button,
   DataTable,
-  FontAwesomeIcon,
   SectionTitle,
   Skeleton,
   Void,
 } from '@radicalbit/radicalbit-design-system';
+import { TriangleAlert } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import columns from './columns';
 
@@ -113,7 +113,7 @@ function IsError({ isFetching, refetch }) {
                 please retry later
               </>
             )}
-            image={<FontAwesomeIcon icon={faWarning} />}
+            image={<Lucide icon={TriangleAlert} />}
             title="Unable to load traces"
           />
         )}

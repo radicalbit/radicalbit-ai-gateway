@@ -1,16 +1,16 @@
 import useModals from '@Hooks/use-modals';
 import { PathsEnum } from '@Src/constants';
+import Lucide from '@Components/lucide';
 import { useGetAssociableGroupsByKeyQuery, useGetKeyQuery } from '@State/keys/api';
-import { faKey, faSearch } from '@fortawesome/free-solid-svg-icons';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
   Alert,
-  FontAwesomeIcon,
   FormField,
   Select,
   Skeleton,
   Tooltip,
 } from '@radicalbit/radicalbit-design-system';
+import { Key, Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 function Group() {
@@ -29,7 +29,7 @@ function Group() {
 
           <Tooltip title="Credentials already associated to that group">
             <small className="flex items-center gap-2">
-              <FontAwesomeIcon icon={faKey} />
+              <Lucide icon={Key} />
 
               {keysLen}
             </small>
@@ -81,7 +81,7 @@ function GroupInner({ groups }) {
               Select one group
             </div>
 
-            <FontAwesomeIcon icon={faSearch} />
+            <Lucide icon={Search} />
           </div>
         )}
         showSearch

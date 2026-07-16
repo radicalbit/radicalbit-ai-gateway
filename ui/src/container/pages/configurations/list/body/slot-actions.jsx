@@ -1,3 +1,4 @@
+import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import useModals, { modals } from '@Hooks/use-modals';
 import { ConfigStatusEnum } from '@Src/constants';
@@ -7,17 +8,15 @@ import {
   useServeConfigMutation,
   useUnserveConfigMutation,
 } from '@State/projects/api';
+import { Button, Dropdown } from '@radicalbit/radicalbit-design-system';
 import {
-  faCircleStop,
-  faCodePullRequest,
-  faEllipsisVertical,
-  faPenToSquare,
-  faPlay,
-  faStop,
-} from '@fortawesome/free-solid-svg-icons';
-import {
-  Button, Dropdown, FontAwesomeIcon,
-} from '@radicalbit/radicalbit-design-system';
+  CircleStop,
+  EllipsisVertical,
+  GitPullRequest,
+  Play,
+  Square,
+  SquarePen,
+} from 'lucide-react';
 
 function SlotActions({ projectUuid, projectName, config }) {
   const items = useSlotMenuItems({ projectUuid, projectName, config });
@@ -33,7 +32,7 @@ function SlotActions({ projectUuid, projectName, config }) {
   return (
     <Dropdown className="c-project-config-menu" menu={{ items }}>
       <Button onClick={handleOnClick} type="text">
-        <FontAwesomeIcon icon={faEllipsisVertical} />
+        <Lucide icon={EllipsisVertical} />
       </Button>
     </Dropdown>
   );
@@ -108,7 +107,7 @@ const useSlotMenuItems = ({ projectUuid, projectName, config }) => {
   const items = [
     {
       key: `edit-config-${configUuid}`,
-      icon: <FontAwesomeIcon icon={faPenToSquare} />,
+      icon: <Lucide icon={SquarePen} />,
       label: 'Edit Configuration',
       onClick: handleOnEdit,
     },
@@ -117,7 +116,7 @@ const useSlotMenuItems = ({ projectUuid, projectName, config }) => {
   if (config.configStatus === ConfigStatusEnum.DRAFT && config.updatedAt && config.configFile) {
     items.push({
       key: `approve-config-${configUuid}`,
-      icon: <FontAwesomeIcon icon={faCodePullRequest} />,
+      icon: <Lucide icon={GitPullRequest} />,
       label: 'Request to Publish',
       onClick: handleOnApprove,
     });
@@ -126,14 +125,14 @@ const useSlotMenuItems = ({ projectUuid, projectName, config }) => {
   if (config.configStatus === ConfigStatusEnum.READY_TO_SERVE) {
     items.push({
       key: `cancel-approval-${configUuid}`,
-      icon: <FontAwesomeIcon icon={faCircleStop} />,
+      icon: <Lucide icon={CircleStop} />,
       label: 'Cancel Publish Request',
       onClick: handleOnCancel,
     });
 
     items.push({
       key: `serve-config-${configUuid}`,
-      icon: <FontAwesomeIcon icon={faPlay} />,
+      icon: <Lucide icon={Play} />,
       label: 'Publish',
       onClick: handleOnServe,
     });
@@ -142,7 +141,7 @@ const useSlotMenuItems = ({ projectUuid, projectName, config }) => {
   if (config.configStatus === ConfigStatusEnum.SERVED) {
     items.push({
       key: `unserve-config-${configUuid}`,
-      icon: <FontAwesomeIcon icon={faStop} />,
+      icon: <Lucide icon={Square} />,
       label: 'Unpublish',
       onClick: handleOnUnserve,
     });

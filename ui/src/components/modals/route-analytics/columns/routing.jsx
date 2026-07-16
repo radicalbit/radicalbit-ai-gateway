@@ -1,8 +1,9 @@
+import Lucide from '@Components/lucide';
 import { numberFormatterInt } from '@Src/constants';
-import { faBarsStaggered } from '@fortawesome/free-solid-svg-icons';
 import {
-  Button, Divider, FontAwesomeIcon, Popover,
+  Button, Divider, Popover,
 } from '@radicalbit/radicalbit-design-system';
+import { AlignLeft } from 'lucide-react';
 
 function Routing({ routing }) {
   const value = routing?.value;
@@ -10,7 +11,7 @@ function Routing({ routing }) {
   if (value === undefined) {
     return (
       <Button disabled shape="circle">
-        <FontAwesomeIcon icon={faBarsStaggered} />
+        <Lucide icon={AlignLeft} />
       </Button>
     );
   }
@@ -20,7 +21,7 @@ function Routing({ routing }) {
   return (
     <Popover content={<PopoverContent routing={routing} />} minWidth="250" title={<strong>Total invocations</strong>}>
       <Button shape="circle" {...btnType}>
-        <FontAwesomeIcon icon={faBarsStaggered} />
+        <Lucide icon={AlignLeft} />
       </Button>
     </Popover>
   );

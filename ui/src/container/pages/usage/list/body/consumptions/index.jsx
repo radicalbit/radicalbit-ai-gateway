@@ -1,10 +1,11 @@
+import Lucide from '@Components/lucide';
 import TimeFilter from '@Components/time-filter';
 import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetCostsSummaryStreamWithRange } from '@State/usage/vertical-hooks';
-import { faWarning } from '@fortawesome/free-solid-svg-icons';
 import {
-  Board, Button, FontAwesomeIcon, FormField, Skeleton, Void,
+  Board, Button, FormField, Skeleton, Void,
 } from '@radicalbit/radicalbit-design-system';
+import { TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
@@ -113,7 +114,7 @@ function IsError({ isFetching, refetch }) {
                 please retry later
               </>
             )}
-            image={<FontAwesomeIcon icon={faWarning} />}
+            image={<Lucide icon={TriangleAlert} />}
             title="Unable to load usage data"
           />
         )}

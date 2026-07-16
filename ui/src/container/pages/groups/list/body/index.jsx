@@ -1,3 +1,4 @@
+import Lucide from '@Components/lucide';
 import { Popup, usePopup } from '@Components/popup';
 import { DETAIL_LAYOUT_CONFIGURATION, MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/groups/detail/header/three-dots-menu';
@@ -11,11 +12,11 @@ import {
   useAddRoutesToGroupMutation,
 } from '@State/groups/api';
 import {
-  faCircleXmark, faInbox, faPlus, faWarning,
-} from '@fortawesome/free-solid-svg-icons';
-import {
-  Board, Button, DataTable, FontAwesomeIcon, Search, Spin, Void,
+  Board, Button, DataTable, Search, Spin, Void,
 } from '@radicalbit/radicalbit-design-system';
+import {
+  CircleX, Inbox, Plus, TriangleAlert,
+} from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -42,7 +43,7 @@ function GroupsList() {
     <div className="flex flex-col gap-4 h-full">
       <div className="flex flex-row items-center gap-4">
         <Search
-          allowClear={{ clearIcon: <FontAwesomeIcon icon={faCircleXmark} /> }}
+          allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
           onChange={handleSearchChange}
           placeholder="Search groups by name"
           style={{ width: '300px' }}
@@ -189,7 +190,7 @@ function IsEmpty() {
     <Board
       main={(
         <Void
-          actions={<Button onClick={handleOnClick} prefix={<FontAwesomeIcon icon={faPlus} />} type="primary">Create groups</Button>}
+          actions={<Button onClick={handleOnClick} prefix={<Lucide icon={Plus} />} type="primary">Create groups</Button>}
           description={(
             <>
               Looks like you have to create you’re first group.
@@ -197,7 +198,7 @@ function IsEmpty() {
               Each group can be associated with routes and keys
             </>
           )}
-          image={<FontAwesomeIcon icon={faInbox} />}
+          image={<Lucide icon={Inbox} />}
           title="Groups"
         />
       )}
@@ -219,7 +220,7 @@ function IsError({ refetch }) {
               please retry later
             </>
           )}
-          image={<FontAwesomeIcon icon={faWarning} />}
+          image={<Lucide icon={TriangleAlert} />}
           title="Unable to load groups"
         />
       )}

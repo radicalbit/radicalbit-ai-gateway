@@ -1,13 +1,14 @@
+import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import { DATE_FORMAT, GATEWAY_OWNER } from '@Src/constants';
 import { useGetGroupQuery, useRemoveKeyFromGroupMutation } from '@State/groups/api';
-import { faTrash } from '@fortawesome/free-solid-svg-icons';
 import {
   DataTableAction,
-  FontAwesomeIcon, Popconfirm, RelativeDateTime, SectionTitle, Skeleton, TextWithBold,
+  Popconfirm, RelativeDateTime, SectionTitle, Skeleton, TextWithBold,
   Tooltip,
   Truncate,
 } from '@radicalbit/radicalbit-design-system';
+import { Trash2 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
 const columns = [
@@ -81,7 +82,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
       <div className="flex">
         <Tooltip title={DISABLED_GROUP_TOOLTIP}>
           <span>
-            <FontAwesomeIcon disabled icon={faTrash} />
+            <Lucide icon={Trash2} />
           </span>
         </Tooltip>
       </div>
@@ -94,7 +95,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
         <Popconfirm
           cancelButtonProps={{ type: 'secondary-light' }}
           description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove the group from the credential" />}
-          label={<FontAwesomeIcon icon={faTrash} />}
+          label={<Lucide icon={Trash2} />}
           okText={<div className="is-error">Remove</div>}
           okType="error-light"
           onCancel={handleOnCancel}

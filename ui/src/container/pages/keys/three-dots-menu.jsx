@@ -1,12 +1,13 @@
+import Lucide from '@Components/lucide';
 import { GATEWAY_OWNER } from '@Src/constants';
 import DeleteKey from '@Container/pages/keys/list/delete-key';
 import useModals, { modals } from '@Hooks/use-modals';
-import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons';
 import {
-  Button, Dropdown, FontAwesomeIcon,
+  Button, Dropdown,
   Skeleton,
   Tooltip,
 } from '@radicalbit/radicalbit-design-system';
+import { EllipsisVertical } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { useGetKeyQuery } from '@State/keys/api';
 
@@ -17,7 +18,7 @@ function ThreeDotsMenu() {
   return (
     <Dropdown menu={{ items }}>
       <Button type="text">
-        <FontAwesomeIcon icon={faEllipsisVertical} />
+        <Lucide icon={EllipsisVertical} />
       </Button>
     </Dropdown>
 

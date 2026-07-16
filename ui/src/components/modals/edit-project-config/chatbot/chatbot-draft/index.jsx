@@ -1,9 +1,10 @@
+import Lucide from '@Components/lucide';
 import { useGenerateConfigMutation } from '@State/projects/api';
-import { faArrowRotateLeft, faCheck, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
-  Alert, Board, Button, FontAwesomeIcon, NewHeader, SectionTitle,
+  Alert, Board, Button, NewHeader, SectionTitle,
 } from '@radicalbit/radicalbit-design-system';
+import { Check, RotateCcw, WandSparkles } from 'lucide-react';
 import { useState } from 'react';
 import AnswerBox from './answer-box';
 import PromptInput from './prompt-input';
@@ -20,7 +21,7 @@ function ChatbotDraft({ config, projectUuid }) {
           size="small"
           subtitle="AI can make mistakes, please check the answer"
           title="Generate Configuration"
-          titlePrefix={<FontAwesomeIcon icon={faWandMagicSparkles} />}
+          titlePrefix={<Lucide icon={WandSparkles} />}
         />
       )}
       />
@@ -91,7 +92,7 @@ function Actions({ config, isGenerated, setIsGenerated, setDescription }) {
     <div className={`flex justify-center items-center gap-4 ${visibilityClassName}`}>
       <Button
         onClick={handleOnDiscard}
-        prefix={<FontAwesomeIcon icon={faArrowRotateLeft} />}
+        prefix={<Lucide icon={RotateCcw} />}
         type="secondary"
       >
         Discard
@@ -99,7 +100,7 @@ function Actions({ config, isGenerated, setIsGenerated, setDescription }) {
 
       <Button
         onClick={handleOnApply}
-        prefix={<FontAwesomeIcon icon={faCheck} />}
+        prefix={<Lucide icon={Check} />}
         type="primary"
       >
         Use in configuration

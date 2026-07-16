@@ -1,11 +1,12 @@
-import { useNavigate } from 'react-router-dom';
+import Lucide from '@Components/lucide';
 import useModals from '@Hooks/use-modals';
-import { faArrowLeft } from '@fortawesome/free-solid-svg-icons';
 import { formatMs, formatInt } from '@Src/helpers/column-formatters';
 import { useGetTraceByIdVertical } from '@State/tracing/vertical-hooks';
 import {
-  FontAwesomeIcon, NewHeader, SectionTitle,
+  NewHeader, SectionTitle,
 } from '@radicalbit/radicalbit-design-system';
+import { ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 function Header() {
   const { modalPayload } = useModals();
@@ -57,7 +58,7 @@ function Header() {
         <SectionTitle
           subtitle={subtitle}
           title={routeName}
-          titlePrefix={<FontAwesomeIcon className="cursor-pointer" icon={faArrowLeft} onClick={handleOnClickBack} />}
+          titlePrefix={<Lucide className="cursor-pointer" icon={ArrowLeft} onClick={handleOnClickBack} />}
         />
       )}
     />

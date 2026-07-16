@@ -1,15 +1,15 @@
 import useModals from '@Hooks/use-modals';
 import { PathsEnum } from '@Src/constants';
+import Lucide from '@Components/lucide';
 import { useGetAssociableRoutesByGroupQuery, useGetGroupQuery } from '@State/groups/api';
-import { faSearch } from '@fortawesome/free-solid-svg-icons';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
   Alert,
-  FontAwesomeIcon,
   FormField,
   Select,
   Skeleton,
 } from '@radicalbit/radicalbit-design-system';
+import { Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 function Routes() {
@@ -85,7 +85,7 @@ function RoutesInner({ routes }) {
               Select one or more routes
             </div>
 
-            <FontAwesomeIcon icon={faSearch} />
+            <Lucide icon={Search} />
           </div>
         )}
         value={selected}
