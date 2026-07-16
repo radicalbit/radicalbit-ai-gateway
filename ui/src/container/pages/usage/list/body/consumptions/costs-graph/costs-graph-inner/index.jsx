@@ -16,6 +16,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import '../_styles.less';
+import { DEFAULT_GROUP_BY, GROUP_BY } from '../group-by';
 import option from './option';
 import useGetNameToId from './use-get-name-to-id';
 import useLazyGetBreakdownByGroupBy from './use-lazy-get-breakdown-by-group-by';
@@ -30,12 +31,6 @@ echarts.use([
   TitleComponent,
 ]);
 
-const GROUP_BY = {
-  groups: { key: 'groups', label: 'Groups' },
-  credentials: { key: 'keys', label: 'Credentials' },
-  models: { key: 'models', label: 'Models' },
-};
-
 const chartWidthAndHeight = {
   width: '100%',
   height: '25rem',
@@ -43,7 +38,7 @@ const chartWidthAndHeight = {
 
 function CostsGraphInner() {
   const [searchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || GROUP_BY.groups.key;
+  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
   const routes = searchParams.get('routes')
     ? searchParams.get('routes').split(',')
     : [];
@@ -93,7 +88,7 @@ function IsEmpty() {
 
 function IsSuccess() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || GROUP_BY.groups.key;
+  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
   const routes = searchParams.get('routes')
     ? searchParams.get('routes').split(',')
     : [];
@@ -154,7 +149,7 @@ function IsSuccess() {
 
 function GroupByTabs() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || GROUP_BY.groups.key;
+  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
 
   const handleOnChangeGroupBy = (e) => {
     setSearchParams((prev) => {
@@ -189,7 +184,7 @@ const useRouteBreakdownTooltip = (chartRef) => {
   const [triggerRouteBreakdown] = useLazyGetBreakdownByGroupBy();
 
   const [searchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || GROUP_BY.groups.key;
+  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
   const routes = searchParams.get('routes')?.split(',') ?? [];
 
   const { data } = useGetCostsChartStreamWithRange({ routes, groupBy });
