@@ -1,0 +1,131 @@
+name: Python SBOM → Dependency-Track (source deps)
+description: >-
+  Generate a CycloneDX 1.6 SBOM from a uv project's resolved dependencies
+  (uv.lock as source of truth via `uv sync --frozen`, then cyclonedx-py) and
+  upload it to Dependency-Track.
+
+inputs:
+  working-directory:
+    description: Path to the uv project (containing pyproject.toml and uv.lock).
+    required: true
+  python-version:
+    description: Python version to use.
+    required: false
+    default: "3.11"
+  uv-version:
+    description: uv version to install.
+    required: false
+    default: "0.7.13"
+  cyclonedx-bom-version:
+    description: cyclonedx-bom (cyclonedx-py) version to run via uvx.
+    required: false
+    default: "7.3.0"
+  project-name:
+    description: Dependency-Track project name.
+    required: true
+  project-version:
+    description: Dependency-Track project version (e.g. the git tag, or "main").
+    required: true
+  is-latest:
+    description: Mark this version as the latest for the project ("true"/"false").
+    required: false
+    default: "false"
+  project-tags:
+    description: Comma-separated tags applied to the Dependency-Track project.
+    required: false
+    default: oss,python,source
+  dt-url:
+    description: Base URL of the Dependency-Track API server.
+    required: true
+  dt-api-key:
+    description: Dependency-Track API key (needs BOM_UPLOAD, PROJECT_CREATION_UPLOAD, VIEW_PORTFOLIO, PORTFOLIO_MANAGEMENT).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Setup uv
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl -LsSf https://astral.sh/uv/${{ inputs.uv-version }}/install.sh | sh
+
+    - name: Sync locked (production) dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        # --frozen: use the exact resolution in uv.lock (fails if the lock is stale)
+        # --no-dev: exclude development dependencies from the SBOM
+        uv sync --frozen --no-dev
+
+    - name: Generate SBOM with cyclonedx-py (CycloneDX 1.6)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CDX_VERSION: ${{ inputs.cyclonedx-bom-version }}
+      run: |
+        set -euo pipefail
+        uvx --from "cyclonedx-bom==${CDX_VERSION}" cyclonedx-py environment .venv \
+          --pyproject pyproject.toml \
+          --spec-version 1.6 \
+          --output-format JSON \
+          --output-file sbom.cyclonedx.json
+        echo ">> Generated SBOM:"
+        head -c 400 sbom.cyclonedx.json; echo
+
+    - name: Upload SBOM to Dependency-Track
+      id: upload
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DT_URL: ${{ inputs.dt-url }}
+        DT_API_KEY: ${{ inputs.dt-api-key }}
+        PROJECT_NAME: ${{ inputs.project-name }}
+        PROJECT_VERSION: ${{ inputs.project-version }}
+        IS_LATEST: ${{ inputs.is-latest }}
+        PROJECT_TAGS: ${{ inputs.project-tags }}
+      run: |
+        set -euo pipefail
+        echo ">> Uploading SBOM to ${DT_URL} for ${PROJECT_NAME}@${PROJECT_VERSION} (isLatest=${IS_LATEST})"
+        RESPONSE=$(curl -sSf -X POST "${DT_URL%/}/api/v1/bom" \
+          -H "X-Api-Key: ${DT_API_KEY}" \
+          -F autoCreate=true \
+          -F "projectName=${PROJECT_NAME}" \
+          -F "projectVersion=${PROJECT_VERSION}" \
+          -F "isLatest=${IS_LATEST}" \
+          -F "projectTags=${PROJECT_TAGS}" \
+          -F "bom=@sbom.cyclonedx.json")
+        echo "${RESPONSE}"
+        TOKEN=$(echo "${RESPONSE}" | jq -r '.token // empty')
+        echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
+
+    - name: Wait for Dependency-Track processing (best-effort)
+      shell: bash
+      env:
+        DT_URL: ${{ inputs.dt-url }}
+        DT_API_KEY: ${{ inputs.dt-api-key }}
+      run: |
+        set -uo pipefail
+        TOKEN="${{ steps.upload.outputs.token }}"
+        if [ -z "${TOKEN}" ]; then
+          echo "No processing token returned; skipping wait."
+          exit 0
+        fi
+        echo ">> Waiting for BOM processing (token ${TOKEN})…"
+        for i in $(seq 1 30); do
+          PROCESSING=$(curl -sSf "${DT_URL%/}/api/v1/bom/token/${TOKEN}" \
+            -H "X-Api-Key: ${DT_API_KEY}" | jq -r '.processing')
+          if [ "${PROCESSING}" = "false" ]; then
+            echo "   BOM processed."
+            exit 0
+          fi
+          echo "   still processing… (${i}/30)"
+          sleep 5
+        done
+        echo "::warning::Timed out waiting for Dependency-Track to finish processing the BOM (upload succeeded)."
