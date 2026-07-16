@@ -15,7 +15,6 @@ const PathsEnum = {
   ALERTS: 'alerts',
   CONFIG: 'config',
   CONFIGURATIONS: 'configs',
-  COSTS: 'costs',
   GROUPS: 'groups',
   CREDENTIALS: 'credentials',
   PROJECTS: 'projects',
