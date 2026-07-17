@@ -22,6 +22,7 @@ env:
   WORKER_PROJECT: metrics-worker
   GATEWAY_PYTHON_PROJECT: radicalbit-ai-gateway-python
   WORKER_PYTHON_PROJECT: metrics-worker-python
+  UI_PROJECT: radicalbit-ai-gateway-ui
 
 jobs:
   prep:
@@ -324,6 +325,16 @@ jobs:
           project-version: ${{ needs.prep.outputs.version }}
           is-latest: ${{ needs.prep.outputs.is_semver }}
           project-tags: oss,python,source
+          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
+          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+      - name: UI source SBOM → Dependency-Track
+        uses: ./.github/actions/ui-sbom-dependency-track
+        with:
+          working-directory: ./ui
+          project-name: ${{ env.UI_PROJECT }}
+          project-version: ${{ needs.prep.outputs.version }}
+          is-latest: ${{ needs.prep.outputs.is_semver }}
+          project-tags: oss,npm,source
           dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
           dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
       - name: Python source SBOM → Dependency-Track (metrics-worker)
