@@ -15,9 +15,6 @@ from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.models.mcp_server import McpHttpServer, McpStdioServer
 
-if sys.version_info < (3, 11):  # pragma: no cover
-    from exceptiongroup import BaseExceptionGroup
-
 FIXTURE_SERVER = Path(__file__).parent / 'fixtures' / 'simple_server.py'
 
 HTTP_SERVER = McpHttpServer(
@@ -117,6 +114,29 @@ async def test_exception_group_maps_to_generic_error():
     with pytest.raises(McpUpstreamError) as exc_info:
         await client.list_tools(HTTP_SERVER)
     assert exc_info.value.code == -32000
+
+
+async def test_group_wrapped_timeout_classified_as_timeout():
+    session = AsyncMock()
+    session.list_tools.side_effect = BaseExceptionGroup('transport', [TimeoutError()])
+    client = _client_with_mock_session(session)
+
+    with pytest.raises(McpUpstreamError) as exc_info:
+        await client.list_tools(HTTP_SERVER)
+    assert exc_info.value.code == -32000
+    assert 'timed out' in exc_info.value.message
+
+
+async def test_group_with_base_exception_propagates():
+    session = AsyncMock()
+    session.list_tools.side_effect = BaseExceptionGroup(
+        'shutdown', [KeyboardInterrupt()]
+    )
+    client = _client_with_mock_session(session)
+
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        await client.list_tools(HTTP_SERVER)
+    assert exc_info.group_contains(KeyboardInterrupt)
 
 
 async def test_upstream_jsonrpc_error_preserves_code_and_message():

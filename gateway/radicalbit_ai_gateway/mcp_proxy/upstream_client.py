@@ -2,11 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 import logging
-import sys
 from typing import TypeVar
-
-if sys.version_info < (3, 11):  # pragma: no cover
-    from exceptiongroup import BaseExceptionGroup
 
 from mcp import ClientSession, types
 from mcp.client.stdio import (
@@ -178,6 +174,16 @@ class McpUpstreamClient:
                 server.alias, e.error.message, code=e.error.code
             ) from e
         except BaseExceptionGroup as eg:
+            if eg.split(Exception)[1] is not None:
+                # KeyboardInterrupt/SystemExit inside the group: propagate.
+                raise
+            if eg.subgroup(TimeoutError):
+                logger.warning(
+                    'MCP upstream %s timed out after %.1fs', server.alias, timeout
+                )
+                raise McpUpstreamError(
+                    server.alias, f"Upstream MCP server '{server.alias}' timed out"
+                ) from eg
             logger.exception('MCP upstream %s transport failure', server.alias)
             raise McpUpstreamError(
                 server.alias, f"Upstream MCP server '{server.alias}' request failed"
