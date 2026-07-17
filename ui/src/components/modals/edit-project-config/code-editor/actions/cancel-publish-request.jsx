@@ -47,7 +47,7 @@ function CancelPublishRequest({ config, projectUuid }) {
       loading={cancelArgs.isLoading}
       onClick={handleOnCancel}
       prefix={<Lucide icon={CircleStop} />}
-      type="secondary"
+      type="primary-outlined"
     >
       Cancel Publish Request
     </Button>

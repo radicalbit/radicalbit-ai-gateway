@@ -26,8 +26,7 @@ function CodeEditor() {
       <Board
         className="flex-1 min-h-0"
         main={(
-          <div className="flex flex-col h-full min-h-0 gap-2">
-
+          <div className="flex flex-col h-full">
             <div className="flex-1 min-h-0">
               <Editor config={activeConfig} />
             </div>

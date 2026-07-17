@@ -47,7 +47,7 @@ function RequestToPublish({ config, projectUuid }) {
       loading={approveArgs.isLoading}
       onClick={handleOnPublish}
       prefix={<Lucide icon={GitPullRequest} />}
-      type="primary"
+      type="primary-outlined"
     >
       Request to Publish
     </Button>

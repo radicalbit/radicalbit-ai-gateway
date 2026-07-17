@@ -2,6 +2,8 @@ import { ConfigStatusEnum } from '@Src/constants';
 import { Tag } from '@radicalbit/radicalbit-design-system';
 
 const CONFIG_STATUS_TAG = {
+  [ConfigStatusEnum.EMPTY]: { label: 'Empty', type: 'secondary-outlined-light' },
+  [ConfigStatusEnum.DRAFT]: { label: 'Draft', type: 'secondary-outlined' },
   [ConfigStatusEnum.READY_TO_SERVE]: { label: 'Publish Requested', type: 'warning-outlined' },
   [ConfigStatusEnum.SERVED]: { label: 'Published in Prod', type: 'success-outlined' },
 };

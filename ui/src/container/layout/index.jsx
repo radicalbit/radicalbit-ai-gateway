@@ -163,7 +163,7 @@ export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps 
       {mac && (
         <div className="flex gap-2 items-center">
           {mac.map(({ label, shape }) => (
-            <Button shape={shape} size="small" type="secondary" {...buttonProps}>
+            <Button shape={shape} size="small" type="secondary-outlined" {...buttonProps}>
               {label}
             </Button>
           ))}

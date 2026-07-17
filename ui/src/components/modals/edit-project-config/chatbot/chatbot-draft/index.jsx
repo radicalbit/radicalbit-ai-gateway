@@ -15,10 +15,9 @@ function ChatbotDraft({ config, projectUuid }) {
   const [isGenerated, setIsGenerated] = useState(false);
 
   return (
-    <div className="flex flex-col min-h-0 gap-2">
+    <div className="flex flex-col min-h-0">
       <NewHeader title={(
         <SectionTitle
-          size="small"
           subtitle="AI can make mistakes, please check the answer"
           title="Generate Configuration"
           titlePrefix={<Lucide icon={WandSparkles} />}
@@ -31,7 +30,7 @@ function ChatbotDraft({ config, projectUuid }) {
       <Board
         className="min-h-0"
         main={(
-          <div className="flex flex-col h-full min-h-0 gap-2">
+          <div className="flex flex-col h-full min-h-0">
             <PromptInput
               config={config}
               description={description}
@@ -93,7 +92,7 @@ function Actions({ config, isGenerated, setIsGenerated, setDescription }) {
       <Button
         onClick={handleOnDiscard}
         prefix={<Lucide icon={RotateCcw} />}
-        type="secondary"
+        type="text"
       >
         Discard
       </Button>

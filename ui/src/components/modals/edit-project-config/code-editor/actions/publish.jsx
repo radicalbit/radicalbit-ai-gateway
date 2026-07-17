@@ -1,3 +1,4 @@
+import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import {
@@ -7,6 +8,7 @@ import {
 } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button } from '@radicalbit/radicalbit-design-system';
+import { Check } from 'lucide-react';
 
 function Publish({ config, projectUuid }) {
   const configUuid = config.uuid;
@@ -44,6 +46,7 @@ function Publish({ config, projectUuid }) {
       disabled={isBusy}
       loading={serveArgs.isLoading}
       onClick={handleOnServe}
+      prefix={<Lucide icon={Check} />}
       type="primary"
     >
       Publish

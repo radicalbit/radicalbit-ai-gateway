@@ -2,6 +2,7 @@ import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import Lucide from '@Components/lucide';
 import { notificationErrorJson } from '@Helpers/notificationUtils';
 import useModals from '@Hooks/use-modals';
+import { ConfigStatusEnum } from '@Src/constants';
 import { actions as notificationActions } from '@State/notification';
 import { useGetProjectQuery, useImportConfigMutation, useLazyExportAllConfigsQuery, useLazyExportConfigQuery } from '@State/projects/api';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
@@ -101,8 +102,11 @@ function ImportButton() {
 
   const { activeConfig } = useGetActiveConfig();
   const configUuid = activeConfig?.uuid;
+  const isNotDraft = activeConfig?.configStatus !== ConfigStatusEnum.DRAFT;
 
   const [trigger, { isLoading }] = useImportConfigMutation({ fixedCacheKey: `import-config-${uuid}` });
+
+  const isDisabled = isLoading || isNotDraft;
 
   const notifyError = (content) => {
     dispatch(notificationActions.setNotificationMessage(notificationErrorJson({ message: content })));
@@ -136,10 +140,10 @@ function ImportButton() {
     <Upload
       accept={ACCEPTED_IMPORT_EXTENSIONS}
       beforeUpload={handleBeforeUpload}
-      disabled={isLoading}
+      disabled={isDisabled}
       showUploadList={false}
     >
-      <Button disabled={isLoading} icon={<Lucide icon={FileDown} />} loading={isLoading} onClick={() => {}}>
+      <Button disabled={isDisabled} icon={<Lucide icon={FileDown} />} loading={isLoading} onClick={() => {}} type="primary-outlined">
         Import
       </Button>
     </Upload>
@@ -198,7 +202,7 @@ function ExportButton() {
 
   return (
     <Dropdown menu={{ items }} trigger={['hover']}>
-      <Button icon={<Lucide icon={FileUp} />} loading={isExporting}>
+      <Button icon={<Lucide icon={FileUp} />} loading={isExporting} type="primary-outlined">
         Export
       </Button>
     </Dropdown>
