@@ -11,6 +11,11 @@ const ModalsEnum = {
   QUERY_NAME: 'modal',
 };
 
+// Hardcoded feature flags. Toggle to enable/disable a feature app-wide.
+const FEATURE_FLAGS = {
+  ALERTS: false, // TODO: enable when the alerts backend is ready (currently mocked)
+};
+
 const PathsEnum = {
   ALERTS: 'alerts',
   CONFIG: 'config',
@@ -148,6 +153,7 @@ export {
   DEFAULT_POLLING_INTERVAL,
   GATEWAY_OWNER,
   echartNumberFormatter,
+  FEATURE_FLAGS,
   SEARCH_PARAMS,
   MAX_DECIMAL_ROUND,
   ModalsEnum,

@@ -6,7 +6,7 @@ import ProjectsListHeader from '@Container/pages/projects/list/header';
 import RoutesListHeader from '@Container/pages/routes/list/header';
 import TracingListHeader from '@Container/pages/tracing/list/header';
 import UsageListHeader from '@Container/pages/usage/list/header';
-import { PathsEnum } from '@Src/constants';
+import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
 import { Route, Routes } from 'react-router-dom';
 import useAuthBootstrapReady from './use-auth-bootstrap-ready';
 
@@ -16,6 +16,14 @@ export default function MainHeaderContentSwitch() {
   if (!isReady) {
     return null;
   }
+
+  const alertsRoutes = FEATURE_FLAGS.ALERTS ? (
+    <>
+      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}`} />
+
+      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}/:uuid`} />
+    </>
+  ) : false;
 
   return (
     <Routes>
@@ -37,9 +45,7 @@ export default function MainHeaderContentSwitch() {
 
       <Route element={<ConfigurationsListHeader />} path={`/${PathsEnum.CONFIGURATIONS}`} />
 
-      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}`} />
-
-      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}/:uuid`} />
+      {alertsRoutes}
     </Routes>
   );
 }

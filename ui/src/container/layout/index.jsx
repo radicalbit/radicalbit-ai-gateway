@@ -1,5 +1,5 @@
 import Lucide from '@Components/lucide';
-import { PathsEnum } from '@Src/constants';
+import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
 import { Button } from '@radicalbit/radicalbit-design-system';
 import {
   FolderOpen, Gauge, Key, Route, Settings2, Signpost, Users,
@@ -142,8 +142,8 @@ const allRoutes = (hasLeftColumnCollapsed) => [
   manageHeader(hasLeftColumnCollapsed),
   groups(hasLeftColumnCollapsed),
   keys(hasLeftColumnCollapsed),
-  alerts(hasLeftColumnCollapsed),
-];
+  FEATURE_FLAGS.ALERTS ? alerts(hasLeftColumnCollapsed) : false,
+].filter(Boolean);
 
 export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps = {} }) {
   const { mac } = keyboardKeys;
