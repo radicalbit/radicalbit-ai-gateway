@@ -47,6 +47,7 @@ dependencies = [
     "azure-health-deidentification>=1.0.0b3",
     "azure-identity>=1.21.0",
     "python-multipart>=0.0.20",
+    "mcp>=1.13,<2",
 ]
 
 [project.scripts]
