@@ -25,6 +25,7 @@ env:
   APP_PROJECT: radicalbit-ai-gateway
   MIGRATIONS_PROJECT: radicalbit-ai-gateway-migrations
   GATEWAY_PYTHON_PROJECT: radicalbit-ai-gateway-python
+  UI_PROJECT: radicalbit-ai-gateway-ui
 
 jobs:
   test:
@@ -227,5 +228,15 @@ jobs:
           project-version: ${{ env.IMAGES_TAG }}
           is-latest: "false"
           project-tags: oss,python,source
+          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
+          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+      - name: UI source SBOM → Dependency-Track
+        uses: ./.github/actions/ui-sbom-dependency-track
+        with:
+          working-directory: ./ui
+          project-name: ${{ env.UI_PROJECT }}
+          project-version: ${{ env.IMAGES_TAG }}
+          is-latest: "false"
+          project-tags: oss,npm,source
           dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
           dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
