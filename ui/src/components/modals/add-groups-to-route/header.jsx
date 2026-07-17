@@ -1,14 +1,14 @@
-import { faCircleInfo } from '@fortawesome/free-solid-svg-icons';
 import HtmlAnchor from '@Components/html-anchor';
+import Lucide from '@Components/lucide';
 import useModals from '@Hooks/use-modals';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useGetRouteByNameWithRange } from '@Src/store/state/routes/vertical-hooks';
 import {
-  FontAwesomeIcon,
   Popover,
   SectionTitle,
   Skeleton,
 } from '@radicalbit/radicalbit-design-system';
+import { Info } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function Header() {
@@ -84,7 +84,7 @@ function AssociatedGroups() {
       <span>{`Groups already associated: ${associated.length}`}</span>
 
       <Popover content={popoverContent}>
-        <FontAwesomeIcon icon={faCircleInfo} />
+        <Lucide icon={Info} />
       </Popover>
     </div>
   );

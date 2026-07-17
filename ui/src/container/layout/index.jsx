@@ -1,8 +1,9 @@
-import { PathsEnum } from '@Src/constants';
+import Lucide from '@Components/lucide';
+import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
+import { Button } from '@radicalbit/radicalbit-design-system';
 import {
-  faChartBar, faFolderOpen, faKey, faLayerGroup, faMicrochip, faRoute, faSliders,
-} from '@fortawesome/free-solid-svg-icons';
-import { Button, FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
+  FolderOpen, Gauge, Key, Route, Settings2, Signpost, Users,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -64,7 +65,7 @@ const separator2 = separator('separator2', 9);
 const projects = (hasLeftColumnCollapsed) => ({
   position: 2,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '1', shape: 'circle' }] }}>Projects</CollapsedTitle> : 'Projects',
-  icon: <FontAwesomeIcon icon={faFolderOpen} />,
+  icon: <Lucide icon={FolderOpen} size="md" />,
   key: PathsEnum.PROJECTS,
   link: getLink(PathsEnum.PROJECTS),
 });
@@ -72,7 +73,7 @@ const projects = (hasLeftColumnCollapsed) => ({
 const configurations = (hasLeftColumnCollapsed) => ({
   position: 3,
   title: hasLeftColumnCollapsed ? <CollapsedTitle>Configurations</CollapsedTitle> : 'Configurations',
-  icon: <FontAwesomeIcon icon={faSliders} />,
+  icon: <Lucide icon={Settings2} size="md" />,
   key: PathsEnum.CONFIGURATIONS,
   link: getLink(PathsEnum.CONFIGURATIONS),
 });
@@ -80,7 +81,7 @@ const configurations = (hasLeftColumnCollapsed) => ({
 const routes = (hasLeftColumnCollapsed) => ({
   position: 6,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '2', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
-  icon: <FontAwesomeIcon icon={faMicrochip} />,
+  icon: <Lucide icon={Gauge} size="md" />,
   key: PathsEnum.ROUTES,
   link: getLink(PathsEnum.ROUTES),
 });
@@ -88,7 +89,7 @@ const routes = (hasLeftColumnCollapsed) => ({
 const usage = (hasLeftColumnCollapsed) => ({
   position: 7,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
-  icon: <FontAwesomeIcon icon={faChartBar} />,
+  icon: <Lucide icon={Signpost} size="md" />,
   key: PathsEnum.USAGE,
   link: getLink(PathsEnum.USAGE),
 });
@@ -96,7 +97,7 @@ const usage = (hasLeftColumnCollapsed) => ({
 const tracing = (hasLeftColumnCollapsed) => ({
   position: 8,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
-  icon: <FontAwesomeIcon icon={faRoute} />,
+  icon: <Lucide icon={Route} size="md" />,
   key: PathsEnum.TRACING,
   link: getLink(PathsEnum.TRACING),
 });
@@ -104,7 +105,7 @@ const tracing = (hasLeftColumnCollapsed) => ({
 const groups = (hasLeftColumnCollapsed) => ({
   position: 11,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
-  icon: <FontAwesomeIcon icon={faLayerGroup} />,
+  icon: <Lucide icon={Users} size="md" />,
   key: PathsEnum.GROUPS,
   link: getLink(PathsEnum.GROUPS),
 });
@@ -112,9 +113,17 @@ const groups = (hasLeftColumnCollapsed) => ({
 const keys = (hasLeftColumnCollapsed) => ({
   position: 12,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
-  icon: <FontAwesomeIcon icon={faKey} />,
+  icon: <Lucide icon={Key} size="md" />,
   key: PathsEnum.CREDENTIALS,
   link: getLink(PathsEnum.CREDENTIALS),
+});
+
+const alerts = (hasLeftColumnCollapsed) => ({
+  position: 13,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle>Alert</CollapsedTitle> : 'Alert',
+  icon: <Lucide icon={Settings2} size="md" />,
+  key: PathsEnum.ALERTS,
+  link: getLink(PathsEnum.ALERTS),
 });
 
 // ALL ROUTES
@@ -133,7 +142,8 @@ const allRoutes = (hasLeftColumnCollapsed) => [
   manageHeader(hasLeftColumnCollapsed),
   groups(hasLeftColumnCollapsed),
   keys(hasLeftColumnCollapsed),
-];
+  FEATURE_FLAGS.ALERTS ? alerts(hasLeftColumnCollapsed) : false,
+].filter(Boolean);
 
 export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps = {} }) {
   const { mac } = keyboardKeys;
@@ -153,7 +163,7 @@ export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps 
       {mac && (
         <div className="flex gap-2 items-center">
           {mac.map(({ label, shape }) => (
-            <Button shape={shape} size="small" type="secondary" {...buttonProps}>
+            <Button shape={shape} size="small" type="secondary-outlined" {...buttonProps}>
               {label}
             </Button>
           ))}

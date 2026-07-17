@@ -3,6 +3,7 @@ import AddGroupToKey from './add-group-to-key';
 import AddGroupsToRoute from './add-groups-to-route';
 import AddKeysToGroups from './add-keys-to-group';
 import AddRoutesToGroups from './add-routes-to-group';
+import CreateAlertRule from './create-alert-rule';
 import CreateGroup from './create-group';
 import CreateKey from './create-key';
 import CreateProject from './create-project';
@@ -30,6 +31,9 @@ export default function ModalsProvider() {
 
     case modals.ADD_GROUPS_TO_ROUTE:
       return <AddGroupsToRoute />;
+
+    case modals.CREATE_ALERT_RULE:
+      return <CreateAlertRule />;
 
     case modals.CREATE_GROUPS:
       return <CreateGroup />;

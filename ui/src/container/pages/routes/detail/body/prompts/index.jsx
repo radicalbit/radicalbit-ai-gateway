@@ -2,13 +2,12 @@ import CodeBlock from '@Components/code-block';
 import CodeBlockMarkdown from '@Components/code-block/markdown';
 import CodeBlockRawText from '@Components/code-block/raw-text';
 import Logo from '@Img/logo.png';
+import Lucide from '@Components/lucide';
 import { useGetPromptsByRouteQuery } from '@State/routes/api';
-import { faLock } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
   Button,
   Collapse,
-  FontAwesomeIcon,
   SectionTitle,
   Skeleton,
   Switchbox,
@@ -16,6 +15,7 @@ import {
   Tooltip,
   Void,
 } from '@radicalbit/radicalbit-design-system';
+import { Lock } from 'lucide-react';
 import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
@@ -71,7 +71,7 @@ function IsSuccess() {
           size="small"
           subtitle={`${subtitle} | ${modelId} | tokens: ${tokens}`}
           title={modelName}
-          titleSuffix={!hasPrompt && <Tooltip title="Prompt not configured"><FontAwesomeIcon icon={faLock} /></Tooltip>}
+          titleSuffix={!hasPrompt && <Tooltip title="Prompt not configured"><Lucide icon={Lock} /></Tooltip>}
         />
       ),
       children: hasPrompt

@@ -1,6 +1,6 @@
+import Lucide from '@Components/lucide';
 import { formatMs } from '@Src/helpers/column-formatters';
-import { faChevronDown, faChevronRight } from '@fortawesome/free-solid-svg-icons';
-import { FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -58,11 +58,11 @@ function Name({ value, record }) {
   }
 
   const isExpanded = expandedCategories.has(value);
-  const icon = isExpanded ? faChevronDown : faChevronRight;
+  const icon = isExpanded ? ChevronDown : ChevronRight;
 
   return (
     <div className="flex items-center gap-2 font-[var(--coo-font-weight-bold)]">
-      <FontAwesomeIcon icon={icon} size="small" />
+      <Lucide icon={icon} />
 
       {value}
 

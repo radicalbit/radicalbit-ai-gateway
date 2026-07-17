@@ -1,8 +1,9 @@
+import Lucide from '@Components/lucide';
 import { numberFormatterFloat, numberFormatterInt } from '@Src/constants';
-import { faCheckCircle } from '@fortawesome/free-solid-svg-icons';
 import {
-  Button, Divider, FontAwesomeIcon, Popover,
+  Button, Divider, Popover,
 } from '@radicalbit/radicalbit-design-system';
+import { CircleCheck } from 'lucide-react';
 
 function Caching({ metrics, configuration }) {
   const caching = configuration?.caching;
@@ -11,7 +12,7 @@ function Caching({ metrics, configuration }) {
   if (caching === undefined) {
     return (
       <Button disabled shape="circle">
-        <FontAwesomeIcon icon={faCheckCircle} />
+        <Lucide icon={CircleCheck} />
       </Button>
     );
   }
@@ -21,7 +22,7 @@ function Caching({ metrics, configuration }) {
   return (
     <Popover content={<PopoverContent configuration={configuration} metrics={metrics} />} minWidth="250" title={<strong>Caching</strong>}>
       <Button shape="circle" {...btnType}>
-        <FontAwesomeIcon icon={faCheckCircle} />
+        <Lucide icon={CircleCheck} />
       </Button>
     </Popover>
   );

@@ -1,5 +1,6 @@
-import { faSliders } from '@fortawesome/free-solid-svg-icons';
-import { FontAwesomeIcon, NewHeader, SectionTitle } from '@radicalbit/radicalbit-design-system';
+import Lucide from '@Components/lucide';
+import { NewHeader, SectionTitle } from '@radicalbit/radicalbit-design-system';
+import { SlidersHorizontal } from 'lucide-react';
 
 function ConfigurationsListHeader() {
   return (
@@ -8,7 +9,7 @@ function ConfigurationsListHeader() {
         <SectionTitle
           subtitle="Write, generate, and publish your gateway configuration. AI-assisted or manual YAML."
           title="Configurations"
-          titlePrefix={<FontAwesomeIcon icon={faSliders} />}
+          titlePrefix={<Lucide icon={SlidersHorizontal} />}
         />
       )}
     />

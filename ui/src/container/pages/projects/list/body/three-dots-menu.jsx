@@ -1,3 +1,4 @@
+import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import DeleteProject from '@Container/pages/projects/list/delete-project';
 import useGetVisibleConfig from '@Container/pages/projects/use-get-visible-config';
@@ -11,14 +12,13 @@ import {
   useUnserveConfigMutation,
 } from '@State/projects/api';
 import {
-  faCircleStop,
-  faCodePullRequest,
-  faPenToSquare,
-  faPlay,
-  faStop,
-  faTrash,
-} from '@fortawesome/free-solid-svg-icons';
-import { FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
+  CircleStop,
+  GitPullRequest,
+  Play,
+  Square,
+  SquarePen,
+  Trash2,
+} from 'lucide-react';
 
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { data, isLoading, isError, isSuccess } = useGetProjectQuery(uuid, { skip: !uuid });
@@ -64,7 +64,7 @@ const useEditConfigItem = (uuid, visibleConfig) => {
 
   return {
     key: 'edit-configuration',
-    icon: <FontAwesomeIcon icon={faPenToSquare} />,
+    icon: <Lucide icon={SquarePen} />,
     label: 'Edit Configuration',
     onClick: handleOnClick,
   };
@@ -138,7 +138,7 @@ const useVisibleConfigItems = (uuid, config) => {
   if (config.configStatus === ConfigStatusEnum.DRAFT && config.updatedAt && config.configFile) {
     items.push({
       key: `approve-config-${configUuid}`,
-      icon: <FontAwesomeIcon icon={faCodePullRequest} />,
+      icon: <Lucide icon={GitPullRequest} />,
       label: 'Request to Publish',
       onClick: handleOnApprove,
     });
@@ -147,14 +147,14 @@ const useVisibleConfigItems = (uuid, config) => {
   if (config.configStatus === ConfigStatusEnum.READY_TO_SERVE) {
     items.push({
       key: `cancel-approval-${configUuid}`,
-      icon: <FontAwesomeIcon icon={faCircleStop} />,
+      icon: <Lucide icon={CircleStop} />,
       label: 'Cancel Publish Request',
       onClick: handleOnCancel,
     });
 
     items.push({
       key: `serve-config-${configUuid}`,
-      icon: <FontAwesomeIcon icon={faPlay} />,
+      icon: <Lucide icon={Play} />,
       label: 'Publish',
       onClick: handleOnServe,
     });
@@ -163,7 +163,7 @@ const useVisibleConfigItems = (uuid, config) => {
   if (config.configStatus === ConfigStatusEnum.SERVED) {
     items.push({
       key: `unserve-config-${configUuid}`,
-      icon: <FontAwesomeIcon icon={faStop} />,
+      icon: <Lucide icon={Square} />,
       label: 'Unpublish',
       onClick: handleOnUnserve,
     });
@@ -179,7 +179,7 @@ const useDeleteProjectItems = (uuid) => [
     label: (
       <DeleteProject uuid={uuid}>
         <div className="is-error flex items-center gap-2">
-          <FontAwesomeIcon icon={faTrash} />
+          <Lucide icon={Trash2} />
 
           Delete project
         </div>

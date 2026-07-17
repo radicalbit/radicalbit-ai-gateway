@@ -1,3 +1,4 @@
+import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import {
@@ -5,9 +6,9 @@ import {
   useGetProjectQuery,
   useUpdateConfigMutation,
 } from '@State/projects/api';
-import { faCodePullRequest } from '@fortawesome/free-solid-svg-icons';
 import { useFormbitContext } from '@radicalbit/formbit';
-import { Button, FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
+import { Button } from '@radicalbit/radicalbit-design-system';
+import { GitPullRequest } from 'lucide-react';
 
 function RequestToPublish({ config, projectUuid }) {
   const configUuid = config.uuid;
@@ -45,8 +46,8 @@ function RequestToPublish({ config, projectUuid }) {
       disabled={isPublishDisabled}
       loading={approveArgs.isLoading}
       onClick={handleOnPublish}
-      prefix={<FontAwesomeIcon icon={faCodePullRequest} />}
-      type="primary"
+      prefix={<Lucide icon={GitPullRequest} />}
+      type="primary-outlined"
     >
       Request to Publish
     </Button>

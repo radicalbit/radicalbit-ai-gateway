@@ -1,10 +1,11 @@
+import Lucide from '@Components/lucide';
 import TimeFilter from '@Components/time-filter';
 import useModals from '@Hooks/use-modals';
-import { faArrowLeft } from '@fortawesome/free-solid-svg-icons';
 import {
-  FontAwesomeIcon, NewHeader, RbitModal,
+  NewHeader, RbitModal,
   SectionTitle,
 } from '@radicalbit/radicalbit-design-system';
+import { ArrowLeft } from 'lucide-react';
 import InvocationsGraph from './invocations-graph';
 import RequestsGraph from './requests-graph';
 import RouteDetailTable from './route-detail-table';
@@ -21,7 +22,7 @@ function RouteAnalytics() {
       header={(
         <NewHeader
           details={{ one: <TimeFilter /> }}
-          prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={hideModal} />}
+          prefix={<Lucide icon={ArrowLeft} onClick={hideModal} />}
           title={(
             <SectionTitle
               subtitle={routeName}

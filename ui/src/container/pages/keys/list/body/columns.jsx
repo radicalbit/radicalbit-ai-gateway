@@ -1,16 +1,12 @@
 import HtmlAnchor from '@Components/html-anchor';
+import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import useModals, { modals } from '@Hooks/use-modals';
 import { DATE_FORMAT, GATEWAY_OWNER, PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import { useGetKeyQuery } from '@State/keys/api';
 import {
-  faEdit, faPlus, faTrash,
-  faXmark,
-} from '@fortawesome/free-solid-svg-icons';
-import {
   DataTableAction,
-  FontAwesomeIcon,
   Popconfirm,
   RelativeDateTime,
   SectionTitle,
@@ -18,6 +14,7 @@ import {
   TextWithBold,
   Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
+import { Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DeleteKey from '../delete-key';
 
@@ -141,7 +138,7 @@ function ActionAssociateGroup({ uuid }) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
         <span>
-          <FontAwesomeIcon className="px-4" disabled icon={faPlus} />
+          <Lucide className="px-4" icon={Plus} />
         </span>
       </Tooltip>
     );
@@ -149,7 +146,7 @@ function ActionAssociateGroup({ uuid }) {
 
   return (
     <Tooltip title="Associate group">
-      <FontAwesomeIcon className="px-4" icon={faPlus} onClick={handleOnAdd} />
+      <Lucide className="px-4" icon={Plus} onClick={handleOnAdd} />
     </Tooltip>
   );
 }
@@ -190,7 +187,7 @@ function ActionRemoveGroup({ uuid }) {
       <div className="flex">
         <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
           <span>
-            <FontAwesomeIcon className="px-4" disabled icon={faTrash} />
+            <Lucide className="px-4" icon={Trash2} />
           </span>
         </Tooltip>
       </div>
@@ -203,7 +200,7 @@ function ActionRemoveGroup({ uuid }) {
         <Popconfirm
           cancelButtonProps={{ type: 'secondary-light' }}
           description={<TextWithBold bold={groupName} isQuestion text="Are you sure you want to remove the credential from the group" />}
-          label={<FontAwesomeIcon className="px-4" icon={faXmark} />}
+          label={<Lucide className="px-4" icon={X} />}
           okText={<div className="is-error">Remove</div>}
           okType="error-light"
           onCancel={handleOnCancel}
@@ -238,7 +235,7 @@ function ActionEditKey({ uuid }) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
         <span>
-          <FontAwesomeIcon className="px-4" disabled icon={faEdit} />
+          <Lucide className="px-4" icon={Pencil} />
         </span>
       </Tooltip>
     );
@@ -246,7 +243,7 @@ function ActionEditKey({ uuid }) {
 
   return (
     <Tooltip title="Edit credential">
-      <FontAwesomeIcon className="px-4" icon={faEdit} onClick={handleOnEditKey} />
+      <Lucide className="px-4" icon={Pencil} onClick={handleOnEditKey} />
     </Tooltip>
   );
 }
@@ -268,7 +265,7 @@ function ActionDeleteKey({ uuid }) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
         <span>
-          <FontAwesomeIcon className="px-4" disabled icon={faTrash} />
+          <Lucide className="px-4" icon={Trash2} />
         </span>
       </Tooltip>
     );
@@ -277,7 +274,7 @@ function ActionDeleteKey({ uuid }) {
   return (
     <DeleteKey uuid={uuid}>
       <Tooltip title="Delete credential">
-        <FontAwesomeIcon className="px-4" icon={faTrash} />
+        <Lucide className="px-4" icon={Trash2} />
       </Tooltip>
     </DeleteKey>
   );

@@ -1,8 +1,9 @@
+import Lucide from '@Components/lucide';
 import { numberFormatterInt } from '@Src/constants';
-import { faSliders } from '@fortawesome/free-solid-svg-icons';
 import {
-  Button, Divider, FontAwesomeIcon, Popover,
+  Button, Divider, Popover,
 } from '@radicalbit/radicalbit-design-system';
+import { SlidersHorizontal } from 'lucide-react';
 
 function Limits({ metrics, configuration }) {
   const rateLimitTriggered = metrics?.rateLimitTriggered;
@@ -12,7 +13,7 @@ function Limits({ metrics, configuration }) {
   if (rateLimitTriggered === undefined && tokenInputLimitTriggered === undefined && tokenOutputLimitTriggered === undefined) {
     return (
       <Button disabled shape="circle">
-        <FontAwesomeIcon icon={faSliders} />
+        <Lucide icon={SlidersHorizontal} />
       </Button>
     );
   }
@@ -23,7 +24,7 @@ function Limits({ metrics, configuration }) {
   return (
     <Popover content={<PopoverContent configuration={configuration} metrics={metrics} />} minWidth="250" title={<strong>Limits</strong>}>
       <Button shape="circle" {...btnType}>
-        <FontAwesomeIcon icon={faSliders} />
+        <Lucide icon={SlidersHorizontal} />
       </Button>
     </Popover>
   );

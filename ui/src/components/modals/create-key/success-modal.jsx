@@ -1,10 +1,11 @@
+import Lucide from '@Components/lucide';
 import useModals from '@Hooks/use-modals';
-import { faCopy } from '@fortawesome/free-solid-svg-icons';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
   Button,
-  CopyToClipboard, FontAwesomeIcon, RbitModal, SectionTitle,
+  CopyToClipboard, RbitModal, SectionTitle,
 } from '@radicalbit/radicalbit-design-system';
+import { Copy } from 'lucide-react';
 
 function SuccessModal() {
   const { hideModal } = useModals();
@@ -30,7 +31,7 @@ function SuccessModal() {
       <CopyToClipboard link={apiKey} modifier="flex gap-2 items-center justify-center" tooltip={{ mouseEnterDelay: 0 }}>
         {apiKey}
 
-        <FontAwesomeIcon icon={faCopy} />
+        <Lucide icon={Copy} />
       </CopyToClipboard>
     </RbitModal>
   );

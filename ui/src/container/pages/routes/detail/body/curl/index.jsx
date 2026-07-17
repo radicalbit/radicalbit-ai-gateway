@@ -2,9 +2,10 @@ import { GATEWAY_BASE_URL } from '@Api/config';
 import CodeBlock from '@Components/code-block';
 import CodeBlockRawText from '@Components/code-block/raw-text';
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
+import Lucide from '@Components/lucide';
 import { useGetProjectQuery } from '@State/projects/api';
-import { faKey } from '@fortawesome/free-solid-svg-icons';
-import { FontAwesomeIcon, Input, Skeleton } from '@radicalbit/radicalbit-design-system';
+import { Input, Skeleton } from '@radicalbit/radicalbit-design-system';
+import { Key } from 'lucide-react';
 import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
@@ -57,7 +58,7 @@ function IsSuccess() {
         <Input
           onChange={handleOnChangeApiKey}
           placeholder="Paste your credential"
-          prefix={<FontAwesomeIcon icon={faKey} />}
+          prefix={<Lucide icon={Key} />}
           value={apiKey}
         />
       )}

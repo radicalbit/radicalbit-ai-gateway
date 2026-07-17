@@ -1,7 +1,7 @@
 import Logo from '@Img/logo.png';
 import { PathsEnum } from '@Src/constants';
 import { useGetGroupQuery } from '@State/groups/api';
-import { Board, Button, Void } from '@radicalbit/radicalbit-design-system';
+import { Board, Button, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
 import { useNavigate, useParams } from 'react-router-dom';
 import Keys from './keys';
 import Routes from './routes';
@@ -16,7 +16,7 @@ function GroupDetail() {
   }
 
   if (isLoading) {
-    return 'Loading...';
+    return <IsLoading />;
   }
 
   if (!isSuccess) {
@@ -28,6 +28,16 @@ function GroupDetail() {
       <Routes />
 
       <Keys />
+    </div>
+  );
+}
+
+function IsLoading() {
+  return (
+    <div className="flex flex-col gap-4">
+      <Skeleton active paragraph={{ rows: 3 }} />
+
+      <Skeleton active paragraph={{ rows: 3 }} />
     </div>
   );
 }

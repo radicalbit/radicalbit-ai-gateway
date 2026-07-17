@@ -1,11 +1,11 @@
-import { faCopy, faMinus, faPlus } from '@fortawesome/free-solid-svg-icons';
+import Lucide from '@Components/lucide';
 import {
   Button,
   CopyToClipboard,
-  FontAwesomeIcon,
   Tooltip,
 } from '@radicalbit/radicalbit-design-system';
 import classNames from 'classnames';
+import { Copy, Minus, Plus } from 'lucide-react';
 import { useState } from 'react';
 import './_styles.less';
 
@@ -88,18 +88,18 @@ function CodeBlock({
         {isFontResizable && (
           <div className="c-code-block__actions__resize">
             <Tooltip title="Increase font size">
-              <Button onClick={handleOnIncreaseFontSize} size="small" type="secondary"><FontAwesomeIcon icon={faPlus} /></Button>
+              <Button onClick={handleOnIncreaseFontSize} size="small" type="secondary"><Lucide icon={Plus} /></Button>
             </Tooltip>
 
             <Tooltip title="Decrease font size">
-              <Button onClick={handleOnDecreaseFontSize} size="small" type="secondary"><FontAwesomeIcon icon={faMinus} /></Button>
+              <Button onClick={handleOnDecreaseFontSize} size="small" type="secondary"><Lucide icon={Minus} /></Button>
             </Tooltip>
           </div>
         )}
 
         {hasCopyToClipboard && (
           <CopyToClipboard className="c-code-block__actions__copy-to-clipboard" link={code} tooltip={{ mouseEnterDelay: 0 }}>
-            <FontAwesomeIcon icon={faCopy} />
+            <Lucide icon={Copy} />
 
             <div>{copyToClipboardText}</div>
           </CopyToClipboard>

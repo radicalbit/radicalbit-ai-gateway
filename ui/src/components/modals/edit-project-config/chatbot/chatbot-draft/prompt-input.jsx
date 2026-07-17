@@ -1,12 +1,13 @@
+import Lucide from '@Components/lucide';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import { useGenerateConfigMutation } from '@State/projects/api';
-import { faPaperPlane } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
-  Button, FontAwesomeIcon, NewHeader, Spin, TextArea,
+  Button, NewHeader, Spin, TextArea,
 } from '@radicalbit/radicalbit-design-system';
+import { Send } from 'lucide-react';
 
-const TEXTAREA_ROWS = 3;
+const TEXTAREA_ROWS = 4;
 
 function PromptInput({
   config, projectUuid, description, setDescription, setError, setIsGenerated, isGenerated,
@@ -68,18 +69,26 @@ function PromptInput({
                     onClick={handleOnGenerate}
                     type="primary"
                   >
-                    <FontAwesomeIcon icon={faPaperPlane} />
+                    <Lucide icon={Send} />
                   </Button>
                 )}
               </>
             ),
           }}
-          title={<i className="color-secondary-01 font-normal">Describe your routes and parameters, add api keys and any custom values. Read configuration docs</i>}
+          padding="vertical"
+          title={(
+            <i className="color-secondary-01 font-normal">
+              <div>
+                Describe your routes and parameters, add api keys and any custom values.
+                <br />
+                AI can read the current selected configuration.
+              </div>
+            </i>
+          )}
         />
       )}
       main={(
         <TextArea
-          bordered={false}
           disabled={isLoading}
           onChange={handleOnChangeDescription}
           onKeyDown={handleOnKeyDown}
@@ -88,7 +97,7 @@ function PromptInput({
           value={description}
         />
       )}
-      size="xsmall"
+      size="small"
     />
   );
 }

@@ -1,9 +1,10 @@
+import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
-import { faChartLine } from '@fortawesome/free-solid-svg-icons';
 import {
-  DataTableAction, FontAwesomeIcon,
+  DataTableAction,
   Tooltip,
 } from '@radicalbit/radicalbit-design-system';
+import { ChartLine } from 'lucide-react';
 
 function Analytics({ record }) {
   const { showModal } = useModals();
@@ -15,7 +16,7 @@ function Analytics({ record }) {
   return (
     <DataTableAction>
       <Tooltip title="Open route analytics">
-        <FontAwesomeIcon className="p-4" icon={faChartLine} onClick={handleOnClick} />
+        <Lucide className="p-4" icon={ChartLine} onClick={handleOnClick} />
       </Tooltip>
     </DataTableAction>
   );

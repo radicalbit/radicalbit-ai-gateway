@@ -1,17 +1,20 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
+import Lucide from '@Components/lucide';
 import { notificationErrorJson } from '@Helpers/notificationUtils';
 import useModals from '@Hooks/use-modals';
+import { ConfigStatusEnum } from '@Src/constants';
 import { actions as notificationActions } from '@State/notification';
 import { useGetProjectQuery, useImportConfigMutation, useLazyExportAllConfigsQuery, useLazyExportConfigQuery } from '@State/projects/api';
-import { faArrowLeft, faFileExport, faFileImport, faFolderOpen } from '@fortawesome/free-solid-svg-icons';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
   Button,
   Dropdown,
-  FontAwesomeIcon,
   NewHeader, RbitModal, SectionTitle, Skeleton,
   Upload,
 } from '@radicalbit/radicalbit-design-system';
+import {
+  ArrowLeft, FileDown, FileUp, FolderOpen,
+} from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import Chatbot from './chatbot';
@@ -72,7 +75,7 @@ function Header() {
   if (isLoading) {
     return (
       <NewHeader
-        prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={hideModal} />}
+        prefix={<Lucide icon={ArrowLeft} onClick={hideModal} />}
         title={<Skeleton.Input active />}
       />
     );
@@ -86,8 +89,8 @@ function Header() {
           two: <ExportButton />,
         }
       }
-      prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={hideModal} />}
-      title={<SectionTitle subtitle={subtitle} title={title} titlePrefix={<FontAwesomeIcon icon={faFolderOpen} />} />}
+      prefix={<Lucide icon={ArrowLeft} onClick={hideModal} />}
+      title={<SectionTitle subtitle={subtitle} title={title} titlePrefix={<Lucide icon={FolderOpen} />} />}
     />
   );
 }
@@ -99,8 +102,11 @@ function ImportButton() {
 
   const { activeConfig } = useGetActiveConfig();
   const configUuid = activeConfig?.uuid;
+  const isNotDraft = activeConfig?.configStatus !== ConfigStatusEnum.DRAFT;
 
   const [trigger, { isLoading }] = useImportConfigMutation({ fixedCacheKey: `import-config-${uuid}` });
+
+  const isDisabled = isLoading || isNotDraft;
 
   const notifyError = (content) => {
     dispatch(notificationActions.setNotificationMessage(notificationErrorJson({ message: content })));
@@ -134,10 +140,10 @@ function ImportButton() {
     <Upload
       accept={ACCEPTED_IMPORT_EXTENSIONS}
       beforeUpload={handleBeforeUpload}
-      disabled={isLoading}
+      disabled={isDisabled}
       showUploadList={false}
     >
-      <Button disabled={isLoading} icon={<FontAwesomeIcon icon={faFileImport} />} loading={isLoading} onClick={() => {}}>
+      <Button disabled={isDisabled} icon={<Lucide icon={FileDown} />} loading={isLoading} onClick={() => {}} type="primary-outlined">
         Import
       </Button>
     </Upload>
@@ -196,7 +202,7 @@ function ExportButton() {
 
   return (
     <Dropdown menu={{ items }} trigger={['hover']}>
-      <Button icon={<FontAwesomeIcon icon={faFileExport} />} loading={isExporting}>
+      <Button icon={<Lucide icon={FileUp} />} loading={isExporting} type="primary-outlined">
         Export
       </Button>
     </Dropdown>

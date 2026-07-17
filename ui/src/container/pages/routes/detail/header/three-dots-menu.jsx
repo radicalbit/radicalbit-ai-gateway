@@ -1,6 +1,7 @@
+import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
-import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons';
-import { Button, Dropdown, FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
+import { Button, Dropdown } from '@radicalbit/radicalbit-design-system';
+import { EllipsisVertical } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
 function ThreeDotsMenu() {
@@ -10,7 +11,7 @@ function ThreeDotsMenu() {
   return (
     <Dropdown menu={{ items }}>
       <Button type="text">
-        <FontAwesomeIcon icon={faEllipsisVertical} />
+        <Lucide icon={EllipsisVertical} />
       </Button>
     </Dropdown>
 

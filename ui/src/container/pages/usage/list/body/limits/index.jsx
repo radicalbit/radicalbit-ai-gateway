@@ -1,6 +1,9 @@
-import SomethingWentWrong from '@Components/error-page/something-went-wrong';
+import Lucide from '@Components/lucide';
 import { useGetLimitsStreamWithRange } from '@State/usage/vertical-hooks';
-import { Board, DataTable, FormField, Void } from '@radicalbit/radicalbit-design-system';
+import {
+  Board, Button, DataTable, FormField, Void,
+} from '@radicalbit/radicalbit-design-system';
+import { TriangleAlert } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import ProjectFilter from '../project-filter';
 import RoutesFilter from '../routes-filter';
@@ -55,11 +58,11 @@ function DataContent() {
     ? searchParams.get('windowStatuses').split(',')
     : [];
 
-  const { data, isLoading, isError } = useGetLimitsStreamWithRange({ routes, windowStatuses });
+  const { data, isLoading, isError, isFetching, refetch } = useGetLimitsStreamWithRange({ routes, windowStatuses });
   const dataSource = data || [];
 
   if (isError) {
-    <Board main={<SomethingWentWrong />} />;
+    return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
   return (
@@ -70,6 +73,30 @@ function DataContent() {
       pagination={false}
       rowKey={({ routeName: key }) => key}
     />
+  );
+}
+
+function IsError({ isFetching, refetch }) {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
+            description={(
+              <>
+                This might be temporary
+                <br />
+                please retry later
+              </>
+            )}
+            image={<Lucide icon={TriangleAlert} />}
+            title="Unable to load usage data"
+          />
+        )}
+        width="100%"
+      />
+    </div>
   );
 }
 

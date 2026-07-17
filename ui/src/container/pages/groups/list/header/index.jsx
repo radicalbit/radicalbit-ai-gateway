@@ -1,12 +1,13 @@
+import Lucide from '@Components/lucide';
 import { CollapsedTitle } from '@Container/layout';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetGroupsQuery } from '@State/groups/api';
-import { faPlus, faLayerGroup } from '@fortawesome/free-solid-svg-icons';
 import {
-  Button, FontAwesomeIcon, NewHeader,
+  Button, NewHeader,
   SectionTitle,
   Tooltip,
 } from '@radicalbit/radicalbit-design-system';
+import { Layers, Plus } from 'lucide-react';
 import { useEffect } from 'react';
 import Subtitle from './subtitle';
 
@@ -25,7 +26,7 @@ function GroupsListHeader() {
         <SectionTitle
           subtitle={<Subtitle />}
           title="Groups"
-          titlePrefix={<FontAwesomeIcon icon={faLayerGroup} />}
+          titlePrefix={<Lucide icon={Layers} />}
         />
       )}
     />
@@ -41,7 +42,7 @@ function CreateGroupButton() {
 
   return (
     <TooltipCreateNewGroup>
-      <Button icon={<FontAwesomeIcon icon={faPlus} />} onClick={handleOnClick} type="primary">
+      <Button icon={<Lucide icon={Plus} />} onClick={handleOnClick} type="primary">
         Create group
       </Button>
     </TooltipCreateNewGroup>

@@ -23,26 +23,11 @@ function SpanLatencies() {
   }
 
   if (isError) {
-    return (
-      <Board
-        header={<SectionTitle title="Span latencies" />}
-        main={<SomethingWentWrong size="small" />}
-      />
-    );
+    return <IsError />;
   }
 
   if (!data?.data?.length) {
-    return (
-      <Board
-        header={<SectionTitle title="Span latencies" />}
-        main={(
-          <Void
-            description="No span latency data available yet."
-            title="Span latencies"
-          />
-        )}
-      />
-    );
+    return <IsEmpty />;
   }
 
   if (!isSuccess) {
@@ -130,6 +115,29 @@ function IsSuccess() {
           rowClassName={({ header }) => header ? undefined : DataTable.ROW_NOT_CLICKABLE}
           rowKey={(({ key }) => key)}
           sticky
+        />
+      )}
+    />
+  );
+}
+
+function IsError() {
+  return (
+    <Board
+      header={<SectionTitle title="Span latencies" />}
+      main={<SomethingWentWrong size="small" />}
+    />
+  );
+}
+
+function IsEmpty() {
+  return (
+    <Board
+      header={<SectionTitle title="Span latencies" />}
+      main={(
+        <Void
+          description="No span latency data available yet."
+          title="Span latencies"
         />
       )}
     />

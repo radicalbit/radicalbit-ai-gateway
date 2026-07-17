@@ -1,5 +1,5 @@
-import HtmlAnchor from '@Components/html-anchor';
 import useModals from '@Hooks/use-modals';
+import { Button } from '@radicalbit/radicalbit-design-system';
 
 function Close() {
   const { hideModal } = useModals();
@@ -9,9 +9,9 @@ function Close() {
   };
 
   return (
-    <HtmlAnchor onClick={handleOnClose} type="link">
+    <Button onClick={handleOnClose} type="text">
       Close
-    </HtmlAnchor>
+    </Button>
   );
 }
 

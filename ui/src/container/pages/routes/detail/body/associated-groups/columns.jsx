@@ -1,11 +1,12 @@
+import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import { DATE_FORMAT } from '@Src/constants';
 import { useRemoveRouteFromGroupMutation } from '@State/groups/api';
-import { faTrash } from '@fortawesome/free-solid-svg-icons';
 import {
-  DataTableAction, FontAwesomeIcon,
+  DataTableAction,
   Popconfirm, RelativeDateTime, SectionTitle, TextWithBold, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
+import { Trash2 } from 'lucide-react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
 const columns = [
@@ -68,7 +69,7 @@ function Actions({ record: { uuid } }) {
         <Popconfirm
           cancelButtonProps={{ type: 'secondary-light' }}
           description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove from the route the group" />}
-          label={<FontAwesomeIcon icon={faTrash} />}
+          label={<Lucide icon={Trash2} />}
           okText={<div className="is-error">Remove</div>}
           okType="error-light"
           onCancel={handleOnCancel}

@@ -1,9 +1,10 @@
+import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetGroupQuery } from '@State/groups/api';
-import { faPlus } from '@fortawesome/free-solid-svg-icons';
 import {
-  Button, Collapse, DataTable, FontAwesomeIcon, Spinner, Tooltip,
+  Button, Collapse, DataTable, Spinner, Tooltip,
 } from '@radicalbit/radicalbit-design-system';
+import { Plus } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { GATEWAY_OWNER, PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import columns from './columns';
@@ -61,11 +62,11 @@ function LabelKey() {
     ? (
       <Tooltip title={DISABLED_GROUP_TOOLTIP}>
         <span>
-          <Button disabled icon={<FontAwesomeIcon icon={faPlus} />}>Associate credentials</Button>
+          <Button disabled icon={<Lucide icon={Plus} />}>Associate credentials</Button>
         </span>
       </Tooltip>
     )
-    : <Button icon={<FontAwesomeIcon icon={faPlus} />} onClick={handleOnClick}>Associate credentials</Button>;
+    : <Button icon={<Lucide icon={Plus} />} onClick={handleOnClick}>Associate credentials</Button>;
 
   return (
     <div className="flex justify-between items-center">

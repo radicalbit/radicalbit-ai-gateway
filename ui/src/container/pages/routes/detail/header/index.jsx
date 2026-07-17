@@ -1,12 +1,13 @@
+import Lucide from '@Components/lucide';
 import { PathsEnum } from '@Src/constants';
 import { useGetRouteByNameWithRange } from '@Src/store/state/routes/vertical-hooks';
-import { faArrowLeft } from '@fortawesome/free-solid-svg-icons';
 import {
   CopyToClipboard,
-  FontAwesomeIcon, NewHeader,
+  NewHeader,
   SectionTitle,
   Skeleton,
 } from '@radicalbit/radicalbit-design-system';
+import { ArrowLeft } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ThreeDotsMenu from './three-dots-menu';
 
@@ -29,7 +30,7 @@ function RouteDetailHeader() {
   if (isError) {
     return (
       <NewHeader
-        prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={handleOnClick} />}
+        prefix={<Lucide icon={ArrowLeft} onClick={handleOnClick} />}
       />
     );
   }
@@ -41,7 +42,7 @@ function RouteDetailHeader() {
   return (
     <NewHeader
       details={{ one: <ThreeDotsMenu /> }}
-      prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={handleOnClick} />}
+      prefix={<Lucide icon={ArrowLeft} onClick={handleOnClick} />}
       title={(
         <SectionTitle
           icon={<CopyToClipboard link={routeName} tooltip={{ mouseEnterDelay: 0 }} />}
@@ -63,7 +64,7 @@ function IsLoading() {
 
   return (
     <NewHeader
-      prefix={<FontAwesomeIcon icon={faArrowLeft} onClick={handleOnClick} />}
+      prefix={<Lucide icon={ArrowLeft} onClick={handleOnClick} />}
       title={<Skeleton active block paragraph={0} />}
     />
   );

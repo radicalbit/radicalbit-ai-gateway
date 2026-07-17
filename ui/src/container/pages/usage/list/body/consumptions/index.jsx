@@ -1,8 +1,11 @@
-import SomethingWentWrong from '@Components/error-page/something-went-wrong';
+import Lucide from '@Components/lucide';
 import TimeFilter from '@Components/time-filter';
 import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetCostsSummaryStreamWithRange } from '@State/usage/vertical-hooks';
-import { Board, FormField, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
+import {
+  Board, Button, FormField, Skeleton, Void,
+} from '@radicalbit/radicalbit-design-system';
+import { TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
@@ -61,14 +64,14 @@ function DataContent() {
     ? searchParams.get('routes').split(',')
     : [];
 
-  const { isError, isFetching, isSuccess } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
+  const { isError, isFetching, isSuccess, refetch } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
 
   if (isFetching) {
     return <Skeleton.Node active style={{ height: '20rem', width: '100%' }} />;
   }
 
   if (isError) {
-    <Board main={<SomethingWentWrong />} />;
+    return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
   if (!isSuccess) {
@@ -94,6 +97,30 @@ function DataContent() {
         </div>
       </div>
     </>
+  );
+}
+
+function IsError({ isFetching, refetch }) {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
+            description={(
+              <>
+                This might be temporary
+                <br />
+                please retry later
+              </>
+            )}
+            image={<Lucide icon={TriangleAlert} />}
+            title="Unable to load usage data"
+          />
+        )}
+        width="100%"
+      />
+    </div>
   );
 }
 
