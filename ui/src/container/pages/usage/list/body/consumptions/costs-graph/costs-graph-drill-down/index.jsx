@@ -1,4 +1,5 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
+import Lucide from '@Components/lucide';
 import { useGetGroupQuery } from '@State/groups/api';
 import { useGetKeyQuery } from '@State/keys/api';
 import {
@@ -6,8 +7,7 @@ import {
   useGetCostsByKeyStreamWithRange,
   useGetCostsByModelStreamWithRange,
 } from '@State/usage/vertical-hooks';
-import { faArrowLeft } from '@fortawesome/free-solid-svg-icons';
-import { Button, FontAwesomeIcon, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
+import { Button, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import { BarChart } from 'echarts/charts';
 import {
@@ -19,10 +19,12 @@ import {
 } from 'echarts/components';
 import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
+import { ArrowLeft } from 'lucide-react';
 import { useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import '../_styles.less';
+import { GROUP_BY } from '../group-by';
 import option from './option';
 
 echarts.use([
@@ -52,17 +54,7 @@ function CostsGraphDrillDown() {
   }
 
   if (!data?.data?.length) {
-    return (
-      <div className="relative">
-        <Void
-          description="No cost data available yet. Chart will appear automatically when some data arrived."
-          style={chartWidthAndHeight}
-          title="Cost Analysis Overview"
-        />
-
-        <BackButton />
-      </div>
-    );
+    return <IsEmpty />;
   }
 
   if (!isSuccess) {
@@ -70,6 +62,20 @@ function CostsGraphDrillDown() {
   }
 
   return <IsSuccess />;
+}
+
+function IsEmpty() {
+  return (
+    <div className="relative">
+      <Void
+        description="No cost data available yet. Chart will appear automatically when some data arrived."
+        style={chartWidthAndHeight}
+        title="Cost Analysis Overview"
+      />
+
+      <BackButton />
+    </div>
+  );
 }
 
 function IsSuccess() {
@@ -124,7 +130,7 @@ function BackButton() {
   return (
     <div className="absolute right-8 top-4 z-10">
       <Button onClick={handleOnClick} suffix={<Label />} type="primary">
-        <FontAwesomeIcon icon={faArrowLeft} />
+        <Lucide icon={ArrowLeft} />
       </Button>
     </div>
   );
@@ -135,21 +141,21 @@ function Label() {
   const drillDownEntity = searchParams.get('drillDownEntity');
   const drillDownId = searchParams.get('drillDownId');
 
-  const { data: groupData, isLoading: isLoadingGroup } = useGetGroupQuery(drillDownId, { skip: drillDownEntity !== 'groups' });
-  const { data: keyData, isLoading: isLoadingKey } = useGetKeyQuery(drillDownId, { skip: drillDownEntity !== 'keys' });
+  const { data: groupData, isLoading: isLoadingGroup } = useGetGroupQuery(drillDownId, { skip: drillDownEntity !== GROUP_BY.groups.key });
+  const { data: keyData, isLoading: isLoadingKey } = useGetKeyQuery(drillDownId, { skip: drillDownEntity !== GROUP_BY.credentials.key });
 
   if (isLoadingGroup || isLoadingKey) {
     return <span>Loading ...</span>;
   }
 
   switch (drillDownEntity) {
-    case 'models':
+    case GROUP_BY.models.key:
       return <span>{`Model: ${drillDownId}`}</span>;
 
-    case 'groups':
+    case GROUP_BY.groups.key:
       return <span>{`Group: ${groupData?.name}`}</span>;
 
-    case 'keys':
+    case GROUP_BY.credentials.key:
       return <span>{`Credential: ${keyData?.name}`}</span>;
 
     default:
@@ -165,9 +171,9 @@ function useDrillDownData() {
     ? searchParams.get('routes').split(',')
     : [];
 
-  const isModels = drillDownEntity === 'models';
-  const isGroups = drillDownEntity === 'groups';
-  const isKeys = drillDownEntity === 'keys';
+  const isModels = drillDownEntity === GROUP_BY.models.key;
+  const isGroups = drillDownEntity === GROUP_BY.groups.key;
+  const isKeys = drillDownEntity === GROUP_BY.credentials.key;
 
   const modelResult = useGetCostsByModelStreamWithRange(
     { modelId: drillDownId, routes },
@@ -185,11 +191,11 @@ function useDrillDownData() {
   );
 
   switch (drillDownEntity) {
-    case 'models':
+    case GROUP_BY.models.key:
       return modelResult;
-    case 'groups':
+    case GROUP_BY.groups.key:
       return groupResult;
-    case 'keys':
+    case GROUP_BY.credentials.key:
       return keyResult;
     default:
       return modelResult;

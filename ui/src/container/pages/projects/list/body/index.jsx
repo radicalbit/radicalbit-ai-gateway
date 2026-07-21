@@ -1,4 +1,4 @@
-import SomethingWentWrong from '@Components/error-page/something-went-wrong';
+import Lucide from '@Components/lucide';
 import { CreateProjectButton } from '@Container/pages/projects/list/header';
 import { SEARCH_PARAMS } from '@Src/constants';
 import {
@@ -9,15 +9,15 @@ import {
   useServeConfigMutation,
   useUnserveConfigMutation,
 } from '@State/projects/api';
-import { faCircleXmark } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
+  Button,
   DataTable,
-  FontAwesomeIcon,
   Search,
   Spin,
   Void,
 } from '@radicalbit/radicalbit-design-system';
+import { CircleX, Inbox, TriangleAlert } from 'lucide-react';
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import getColumns from './columns';
@@ -48,9 +48,9 @@ function ProjectsList() {
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      <div className="flex flex-row items-center gap-4 pt-4">
+      <div className="flex flex-row items-center gap-4">
         <Search
-          allowClear={{ clearIcon: <FontAwesomeIcon icon={faCircleXmark} /> }}
+          allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
           onChange={handleSearchChange}
           placeholder="Search projects by name"
           style={{ width: '300px' }}
@@ -95,33 +95,20 @@ function ProjectsCount({ searchValue }) {
 }
 
 function ProjectsTable({ searchValue }) {
-  const { data = [], isError, isLoading, isSuccess } = useGetProjectsQuery();
+  const {
+    data = [], isError, isLoading, isFetching, isSuccess, refetch,
+  } = useGetProjectsQuery();
 
   if (isLoading) {
     return <DataTable loading />;
   }
 
   if (isError) {
-    return (
-      <Board
-        main={<SomethingWentWrong size="small" />}
-      />
-    );
+    return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
   if (!data?.length) {
-    return (
-      <Board
-        borderType="none"
-        main={(
-          <Void
-            description="No projects found."
-            title="Projects"
-          />
-        )}
-        suffix={<CreateProjectButton />}
-      />
-    );
+    return <IsEmpty />;
   }
 
   if (!isSuccess) {
@@ -129,6 +116,48 @@ function ProjectsTable({ searchValue }) {
   }
 
   return <IsSuccess searchValue={searchValue} />;
+}
+
+function IsError({ isFetching, refetch }) {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
+            description={(
+              <>
+                This might be temporary
+                <br />
+                please retry later
+              </>
+            )}
+            image={<Lucide icon={TriangleAlert} />}
+            title="Unable to load projects"
+          />
+        )}
+        width="100%"
+      />
+    </div>
+  );
+}
+
+function IsEmpty() {
+  return (
+    <div className="flex justify-center h-full">
+      <Board
+        main={(
+          <Void
+            description="No projects found."
+            image={<Lucide icon={Inbox} />}
+            title="Projects"
+          />
+        )}
+        suffix={<CreateProjectButton />}
+        width="100%"
+      />
+    </div>
+  );
 }
 
 function IsSuccess({ searchValue }) {

@@ -15,6 +15,14 @@ env:
   MIGRATIONS_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway-migrations
   CLICKHOUSE_MIGRATIONS_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway-clickhouse-migrations
   WORKER_IMAGE: ${{ secrets.IMAGE_PREFIX }}/metrics-worker
+  # Dependency-Track project names (registry-independent, stable across builds)
+  APP_PROJECT: radicalbit-ai-gateway
+  MIGRATIONS_PROJECT: radicalbit-ai-gateway-migrations
+  CLICKHOUSE_MIGRATIONS_PROJECT: radicalbit-ai-gateway-clickhouse-migrations
+  WORKER_PROJECT: metrics-worker
+  GATEWAY_PYTHON_PROJECT: radicalbit-ai-gateway-python
+  WORKER_PYTHON_PROJECT: metrics-worker-python
+  UI_PROJECT: radicalbit-ai-gateway-ui
 
 jobs:
   prep:
@@ -142,7 +150,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write # needed for keyless signing with the GitHub OIDC token
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
@@ -151,6 +162,8 @@ jobs:
           merge-multiple: true
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.0.0
       - name: Log in to container registry
         uses: docker/login-action@v3
         with:
@@ -205,3 +218,134 @@ jobs:
           if [[ "${{ needs.prep.outputs.is_semver }}" == "true" ]]; then
             echo "   Latest tags also created for semantic version"
           fi
+
+      - name: Get app manifest digest
+        id: app-manifest
+        run: |
+          DIGEST=$(docker buildx imagetools inspect ${{ env.APP_IMAGE }}:${{ needs.prep.outputs.version }} --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+      - name: Get migrations manifest digest
+        id: migrations-manifest
+        run: |
+          DIGEST=$(docker buildx imagetools inspect ${{ env.MIGRATIONS_IMAGE }}:${{ needs.prep.outputs.version }} --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+      - name: Get clickhouse-migrations manifest digest
+        id: clickhouse-manifest
+        run: |
+          DIGEST=$(docker buildx imagetools inspect ${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}:${{ needs.prep.outputs.version }} --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+      - name: Get metrics-worker manifest digest
+        id: worker-manifest
+        run: |
+          DIGEST=$(docker buildx imagetools inspect ${{ env.WORKER_IMAGE }}:${{ needs.prep.outputs.version }} --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+
+      - name: SBOM → Dependency-Track (app)
+        uses: ./.github/actions/sbom-dependency-track
+        with:
+          image-ref: ${{ env.APP_IMAGE }}@${{ steps.app-manifest.outputs.digest }}
+          project-name: ${{ env.APP_PROJECT }}
+          project-version: ${{ needs.prep.outputs.version }}
+          is-latest: ${{ needs.prep.outputs.is_semver }}
+          project-tags: oss,container,docker
+          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
+          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+      - name: SBOM → Dependency-Track (migrations)
+        uses: ./.github/actions/sbom-dependency-track
+        with:
+          image-ref: ${{ env.MIGRATIONS_IMAGE }}@${{ steps.migrations-manifest.outputs.digest }}
+          project-name: ${{ env.MIGRATIONS_PROJECT }}
+          project-version: ${{ needs.prep.outputs.version }}
+          is-latest: ${{ needs.prep.outputs.is_semver }}
+          project-tags: oss,container,docker
+          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
+          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+      - name: SBOM → Dependency-Track (clickhouse-migrations)
+        uses: ./.github/actions/sbom-dependency-track
+        with:
+          image-ref: ${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@${{ steps.clickhouse-manifest.outputs.digest }}
+          project-name: ${{ env.CLICKHOUSE_MIGRATIONS_PROJECT }}
+          project-version: ${{ needs.prep.outputs.version }}
+          is-latest: ${{ needs.prep.outputs.is_semver }}
+          project-tags: oss,container,docker
+          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
+          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+      - name: SBOM → Dependency-Track (metrics-worker)
+        uses: ./.github/actions/sbom-dependency-track
+        with:
+          image-ref: ${{ env.WORKER_IMAGE }}@${{ steps.worker-manifest.outputs.digest }}
+          project-name: ${{ env.WORKER_PROJECT }}
+          project-version: ${{ needs.prep.outputs.version }}
+          is-latest: ${{ needs.prep.outputs.is_semver }}
+          project-tags: oss,container,docker
+          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
+          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+
+      - name: Sign images with Cosign (keyless)
+        env:
+          APP_DIGEST: ${{ steps.app-manifest.outputs.digest }}
+          MIGRATIONS_DIGEST: ${{ steps.migrations-manifest.outputs.digest }}
+          CLICKHOUSE_DIGEST: ${{ steps.clickhouse-manifest.outputs.digest }}
+          WORKER_DIGEST: ${{ steps.worker-manifest.outputs.digest }}
+        run: |
+          cosign sign --yes "${{ env.APP_IMAGE }}@${APP_DIGEST}"
+          cosign sign --yes "${{ env.MIGRATIONS_IMAGE }}@${MIGRATIONS_DIGEST}"
+          cosign sign --yes "${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@${CLICKHOUSE_DIGEST}"
+          cosign sign --yes "${{ env.WORKER_IMAGE }}@${WORKER_DIGEST}"
+      - name: Verify signatures
+        env:
+          APP_DIGEST: ${{ steps.app-manifest.outputs.digest }}
+          MIGRATIONS_DIGEST: ${{ steps.migrations-manifest.outputs.digest }}
+          CLICKHOUSE_DIGEST: ${{ steps.clickhouse-manifest.outputs.digest }}
+          WORKER_DIGEST: ${{ steps.worker-manifest.outputs.digest }}
+        run: |
+          for REF in \
+            "${{ env.APP_IMAGE }}@${APP_DIGEST}" \
+            "${{ env.MIGRATIONS_IMAGE }}@${MIGRATIONS_DIGEST}" \
+            "${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@${CLICKHOUSE_DIGEST}" \
+            "${{ env.WORKER_IMAGE }}@${WORKER_DIGEST}"; do
+            cosign verify "${REF}" \
+              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/.+@refs/tags/.+" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          done
+
+  source-sbom:
+    runs-on: ubuntu-22.04
+    needs: prep
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python source SBOM → Dependency-Track (gateway)
+        uses: ./.github/actions/python-sbom-dependency-track
+        with:
+          working-directory: ./gateway
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+          project-name: ${{ env.GATEWAY_PYTHON_PROJECT }}
+          project-version: ${{ needs.prep.outputs.version }}
+          is-latest: ${{ needs.prep.outputs.is_semver }}
+          project-tags: oss,python,source
+          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
+          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+      - name: UI source SBOM → Dependency-Track
+        uses: ./.github/actions/ui-sbom-dependency-track
+        with:
+          working-directory: ./ui
+          project-name: ${{ env.UI_PROJECT }}
+          project-version: ${{ needs.prep.outputs.version }}
+          is-latest: ${{ needs.prep.outputs.is_semver }}
+          project-tags: oss,npm,source
+          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
+          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+      - name: Python source SBOM → Dependency-Track (metrics-worker)
+        uses: ./.github/actions/python-sbom-dependency-track
+        with:
+          working-directory: ./metrics-worker
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+          project-name: ${{ env.WORKER_PYTHON_PROJECT }}
+          project-version: ${{ needs.prep.outputs.version }}
+          is-latest: ${{ needs.prep.outputs.is_semver }}
+          project-tags: oss,python,source
+          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
+          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}

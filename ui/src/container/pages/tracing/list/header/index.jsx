@@ -1,7 +1,8 @@
+import Lucide from '@Components/lucide';
 import { TimeFilterCustomOnly } from '@Components/time-filter';
-import { faRoute } from '@fortawesome/free-solid-svg-icons';
-import { FontAwesomeIcon, FormField, NewHeader, SectionTitle, Select } from '@radicalbit/radicalbit-design-system';
+import { FormField, NewHeader, SectionTitle, Select } from '@radicalbit/radicalbit-design-system';
 import { useGetRoutesWithRange } from '@Src/store/state/routes/vertical-hooks';
+import { Route } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import ProjectFilter from './project-filter';
 
@@ -32,7 +33,7 @@ function TracingListHeader() {
         <SectionTitle
           subtitle="Inspect individual requests processed by the gateway."
           title="Tracing"
-          titlePrefix={<FontAwesomeIcon icon={faRoute} />}
+          titlePrefix={<Lucide icon={Route} />}
         />
       )}
     />

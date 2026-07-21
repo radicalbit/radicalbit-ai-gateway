@@ -21,12 +21,7 @@ function TracesChart() {
   }
 
   if (isError) {
-    return (
-      <Board
-        main={<SomethingWentWrong size="small" style={chartWidthAndHeight} />}
-        size="xsmall"
-      />
-    );
+    return <IsError />;
   }
 
   if (!chartData.length) {
@@ -38,6 +33,15 @@ function TracesChart() {
   }
 
   return <TracesChartSuccess />;
+}
+
+function IsError() {
+  return (
+    <Board
+      main={<SomethingWentWrong size="small" style={chartWidthAndHeight} />}
+      size="xsmall"
+    />
+  );
 }
 
 function TracesChartEmpty() {

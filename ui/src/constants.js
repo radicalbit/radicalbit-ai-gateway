@@ -11,10 +11,15 @@ const ModalsEnum = {
   QUERY_NAME: 'modal',
 };
 
+// Hardcoded feature flags. Toggle to enable/disable a feature app-wide.
+const FEATURE_FLAGS = {
+  ALERTS: false, // TODO: enable when the alerts backend is ready (currently mocked)
+};
+
 const PathsEnum = {
+  ALERTS: 'alerts',
   CONFIG: 'config',
   CONFIGURATIONS: 'configs',
-  COSTS: 'costs',
   GROUPS: 'groups',
   CREDENTIALS: 'credentials',
   PROJECTS: 'projects',
@@ -108,7 +113,37 @@ const ProjectStatusEnum = {
   PROD: 'PROD',
 };
 
+const AlertScopeEnum = {
+  ROUTE: 'ROUTE',
+};
+
+const ALERT_SCOPE_LABELS = {
+  [AlertScopeEnum.ROUTE]: 'Route',
+};
+
+const AlertTimeAggregationEnum = {
+  INSTANT: 'instant',
+};
+
+const ALERT_TIME_AGGREGATION_LABELS = {
+  [AlertTimeAggregationEnum.INSTANT]: 'Instant',
+};
+
+const AlertChannelEnum = {
+  EMAIL: 'email',
+};
+
+const ALERT_CHANNEL_LABELS = {
+  [AlertChannelEnum.EMAIL]: 'Email',
+};
+
 export {
+  AlertScopeEnum,
+  ALERT_SCOPE_LABELS,
+  AlertTimeAggregationEnum,
+  ALERT_TIME_AGGREGATION_LABELS,
+  AlertChannelEnum,
+  ALERT_CHANNEL_LABELS,
   ConfigListFilterEnum,
   CONFIG_LIST_FILTER_LABELS,
   ConfigStatusEnum,
@@ -118,6 +153,7 @@ export {
   DEFAULT_POLLING_INTERVAL,
   GATEWAY_OWNER,
   echartNumberFormatter,
+  FEATURE_FLAGS,
   SEARCH_PARAMS,
   MAX_DECIMAL_ROUND,
   ModalsEnum,

@@ -1,22 +1,21 @@
 import { Popup, usePopup } from '@Components/popup';
+import Lucide from '@Components/lucide';
 import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
 import useModals, { modals } from '@Hooks/use-modals';
-import Logo from '@Img/logo.png';
 import {
   useGetKeysQuery, useDeleteKeyMutation, useEditKeyMutation, useAddGroupToKeyMutation,
 } from '@State/keys/api';
 import { SEARCH_PARAMS } from '@Src/constants';
-import { faCircleXmark, faPlus } from '@fortawesome/free-solid-svg-icons';
 import {
   Board,
   Button,
   DataTable,
-  FontAwesomeIcon,
   Search,
   Spin,
   Void,
 } from '@radicalbit/radicalbit-design-system';
+import { CircleX, Inbox, Plus, TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -40,9 +39,9 @@ function KeysList() {
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      <div className="flex flex-row items-center gap-4 pt-4">
+      <div className="flex flex-row items-center gap-4">
         <Search
-          allowClear={{ clearIcon: <FontAwesomeIcon icon={faCircleXmark} /> }}
+          allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
           onChange={handleSearchChange}
           placeholder="Search credentials by name"
           style={{ width: '300px' }}
@@ -93,7 +92,11 @@ function KeysTable({ searchValue }) {
   }
 
   if (isError) {
-    return <IsError refetch={refetch} />;
+    return (
+      <div className="flex justify-center h-full">
+        <IsError refetch={refetch} />
+      </div>
+    );
   }
 
   if (!isSuccess) {
@@ -102,10 +105,7 @@ function KeysTable({ searchValue }) {
 
   if (data.length === 0) {
     return (
-      <div
-        className="flex justify-center"
-        style={{ height: 'calc(100vh - 20%)' }}
-      >
+      <div className="flex justify-center h-full">
         <IsEmpty />
       </div>
     );
@@ -185,10 +185,9 @@ function IsEmpty() {
 
   return (
     <Board
-      borderType="none"
       main={(
         <Void
-          actions={<Button onClick={handleOnClick} prefix={<FontAwesomeIcon icon={faPlus} />} type="primary">Create credential</Button>}
+          actions={<Button onClick={handleOnClick} prefix={<Lucide icon={Plus} />} type="primary">Create credential</Button>}
           description={(
             <>
               Looks like you have to create your first credential.
@@ -196,10 +195,11 @@ function IsEmpty() {
               Please note that we do not display your credentials again after you generate them.
             </>
           )}
-          image={<img alt="Logo" src={Logo} />}
+          image={<Lucide icon={Inbox} />}
           title="Credentials"
         />
       )}
+      width="100%"
     />
   );
 }
@@ -217,10 +217,11 @@ function IsError({ refetch }) {
               please retry later
             </>
           )}
-          image={<img alt="Logo" src={Logo} />}
+          image={<Lucide icon={TriangleAlert} />}
           title="Unable to load credentials"
         />
       )}
+      width="100%"
     />
   );
 }

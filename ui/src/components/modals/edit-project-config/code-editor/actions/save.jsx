@@ -1,9 +1,10 @@
+import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import { useGetProjectQuery, useUpdateConfigMutation } from '@State/projects/api';
-import { faFloppyDisk } from '@fortawesome/free-solid-svg-icons';
 import { useFormbitContext } from '@radicalbit/formbit';
-import { Button, FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
+import { Button } from '@radicalbit/radicalbit-design-system';
+import { Save as SaveIcon } from 'lucide-react';
 
 function Save({ config, projectUuid }) {
   const configUuid = config.uuid;
@@ -41,7 +42,7 @@ function Save({ config, projectUuid }) {
       disabled={isSaveDisabled}
       loading={saveArgs.isLoading}
       onClick={handleOnSave}
-      prefix={<FontAwesomeIcon icon={faFloppyDisk} />}
+      prefix={<Lucide icon={SaveIcon} />}
       type="primary"
     >
       Save

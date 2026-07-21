@@ -1,3 +1,4 @@
+import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import {
@@ -5,9 +6,9 @@ import {
   useGetProjectQuery,
   useServeConfigMutation,
 } from '@State/projects/api';
-import { faCircleStop } from '@fortawesome/free-solid-svg-icons';
 import { useFormbitContext } from '@radicalbit/formbit';
-import { Button, FontAwesomeIcon } from '@radicalbit/radicalbit-design-system';
+import { Button } from '@radicalbit/radicalbit-design-system';
+import { CircleStop } from 'lucide-react';
 
 function CancelPublishRequest({ config, projectUuid }) {
   const configUuid = config.uuid;
@@ -45,8 +46,8 @@ function CancelPublishRequest({ config, projectUuid }) {
       disabled={isBusy}
       loading={cancelArgs.isLoading}
       onClick={handleOnCancel}
-      prefix={<FontAwesomeIcon icon={faCircleStop} />}
-      type="secondary"
+      prefix={<Lucide icon={CircleStop} />}
+      type="primary-outlined"
     >
       Cancel Publish Request
     </Button>

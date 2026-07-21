@@ -1,5 +1,6 @@
-import { faWarning } from '@fortawesome/free-solid-svg-icons';
-import { Button, FontAwesomeIcon, Void } from '@radicalbit/radicalbit-design-system';
+import Lucide from '@Components/lucide';
+import { Button, Void } from '@radicalbit/radicalbit-design-system';
+import { TriangleAlert } from 'lucide-react';
 import { memo } from 'react';
 
 function SomethingWentWrong({ size, withLogo = true, refetch, ...rest }) {
@@ -11,7 +12,7 @@ function SomethingWentWrong({ size, withLogo = true, refetch, ...rest }) {
           We are experiencing some errors in our infrastructure
         </>
       )}
-      image={withLogo && <FontAwesomeIcon icon={faWarning} />}
+      image={withLogo && <Lucide icon={TriangleAlert} />}
       size={size}
       title={(
         <>

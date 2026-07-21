@@ -1,4 +1,5 @@
 import HtmlAnchor from '@Components/html-anchor';
+import Lucide from '@Components/lucide';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import {
   FormatBold,
@@ -7,8 +8,8 @@ import {
   formatText,
   formatTimestamp,
 } from '@Src/helpers/column-formatters';
-import { faWarning } from '@fortawesome/free-solid-svg-icons';
-import { Button, FontAwesomeIcon, Tooltip } from '@radicalbit/radicalbit-design-system';
+import { Button, Tooltip } from '@radicalbit/radicalbit-design-system';
+import { TriangleAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function AssociatedGroup({ groupName, groupUuid }) {
@@ -117,13 +118,13 @@ function Status({ traceStatus }) {
   switch (traceStatus) {
     case 'error': return (
       <Button className="capitalize" shape="circle" size="small" type="error">
-        <FontAwesomeIcon icon={faWarning} />
+        <Lucide icon={TriangleAlert} />
       </Button>
     );
 
     case 'warning': return (
       <Button className="capitalize" shape="circle" size="small" type="warning-light">
-        <FontAwesomeIcon icon={faWarning} />
+        <Lucide icon={TriangleAlert} />
       </Button>
     );
 

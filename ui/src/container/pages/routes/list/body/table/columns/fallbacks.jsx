@@ -1,10 +1,11 @@
 import HtmlAnchor from '@Components/html-anchor';
 import dateFormatter from '@Helpers/date-formatter';
+import Lucide from '@Components/lucide';
 import { PathsEnum, SEARCH_PARAMS, numberFormatterInt } from '@Src/constants';
-import { faArrowsTurnRight } from '@fortawesome/free-solid-svg-icons';
 import {
-  Button, Divider, FontAwesomeIcon, Popover,
+  Button, Divider, Popover,
 } from '@radicalbit/radicalbit-design-system';
+import { CornerDownRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function Fallbacks({ fallbacks }) {
@@ -13,7 +14,7 @@ function Fallbacks({ fallbacks }) {
   if (value === undefined) {
     return (
       <Button disabled shape="circle">
-        <FontAwesomeIcon icon={faArrowsTurnRight} />
+        <Lucide icon={CornerDownRight} />
       </Button>
     );
   }
@@ -23,7 +24,7 @@ function Fallbacks({ fallbacks }) {
   return (
     <Popover content={<PopoverContent fallbacks={fallbacks} />} minWidth="250" title={<strong>Fallback</strong>}>
       <Button shape="circle" {...btnType}>
-        <FontAwesomeIcon icon={faArrowsTurnRight} />
+        <Lucide icon={CornerDownRight} />
       </Button>
     </Popover>
   );

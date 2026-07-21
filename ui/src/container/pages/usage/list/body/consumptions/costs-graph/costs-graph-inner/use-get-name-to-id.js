@@ -1,12 +1,11 @@
 import { useGetCostsChartStreamWithRange } from '@State/usage/vertical-hooks';
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-
-const GROUP_BY_MODELS_KEY = 'models';
+import { DEFAULT_GROUP_BY, GROUP_BY } from '../group-by';
 
 const useGetNameToId = () => {
   const [searchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || 'groups';
+  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
   const routes = searchParams.get('routes')
     ? searchParams.get('routes').split(',')
     : [];
@@ -18,7 +17,7 @@ const useGetNameToId = () => {
     const idMap = {};
 
     d.forEach(({ name, uuid }) => {
-      if (groupBy === GROUP_BY_MODELS_KEY) {
+      if (groupBy === GROUP_BY.models.key) {
         idMap[name] = name;
       } else {
         idMap[name] = uuid;

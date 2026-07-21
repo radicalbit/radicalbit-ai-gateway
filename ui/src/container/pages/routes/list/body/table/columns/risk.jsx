@@ -1,5 +1,6 @@
-import { faCheckCircle, faExclamationCircle, faWarning } from '@fortawesome/free-solid-svg-icons';
-import { Button, FontAwesomeIcon, Popover } from '@radicalbit/radicalbit-design-system';
+import Lucide from '@Components/lucide';
+import { Button, Popover } from '@radicalbit/radicalbit-design-system';
+import { CircleAlert, CircleCheck, TriangleAlert } from 'lucide-react';
 
 function Risk({ level }) {
   switch (level) {
@@ -15,7 +16,7 @@ function Risk({ level }) {
                 style={{ '--coo-primary': '#38A88E' }}
                 type="primary"
               >
-                <FontAwesomeIcon icon={faCheckCircle} />
+                <Lucide icon={CircleCheck} />
               </Button>
 
               <div>Minimal Risk</div>
@@ -27,7 +28,7 @@ function Risk({ level }) {
             style={{ '--coo-primary': '#38A88E' }}
             type="primary"
           >
-            <FontAwesomeIcon icon={faCheckCircle} />
+            <Lucide icon={CircleCheck} />
           </Button>
         </Popover>
       );
@@ -51,7 +52,7 @@ function Risk({ level }) {
                 style={{ '--coo-primary': '#EEBB1F' }}
                 type="primary"
               >
-                <FontAwesomeIcon icon={faExclamationCircle} />
+                <Lucide icon={CircleAlert} />
               </Button>
 
               <div>Limited Risk</div>
@@ -63,7 +64,7 @@ function Risk({ level }) {
             style={{ '--coo-primary': '#EEBB1F' }}
             type="primary"
           >
-            <FontAwesomeIcon icon={faExclamationCircle} />
+            <Lucide icon={CircleAlert} />
           </Button>
         </Popover>
       );
@@ -91,7 +92,7 @@ function Risk({ level }) {
                 style={{ '--coo-primary': '#F86B02' }}
                 type="primary"
               >
-                <FontAwesomeIcon icon={faWarning} />
+                <Lucide icon={TriangleAlert} />
               </Button>
 
               <div>High Risk</div>
@@ -103,7 +104,7 @@ function Risk({ level }) {
             style={{ '--coo-primary': '#F86B02' }}
             type="primary"
           >
-            <FontAwesomeIcon icon={faWarning} />
+            <Lucide icon={TriangleAlert} />
           </Button>
         </Popover>
       );

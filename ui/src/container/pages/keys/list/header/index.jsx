@@ -1,14 +1,14 @@
+import Lucide from '@Components/lucide';
 import { CollapsedTitle } from '@Container/layout';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetKeysQuery } from '@State/keys/api';
-import { faKey, faPlus } from '@fortawesome/free-solid-svg-icons';
 import {
   Button,
-  FontAwesomeIcon,
   NewHeader,
   SectionTitle,
   Tooltip,
 } from '@radicalbit/radicalbit-design-system';
+import { Key, Plus } from 'lucide-react';
 import { useEffect } from 'react';
 import Subtitle from './subtitle';
 
@@ -27,7 +27,7 @@ function KeysListHeader() {
         <SectionTitle
           subtitle={<Subtitle />}
           title="Credentials"
-          titlePrefix={<FontAwesomeIcon icon={faKey} />}
+          titlePrefix={<Lucide icon={Key} />}
         />
       )}
     />
@@ -43,7 +43,7 @@ function CreateKeyButton() {
 
   return (
     <TooltipCreateNewKey>
-      <Button onClick={handleOnClick} prefix={<FontAwesomeIcon icon={faPlus} />} type="primary">
+      <Button onClick={handleOnClick} prefix={<Lucide icon={Plus} />} type="primary">
         Create credential
       </Button>
     </TooltipCreateNewKey>

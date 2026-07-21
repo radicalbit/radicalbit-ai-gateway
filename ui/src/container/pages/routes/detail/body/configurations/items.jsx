@@ -1,14 +1,12 @@
+import Lucide from '@Components/lucide';
 import { useGetRouteByNameWithRange } from '@Src/store/state/routes/vertical-hooks';
 import {
-  faArrowsTurnRight,
-  faCheckCircle,
-  faRobot, faRoute, faShield, faStopwatch,
-  faTableCellsColumnLock,
-} from '@fortawesome/free-solid-svg-icons';
-import {
-  Button, FontAwesomeIcon, Json, Popover,
+  Button, Json, Popover,
 } from '@radicalbit/radicalbit-design-system';
 import isEmpty from 'lodash/isEmpty';
+import {
+  Bot, CircleCheck, CornerDownRight, Route, Shield, TableColumnsSplit, Timer,
+} from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
 // *** Models ***
@@ -26,7 +24,7 @@ export function useGetModelItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button shape="circle" type="text"><FontAwesomeIcon icon={faRobot} /></Button>
+            <Button shape="circle" type="text"><Lucide icon={Bot} /></Button>
 
             <div>Models</div>
           </div>
@@ -38,7 +36,7 @@ export function useGetModelItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" type="text"><FontAwesomeIcon icon={faRobot} /></Button>
+        <Button shape="circle" type="text"><Lucide icon={Bot} /></Button>
 
         <div>Models</div>
       </div>
@@ -70,7 +68,7 @@ export function useGetFallbackItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle" type="secondary-light"><FontAwesomeIcon icon={faArrowsTurnRight} /></Button>
+            <Button disabled shape="circle" type="secondary-light"><Lucide icon={CornerDownRight} /></Button>
 
             <div>Fallback</div>
           </div>
@@ -94,7 +92,7 @@ export function useGetFallbackItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><FontAwesomeIcon icon={faArrowsTurnRight} /></Button>
+        <Button shape="circle" {...type}><Lucide icon={CornerDownRight} /></Button>
 
         <div>Fallback</div>
       </div>
@@ -125,7 +123,7 @@ export function useGetGuardrailsItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle" type="secondary-light"><FontAwesomeIcon icon={faShield} /></Button>
+            <Button disabled shape="circle" type="secondary-light"><Lucide icon={Shield} /></Button>
 
             <div>Guardrails</div>
           </div>
@@ -148,7 +146,7 @@ export function useGetGuardrailsItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><FontAwesomeIcon icon={faShield} /></Button>
+        <Button shape="circle" {...type}><Lucide icon={Shield} /></Button>
 
         <div>Guardrails</div>
       </div>
@@ -179,7 +177,7 @@ export function useGetRateLimitingItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle"><FontAwesomeIcon icon={faStopwatch} /></Button>
+            <Button disabled shape="circle"><Lucide icon={Timer} /></Button>
 
             <div>Rate Limiting</div>
           </div>
@@ -201,7 +199,7 @@ export function useGetRateLimitingItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><FontAwesomeIcon icon={faStopwatch} /></Button>
+        <Button shape="circle" {...type}><Lucide icon={Timer} /></Button>
 
         <div>Rate Limiting</div>
       </div>
@@ -234,7 +232,7 @@ export function useGetTokenLimitingItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle" type="secondary-light"><FontAwesomeIcon icon={faTableCellsColumnLock} /></Button>
+            <Button disabled shape="circle" type="secondary-light"><Lucide icon={TableColumnsSplit} /></Button>
 
             <div>Token Limiting</div>
           </div>
@@ -255,7 +253,7 @@ export function useGetTokenLimitingItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><FontAwesomeIcon icon={faTableCellsColumnLock} /></Button>
+        <Button shape="circle" {...type}><Lucide icon={TableColumnsSplit} /></Button>
 
         <div>Token Limiting</div>
       </div>
@@ -298,7 +296,7 @@ export function useGetCacheItem() {
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
             <Button shape="circle" {...type}>
-              <FontAwesomeIcon icon={faCheckCircle} />
+              <Lucide icon={CircleCheck} />
             </Button>
 
             <div>Caching</div>
@@ -312,7 +310,7 @@ export function useGetCacheItem() {
     label: (
       <div className="flex justify-start items-center gap-4">
         <Button shape="circle" {...type}>
-          <FontAwesomeIcon icon={faCheckCircle} />
+          <Lucide icon={CircleCheck} />
         </Button>
 
         <div>Caching</div>
@@ -344,7 +342,7 @@ export function useGetAdvancedRoutingItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle" type="secondary-light"><FontAwesomeIcon icon={faRoute} /></Button>
+            <Button disabled shape="circle" type="secondary-light"><Lucide icon={Route} /></Button>
 
             <div>Advanced Routing</div>
           </div>
@@ -356,7 +354,7 @@ export function useGetAdvancedRoutingItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" type="text"><FontAwesomeIcon icon={faRoute} /></Button>
+        <Button shape="circle" type="text"><Lucide icon={Route} /></Button>
 
         <div>Advanced Routing</div>
       </div>
