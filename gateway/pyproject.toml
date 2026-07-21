@@ -3,7 +3,7 @@ name = "radicalbit-ai-gateway"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "en-core-web-lg",
     "it-core-news-md",
@@ -47,6 +47,7 @@ dependencies = [
     "azure-health-deidentification>=1.0.0b3",
     "azure-identity>=1.21.0",
     "python-multipart>=0.0.20",
+    "mcp>=1.13,<2",
 ]
 
 [project.scripts]
@@ -159,6 +160,11 @@ select = [
 ]
 
 ignore = [
+    # UP017/UP035/UP042 were activated by the requires-python bump to 3.11 and
+    # touch hundreds of call sites; apply that modernization in a dedicated change.
+    "UP017", # Use datetime.UTC alias
+    "UP035", # Import from {target} instead: {names}
+    "UP042", # Class {name} inherits from both str and enum.Enum
     "D100", # Missing docstring in public module
     "D101", # Missing docstring in public class
     "D102", # Missing docstring in public method

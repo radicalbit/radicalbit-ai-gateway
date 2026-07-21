@@ -193,3 +193,23 @@ def test_validate_secret_returns_error_for_whitespace_only_value():
         error = provider.validate_secret('BLANK_SECRET')
         assert error is not None
         assert 'empty' in error
+
+
+def test_mcp_server_nested_secrets_are_resolved(secrets_path):
+    config_yaml = """
+mcp_servers:
+  - alias: github
+    transport: streamable_http
+    url: https://api.example.com/mcp/
+    headers:
+      Authorization: !secret OPENAI_API_KEY
+  - alias: local
+    transport: stdio
+    command: python
+    env:
+      API_TOKEN: !secret OPENAI_API_KEY
+"""
+    provider = FileSecretProvider(secrets_path)
+    resolved = resolve_secrets_from_string(config_yaml, provider=provider)
+    assert resolved['mcp_servers'][0]['headers']['Authorization'] == 'sk-dummy-key'
+    assert resolved['mcp_servers'][1]['env']['API_TOKEN'] == 'sk-dummy-key'

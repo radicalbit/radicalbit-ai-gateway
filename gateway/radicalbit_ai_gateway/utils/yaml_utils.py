@@ -52,6 +52,14 @@ SENSITIVE_FIELD_PATTERN = re.compile(
 )
 SECRET_REF_PATTERN = re.compile(r'^!secret\s+\S+$')
 
+SECRET_PLACEHOLDER = '__secret_placeholder__'
+
+# Keys under mcp_servers[].headers / mcp_servers[].env whose values look
+# sensitive and therefore must be !secret references.
+_SENSITIVE_KEY_PATTERN = re.compile(
+    r'(?i)(authorization|api[-_]?key|token|secret|password|cookie|credential)'
+)
+
 
 def check_no_literal_secrets(yaml_content: str) -> list[str]:
     violations = []
@@ -60,6 +68,41 @@ def check_no_literal_secrets(yaml_content: str) -> list[str]:
         if value and not SECRET_REF_PATTERN.match(value):
             line_no = yaml_content[: match.start()].count('\n') + 1
             violations.append(f'line {line_no}: {match.group(0).strip()}')
+    return violations
+
+
+def check_no_literal_secrets_in_mcp_servers(parsed: dict, yaml_str: str) -> list[str]:
+    """Reject literal values for sensitive-looking keys under
+    ``mcp_servers[].headers`` and ``mcp_servers[].env``.
+
+    ``parsed`` must come from :func:`_parse_yaml_with_secrets`, where every
+    ``!secret`` value is already replaced by :data:`SECRET_PLACEHOLDER`.
+    """
+    violations: list[str] = []
+    servers = parsed.get('mcp_servers') or []
+    if not isinstance(servers, list):
+        return violations
+    for entry in servers:
+        if not isinstance(entry, dict):
+            continue
+        alias = entry.get('alias', '<unknown>')
+        for block_name in ('headers', 'env'):
+            block = entry.get(block_name) or {}
+            if not isinstance(block, dict):
+                continue
+            for key, value in block.items():
+                if not isinstance(key, str):
+                    continue
+                if not _SENSITIVE_KEY_PATTERN.search(key):
+                    continue
+                if value == SECRET_PLACEHOLDER:
+                    continue
+                line = _find_key_line(yaml_str, key)
+                loc = f' (line {line})' if line else ''
+                violations.append(
+                    f'mcp_servers[{alias}].{block_name}.{key}{loc}: '
+                    'literal value for a sensitive key; use a !secret reference'
+                )
     return violations
 
 
@@ -78,7 +121,7 @@ def _parse_yaml_with_secrets(
         key = loader.construct_scalar(node)
         line = node.start_mark.line + 1 if node.start_mark else None
         refs.append((key, line))
-        return '__secret_placeholder__'
+        return SECRET_PLACEHOLDER
 
     loader.add_constructor('!secret', secret_constructor)
     try:
@@ -136,6 +179,8 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
         raise ProjectConfigValidationError(f'Invalid YAML{location}: {problem}') from e
     if check_secrets:
         violations = check_no_literal_secrets(yaml_str)
+        if isinstance(parsed, dict):
+            violations += check_no_literal_secrets_in_mcp_servers(parsed, yaml_str)
         if violations:
             raise ProjectConfigValidationError(
                 f'Config contains literal secrets: {violations}. Use !secret references instead.'

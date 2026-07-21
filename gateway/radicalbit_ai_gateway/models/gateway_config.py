@@ -14,6 +14,7 @@ from radicalbit_ai_gateway.models.caching import CacheConfig, SemanticCaching
 from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import Guardrail, GuardrailType
+from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
 from radicalbit_ai_gateway.models.routing import (
     AnyRoutingConfig,
     DeterministicRoutingConfig,
@@ -48,6 +49,7 @@ class GatewayConfig(BaseModel):
     cache: CacheConfig | None = None
     guardrails: list[Guardrail] | None = None
     routing: list[AnyRoutingConfig] | None = None
+    mcp_servers: list[AnyMcpServer] | None = None
 
     @property
     def chat_models_by_id(self) -> dict[str, Model]:
@@ -60,6 +62,18 @@ class GatewayConfig(BaseModel):
     @property
     def routing_by_name(self) -> dict[str, AnyRoutingConfig]:
         return {r.name: r for r in (self.routing or [])}
+
+    @property
+    def mcp_servers_by_alias(self) -> dict[str, AnyMcpServer]:
+        return {s.alias: s for s in (self.mcp_servers or [])}
+
+    def get_route_mcp_servers(self, route_name: str) -> list[AnyMcpServer]:
+        """Resolve a route's MCP server aliases to their top-level definitions."""
+        route = self.routes.get(route_name)
+        if route is None or not route.mcp_servers:
+            return []
+        servers_by_alias = self.mcp_servers_by_alias
+        return [servers_by_alias[alias] for alias in route.mcp_servers]
 
     @property
     def is_semantic_caching_enable(self) -> bool:
@@ -321,6 +335,31 @@ class GatewayConfig(BaseModel):
                     f"Route '{route_name}': budget routing requires budget_limiting to be configured."
                 )
 
+        return self
+
+    @model_validator(mode='after')
+    def validate_mcp_servers(self) -> Self:
+        """Validate top-level MCP server definitions and route references."""
+        aliases = [s.alias for s in (self.mcp_servers or [])]
+        if len(aliases) != len(set(aliases)):
+            duplicates = sorted({a for a in aliases if aliases.count(a) > 1})
+            raise ValueError(
+                f'All mcp_servers must have unique aliases. Duplicates found: {", ".join(duplicates)}'
+            )
+
+        defined = set(aliases)
+        for route_name, route in self.routes.items():
+            route_aliases = route.mcp_servers or []
+            if len(route_aliases) != len(set(route_aliases)):
+                dups = sorted({a for a in route_aliases if route_aliases.count(a) > 1})
+                raise ValueError(
+                    f"Route '{route_name}': duplicate mcp_servers: {', '.join(dups)}"
+                )
+            missing = sorted([a for a in route_aliases if a not in defined])
+            if missing:
+                raise ValueError(
+                    f"Route '{route_name}': mcp_servers not declared in top-level mcp_servers: {', '.join(missing)}"
+                )
         return self
 
     @model_validator(mode='after')

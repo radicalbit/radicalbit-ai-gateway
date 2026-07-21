@@ -268,3 +268,84 @@ def test_validate_gateway_config_skips_secret_check_when_disabled():
     )
     # Should NOT raise — secret validation is off
     validate_gateway_config(yaml_str, check_secrets=False)
+
+
+# ---------------------------------------------------------------------------
+# MCP servers: literal secrets under headers/env
+# ---------------------------------------------------------------------------
+
+_MCP_CONFIG_PREFIX = (
+    'chat_models:\n'
+    '  - model_id: m1\n'
+    '    model: openai/gpt-4o-mini\n'
+    '    credentials:\n'
+    '      api_key: !secret VALID_KEY\n'
+    'routes:\n'
+    '  default-route:\n'
+    '    chat_models: [m1]\n'
+    '    mcp_servers: [github]\n'
+)
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_mcp_literal_authorization_header_rejected():
+    yaml_str = _MCP_CONFIG_PREFIX + (
+        'mcp_servers:\n'
+        '  - alias: github\n'
+        '    transport: streamable_http\n'
+        '    url: https://api.example.com/mcp/\n'
+        '    headers:\n'
+        '      Authorization: Bearer literal-pat\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_str, check_secrets=True)
+    message = str(exc_info.value)
+    assert 'mcp_servers[github].headers.Authorization' in message
+    assert '!secret' in message
+    assert 'line 15' in message
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_mcp_secret_header_and_benign_literal_accepted():
+    yaml_str = _MCP_CONFIG_PREFIX + (
+        'mcp_servers:\n'
+        '  - alias: github\n'
+        '    transport: streamable_http\n'
+        '    url: https://api.example.com/mcp/\n'
+        '    headers:\n'
+        '      Authorization: !secret VALID_KEY\n'
+        '      X-Client-Name: gateway\n'
+    )
+    validate_gateway_config(yaml_str, check_secrets=True)
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_mcp_literal_env_token_rejected():
+    yaml_str = _MCP_CONFIG_PREFIX + (
+        'mcp_servers:\n'
+        '  - alias: github\n'
+        '    transport: stdio\n'
+        '    command: python\n'
+        '    args: [-m, my_server]\n'
+        '    env:\n'
+        '      API_TOKEN: literal-token\n'
+        '      LOG_LEVEL: debug\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_str, check_secrets=True)
+    message = str(exc_info.value)
+    assert 'mcp_servers[github].env.API_TOKEN' in message
+    assert 'LOG_LEVEL' not in message
+
+
+@pytest.mark.usefixtures('_secrets_file_with_empty')
+def test_mcp_secrets_skipped_when_check_disabled():
+    yaml_str = _MCP_CONFIG_PREFIX + (
+        'mcp_servers:\n'
+        '  - alias: github\n'
+        '    transport: streamable_http\n'
+        '    url: https://api.example.com/mcp/\n'
+        '    headers:\n'
+        '      Authorization: Bearer literal-pat\n'
+    )
+    validate_gateway_config(yaml_str, check_secrets=False)

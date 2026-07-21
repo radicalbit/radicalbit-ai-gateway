@@ -61,6 +61,10 @@ class GatewayRouteConfig(BaseModel):
         default=None,
         description=('Plugins configuration for the route.'),
     )
+    mcp_servers: list[str] | None = Field(
+        default=None,
+        description='Aliases of top-level MCP servers exposed on this route.',
+    )
 
     def get_token_limiter(self) -> TokenLimiter:
         return TokenLimiter(
