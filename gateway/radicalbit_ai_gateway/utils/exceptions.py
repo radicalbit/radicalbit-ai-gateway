@@ -143,6 +143,31 @@ class InvalidJwtToken(ApiKeyError):
         super().__init__(message, 'invalid_jwt_token', log_message=log_message)
 
 
+class McpTransportError(AppError):
+    """HTTP-level failure on the inbound MCP endpoint.
+
+    Covers transport concerns only (bad Origin, unknown project/route,
+    unsupported protocol version, key not bound to the route). Protocol-level
+    failures are JSON-RPC ``error`` bodies over HTTP 200 instead — see
+    ``mcp_proxy/jsonrpc.py``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int,
+        *,
+        code: str | None = None,
+        log_message: str | None = None,
+    ):
+        super().__init__(
+            client_message=message,
+            status_code=status_code,
+            code=code,
+            log_message=log_message,
+        )
+
+
 class GuardrailError(AppError):
     def __init__(
         self,
@@ -667,6 +692,11 @@ def api_key_exception_handler(request: Request, err: ApiKeyError):
 def auth_registry_exception_handler(request: Request, err: AuthRegistryError):
     set_request_error_info(request, err)
     return _log_and_json_response(err, 'auth_registry_error')
+
+
+def mcp_transport_exception_handler(request: Request, err: McpTransportError):
+    set_request_error_info(request, err)
+    return _log_and_json_response(err, 'mcp_error')
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: RequestRateLimitExceeded):

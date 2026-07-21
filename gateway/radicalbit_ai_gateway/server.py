@@ -36,6 +36,7 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
+from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.metrics.define_metrics import (
     request_latency_histogram,
     total_requests_counter,
@@ -53,6 +54,7 @@ from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRout
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
+from radicalbit_ai_gateway.routes.mcp_route import McpRoute
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
 from radicalbit_ai_gateway.routes.tracing_route import TracingRoute
 from radicalbit_ai_gateway.routes.usage_route import UsageRoute
@@ -63,6 +65,7 @@ from radicalbit_ai_gateway.services.config_generator_service import (
 from radicalbit_ai_gateway.services.event_service import EventService
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
+from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
@@ -77,6 +80,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     GuardrailError,
     InvalidApiKey,
     JudgeInternalError,
+    McpTransportError,
     ModelInvokerError,
     RequestRateLimitExceeded,
     TokenLimitExceeded,
@@ -86,6 +90,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     gateway_exception_handler,
     guardrail_exception_handler,
     judge_exception_handler,
+    mcp_transport_exception_handler,
     model_invoker_exception_handler,
     rate_limit_exceeded_handler,
     token_limiter_exception_handler,
@@ -193,6 +198,10 @@ request_event_service = RequestEventService(request_event_dao=request_event_dao)
 tracing_service = TracingService(
     otel_traces_dao=otel_traces_dao,
     key_service=key_service,
+    group_service=group_service,
+)
+mcp_service = McpService(
+    upstream_client=McpUpstreamClient(),
     group_service=group_service,
 )
 
@@ -358,7 +367,10 @@ app.add_exception_handler(GuardrailError, guardrail_exception_handler)
 app.add_exception_handler(JudgeInternalError, judge_exception_handler)
 app.add_exception_handler(BudgetLimitExceeded, budget_limiter_exception_handler)
 app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
 app.include_router(KeyRoute.get_key_router(key_service), prefix=prefix)
+# Root-level like /v1/... (NOT under /public/api/v1): inbound MCP proxy.
+app.include_router(McpRoute.get_mcp_router(mcp_service))
 app.include_router(
     GroupRoute.get_group_router(group_service, project_service),
     prefix=prefix,
