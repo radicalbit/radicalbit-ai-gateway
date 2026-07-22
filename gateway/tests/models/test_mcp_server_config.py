@@ -76,6 +76,17 @@ def test_duplicate_top_level_aliases_rejected():
         )
 
 
+def test_case_variant_duplicate_aliases_rejected():
+    with pytest.raises(ValueError) as exc_info:
+        GatewayConfig.model_validate(
+            _base_config(mcp_servers=[HTTP_SERVER, {**STDIO_SERVER, 'alias': 'GitHub'}])
+        )
+    message = str(exc_info.value)
+    assert 'case-insensitively' in message
+    assert 'GitHub' in message
+    assert 'github' in message
+
+
 def test_route_reference_to_undefined_alias_rejected():
     with pytest.raises(
         ValueError, match='not declared in top-level mcp_servers: missing'

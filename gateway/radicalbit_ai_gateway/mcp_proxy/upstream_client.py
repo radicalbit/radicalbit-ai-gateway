@@ -35,7 +35,7 @@ class McpUpstreamClient:
     Each operation opens a transport to the upstream server, runs the full
     initialize handshake, performs the single request, and closes. The
     per-server ``timeout`` (or ``default_timeout``) bounds the whole
-    lifecycle, connection setup included.
+    lifecycle, connection setup inclu   ded.
     """
 
     def __init__(
