@@ -2,8 +2,7 @@
 
 Protocol-level failures are carried as JSON-RPC ``error`` objects (usually
 over HTTP 200); only envelope problems the gateway cannot attribute to a
-well-formed request (parse / invalid request) travel over HTTP 400. See
-``gateway/mcp_protocol.md`` §3.
+well-formed request (parse / invalid request) travel over HTTP 400.
 """
 
 from typing import Any

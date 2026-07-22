@@ -1,16 +1,3 @@
-"""Inbound MCP proxy service (tools-only, Streamable HTTP, stateless).
-
-Implements the JSON-RPC dispatch behind ``POST /{project_name}/{route_name}/mcp``
-per ``gateway/mcp_protocol.md``: lifecycle (``initialize``,
-``notifications/initialized``), ``ping``, and the ``tools/list`` /
-``tools/call`` proxy to the route's configured upstream MCP servers.
-
-Every POST is self-contained: no ``Mcp-Session-Id`` is ever issued, responses
-are always ``application/json`` (never SSE). HTTP status codes carry
-transport-level failures only; protocol failures are JSON-RPC ``error``
-bodies (parse / invalid-request over HTTP 400, everything else over 200).
-"""
-
 import asyncio
 from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version as _package_version
