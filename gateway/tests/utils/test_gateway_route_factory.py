@@ -101,6 +101,49 @@ def test_build_gateway_routes_from_config_keys():
     assert isinstance(routes['my-route'], GatewayRoute)
 
 
+_PROJECT_CONFIG_WITH_TRANSCRIPTION_YAML = """\
+chat_models:
+  - model_id: openai-gpt4o
+    model: openai/gpt-4o-mini
+    credentials:
+      api_key: sk-test-key
+transcription_models:
+  - model_id: openai-whisper
+    model: openai/whisper-1
+    credentials:
+      api_key: sk-test-key
+routes:
+  my-route:
+    chat_models:
+      - openai-gpt4o
+    transcription_models:
+      - openai-whisper
+"""
+
+
+def test_build_gateway_routes_from_config_resolves_transcription_models():
+    """Step 3: a route's transcription_models resolve to Model instances on
+    the GatewayRoute. No invoker is built yet (that's AG-891's job — this
+    ticket, AG-896, only covers config schema + wiring).
+    """
+    resolved = resolve_secrets_from_string(_PROJECT_CONFIG_WITH_TRANSCRIPTION_YAML)
+    config = GatewayConfig.model_validate(resolved)
+    cost_service = MagicMock(spec_set=CostService)
+
+    routes = build_gateway_routes_from_config(
+        config,
+        guardrail_engine=_make_guardrail_engine(),
+        redis_client=None,
+        cost_service=cost_service,
+        httpx_client=None,
+    )
+
+    route = routes['my-route']
+    assert [m.model_id for m in route._transcription_models] == ['openai-whisper']
+    # chat_invoker is unaffected by the new wiring
+    assert route.chat_invoker is not None
+
+
 def test_build_gateway_routes_empty_config():
     """Step 3: an empty config produces an empty routes dict."""
     config = GatewayConfig.model_validate({'routes': {}, 'chat_models': []})

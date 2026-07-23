@@ -95,6 +95,14 @@ class Model(BaseModel):
         default=Decimal(),
         description='Cost for a million cache-creation input tokens — 1-hour TTL (Anthropic-specific).',
     )
+    input_cost_per_second: Decimal = Field(
+        default=Decimal(),
+        description='Cost per second of audio input (duration-based billing, e.g. whisper-1).',
+    )
+    input_cost_per_audio_token: Decimal = Field(
+        default=Decimal(),
+        description='Cost for an audio input token, distinct from a text input token (e.g. gpt-4o-transcribe family).',
+    )
 
     @field_validator(
         'input_cost_per_million_tokens', 'output_cost_per_million_tokens', mode='before'
@@ -170,12 +178,6 @@ class Model(BaseModel):
 
     @model_validator(mode='after')
     def set_costs(self) -> Self:
-        if (
-            self.input_cost_per_million_tokens
-            and self.output_cost_per_million_tokens
-            and self.input_cached_cost_per_million_tokens
-        ):
-            return self
         try:
             with open('radicalbit_ai_gateway/resources/model_prices.json') as f:
                 costs = json.load(f)
@@ -227,6 +229,14 @@ class Model(BaseModel):
                 self.input_cache_creation_1h_cost_per_million_tokens = Decimal(
                     str(cost_per_token)
                 ) * Decimal('1000000')
+        if not self.input_cost_per_second:
+            cost_per_second = costs.get(model, {}).get('input_cost_per_second')
+            if cost_per_second:
+                self.input_cost_per_second = Decimal(str(cost_per_second))
+        if not self.input_cost_per_audio_token:
+            cost_per_audio_token = costs.get(model, {}).get('input_cost_per_audio_token')
+            if cost_per_audio_token:
+                self.input_cost_per_audio_token = Decimal(str(cost_per_audio_token))
         return self
 
     @model_validator(mode='after')

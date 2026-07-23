@@ -101,6 +101,60 @@ def test_invalid_cron_raises_error():
         GatewayConfig.model_validate(raw)
 
 
+def test_transcription_models_valid_config():
+    raw = {
+        'chat_models': [{'model_id': 'c1', 'model': 'openai/gpt-4o-mini'}],
+        'transcription_models': [{'model_id': 'w1', 'model': 'openai/whisper-1'}],
+        'routes': {
+            'r': {'chat_models': ['c1'], 'transcription_models': ['w1']},
+        },
+    }
+    gateway_config = GatewayConfig.model_validate(raw)
+    assert list(gateway_config.transcription_models_by_id.keys()) == ['w1']
+    assert gateway_config.routes['r'].transcription_models == ['w1']
+
+
+def test_transcription_models_reject_missing_route_reference():
+    raw = {
+        'chat_models': [{'model_id': 'c1', 'model': 'openai/gpt-4o-mini'}],
+        'transcription_models': [{'model_id': 'w1', 'model': 'openai/whisper-1'}],
+        'routes': {
+            'r': {'chat_models': ['c1'], 'transcription_models': ['unknown']},
+        },
+    }
+    with pytest.raises(
+        ValueError,
+        match='transcription_models not declared in top-level transcription_models',
+    ):
+        GatewayConfig.model_validate(raw)
+
+
+def test_transcription_models_reject_duplicate_ids_across_categories():
+    raw = {
+        'chat_models': [{'model_id': 'dup', 'model': 'openai/gpt-4o-mini'}],
+        'transcription_models': [{'model_id': 'dup', 'model': 'openai/whisper-1'}],
+    }
+    with pytest.raises(
+        ValueError,
+        match='chat_models and transcription_models must have globally unique model_id',
+    ):
+        GatewayConfig.model_validate(raw)
+
+
+def test_transcription_models_reject_duplicate_ids_within_list():
+    raw = {
+        'chat_models': [{'model_id': 'c1', 'model': 'openai/gpt-4o-mini'}],
+        'transcription_models': [
+            {'model_id': 'w1', 'model': 'openai/whisper-1'},
+            {'model_id': 'w1', 'model': 'openai/whisper-1'},
+        ],
+    }
+    with pytest.raises(
+        ValueError, match='All transcription_models must have unique model_id'
+    ):
+        GatewayConfig.model_validate(raw)
+
+
 def test_time_routing_model_id_not_in_route():
     raw = {
         'chat_models': [
