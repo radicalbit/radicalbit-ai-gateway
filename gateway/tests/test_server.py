@@ -24,6 +24,9 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
+    TranscriptionResult,
+)
 from radicalbit_ai_gateway.models.event_dto import WindowStatus
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import (
@@ -455,6 +458,128 @@ class TestServer(unittest.TestCase):
             '/v1/embeddings', json=request_data, headers=self.headers
         )
         assert response.status_code == 401
+
+    def test_audio_transcriptions_success_json(self):
+        api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
+        key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+
+        mock_result = TranscriptionResult(
+            body={'text': 'Ciao mondo', 'usage': {'type': 'duration', 'seconds': 9}},
+            content_type='application/json',
+            usage=MagicMock(type='duration', seconds=9),
+            model_invoked=MagicMock(model_id='whisper-1'),
+            latency_ms=42.0,
+        )
+        self.gateways_mock['rb-gateway'].invoke_transcription = AsyncMock(
+            return_value=mock_result
+        )
+
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway', 'response_format': 'json'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+            headers=self.headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json() == mock_result.body
+        self.gateways_mock['rb-gateway'].invoke_transcription.assert_awaited_once_with(
+            request_uuid=str(db_mock.REQUEST_UUID),
+            api_key_uuid=str(api_key.uuid),
+            api_key_name=api_key.name,
+            group_uuid=str(db_mock.GROUP_UUID),
+            group_name='group',
+            route_name='rb-gateway',
+            audio_bytes=b'fake-audio-bytes',
+            filename='test.wav',
+            content_type='audio/wav',
+            requested_response_format='json',
+            language=None,
+            prompt=None,
+            temperature=None,
+        )
+
+    def test_audio_transcriptions_success_text_format(self):
+        api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
+        key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+
+        mock_result = TranscriptionResult(
+            body='Ciao mondo',
+            content_type='text/plain',
+            usage=MagicMock(type='duration', seconds=9),
+            model_invoked=MagicMock(model_id='whisper-1'),
+            latency_ms=42.0,
+        )
+        self.gateways_mock['rb-gateway'].invoke_transcription = AsyncMock(
+            return_value=mock_result
+        )
+
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway', 'response_format': 'text'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+            headers=self.headers,
+        )
+
+        assert response.status_code == 200
+        assert response.text == 'Ciao mondo'
+        assert response.headers['content-type'].startswith('text/plain')
+
+    def test_audio_transcriptions_wrong_model_name(self):
+        key_service.get_key_by_hashed_key = MagicMock(
+            return_value=db_mock.get_sample_key_with_group(
+                group_uuid=db_mock.GROUP_UUID
+            )
+        )
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'unknown-route'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+            headers=self.headers,
+        )
+        assert response.status_code == 400
+
+    def test_audio_transcriptions_missing_api_key(self):
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+        )
+        assert response.status_code == 401
+
+    def test_audio_transcriptions_wrong_api_key(self):
+        key_service.get_key_by_hashed_key = MagicMock(
+            return_value=db_mock.get_sample_key_with_group(
+                group_uuid=db_mock.GROUP_UUID
+            )
+        )
+        group_service.check_key_uuid_for_route = MagicMock(return_value=False)
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+            headers=self.headers,
+        )
+        assert response.status_code == 401
+
+    def test_audio_transcriptions_unsupported_extension_rejected(self):
+        key_service.get_key_by_hashed_key = MagicMock(
+            return_value=db_mock.get_sample_key_with_group(
+                group_uuid=db_mock.GROUP_UUID
+            )
+        )
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway'},
+            files={'file': ('test.txt', b'not-audio', 'text/plain')},
+            headers=self.headers,
+        )
+        assert response.status_code == 400
+        self.gateways_mock['rb-gateway'].invoke_transcription.assert_not_called()
 
     @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
     @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)

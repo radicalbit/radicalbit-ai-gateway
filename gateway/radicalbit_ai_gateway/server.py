@@ -7,7 +7,17 @@ import time
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -67,6 +77,7 @@ from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.audio_validation import validate_audio_upload
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
     AppError,
@@ -813,6 +824,105 @@ async def embeddings(
         group_uuid=key_details.group_uuid,
         group_name=key_details.group_name,
     )
+
+
+@app.post('/v1/audio/transcriptions')
+@otel_metrics_decorator
+@workflow(name='audio_transcriptions')
+@ensure_endpoint_category
+async def audio_transcriptions(
+    request: Request,
+    model: str = Form(...),
+    file: UploadFile = File(...),
+    language: str | None = Form(None),
+    prompt: str | None = Form(None),
+    response_format: str = Form('json'),
+    temperature: float | None = Form(None),
+    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
+    request_uuid: str = Depends(set_request_uuid),
+):
+    route_key = model
+    route = gateway_routes.get(route_key)
+
+    _set_early_project_trace_attributes(route_key, route)
+
+    if route is None:
+        raise GatewayBadRequest(
+            f'The route name [{route_key}] was not found in the config'
+        )
+    route_name = route.gateway_route_config.route_name
+
+    # Mark the root workflow span with ENDPOINT category
+    set_operation_category(OperationCategory.ENDPOINT)
+
+    # Set early trace attributes
+    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+
+    # Populate request event context first (before auth, so route_name is always captured)
+    ctx = RequestEventContext.get_or_create(request)
+    ctx.route_name = route_name
+    ctx.is_streaming = False
+
+    # Validate API key after context is populated
+    set_operation_category(OperationCategory.AUTH)
+    key_details = await set_api_key_uuid(
+        request, route.project_uuid, route.project_name
+    )
+
+    # Set auth-related trace attributes
+    set_trace_attributes(
+        api_key_uuid=key_details.api_key_uuid,
+        api_key_name=key_details.api_key_name,
+        group_uuid=key_details.group_uuid,
+        group_name=key_details.group_name,
+        project_uuid=route.project_uuid,
+        project_name=route.project_name,
+    )
+
+    if not group_service.check_key_uuid_for_route(
+        route_key, UUID(key_details.api_key_uuid)
+    ):
+        raise InvalidApiKey('Incorrect API key provided.')
+
+    ctx.project_uuid = route.project_uuid
+    ctx.project_name = route.project_name
+    request.state.otel_route_name = route_name
+
+    # Check and count request rate limits BEFORE any processing
+    if route.request_rate_limiter:
+        await route.request_rate_limiter.check_and_count_request(
+            request_uuid=request_uuid,
+            api_key_uuid=key_details.api_key_uuid,
+            group_uuid=key_details.group_uuid,
+            api_key_name=key_details.api_key_name,
+            group_name=key_details.group_name,
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+        )
+
+    content = await file.read()
+    validate_audio_upload(filename=file.filename, size=file.size, content=content)
+
+    set_operation_category(OperationCategory.ENDPOINT)
+    result = await route.invoke_transcription(
+        request_uuid=request_uuid,
+        api_key_uuid=key_details.api_key_uuid,
+        api_key_name=key_details.api_key_name,
+        group_uuid=key_details.group_uuid,
+        group_name=key_details.group_name,
+        route_name=route_name,
+        audio_bytes=content,
+        filename=file.filename or 'audio',
+        content_type=file.content_type,
+        requested_response_format=response_format,
+        language=language,
+        prompt=prompt,
+        temperature=temperature,
+    )
+
+    if isinstance(result.body, dict):
+        return JSONResponse(content=jsonable_encoder(result.body))
+    return Response(content=result.body, media_type=result.content_type)
 
 
 # This endpoint follows the OpenAI Responses API standard (stateless Phase 1):

@@ -27,9 +27,13 @@ from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
+    TranscriptionResult,
+)
 from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
+from radicalbit_ai_gateway.models.limiting import BudgetLimiting
 from radicalbit_ai_gateway.models.model import Model
 import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
@@ -839,6 +843,154 @@ async def test_invoke_embeddings_budget_limit_exceeded(
     assert len(pook.pending_mocks()) == 0
 
     pook.disable_network()
+
+
+def _make_transcription_route_config(**budget_kwargs) -> GatewayRouteConfig:
+    budget_limiting = BudgetLimiting(**budget_kwargs) if budget_kwargs else None
+    return GatewayRouteConfig(
+        route_name='rb-gateway',
+        chat_models=[],
+        transcription_models=['whisper-1'],
+        budget_limiting=budget_limiting,
+    )
+
+
+@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@pytest.mark.asyncio
+async def test_invoke_transcription_success(mock_emit_event):
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = _make_transcription_route_config()
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+    )
+
+    fake_result = TranscriptionResult(
+        body={'text': 'Ciao mondo', 'usage': {'type': 'duration', 'seconds': 9}},
+        content_type='application/json',
+        usage=MagicMock(type='duration', seconds=9),
+        model_invoked=whisper_model,
+        latency_ms=42.0,
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    result = await ai_gateway.invoke_transcription(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        route_name='rb-gateway',
+        audio_bytes=b'fake-audio',
+        filename='test.wav',
+        content_type='audio/wav',
+        requested_response_format='json',
+    )
+
+    assert result is fake_result
+    ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
+
+    # A MODEL_INVOCATION event was emitted, tagged as transcription...
+    assert mock_emit_event.call_count == 1
+    emitted_payload = mock_emit_event.call_args.args[0]
+    assert emitted_payload.model_type == 'transcription'
+
+    # ...but no cost was computed: passing token_input_count/token_output_count
+    # to _record_metrics for a transcription model would crash CostService
+    # (it only knows chat/embedding prices) — see AG-891 plan.
+    cost_service.compute_cost.assert_not_called()
+
+
+@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@pytest.mark.asyncio
+async def test_invoke_transcription_checks_and_counts_budget(mock_emit_event):
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = _make_transcription_route_config(max_budget=10.0, window_size=3600)
+    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter.check_budget = AsyncMock()
+    budget_limiter.count_cost = AsyncMock()
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+        budget_limiter=budget_limiter,
+    )
+
+    fake_result = TranscriptionResult(
+        body={'text': 'Ciao', 'usage': {'type': 'duration', 'seconds': 3}},
+        content_type='application/json',
+        usage=MagicMock(type='duration', seconds=3),
+        model_invoked=whisper_model,
+        latency_ms=10.0,
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    await ai_gateway.invoke_transcription(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        route_name='rb-gateway',
+        audio_bytes=b'fake-audio',
+        filename='test.wav',
+        content_type='audio/wav',
+        requested_response_format='json',
+    )
+
+    budget_limiter.check_budget.assert_awaited_once()
+    budget_limiter.count_cost.assert_awaited_once_with(cost=0.0)
+
+
+@pytest.mark.asyncio
+async def test_invoke_transcription_no_models_configured_raises():
+    cost_service = MagicMock(spec_set=CostService)
+    route_cfg = GatewayRouteConfig(route_name='rb-gateway', chat_models=[])
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=None,
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+    )
+
+    with pytest.raises(GatewayBadRequest, match='no transcription models defined'):
+        await ai_gateway.invoke_transcription(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='rb-key',
+            group_name='test-group',
+            route_name='rb-gateway',
+            audio_bytes=b'fake-audio',
+            filename='test.wav',
+            content_type='audio/wav',
+            requested_response_format='json',
+        )
 
 
 @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)

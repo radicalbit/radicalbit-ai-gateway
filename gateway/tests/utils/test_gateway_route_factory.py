@@ -144,6 +144,28 @@ def test_build_gateway_routes_from_config_resolves_transcription_models():
     assert route.chat_invoker is not None
 
 
+def test_build_gateway_routes_from_config_wires_transcription_invoker():
+    """AG-891: once TranscriptionModelInvoker exists, a route with
+    transcription_models gets a working transcription_invoker built from the
+    resolved Model list.
+    """
+    resolved = resolve_secrets_from_string(_PROJECT_CONFIG_WITH_TRANSCRIPTION_YAML)
+    config = GatewayConfig.model_validate(resolved)
+    cost_service = MagicMock(spec_set=CostService)
+
+    routes = build_gateway_routes_from_config(
+        config,
+        guardrail_engine=_make_guardrail_engine(),
+        redis_client=None,
+        cost_service=cost_service,
+        httpx_client=None,
+    )
+
+    route = routes['my-route']
+    assert route.transcription_invoker is not None
+    assert 'openai-whisper' in route.transcription_invoker.model_map
+
+
 def test_build_gateway_routes_empty_config():
     """Step 3: an empty config produces an empty routes dict."""
     config = GatewayConfig.model_validate({'routes': {}, 'chat_models': []})

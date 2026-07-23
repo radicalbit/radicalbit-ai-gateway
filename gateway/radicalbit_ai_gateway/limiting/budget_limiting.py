@@ -78,6 +78,21 @@ class BudgetLimiter:
             return
         await self.limiter.hit(self.item, cost=cost)
 
+    async def count_cost(self, cost: float) -> None:
+        """Add a pre-computed dollar cost directly to the budget window.
+
+        Bypasses the token_count × cost_per_token math of `count_input`/
+        `count_output`, for billing models that aren't token-based (e.g.
+        duration-based transcription pricing for whisper-1). Callers compute
+        `cost` themselves (today: transcription passes a `0.0` placeholder
+        pending AG-892's `CostService` support; chat/embeddings continue to
+        use `count_input`/`count_output`, unaffected by this method).
+        """
+        cost_units = int(cost * BUDGET_MULTIPLIER)
+        if not self.limiter or not self.item:
+            return
+        await self.limiter.hit(self.item, cost=cost_units)
+
     @task(name='check_budget_limit')
     async def check_budget(self) -> None:
         """Check if budget counter is exceeded. Raise BudgetLimitExceededError if limit is exceeded."""
