@@ -62,6 +62,21 @@ def set_trace_attributes(
         _merge_association_properties(properties)
 
 
+def set_mcp_attributes(
+    method: str | None = None,
+    alias: str | None = None,
+    tool_name: str | None = None,
+) -> None:
+    properties = {
+        'rb.gateway.mcp_method': method,
+        'rb.gateway.mcp_alias': alias,
+        'rb.gateway.mcp_tool_name': tool_name,
+    }
+    properties = {k: v for k, v in properties.items() if v is not None}
+    if properties:
+        _merge_association_properties(properties)
+
+
 def ensure_endpoint_category(func):
     """Ensure the workflow span always ends with ENDPOINT category.
 

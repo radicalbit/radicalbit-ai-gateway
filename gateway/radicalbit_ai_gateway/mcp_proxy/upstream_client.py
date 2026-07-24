@@ -13,6 +13,7 @@ from mcp.client.stdio import (
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.exceptions import McpError as SdkMcpError
 from pydantic import AnyUrl
+from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.headers import build_upstream_headers
@@ -46,6 +47,7 @@ class McpUpstreamClient:
         self._default_timeout = default_timeout
         self._httpx_client_factory = httpx_client_factory
 
+    @task(name='mcp_upstream_list_tools')
     async def list_tools(
         self,
         server: AnyMcpServer,
@@ -57,6 +59,7 @@ class McpUpstreamClient:
             server, lambda session: session.list_tools(cursor), client_headers
         )
 
+    @task(name='mcp_upstream_call_tool')
     async def call_tool(
         self,
         server: AnyMcpServer,

@@ -5,6 +5,7 @@ import logging
 from uuid import UUID
 
 from fastapi import Request
+from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.mcp_proxy import jsonrpc
@@ -19,6 +20,13 @@ from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import McpTransportError
+from radicalbit_ai_gateway.utils.trace_attributes import (
+    OperationCategory,
+    ensure_endpoint_category,
+    set_mcp_attributes,
+    set_operation_category,
+    set_trace_attributes,
+)
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
@@ -84,6 +92,8 @@ class McpService:
             else get_app_config().cors_config.cors_allow_origins
         )
 
+    @workflow(name='mcp_request')
+    @ensure_endpoint_category
     async def handle_post(
         self, request: Request, project_name: str, route_name: str
     ) -> McpDispatchResult:
@@ -92,6 +102,11 @@ class McpService:
 
         entry: ProjectEntry | None = request.app.state.project_configs.get(project_name)
         project_uuid = str(entry.uuid) if entry else ''
+        set_trace_attributes(
+            project_uuid=project_uuid, project_name=project_name, route_name=route_name
+        )
+
+        set_operation_category(OperationCategory.AUTH)
         key_details = await authenticate_bearer_request(
             request, project_uuid, project_name
         )
@@ -122,6 +137,7 @@ class McpService:
             )
 
         servers = entry.config.get_route_mcp_servers(route_name)
+        set_operation_category(OperationCategory.INVOCATION)
         return await self._dispatch(body, servers, request.headers)
 
     async def _dispatch(
@@ -212,6 +228,7 @@ class McpService:
             status_code=200, payload=jsonrpc.result_message(request_id, result)
         )
 
+    @task(name='mcp_initialize')
     def _initialize(self, params: dict) -> dict:
         return {
             'protocolVersion': negotiate_protocol_version(
@@ -221,6 +238,7 @@ class McpService:
             'serverInfo': {'name': MCP_SERVER_NAME, 'version': gateway_version()},
         }
 
+    @task(name='mcp_tools_list')
     async def _tools_list(
         self,
         servers: list[AnyMcpServer],
@@ -263,6 +281,7 @@ class McpService:
             )
         return {'tools': tools}
 
+    @task(name='mcp_tools_call')
     async def _tools_call(
         self,
         params: dict,
@@ -291,6 +310,7 @@ class McpService:
         )
         if split is None or server is None:
             raise _McpMethodError(jsonrpc.INVALID_PARAMS, f'Unknown tool: {name}')
+        set_mcp_attributes(method='tools/call', alias=split[0], tool_name=split[1])
         result = await self._upstream_client.call_tool(
             server, split[1], arguments, client_headers=client_headers
         )
