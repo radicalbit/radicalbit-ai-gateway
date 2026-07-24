@@ -219,7 +219,7 @@ def test_initialize_lifecycle():
     assert res.status_code == 200
     result = res.json()['result']
     assert result['protocolVersion'] == '2025-06-18'
-    assert result['capabilities'] == {'tools': {}}
+    assert result['capabilities'] == {'tools': {}, 'prompts': {}, 'resources': {}}
 
     res = client.post(
         PATH,
@@ -237,7 +237,7 @@ def test_unknown_method_is_32601_over_200():
     client, _ = _make_client()
     res = client.post(
         PATH,
-        json={'jsonrpc': '2.0', 'id': 1, 'method': 'prompts/list'},
+        json={'jsonrpc': '2.0', 'id': 1, 'method': 'completion/complete'},
         headers=AUTH,
     )
     assert res.status_code == 200
