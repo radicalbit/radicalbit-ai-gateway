@@ -83,55 +83,53 @@ def test_split_tool_name():
     ],
 )
 async def test_invalid_envelope_is_400_invalid_request(body):
-    status, payload = await _service().dispatch(body, SERVERS, None)
-    assert status == 400
-    assert payload['error']['code'] == -32600
-    assert payload['id'] is None
+    result = await _service()._dispatch(body, SERVERS, None)
+    assert result.status_code == 400
+    assert result.payload['error']['code'] == -32600
+    assert result.payload['id'] is None
 
 
 @pytest.mark.parametrize('request_id', [None, True, 1.5, {'x': 1}])
 async def test_invalid_request_id_rejected(request_id):
-    status, payload = await _service().dispatch(
+    result = await _service()._dispatch(
         _request('ping', request_id=request_id), SERVERS, None
     )
-    assert status == 400
-    assert payload['error']['code'] == -32600
+    assert result.status_code == 400
+    assert result.payload['error']['code'] == -32600
 
 
 @pytest.mark.parametrize('request_id', [0, 1, 'abc'])
 async def test_valid_request_ids_echoed(request_id):
-    status, payload = await _service().dispatch(
+    result = await _service()._dispatch(
         _request('ping', request_id=request_id), SERVERS, None
     )
-    assert status == 200
-    assert payload == {'jsonrpc': '2.0', 'id': request_id, 'result': {}}
+    assert result.status_code == 200
+    assert result.payload == {'jsonrpc': '2.0', 'id': request_id, 'result': {}}
 
 
 async def test_notifications_get_202_and_no_body():
     service = _service()
     for method in ('notifications/initialized', 'notifications/cancelled'):
-        status, payload = await service.dispatch(
+        result = await service._dispatch(
             {'jsonrpc': '2.0', 'method': method}, SERVERS, None
         )
-        assert status == 202
-        assert payload is None
+        assert result.status_code == 202
+        assert result.payload is None
 
 
 async def test_unknown_method_is_32601():
-    status, payload = await _service().dispatch(
-        _request('resources/list'), SERVERS, None
-    )
-    assert status == 200
-    assert payload['error']['code'] == -32601
-    assert 'resources/list' in payload['error']['message']
+    result = await _service()._dispatch(_request('resources/list'), SERVERS, None)
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32601
+    assert 'resources/list' in result.payload['error']['message']
 
 
 async def test_non_object_params_is_32602():
-    status, payload = await _service().dispatch(
+    result = await _service()._dispatch(
         _request('tools/call', params=[1, 2]), SERVERS, None
     )
-    assert status == 200
-    assert payload['error']['code'] == -32602
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32602
 
 
 # ---------------------------------------------------------------------------
@@ -140,27 +138,27 @@ async def test_non_object_params_is_32602():
 
 
 async def test_initialize_advertises_tools_only():
-    status, payload = await _service().dispatch(
+    result = await _service()._dispatch(
         _request('initialize', params={'protocolVersion': '2025-06-18'}),
         SERVERS,
         None,
     )
-    assert status == 200
-    result = payload['result']
-    assert result['protocolVersion'] == '2025-06-18'
-    assert result['capabilities'] == {'tools': {}}  # no listChanged
-    assert result['serverInfo']['name'] == MCP_SERVER_NAME
-    assert result['serverInfo']['version']
+    assert result.status_code == 200
+    payload_result = result.payload['result']
+    assert payload_result['protocolVersion'] == '2025-06-18'
+    assert payload_result['capabilities'] == {'tools': {}}  # no listChanged
+    assert payload_result['serverInfo']['name'] == MCP_SERVER_NAME
+    assert payload_result['serverInfo']['version']
 
 
 async def test_initialize_negotiates_unsupported_version():
-    status, payload = await _service().dispatch(
+    result = await _service()._dispatch(
         _request('initialize', params={'protocolVersion': '2024-11-05'}),
         SERVERS,
         None,
     )
-    assert status == 200
-    assert payload['result']['protocolVersion'] == LATEST_PROTOCOL_VERSION
+    assert result.status_code == 200
+    assert result.payload['result']['protocolVersion'] == LATEST_PROTOCOL_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -178,12 +176,10 @@ async def test_tools_list_fans_out_and_prefixes():
     )
     headers = {'x-user-jwt': 'jwt-1'}
 
-    status, payload = await _service(client).dispatch(
-        _request('tools/list'), SERVERS, headers
-    )
+    result = await _service(client)._dispatch(_request('tools/list'), SERVERS, headers)
 
-    assert status == 200
-    tools = payload['result']['tools']
+    assert result.status_code == 200
+    tools = result.payload['result']['tools']
     assert [t['name'] for t in tools] == [
         'github__get_issue',
         'github__create_issue',
@@ -198,9 +194,9 @@ async def test_tools_list_fans_out_and_prefixes():
 
 
 async def test_tools_list_without_servers_is_empty():
-    status, payload = await _service().dispatch(_request('tools/list'), [], None)
-    assert status == 200
-    assert payload['result'] == {'tools': []}
+    result = await _service()._dispatch(_request('tools/list'), [], None)
+    assert result.status_code == 200
+    assert result.payload['result'] == {'tools': []}
 
 
 async def test_tools_list_tolerates_one_failing_upstream():
@@ -211,22 +207,18 @@ async def test_tools_list_tolerates_one_failing_upstream():
             types.ListToolsResult(tools=[_tool('search')]),
         ]
     )
-    status, payload = await _service(client).dispatch(
-        _request('tools/list'), SERVERS, None
-    )
-    assert status == 200
-    assert [t['name'] for t in payload['result']['tools']] == ['jira__search']
+    result = await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
+    assert result.status_code == 200
+    assert [t['name'] for t in result.payload['result']['tools']] == ['jira__search']
 
 
 async def test_tools_list_all_upstreams_failing_is_32000():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.list_tools = AsyncMock(side_effect=McpUpstreamError('github', 'boom'))
-    status, payload = await _service(client).dispatch(
-        _request('tools/list'), SERVERS, None
-    )
-    assert status == 200
-    assert payload['error']['code'] == -32000
-    assert 'boom' not in payload['error']['message']
+    result = await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32000
+    assert 'boom' not in result.payload['error']['message']
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +235,7 @@ async def test_tools_call_forwards_and_passes_result_through():
     client.call_tool = AsyncMock(return_value=result)
     headers = {'x-user-jwt': 'jwt-1'}
 
-    status, payload = await _service(client).dispatch(
+    dispatch_result = await _service(client)._dispatch(
         _request(
             'tools/call',
             params={'name': 'github__get_issue', 'arguments': {'id': '42'}},
@@ -252,8 +244,8 @@ async def test_tools_call_forwards_and_passes_result_through():
         headers,
     )
 
-    assert status == 200
-    assert payload['result'] == {
+    assert dispatch_result.status_code == 200
+    assert dispatch_result.payload['result'] == {
         'content': [{'type': 'text', 'text': 'issue #42'}],
         'isError': False,
     }
@@ -269,17 +261,17 @@ async def test_tools_call_is_error_result_passes_through():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock(return_value=result)
 
-    status, payload = await _service(client).dispatch(
+    dispatch_result = await _service(client)._dispatch(
         _request('tools/call', params={'name': 'github__get_issue'}), SERVERS, None
     )
-    assert status == 200
-    assert payload['result']['isError'] is True
+    assert dispatch_result.status_code == 200
+    assert dispatch_result.payload['result']['isError'] is True
 
 
 async def test_tools_call_splits_on_first_separator_only():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
-    await _service(client).dispatch(
+    await _service(client)._dispatch(
         _request('tools/call', params={'name': 'github__ns__tool'}), SERVERS, None
     )
     assert client.call_tool.await_args.args[1] == 'ns__tool'
@@ -291,11 +283,11 @@ async def test_tools_call_splits_on_first_separator_only():
 async def test_tools_call_unknown_tool_is_32602(name):
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock()
-    status, payload = await _service(client).dispatch(
+    result = await _service(client)._dispatch(
         _request('tools/call', params={'name': name}), SERVERS, None
     )
-    assert status == 200
-    assert payload['error']['code'] == -32602
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32602
     client.call_tool.assert_not_awaited()
 
 
@@ -303,11 +295,11 @@ async def test_tools_call_alias_outside_scope_is_32602():
     """A top-level alias not exposed on this route is invisible."""
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock()
-    status, payload = await _service(client).dispatch(
+    result = await _service(client)._dispatch(
         _request('tools/call', params={'name': 'jira__search'}), [GITHUB], None
     )
-    assert status == 200
-    assert payload['error']['code'] == -32602
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32602
     client.call_tool.assert_not_awaited()
 
 
@@ -316,11 +308,11 @@ async def test_tools_call_alias_outside_scope_is_32602():
     [{}, {'name': 7}, {'name': 'github__x', 'arguments': 'not-a-dict'}],
 )
 async def test_tools_call_bad_params_is_32602(params):
-    status, payload = await _service().dispatch(
+    result = await _service()._dispatch(
         _request('tools/call', params=params), SERVERS, None
     )
-    assert status == 200
-    assert payload['error']['code'] == -32602
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32602
 
 
 async def test_tools_call_upstream_error_maps_to_jsonrpc_error():
@@ -328,20 +320,20 @@ async def test_tools_call_upstream_error_maps_to_jsonrpc_error():
     client.call_tool = AsyncMock(
         side_effect=McpUpstreamError('github', "Upstream MCP server 'github' timed out")
     )
-    status, payload = await _service(client).dispatch(
+    result = await _service(client)._dispatch(
         _request('tools/call', params={'name': 'github__get_issue'}), SERVERS, None
     )
-    assert status == 200
-    assert payload['error']['code'] == -32000
-    assert 'timed out' in payload['error']['message']
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32000
+    assert 'timed out' in result.payload['error']['message']
 
 
 async def test_unexpected_exception_is_sanitized_internal_error():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock(side_effect=ValueError('secret detail'))
-    status, payload = await _service(client).dispatch(
+    result = await _service(client)._dispatch(
         _request('tools/call', params={'name': 'github__get_issue'}), SERVERS, None
     )
-    assert status == 200
-    assert payload['error']['code'] == -32603
-    assert 'secret detail' not in payload['error']['message']
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32603
+    assert 'secret detail' not in result.payload['error']['message']

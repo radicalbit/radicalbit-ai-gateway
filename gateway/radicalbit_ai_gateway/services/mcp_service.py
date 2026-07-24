@@ -4,8 +4,7 @@ from importlib.metadata import PackageNotFoundError, version as _package_version
 import logging
 from uuid import UUID
 
-from fastapi import Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import Request
 
 from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.mcp_proxy import jsonrpc
@@ -14,6 +13,7 @@ from radicalbit_ai_gateway.mcp_proxy.errors import (
     McpUpstreamError,
 )
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
+from radicalbit_ai_gateway.models.mcp_dispatch_result import McpDispatchResult
 from radicalbit_ai_gateway.models.mcp_server import ALIAS_TOOL_SEPARATOR, AnyMcpServer
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.group_service import GroupService
@@ -86,7 +86,7 @@ class McpService:
 
     async def handle_post(
         self, request: Request, project_name: str, route_name: str
-    ) -> Response:
+    ) -> McpDispatchResult:
         """Authenticate and authorize the POST, then dispatch its JSON-RPC message."""
         self._validate_origin(request)
 
@@ -116,24 +116,21 @@ class McpService:
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(
-                jsonrpc.error_message(None, jsonrpc.PARSE_ERROR, 'Parse error'),
+            return McpDispatchResult(
                 status_code=400,
+                payload=jsonrpc.error_message(None, jsonrpc.PARSE_ERROR, 'Parse error'),
             )
 
         servers = entry.config.get_route_mcp_servers(route_name)
-        status_code, payload = await self.dispatch(body, servers, request.headers)
-        if payload is None:
-            return Response(status_code=status_code)
-        return JSONResponse(payload, status_code=status_code)
+        return await self._dispatch(body, servers, request.headers)
 
-    async def dispatch(
+    async def _dispatch(
         self,
         body: dict,
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
-    ) -> tuple[int, dict | None]:
-        """Dispatch one JSON-RPC message; returns ``(http_status, payload)``.
+    ) -> McpDispatchResult:
+        """Dispatch one JSON-RPC message; returns its HTTP-level outcome.
 
         ``payload`` is ``None`` for notifications (202, empty body).
         """
@@ -142,28 +139,37 @@ class McpService:
             or body.get('jsonrpc') != '2.0'
             or not isinstance(body.get('method'), str)
         ):
-            return 400, jsonrpc.error_message(
-                None, jsonrpc.INVALID_REQUEST, 'Invalid Request'
+            return McpDispatchResult(
+                status_code=400,
+                payload=jsonrpc.error_message(
+                    None, jsonrpc.INVALID_REQUEST, 'Invalid Request'
+                ),
             )
         method = body['method']
 
         if 'id' not in body:
             # Notifications (e.g. notifications/initialized) get no response.
             logger.debug('MCP notification accepted: %s', method)
-            return 202, None
+            return McpDispatchResult(status_code=202)
 
         request_id = body['id']
         if not jsonrpc.is_valid_request_id(request_id):
-            return 400, jsonrpc.error_message(
-                None,
-                jsonrpc.INVALID_REQUEST,
-                'Invalid Request: id must be a string or integer',
+            return McpDispatchResult(
+                status_code=400,
+                payload=jsonrpc.error_message(
+                    None,
+                    jsonrpc.INVALID_REQUEST,
+                    'Invalid Request: id must be a string or integer',
+                ),
             )
 
         params = body.get('params')
         if params is not None and not isinstance(params, dict):
-            return 200, jsonrpc.error_message(
-                request_id, jsonrpc.INVALID_PARAMS, 'params must be an object'
+            return McpDispatchResult(
+                status_code=200,
+                payload=jsonrpc.error_message(
+                    request_id, jsonrpc.INVALID_PARAMS, 'params must be an object'
+                ),
             )
 
         try:
@@ -176,21 +182,35 @@ class McpService:
             elif method == 'tools/call':
                 result = await self._tools_call(params or {}, servers, client_headers)
             else:
-                return 200, jsonrpc.error_message(
-                    request_id,
-                    jsonrpc.METHOD_NOT_FOUND,
-                    f'Method not found: {method}',
+                return McpDispatchResult(
+                    status_code=200,
+                    payload=jsonrpc.error_message(
+                        request_id,
+                        jsonrpc.METHOD_NOT_FOUND,
+                        f'Method not found: {method}',
+                    ),
                 )
         except _McpMethodError as e:
-            return 200, jsonrpc.error_message(request_id, e.code, e.message)
+            return McpDispatchResult(
+                status_code=200,
+                payload=jsonrpc.error_message(request_id, e.code, e.message),
+            )
         except McpUpstreamError as e:
-            return 200, jsonrpc.error_message(request_id, e.code, e.message)
+            return McpDispatchResult(
+                status_code=200,
+                payload=jsonrpc.error_message(request_id, e.code, e.message),
+            )
         except Exception:
             logger.exception('MCP %s failed', method)
-            return 200, jsonrpc.error_message(
-                request_id, jsonrpc.INTERNAL_ERROR, 'Internal error'
+            return McpDispatchResult(
+                status_code=200,
+                payload=jsonrpc.error_message(
+                    request_id, jsonrpc.INTERNAL_ERROR, 'Internal error'
+                ),
             )
-        return 200, jsonrpc.result_message(request_id, result)
+        return McpDispatchResult(
+            status_code=200, payload=jsonrpc.result_message(request_id, result)
+        )
 
     def _initialize(self, params: dict) -> dict:
         return {
