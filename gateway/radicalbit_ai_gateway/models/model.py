@@ -234,7 +234,9 @@ class Model(BaseModel):
             if cost_per_second:
                 self.input_cost_per_second = Decimal(str(cost_per_second))
         if not self.input_cost_per_audio_token:
-            cost_per_audio_token = costs.get(model, {}).get('input_cost_per_audio_token')
+            cost_per_audio_token = costs.get(model, {}).get(
+                'input_cost_per_audio_token'
+            )
             if cost_per_audio_token:
                 self.input_cost_per_audio_token = Decimal(str(cost_per_audio_token))
         return self
