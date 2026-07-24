@@ -100,12 +100,21 @@ def build_gateway_routes_from_config(
     routes: dict[str, GatewayRoute] = {}
     chat_by_id = gateway_config.chat_models_by_id
     emb_by_id = gateway_config.embedding_models_by_id
+    transcription_by_id = gateway_config.transcription_models_by_id
 
     for route_name, route_config in gateway_config.routes.items():
         chat_models = [chat_by_id[mid] for mid in route_config.chat_models]
         embedding_models = (
             [emb_by_id[mid] for mid in (route_config.embedding_models or [])]
             if route_config.embedding_models
+            else None
+        )
+        transcription_models = (
+            [
+                transcription_by_id[mid]
+                for mid in (route_config.transcription_models or [])
+            ]
+            if route_config.transcription_models
             else None
         )
         cache_client = get_proper_cache(route_config, redis_client)
@@ -151,6 +160,7 @@ def build_gateway_routes_from_config(
             gateway_route_config=route_config,
             chat_models=chat_models,
             embedding_models=embedding_models,
+            transcription_models=transcription_models,
             guardrail_engine=guardrail_engine,
             gateway_cache=gateway_cache,
             cost_service=cost_service,

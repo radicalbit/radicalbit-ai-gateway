@@ -40,12 +40,40 @@ def get_model_from_model_id(
     raise ValueError(f'Model {model_id} not found for route {route_name}')
 
 
+def _check_unique_ids(ids: list[str], label: str, scope: str = '') -> None:
+    """Raise ValueError if `ids` contains duplicates."""
+    if len(ids) != len(set(ids)):
+        raise ValueError(f'{scope}All {label} must have unique model_id.')
+
+
+def _check_disjoint_ids(groups: list[tuple[str, list[str]]], scope: str = '') -> None:
+    """Raise ValueError if any two (label, ids) groups share a model_id."""
+    for i, (label_a, ids_a) in enumerate(groups):
+        for label_b, ids_b in groups[i + 1 :]:
+            if set(ids_a) & set(ids_b):
+                raise ValueError(
+                    f'{scope}{label_a} and {label_b} must have globally unique model_id.'
+                )
+
+
+def _check_missing_references(
+    ids: list[str], defined: set[str], label: str, scope: str = ''
+) -> None:
+    """Raise ValueError if any of `ids` isn't in the top-level `defined` set."""
+    missing = sorted(mid for mid in ids if mid not in defined)
+    if missing:
+        raise ValueError(
+            f'{scope}{label} not declared in top-level {label}: {", ".join(missing)}'
+        )
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     routes: dict[str, GatewayRouteConfig] = {}
     chat_models: list[Model]
     embedding_models: list[Model] | None = None
+    transcription_models: list[Model] | None = None
     cache: CacheConfig | None = None
     guardrails: list[Guardrail] | None = None
     routing: list[AnyRoutingConfig] | None = None
@@ -58,6 +86,10 @@ class GatewayConfig(BaseModel):
     @property
     def embedding_models_by_id(self) -> dict[str, Model]:
         return {m.model_id: m for m in (self.embedding_models or [])}
+
+    @property
+    def transcription_models_by_id(self) -> dict[str, Model]:
+        return {m.model_id: m for m in (self.transcription_models or [])}
 
     @property
     def routing_by_name(self) -> dict[str, AnyRoutingConfig]:
@@ -124,52 +156,53 @@ class GatewayConfig(BaseModel):
     def validate_models_and_routes(self) -> Self:
         chat_ids = [m.model_id for m in self.chat_models]
         emb_ids = [m.model_id for m in (self.embedding_models or [])]
+        transcription_ids = [m.model_id for m in (self.transcription_models or [])]
 
-        if len(chat_ids) != len(set(chat_ids)):
-            raise ValueError('All chat_models must have unique model_id.')
-        if len(emb_ids) != len(set(emb_ids)):
-            raise ValueError('All embedding_models must have unique model_id.')
-        if set(chat_ids) & set(emb_ids):
-            raise ValueError(
-                'chat_models and embedding_models must have globally unique model_id.'
-            )
+        _check_unique_ids(chat_ids, 'chat_models')
+        _check_unique_ids(emb_ids, 'embedding_models')
+        _check_unique_ids(transcription_ids, 'transcription_models')
+        _check_disjoint_ids(
+            [
+                ('chat_models', chat_ids),
+                ('embedding_models', emb_ids),
+                ('transcription_models', transcription_ids),
+            ]
+        )
 
         chat_defined = set(self.chat_models_by_id.keys())
         emb_defined = set(self.embedding_models_by_id.keys())
+        transcription_defined = set(self.transcription_models_by_id.keys())
 
         # Route-level reference validation
         for route_name, route in self.routes.items():
             route_chat_ids = route.chat_models
             route_emb_ids = list(route.embedding_models or [])
+            route_transcription_ids = list(route.transcription_models or [])
+            scope = f'Route {route_name}: '
 
-            if len(route_chat_ids) != len(set(route_chat_ids)):
-                raise ValueError(
-                    f'Route {route_name}: chat_models must have unique ids.'
-                )
-            if len(route_emb_ids) != len(set(route_emb_ids)):
-                raise ValueError(
-                    f'Route {route_name}: embedding_models must have unique ids.'
-                )
-            if set(route_chat_ids) & set(route_emb_ids):
-                raise ValueError(
-                    f'Route {route_name}: chat_models and embedding_models must have globally unique model_id.'
-                )
-
-            missing_chat = sorted(
-                [mid for mid in route_chat_ids if mid not in chat_defined]
+            _check_unique_ids(route_chat_ids, 'chat_models', scope)
+            _check_unique_ids(route_emb_ids, 'embedding_models', scope)
+            _check_unique_ids(route_transcription_ids, 'transcription_models', scope)
+            _check_disjoint_ids(
+                [
+                    ('chat_models', route_chat_ids),
+                    ('embedding_models', route_emb_ids),
+                    ('transcription_models', route_transcription_ids),
+                ],
+                scope,
             )
-            if missing_chat:
-                raise ValueError(
-                    f'Route {route_name}: chat_models not declared in top-level chat_models: {", ".join(missing_chat)}'
-                )
-
-            missing_emb = sorted(
-                [mid for mid in route_emb_ids if mid not in emb_defined]
+            _check_missing_references(
+                route_chat_ids, chat_defined, 'chat_models', scope
             )
-            if missing_emb:
-                raise ValueError(
-                    f'Route {route_name}: embedding_models not declared in top-level embedding_models: {", ".join(missing_emb)}'
-                )
+            _check_missing_references(
+                route_emb_ids, emb_defined, 'embedding_models', scope
+            )
+            _check_missing_references(
+                route_transcription_ids,
+                transcription_defined,
+                'transcription_models',
+                scope,
+            )
 
             # Fallback validation
             if route.fallback:

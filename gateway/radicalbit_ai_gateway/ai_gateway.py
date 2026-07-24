@@ -98,6 +98,7 @@ class GatewayRoute:
         token_limiter: TokenLimiter | None = None,
         rate_limiter: RequestRateLimiter | None = None,
         budget_limiter: BudgetLimiter | None = None,
+        transcription_models: list[Model] | None = None,
         project_uuid: str = '',
         project_name: str = '',
     ):
@@ -106,6 +107,7 @@ class GatewayRoute:
         self.project_name = project_name
         self._chat_models = chat_models
         self._embedding_models = embedding_models or []
+        self._transcription_models = transcription_models or []
         self.router = router
         self.guardrail_engine = guardrail_engine
         self.gateway_cache = gateway_cache

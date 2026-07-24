@@ -28,6 +28,10 @@ class GatewayRouteConfig(BaseModel):
         default=None,
         description='List of embedding model IDs for the route.',
     )
+    transcription_models: list[str] | None = Field(
+        default=None,
+        description='List of transcription model IDs for the route.',
+    )
     rate_limiting: RateLimiting | None = Field(
         default=None,
         description='Rate limiting configuration for the route.',

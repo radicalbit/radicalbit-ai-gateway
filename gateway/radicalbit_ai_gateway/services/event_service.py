@@ -467,6 +467,9 @@ class EventService:
 
         chat_by_id = {m.model_id: m for m in config.chat_models}
         embed_by_id = {m.model_id: m for m in (config.embedding_models or [])}
+        transcription_by_id = {
+            m.model_id: m for m in (config.transcription_models or [])
+        }
 
         chat_ids: list[str] = route_dict.get('chat_models')
         resolved_chat: list[dict] = []
@@ -498,6 +501,23 @@ class EventService:
                     continue
                 resolved_embed.append(embedding_model.model_dump())
             route_dict['embedding_models'] = resolved_embed
+
+        transcription_ids: list[str] | None = route_dict.get('transcription_models')
+        if transcription_ids is None:
+            route_dict['transcription_models'] = None
+        else:
+            resolved_transcription: list[dict] = []
+            for mid in transcription_ids:
+                transcription_model = transcription_by_id.get(mid)
+                if transcription_model is None:
+                    logger.warning(
+                        'Transcription model_id %s referenced by route %s not found in top-level transcription_models registry',
+                        mid,
+                        route_config.route_name,
+                    )
+                    continue
+                resolved_transcription.append(transcription_model.model_dump())
+            route_dict['transcription_models'] = resolved_transcription
 
         routing_name: str | None = route_dict.get('routing')
         if routing_name:
