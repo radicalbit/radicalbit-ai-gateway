@@ -374,10 +374,13 @@ class GatewayConfig(BaseModel):
     def validate_mcp_servers(self) -> Self:
         """Validate top-level MCP server definitions and route references."""
         aliases = [s.alias for s in (self.mcp_servers or [])]
-        if len(aliases) != len(set(aliases)):
-            duplicates = sorted({a for a in aliases if aliases.count(a) > 1})
+        lowered = [a.lower() for a in aliases]
+        if len(lowered) != len(set(lowered)):
+            dup_lower = {a for a in lowered if lowered.count(a) > 1}
+            duplicates = sorted({a for a in aliases if a.lower() in dup_lower})
             raise ValueError(
-                f'All mcp_servers must have unique aliases. Duplicates found: {", ".join(duplicates)}'
+                'All mcp_servers must have unique aliases (case-insensitively). '
+                f'Duplicates found: {", ".join(duplicates)}'
             )
 
         defined = set(aliases)

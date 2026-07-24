@@ -91,6 +91,27 @@ def test_non_allowlisted_headers_dropped():
     assert result == {'x-user-jwt': 'jwt'}
 
 
+def test_only_allowlisted_headers_pass_through_among_many():
+    server = _server(forward_headers=['x-user-jwt', 'x-tenant-id', 'x-request-id'])
+    result = build_upstream_headers(
+        server,
+        {
+            'X-User-Jwt': 'jwt-value',
+            'X-Tenant-Id': 'tenant-42',
+            'X-Request-Id': 'req-123',
+            'X-Other': 'nope',
+            'Cookie': 'session=1',
+            'X-Forwarded-For': '10.0.0.1',
+            'User-Agent': 'some-client/1.0',
+        },
+    )
+    assert result == {
+        'x-user-jwt': 'jwt-value',
+        'x-tenant-id': 'tenant-42',
+        'x-request-id': 'req-123',
+    }
+
+
 def test_empty_inputs():
     server = _server()
     assert build_upstream_headers(server, None) == {}
