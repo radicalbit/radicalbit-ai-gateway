@@ -97,7 +97,11 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
     async def test_transcribe_gpt4o_success_uses_json_upstream(self):
         invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
         mock_client = MockTranscriptionClient(response=GPT4O_JSON_RESPONSE)
-        invoker.model_map['gpt4o-transcribe'] = (GPT4O_TRANSCRIBE_MODEL, mock_client, [])
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            mock_client,
+            [],
+        )
 
         result = await invoker.transcribe(
             audio_bytes=b'fake-audio',
@@ -114,7 +118,11 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
     async def test_transcribe_gpt4o_rejects_verbose_json(self):
         invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
         mock_client = MockTranscriptionClient(response=GPT4O_JSON_RESPONSE)
-        invoker.model_map['gpt4o-transcribe'] = (GPT4O_TRANSCRIBE_MODEL, mock_client, [])
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            mock_client,
+            [],
+        )
 
         with pytest.raises(ModelInvokerBadRequest, match='verbose_json'):
             await invoker.transcribe(
@@ -128,7 +136,11 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
     async def test_transcribe_gpt4o_rejects_srt(self):
         invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
         mock_client = MockTranscriptionClient(response=GPT4O_JSON_RESPONSE)
-        invoker.model_map['gpt4o-transcribe'] = (GPT4O_TRANSCRIBE_MODEL, mock_client, [])
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            mock_client,
+            [],
+        )
 
         with pytest.raises(ModelInvokerBadRequest, match='segment timing'):
             await invoker.transcribe(
@@ -153,11 +165,11 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_transcribe_upstream_5xx_raises_internal_error(self):
         invoker = self._build_invoker(WHISPER_MODEL)
-        request = httpx.Request('POST', 'https://api.openai.com/v1/audio/transcriptions')
-        response = httpx.Response(status_code=503, request=request)
-        exception = APIStatusError(
-            'Service unavailable', response=response, body=None
+        request = httpx.Request(
+            'POST', 'https://api.openai.com/v1/audio/transcriptions'
         )
+        response = httpx.Response(status_code=503, request=request)
+        exception = APIStatusError('Service unavailable', response=response, body=None)
         mock_client = MockTranscriptionClient(exception=exception)
         invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
 
@@ -172,7 +184,9 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_transcribe_upstream_4xx_raises_bad_request(self):
         invoker = self._build_invoker(WHISPER_MODEL)
-        request = httpx.Request('POST', 'https://api.openai.com/v1/audio/transcriptions')
+        request = httpx.Request(
+            'POST', 'https://api.openai.com/v1/audio/transcriptions'
+        )
         response = httpx.Response(status_code=400, request=request)
         exception = APIStatusError('Invalid file', response=response, body=None)
         mock_client = MockTranscriptionClient(exception=exception)
@@ -189,7 +203,9 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_transcribe_connection_error_raises_internal_error(self):
         invoker = self._build_invoker(WHISPER_MODEL)
-        request = httpx.Request('POST', 'https://api.openai.com/v1/audio/transcriptions')
+        request = httpx.Request(
+            'POST', 'https://api.openai.com/v1/audio/transcriptions'
+        )
         exception = APIConnectionError(message='Connection failed', request=request)
         mock_client = MockTranscriptionClient(exception=exception)
         invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
