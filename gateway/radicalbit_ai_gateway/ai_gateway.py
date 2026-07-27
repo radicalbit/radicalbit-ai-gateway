@@ -89,7 +89,7 @@ class GatewayRoute:
     def __init__(
         self,
         gateway_route_config: GatewayRouteConfig,
-        chat_models: list[Model],
+        chat_models: list[Model] | None,
         embedding_models: list[Model] | None,
         guardrail_engine: GuardrailEngine,
         cost_service: CostService,
@@ -109,7 +109,7 @@ class GatewayRoute:
         self.gateway_route_config = gateway_route_config
         self.project_uuid = project_uuid
         self.project_name = project_name
-        self._chat_models = chat_models
+        self._chat_models = chat_models or []
         self._embedding_models = embedding_models or []
         self._transcription_models = transcription_models or []
         self.router = router
@@ -157,10 +157,7 @@ class GatewayRoute:
         transcription_models = self._transcription_models
 
         if transcription_models:
-            # No fallback support yet for transcription models (AG-901);
-            # TranscriptionModelInvoker already extends ModelInvoker so wiring
-            # a fallback list in later (mirroring chat/embedding above) needs
-            # no further refactor.
+            # TODO(AG-901): no fallback support yet for transcription models.
             self.transcription_invoker = TranscriptionModelInvoker(
                 models=transcription_models,
                 fallbacks=None,
@@ -693,16 +690,6 @@ class GatewayRoute:
         prompt: str | None = None,
         temperature: float | None = None,
     ) -> TranscriptionResult:
-        """Invoke a transcription model for the route.
-
-        Mirrors `invoke_embeddings` but deliberately excludes guardrails
-        (excluded by the epic for raw audio input), caching (AG-902) and
-        token limiting (not applicable — see AG-887 analysis: there is no
-        way to estimate audio/token usage before calling the provider).
-        Cost tracking (AG-892) is also not wired here yet: see the
-        `_record_metrics` call below for why calling it with token counts
-        would crash against `CostService` today.
-        """
         if route_name != self.gateway_route_config.route_name:
             raise GatewayBadRequest(f'{route_name} must be the route name')
 
@@ -720,12 +707,6 @@ class GatewayRoute:
 
         set_operation_category(OperationCategory.INVOCATION)
         result = await self.transcription_invoker.transcribe(
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            group_uuid=group_uuid,
-            api_key_name=api_key_name,
-            group_name=group_name,
-            route_name=route_name,
             audio_bytes=audio_bytes,
             filename=filename,
             content_type=content_type,
@@ -734,16 +715,10 @@ class GatewayRoute:
             language=language,
             prompt=prompt,
             temperature=temperature,
-            project_uuid=self.project_uuid,
-            project_name=self.project_name,
         )
 
-        # Record that an invocation happened (event_type=MODEL_INVOCATION),
-        # without token_input_count/token_output_count: passing them would
-        # call `CostService.compute_cost` for a model_id it doesn't know
-        # about (transcription models aren't in `self.prices`, only chat/
-        # embedding are), which raises UnboundLocalError today. AG-892 will
-        # extend CostService and pass real counts here.
+        # TODO(AG-892): pass token/duration counts once CostService supports
+        # transcription pricing (would raise UnboundLocalError today).
         self.transcription_invoker._record_metrics(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
@@ -760,10 +735,7 @@ class GatewayRoute:
         )
 
         if self.budget_limiter:
-            # Placeholder pass-through (no-op: int(0.0 * BUDGET_MULTIPLIER) == 0)
-            # so the wiring is exercised end-to-end now. TODO(AG-892): replace
-            # 0.0 with the real dollar cost once CostService supports
-            # transcription pricing.
+            # TODO(AG-892): replace 0.0 with the real dollar cost.
             await self.budget_limiter.count_cost(cost=0.0)
 
         return result
@@ -1041,12 +1013,7 @@ class GatewayRoute:
 
     @task(name='select_transcription_model')
     def _select_and_prepare_transcription_model(self) -> Model:
-        """Select transcription model for transcription invocation.
-
-        v1 always selects the first model configured on the route (same
-        pattern as `/v1/embeddings` today) — no client-side model selection
-        within a route, no multi-model routing for transcription yet.
-        """
+        """Select transcription model for transcription invocation"""
         model_selected = self._get_first_transcription_model()
         if not model_selected:
             raise ValueError('Configuration for transcription model not found.')

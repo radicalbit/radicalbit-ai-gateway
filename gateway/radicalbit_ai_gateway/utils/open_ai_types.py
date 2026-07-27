@@ -11,7 +11,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Literal, TypeAlias, Union
 
+from fastapi import UploadFile
 from openai._types import SequenceNotStr
+from openai.types.audio_response_format import AudioResponseFormat
 from openai.types.chat.chat_completion_assistant_message_param import (
     ChatCompletionAssistantMessageParam,
 )
@@ -57,6 +59,7 @@ from openai.types.shared_params.response_format_json_schema import (
     ResponseFormatJSONSchema,
 )
 from openai.types.shared_params.response_format_text import ResponseFormatText
+from pydantic import BaseModel
 from typing_extensions import Required, TypedDict
 
 
@@ -543,3 +546,31 @@ class ResponseCreateParamsCustom(TypedDict, total=False):
 
     parallel_tool_calls: bool | None
     """Whether to allow parallel tool calls (forwarded to Chat Completions)."""
+
+
+# ---------------------------------------------------------------------------
+# Audio transcriptions API (POST /v1/audio/transcriptions)
+# ---------------------------------------------------------------------------
+# This one is a `pydantic.BaseModel`, not a TypedDict: FastAPI's
+# `Annotated[X, Form()]` multipart grouping only accepts a `BaseModel`.
+# ---------------------------------------------------------------------------
+
+
+class TranscriptionCreateParamsCustom(BaseModel):
+    model: str
+    """Gateway route name used to select the backend model."""
+
+    file: UploadFile
+    """The audio file to transcribe."""
+
+    language: str | None = None
+    """The language of the input audio, in ISO-639-1 format (e.g. `en`)."""
+
+    prompt: str | None = None
+    """An optional text to guide the model's style or continue a previous audio segment."""
+
+    response_format: AudioResponseFormat = 'json'
+    """The format of the transcript output."""
+
+    temperature: float | None = None
+    """Sampling temperature, between 0 and 1."""

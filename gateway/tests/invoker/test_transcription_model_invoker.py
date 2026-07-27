@@ -7,7 +7,6 @@ from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 import pytest
 
-from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 from tests.common.mocked_transcription_client import MockTranscriptionClient
 
 from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
@@ -61,12 +60,6 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
 
         result = await invoker.transcribe(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='test-route',
             audio_bytes=b'fake-audio',
             filename='test.wav',
             content_type='audio/wav',
@@ -91,12 +84,6 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
 
         result = await invoker.transcribe(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='test-route',
             audio_bytes=b'fake-audio',
             filename='test.wav',
             content_type='audio/wav',
@@ -113,12 +100,6 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         invoker.model_map['gpt4o-transcribe'] = (GPT4O_TRANSCRIBE_MODEL, mock_client, [])
 
         result = await invoker.transcribe(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='test-route',
             audio_bytes=b'fake-audio',
             filename='test.wav',
             content_type='audio/wav',
@@ -137,12 +118,6 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         with pytest.raises(ModelInvokerBadRequest, match='verbose_json'):
             await invoker.transcribe(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='rb-key',
-                group_name='test-group',
-                route_name='test-route',
                 audio_bytes=b'fake-audio',
                 filename='test.wav',
                 content_type='audio/wav',
@@ -157,12 +132,6 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         with pytest.raises(ModelInvokerBadRequest, match='segment timing'):
             await invoker.transcribe(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='rb-key',
-                group_name='test-group',
-                route_name='test-route',
                 audio_bytes=b'fake-audio',
                 filename='test.wav',
                 content_type='audio/wav',
@@ -175,12 +144,6 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         with pytest.raises(ModelInvokerBadRequest, match='not defined'):
             await invoker.transcribe(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='rb-key',
-                group_name='test-group',
-                route_name='test-route',
                 audio_bytes=b'fake-audio',
                 filename='test.wav',
                 content_type='audio/wav',
@@ -200,12 +163,6 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         with pytest.raises(ModelInvokerInternalError):
             await invoker.transcribe(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='rb-key',
-                group_name='test-group',
-                route_name='test-route',
                 audio_bytes=b'fake-audio',
                 filename='test.wav',
                 content_type='audio/wav',
@@ -223,12 +180,6 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         with pytest.raises(ModelInvokerBadRequest):
             await invoker.transcribe(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='rb-key',
-                group_name='test-group',
-                route_name='test-route',
                 audio_bytes=b'fake-audio',
                 filename='test.wav',
                 content_type='audio/wav',
@@ -245,12 +196,6 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         with pytest.raises(ModelInvokerInternalError):
             await invoker.transcribe(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='rb-key',
-                group_name='test-group',
-                route_name='test-route',
                 audio_bytes=b'fake-audio',
                 filename='test.wav',
                 content_type='audio/wav',

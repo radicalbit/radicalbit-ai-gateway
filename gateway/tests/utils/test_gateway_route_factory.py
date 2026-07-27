@@ -145,9 +145,8 @@ def test_build_gateway_routes_from_config_resolves_transcription_models():
 
 
 def test_build_gateway_routes_from_config_wires_transcription_invoker():
-    """AG-891: once TranscriptionModelInvoker exists, a route with
-    transcription_models gets a working transcription_invoker built from the
-    resolved Model list.
+    """A route with transcription_models gets a working transcription_invoker
+    built from the resolved Model list.
     """
     resolved = resolve_secrets_from_string(_PROJECT_CONFIG_WITH_TRANSCRIPTION_YAML)
     config = GatewayConfig.model_validate(resolved)
@@ -162,6 +161,48 @@ def test_build_gateway_routes_from_config_wires_transcription_invoker():
     )
 
     route = routes['my-route']
+    assert route.transcription_invoker is not None
+    assert 'openai-whisper' in route.transcription_invoker.model_map
+
+
+_PROJECT_CONFIG_TRANSCRIPTION_ONLY_ROUTE_YAML = """\
+chat_models:
+  - model_id: openai-gpt4o
+    model: openai/gpt-4o-mini
+    credentials:
+      api_key: sk-test-key
+transcription_models:
+  - model_id: openai-whisper
+    model: openai/whisper-1
+    credentials:
+      api_key: sk-test-key
+routes:
+  transcription-only-route:
+    transcription_models:
+      - openai-whisper
+"""
+
+
+def test_build_gateway_routes_from_config_transcription_only_route():
+    """A route that references only transcription_models (no chat_models) is
+    valid: it builds with no chat_invoker but a working transcription_invoker.
+    """
+    resolved = resolve_secrets_from_string(
+        _PROJECT_CONFIG_TRANSCRIPTION_ONLY_ROUTE_YAML
+    )
+    config = GatewayConfig.model_validate(resolved)
+    cost_service = MagicMock(spec_set=CostService)
+
+    routes = build_gateway_routes_from_config(
+        config,
+        guardrail_engine=_make_guardrail_engine(),
+        redis_client=None,
+        cost_service=cost_service,
+        httpx_client=None,
+    )
+
+    route = routes['transcription-only-route']
+    assert route.chat_invoker is None
     assert route.transcription_invoker is not None
     assert 'openai-whisper' in route.transcription_invoker.model_map
 

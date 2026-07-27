@@ -565,21 +565,38 @@ class TestServer(unittest.TestCase):
         )
         assert response.status_code == 401
 
-    def test_audio_transcriptions_unsupported_extension_rejected(self):
+    def test_audio_transcriptions_does_not_reject_by_extension(self):
+        """The gateway no longer validates audio format/extension — an
+        unsupported format is left to the upstream provider to reject (see
+        `TranscriptionModelInvoker.transcribe`'s `openai.APIStatusError`
+        handling), so a `.txt` upload still reaches `invoke_transcription`.
+        """
         key_service.get_key_by_hashed_key = MagicMock(
             return_value=db_mock.get_sample_key_with_group(
                 group_uuid=db_mock.GROUP_UUID
             )
         )
         group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+
+        mock_result = TranscriptionResult(
+            body={'text': 'irrelevant'},
+            content_type='application/json',
+            usage=None,
+            model_invoked=MagicMock(model_id='whisper-1'),
+            latency_ms=1.0,
+        )
+        self.gateways_mock['rb-gateway'].invoke_transcription = AsyncMock(
+            return_value=mock_result
+        )
+
         response = self.client.post(
             '/v1/audio/transcriptions',
             data={'model': 'rb-gateway'},
             files={'file': ('test.txt', b'not-audio', 'text/plain')},
             headers=self.headers,
         )
-        assert response.status_code == 400
-        self.gateways_mock['rb-gateway'].invoke_transcription.assert_not_called()
+        assert response.status_code == 200
+        self.gateways_mock['rb-gateway'].invoke_transcription.assert_awaited_once()
 
     @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
     @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)

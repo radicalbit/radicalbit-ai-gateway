@@ -73,7 +73,6 @@ class TestConvertTranscriptionResponseWhisper:
     def test_verbose_json_passthrough(self):
         body, content_type = convert_transcription_response(
             response=WHISPER_RESPONSE,
-            upstream_format='verbose_json',
             requested_format='verbose_json',
             is_whisper=True,
         )
@@ -84,7 +83,6 @@ class TestConvertTranscriptionResponseWhisper:
     def test_json_strips_down_to_text_and_usage(self):
         body, content_type = convert_transcription_response(
             response=WHISPER_RESPONSE,
-            upstream_format='verbose_json',
             requested_format='json',
             is_whisper=True,
         )
@@ -94,7 +92,6 @@ class TestConvertTranscriptionResponseWhisper:
     def test_text_format(self):
         body, content_type = convert_transcription_response(
             response=WHISPER_RESPONSE,
-            upstream_format='verbose_json',
             requested_format='text',
             is_whisper=True,
         )
@@ -104,7 +101,6 @@ class TestConvertTranscriptionResponseWhisper:
     def test_srt_format(self):
         body, content_type = convert_transcription_response(
             response=WHISPER_RESPONSE,
-            upstream_format='verbose_json',
             requested_format='srt',
             is_whisper=True,
         )
@@ -114,7 +110,6 @@ class TestConvertTranscriptionResponseWhisper:
     def test_vtt_format(self):
         body, content_type = convert_transcription_response(
             response=WHISPER_RESPONSE,
-            upstream_format='verbose_json',
             requested_format='vtt',
             is_whisper=True,
         )
@@ -126,7 +121,6 @@ class TestConvertTranscriptionResponseGpt4o:
     def test_json_passthrough(self):
         body, content_type = convert_transcription_response(
             response=GPT4O_RESPONSE,
-            upstream_format='json',
             requested_format='json',
             is_whisper=False,
         )
@@ -137,7 +131,6 @@ class TestConvertTranscriptionResponseGpt4o:
     def test_text_format(self):
         body, content_type = convert_transcription_response(
             response=GPT4O_RESPONSE,
-            upstream_format='json',
             requested_format='text',
             is_whisper=False,
         )
@@ -148,7 +141,6 @@ class TestConvertTranscriptionResponseGpt4o:
         with pytest.raises(ModelInvokerBadRequest, match='verbose_json'):
             convert_transcription_response(
                 response=GPT4O_RESPONSE,
-                upstream_format='json',
                 requested_format='verbose_json',
                 is_whisper=False,
             )
@@ -158,7 +150,6 @@ class TestConvertTranscriptionResponseGpt4o:
         with pytest.raises(ModelInvokerBadRequest, match='segment timing'):
             convert_transcription_response(
                 response=GPT4O_RESPONSE,
-                upstream_format='json',
                 requested_format=fmt,
                 is_whisper=False,
             )
@@ -168,7 +159,6 @@ def test_unsupported_response_format_rejected():
     with pytest.raises(ModelInvokerBadRequest, match='Unsupported response_format'):
         convert_transcription_response(
             response=GPT4O_RESPONSE,
-            upstream_format='json',
             requested_format='xml',
             is_whisper=False,
         )

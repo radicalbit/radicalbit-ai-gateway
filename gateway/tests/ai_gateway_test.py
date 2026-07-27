@@ -901,14 +901,11 @@ async def test_invoke_transcription_success(mock_emit_event):
     assert result is fake_result
     ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
 
-    # A MODEL_INVOCATION event was emitted, tagged as transcription...
+    # A MODEL_INVOCATION event was emitted, tagged as transcription, but no
+    # cost was computed: CostService doesn't know transcription prices yet.
     assert mock_emit_event.call_count == 1
     emitted_payload = mock_emit_event.call_args.args[0]
     assert emitted_payload.model_type == 'transcription'
-
-    # ...but no cost was computed: passing token_input_count/token_output_count
-    # to _record_metrics for a transcription model would crash CostService
-    # (it only knows chat/embedding prices) — see AG-891 plan.
     cost_service.compute_cost.assert_not_called()
 
 

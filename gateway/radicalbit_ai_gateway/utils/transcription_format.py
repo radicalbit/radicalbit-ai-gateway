@@ -1,13 +1,7 @@
-"""Conversion between the response_format the gateway always requests upstream
-(to guarantee a `usage` object, see AG-835) and the response_format the client
-actually asked for.
-
-Policy (see AG-891 plan): the gateway requests `verbose_json` upstream for the
-whisper-1 family (the only family that supports it, and it carries `segments`/
-`duration`) and `json` for the gpt-4o-transcribe family (the only JSON format
-that family supports). This module converts the upstream response into
-whatever the client requested, rejecting combinations that are not supported
-by the invoked model family instead of silently degrading.
+"""Converts between the response_format the gateway always requests upstream
+(to guarantee `usage`, see AG-835 — verbose_json for whisper-1, json for
+gpt-4o-transcribe*) and the format the client actually asked for. Rejects
+formats the invoked model family can't produce instead of silently degrading.
 """
 
 from radicalbit_ai_gateway.utils.exceptions import ModelInvokerBadRequest
@@ -60,19 +54,11 @@ def build_vtt(segments: list) -> str:
 
 def convert_transcription_response(
     response,
-    upstream_format: str,
     requested_format: str,
     is_whisper: bool,
 ) -> tuple[str | dict, str]:
-    """Convert the upstream OpenAI response into the client-requested format.
-
-    Returns a tuple of (body, media_type). `body` is a dict for `json`/
-    `verbose_json` (to be JSON-encoded by the caller) and a plain string for
-    `text`/`srt`/`vtt`.
-
-    Raises `ModelInvokerBadRequest` if the requested format requires
-    capabilities (segments/timestamps) that the invoked model family does not
-    provide.
+    """Return (body, media_type); raise `ModelInvokerBadRequest` if the
+    requested format needs capabilities the invoked model family lacks.
     """
     if requested_format not in SUPPORTED_RESPONSE_FORMATS:
         raise ModelInvokerBadRequest(
@@ -85,7 +71,6 @@ def convert_transcription_response(
             raise ModelInvokerBadRequest(
                 'response_format=verbose_json is only supported for whisper-1 models.'
             )
-        # requested_format == 'json', upstream_format == 'json' already: passthrough.
         return {'text': response.text, 'usage': response.usage}, 'application/json'
 
     if requested_format in TEXT_RESPONSE_FORMATS and not is_whisper:
@@ -96,8 +81,7 @@ def convert_transcription_response(
             'available for whisper-1 models.'
         )
 
-    # is_whisper is True from here on: upstream_format == 'verbose_json',
-    # response has `segments`/`duration`/`language`.
+    # is_whisper is True from here on: response has `segments`/`duration`/`language`.
     if requested_format == 'verbose_json':
         return response.model_dump(), 'application/json'
     if requested_format == 'json':

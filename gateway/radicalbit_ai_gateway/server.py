@@ -4,20 +4,11 @@ import json
 import logging.config
 import os
 import time
+from typing import Annotated
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import (
-    Depends,
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Request,
-    Response,
-    UploadFile,
-    status,
-)
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -77,7 +68,6 @@ from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.audio_validation import validate_audio_upload
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
     AppError,
@@ -110,6 +100,7 @@ from radicalbit_ai_gateway.utils.logging_hooks import apply_log_filters
 from radicalbit_ai_gateway.utils.open_ai_types import (
     CompletionCreateParams,
     ResponseCreateParamsCustom,
+    TranscriptionCreateParamsCustom,
 )
 from radicalbit_ai_gateway.utils.request_context import (
     reset_route_context,
@@ -832,16 +823,11 @@ async def embeddings(
 @ensure_endpoint_category
 async def audio_transcriptions(
     request: Request,
-    model: str = Form(...),
-    file: UploadFile = File(...),
-    language: str | None = Form(None),
-    prompt: str | None = Form(None),
-    response_format: str = Form('json'),
-    temperature: float | None = Form(None),
+    transcription_params: Annotated[TranscriptionCreateParamsCustom, Form()],
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
     request_uuid: str = Depends(set_request_uuid),
 ):
-    route_key = model
+    route_key = transcription_params.model
     route = gateway_routes.get(route_key)
 
     _set_early_project_trace_attributes(route_key, route)
@@ -900,8 +886,8 @@ async def audio_transcriptions(
             project_name=route.project_name,
         )
 
+    file = transcription_params.file
     content = await file.read()
-    validate_audio_upload(filename=file.filename, size=file.size, content=content)
 
     set_operation_category(OperationCategory.ENDPOINT)
     result = await route.invoke_transcription(
@@ -914,10 +900,10 @@ async def audio_transcriptions(
         audio_bytes=content,
         filename=file.filename or 'audio',
         content_type=file.content_type,
-        requested_response_format=response_format,
-        language=language,
-        prompt=prompt,
-        temperature=temperature,
+        requested_response_format=transcription_params.response_format,
+        language=transcription_params.language,
+        prompt=transcription_params.prompt,
+        temperature=transcription_params.temperature,
     )
 
     if isinstance(result.body, dict):
