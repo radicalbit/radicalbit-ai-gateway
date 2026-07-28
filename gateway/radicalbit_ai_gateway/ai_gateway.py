@@ -10,7 +10,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 import numpy as np
-from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription import Transcription, UsageDuration, UsageTokens
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
@@ -1624,7 +1624,7 @@ class GatewayRoute:
 
     async def _count_transcription_usage(
         self,
-        usage,
+        usage: UsageTokens | UsageDuration | None,
         model_selected: Model,
     ) -> None:
         """Count budget usage from a transcription response, mirroring _count_usage.
@@ -1637,16 +1637,9 @@ class GatewayRoute:
 
         if usage.type == 'duration':
             if model_selected.input_cost_per_second:
-                # `count_input` is plain count x price; for whisper-1-style
-                # duration billing `token_count` carries seconds (a float) and
-                # `input_cost_per_token` the per-second price. count_input's
-                # arithmetic assumes a plain float price (as chat/embedding
-                # always pass an int token_count against a Decimal price,
-                # relying on int*Decimal support) — cast here rather than in
-                # count_input, so chat/embedding's math stays untouched.
-                await self.budget_limiter.count_input(
-                    token_count=usage.seconds,
-                    input_cost_per_token=float(model_selected.input_cost_per_second),
+                await self.budget_limiter.count_duration(
+                    seconds=usage.seconds,
+                    cost_per_second=float(model_selected.input_cost_per_second),
                 )
             return
 

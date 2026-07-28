@@ -78,6 +78,15 @@ class BudgetLimiter:
             return
         await self.limiter.hit(self.item, cost=cost)
 
+    async def count_duration(self, seconds: float, cost_per_second: float) -> None:
+        """Duration-based billing (whisper-1 style): seconds and price are
+        both floats, unlike count_input/count_output's int token counts.
+        """
+        cost = int(seconds * cost_per_second * BUDGET_MULTIPLIER)
+        if not self.limiter or not self.item:
+            return
+        await self.limiter.hit(self.item, cost=cost)
+
     @task(name='check_budget_limit')
     async def check_budget(self) -> None:
         """Check if budget counter is exceeded. Raise BudgetLimitExceededError if limit is exceeded."""

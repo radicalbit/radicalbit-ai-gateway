@@ -915,10 +915,10 @@ async def test_invoke_transcription_success():
 
 @pytest.mark.asyncio
 async def test_invoke_transcription_counts_budget_duration():
-    """usage.type == 'duration' (whisper-1): budget counted via count_input,
-    seconds standing in for token_count and input_cost_per_second for the
-    per-token price — same count_input/count_output primitives _count_usage
-    uses for chat, just fed a duration instead of a token count.
+    """usage.type == 'duration' (whisper-1): budget counted via the dedicated
+    count_duration (seconds + per-second price, both floats) — a separate
+    method from count_input/count_output, whose int*Decimal arithmetic stays
+    untouched for chat/embedding/token-based transcription billing.
     """
     cost_service = MagicMock(spec_set=CostService)
     whisper_model = Model(
@@ -930,6 +930,7 @@ async def test_invoke_transcription_counts_budget_duration():
     route_cfg = _make_transcription_route_config(max_budget=10.0, window_size=3600)
     budget_limiter = route_cfg.get_budget_limiter()
     budget_limiter.check_budget = AsyncMock()
+    budget_limiter.count_duration = AsyncMock()
     budget_limiter.count_input = AsyncMock()
     budget_limiter.count_output = AsyncMock()
 
@@ -960,12 +961,10 @@ async def test_invoke_transcription_counts_budget_duration():
     )
 
     budget_limiter.check_budget.assert_awaited_once()
-    # input_cost_per_second is cast to float here (unlike chat/embedding's
-    # int token_count, whisper's seconds is itself a float, and count_input's
-    # arithmetic can't mix float*Decimal — see _count_transcription_usage).
-    budget_limiter.count_input.assert_awaited_once_with(
-        token_count=3, input_cost_per_token=0.0001
+    budget_limiter.count_duration.assert_awaited_once_with(
+        seconds=3, cost_per_second=0.0001
     )
+    budget_limiter.count_input.assert_not_awaited()
     budget_limiter.count_output.assert_not_awaited()
 
 
