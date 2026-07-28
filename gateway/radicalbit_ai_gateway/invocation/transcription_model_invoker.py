@@ -124,11 +124,6 @@ class TranscriptionModelInvoker(ModelInvoker):
 
         usage = response.usage
         if is_whisper:
-            # response is a `TranscriptionVerbose` (upstream call forced
-            # verbose_json to guarantee `usage` — see AG-835); convert it to a
-            # genuine `Transcription`, never a custom shape. `usage` is a
-            # different (structurally identical) pydantic class than the one
-            # `Transcription` expects, so dump it before re-validating.
             body = Transcription(
                 text=response.text,
                 usage=usage.model_dump() if usage else None,
