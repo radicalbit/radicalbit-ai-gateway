@@ -10,6 +10,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 import numpy as np
+from openai.types.audio.transcription import Transcription
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
@@ -25,7 +26,6 @@ from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
 )
 from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
     TranscriptionModelInvoker,
-    TranscriptionResult,
 )
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
@@ -685,11 +685,10 @@ class GatewayRoute:
         audio_bytes: bytes,
         filename: str,
         content_type: str | None,
-        requested_response_format: str,
         language: str | None = None,
         prompt: str | None = None,
         temperature: float | None = None,
-    ) -> TranscriptionResult:
+    ) -> Transcription:
         if route_name != self.gateway_route_config.route_name:
             raise GatewayBadRequest(f'{route_name} must be the route name')
 
@@ -707,29 +706,19 @@ class GatewayRoute:
 
         set_operation_category(OperationCategory.INVOCATION)
         result = await self.transcription_invoker.transcribe(
-            audio_bytes=audio_bytes,
-            filename=filename,
-            content_type=content_type,
-            model_id=model_selected.model_id,
-            requested_response_format=requested_response_format,
-            language=language,
-            prompt=prompt,
-            temperature=temperature,
-        )
-
-        # TODO(AG-892): pass token/duration counts once CostService supports
-        # transcription pricing (would raise UnboundLocalError today).
-        self.transcription_invoker._record_metrics(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
             api_key_name=api_key_name,
             group_name=group_name,
             route_name=route_name,
-            target_model_id=model_selected.model_id,
-            model=result.model_invoked,
-            latency_ms=result.latency_ms,
-            model_type='transcription',
+            audio_bytes=audio_bytes,
+            filename=filename,
+            content_type=content_type,
+            model_id=model_selected.model_id,
+            language=language,
+            prompt=prompt,
+            temperature=temperature,
             project_uuid=self.project_uuid,
             project_name=self.project_name,
         )

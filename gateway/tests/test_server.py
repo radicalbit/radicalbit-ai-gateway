@@ -6,6 +6,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.testclient import TestClient
 from freezegun import freeze_time
 from langchain_core.messages import HumanMessage, SystemMessage
+from openai.types.audio.transcription import Transcription
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
 import pook
@@ -24,9 +25,6 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
-    TranscriptionResult,
-)
 from radicalbit_ai_gateway.models.event_dto import WindowStatus
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import (
@@ -464,12 +462,8 @@ class TestServer(unittest.TestCase):
         key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
         group_service.check_key_uuid_for_route = MagicMock(return_value=True)
 
-        mock_result = TranscriptionResult(
-            body={'text': 'Ciao mondo', 'usage': {'type': 'duration', 'seconds': 9}},
-            content_type='application/json',
-            usage=MagicMock(type='duration', seconds=9),
-            model_invoked=MagicMock(model_id='whisper-1'),
-            latency_ms=42.0,
+        mock_result = Transcription(
+            text='Ciao mondo', usage={'type': 'duration', 'seconds': 9}
         )
         self.gateways_mock['rb-gateway'].invoke_transcription = AsyncMock(
             return_value=mock_result
@@ -483,7 +477,7 @@ class TestServer(unittest.TestCase):
         )
 
         assert response.status_code == 200
-        assert response.json() == mock_result.body
+        assert response.json() == mock_result.model_dump()
         self.gateways_mock['rb-gateway'].invoke_transcription.assert_awaited_once_with(
             request_uuid=str(db_mock.REQUEST_UUID),
             api_key_uuid=str(api_key.uuid),
@@ -494,38 +488,28 @@ class TestServer(unittest.TestCase):
             audio_bytes=b'fake-audio-bytes',
             filename='test.wav',
             content_type='audio/wav',
-            requested_response_format='json',
             language=None,
             prompt=None,
             temperature=None,
         )
 
-    def test_audio_transcriptions_success_text_format(self):
+    def test_audio_transcriptions_rejects_unsupported_response_format(self):
+        """response_format is pinned to `Literal['json']` at the request
+        schema — this is the only place that value is validated (the invoker
+        no longer re-checks it), so this is the one test covering rejection.
+        """
         api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
         key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
         group_service.check_key_uuid_for_route = MagicMock(return_value=True)
 
-        mock_result = TranscriptionResult(
-            body='Ciao mondo',
-            content_type='text/plain',
-            usage=MagicMock(type='duration', seconds=9),
-            model_invoked=MagicMock(model_id='whisper-1'),
-            latency_ms=42.0,
-        )
-        self.gateways_mock['rb-gateway'].invoke_transcription = AsyncMock(
-            return_value=mock_result
-        )
-
         response = self.client.post(
             '/v1/audio/transcriptions',
-            data={'model': 'rb-gateway', 'response_format': 'text'},
+            data={'model': 'rb-gateway', 'response_format': 'verbose_json'},
             files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
             headers=self.headers,
         )
 
-        assert response.status_code == 200
-        assert response.text == 'Ciao mondo'
-        assert response.headers['content-type'].startswith('text/plain')
+        assert response.status_code == 422
 
     def test_audio_transcriptions_wrong_model_name(self):
         key_service.get_key_by_hashed_key = MagicMock(
@@ -578,13 +562,7 @@ class TestServer(unittest.TestCase):
         )
         group_service.check_key_uuid_for_route = MagicMock(return_value=True)
 
-        mock_result = TranscriptionResult(
-            body={'text': 'irrelevant'},
-            content_type='application/json',
-            usage=None,
-            model_invoked=MagicMock(model_id='whisper-1'),
-            latency_ms=1.0,
-        )
+        mock_result = Transcription(text='irrelevant')
         self.gateways_mock['rb-gateway'].invoke_transcription = AsyncMock(
             return_value=mock_result
         )

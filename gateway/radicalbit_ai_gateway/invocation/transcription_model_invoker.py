@@ -3,6 +3,8 @@ import time
 
 import openai
 from openai import AsyncAzureOpenAI, AsyncOpenAI
+from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
@@ -17,30 +19,11 @@ from radicalbit_ai_gateway.utils.exceptions import (
 from radicalbit_ai_gateway.utils.parse_provider_and_model import (
     parse_provider_and_model,
 )
-from radicalbit_ai_gateway.utils.transcription_format import (
-    convert_transcription_response,
-)
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 WHISPER_FAMILY_PREFIX = 'whisper'
-
-
-class TranscriptionResult:
-    def __init__(
-        self,
-        body: str | dict,
-        content_type: str,
-        usage,
-        model_invoked: Model,
-        latency_ms: float,
-    ):
-        self.body = body
-        self.content_type = content_type
-        self.usage = usage
-        self.model_invoked = model_invoked
-        self.latency_ms = latency_ms
 
 
 class TranscriptionModelInvoker(ModelInvoker):
@@ -84,15 +67,22 @@ class TranscriptionModelInvoker(ModelInvoker):
     @task(name='llm_transcribe')
     async def transcribe(
         self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
         audio_bytes: bytes,
         filename: str,
         content_type: str | None,
         model_id: str,
-        requested_response_format: str,
         language: str | None = None,
         prompt: str | None = None,
         temperature: float | None = None,
-    ) -> TranscriptionResult:
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> Transcription:
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Transcription model {model_id} not defined')
 
@@ -115,7 +105,9 @@ class TranscriptionModelInvoker(ModelInvoker):
 
         start_time = time.monotonic()
         try:
-            response = await client.audio.transcriptions.create(**create_kwargs)
+            response: Transcription | TranscriptionVerbose = (
+                await client.audio.transcriptions.create(**create_kwargs)
+            )
         except openai.APIStatusError as e:
             if 400 <= e.status_code < 500:
                 raise ModelInvokerBadRequest(
@@ -130,16 +122,33 @@ class TranscriptionModelInvoker(ModelInvoker):
             ) from e
         latency_ms = (time.monotonic() - start_time) * 1000
 
-        body, response_content_type = convert_transcription_response(
-            response=response,
-            requested_format=requested_response_format,
-            is_whisper=is_whisper,
+        usage = response.usage
+        if is_whisper:
+            # response is a `TranscriptionVerbose` (upstream call forced
+            # verbose_json to guarantee `usage` — see AG-835); convert it to a
+            # genuine `Transcription`, never a custom shape. `usage` is a
+            # different (structurally identical) pydantic class than the one
+            # `Transcription` expects, so dump it before re-validating.
+            body = Transcription(
+                text=response.text,
+                usage=usage.model_dump() if usage else None,
+            )
+        else:
+            body = response
+
+        self._record_metrics(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            target_model_id=model_id,
+            model=model,
+            latency_ms=latency_ms,
+            model_type='transcription',
+            project_uuid=project_uuid,
+            project_name=project_name,
         )
 
-        return TranscriptionResult(
-            body=body,
-            content_type=response_content_type,
-            usage=getattr(response, 'usage', None),
-            model_invoked=model,
-            latency_ms=latency_ms,
-        )
+        return body

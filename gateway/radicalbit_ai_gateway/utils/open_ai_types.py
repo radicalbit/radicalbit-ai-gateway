@@ -13,7 +13,6 @@ from typing import Any, Literal, TypeAlias, Union
 
 from fastapi import UploadFile
 from openai._types import SequenceNotStr
-from openai.types.audio_response_format import AudioResponseFormat
 from openai.types.chat.chat_completion_assistant_message_param import (
     ChatCompletionAssistantMessageParam,
 )
@@ -569,8 +568,8 @@ class TranscriptionCreateParamsCustom(BaseModel):
     prompt: str | None = None
     """An optional text to guide the model's style or continue a previous audio segment."""
 
-    response_format: AudioResponseFormat = 'json'
-    """The format of the transcript output."""
+    response_format: Literal['json'] = 'json'
+    """The format of the transcript output. verbose_json/text/srt/vtt aren't supported yet."""
 
     temperature: float | None = None
     """Sampling temperature, between 0 and 1."""

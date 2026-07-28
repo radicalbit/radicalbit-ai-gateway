@@ -27,9 +27,6 @@ from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
-    TranscriptionResult,
-)
 from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
@@ -855,9 +852,8 @@ def _make_transcription_route_config(**budget_kwargs) -> GatewayRouteConfig:
     )
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
 @pytest.mark.asyncio
-async def test_invoke_transcription_success(mock_emit_event):
+async def test_invoke_transcription_success():
     cost_service = MagicMock(spec_set=CostService)
     whisper_model = Model(
         model_id='whisper-1',
@@ -876,13 +872,7 @@ async def test_invoke_transcription_success(mock_emit_event):
         cost_service=cost_service,
     )
 
-    fake_result = TranscriptionResult(
-        body={'text': 'Ciao mondo', 'usage': {'type': 'duration', 'seconds': 9}},
-        content_type='application/json',
-        usage=MagicMock(type='duration', seconds=9),
-        model_invoked=whisper_model,
-        latency_ms=42.0,
-    )
+    fake_result = MagicMock(usage=MagicMock(type='duration', seconds=9))
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     result = await ai_gateway.invoke_transcription(
@@ -895,23 +885,33 @@ async def test_invoke_transcription_success(mock_emit_event):
         audio_bytes=b'fake-audio',
         filename='test.wav',
         content_type='audio/wav',
-        requested_response_format='json',
     )
 
     assert result is fake_result
-    ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
+    # transcribe() now records its own metrics internally (mirroring
+    # ChatModelInvoker.complete()/EmbeddingModelInvoker.embed()), so
+    # ai_gateway just has to wire the identity/project params through.
+    ai_gateway.transcription_invoker.transcribe.assert_awaited_once_with(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        route_name='rb-gateway',
+        audio_bytes=b'fake-audio',
+        filename='test.wav',
+        content_type='audio/wav',
+        model_id='whisper-1',
+        language=None,
+        prompt=None,
+        temperature=None,
+        project_uuid='',
+        project_name='',
+    )
 
-    # A MODEL_INVOCATION event was emitted, tagged as transcription, but no
-    # cost was computed: CostService doesn't know transcription prices yet.
-    assert mock_emit_event.call_count == 1
-    emitted_payload = mock_emit_event.call_args.args[0]
-    assert emitted_payload.model_type == 'transcription'
-    cost_service.compute_cost.assert_not_called()
 
-
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
 @pytest.mark.asyncio
-async def test_invoke_transcription_checks_and_counts_budget(mock_emit_event):
+async def test_invoke_transcription_checks_and_counts_budget():
     cost_service = MagicMock(spec_set=CostService)
     whisper_model = Model(
         model_id='whisper-1',
@@ -934,13 +934,7 @@ async def test_invoke_transcription_checks_and_counts_budget(mock_emit_event):
         budget_limiter=budget_limiter,
     )
 
-    fake_result = TranscriptionResult(
-        body={'text': 'Ciao', 'usage': {'type': 'duration', 'seconds': 3}},
-        content_type='application/json',
-        usage=MagicMock(type='duration', seconds=3),
-        model_invoked=whisper_model,
-        latency_ms=10.0,
-    )
+    fake_result = MagicMock(usage=MagicMock(type='duration', seconds=3))
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     await ai_gateway.invoke_transcription(
@@ -953,7 +947,6 @@ async def test_invoke_transcription_checks_and_counts_budget(mock_emit_event):
         audio_bytes=b'fake-audio',
         filename='test.wav',
         content_type='audio/wav',
-        requested_response_format='json',
     )
 
     budget_limiter.check_budget.assert_awaited_once()
@@ -986,7 +979,6 @@ async def test_invoke_transcription_no_models_configured_raises():
             audio_bytes=b'fake-audio',
             filename='test.wav',
             content_type='audio/wav',
-            requested_response_format='json',
         )
 
 

@@ -8,7 +8,7 @@ from typing import Annotated
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -383,9 +383,15 @@ app.include_router(
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = [{'loc': e.get('loc'), 'type': e.get('type')} for e in exc.errors()]
     logger.error('Validation error: %s', errors)
+    try:
+        body = (await request.body()).decode()
+    except RuntimeError:
+        # Multipart/form requests (e.g. /v1/audio/transcriptions) have
+        # already consumed the body stream by the time validation fails.
+        body = ''
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={'detail': exc.errors(), 'body': (await request.body()).decode()},
+        content={'detail': exc.errors(), 'body': body},
     )
 
 
@@ -900,15 +906,12 @@ async def audio_transcriptions(
         audio_bytes=content,
         filename=file.filename or 'audio',
         content_type=file.content_type,
-        requested_response_format=transcription_params.response_format,
         language=transcription_params.language,
         prompt=transcription_params.prompt,
         temperature=transcription_params.temperature,
     )
 
-    if isinstance(result.body, dict):
-        return JSONResponse(content=jsonable_encoder(result.body))
-    return Response(content=result.body, media_type=result.content_type)
+    return JSONResponse(content=jsonable_encoder(result))
 
 
 # This endpoint follows the OpenAI Responses API standard (stateless Phase 1):
