@@ -105,9 +105,9 @@ class TranscriptionModelInvoker(ModelInvoker):
 
         start_time = time.monotonic()
         try:
-            response: Transcription | TranscriptionVerbose = (
-                await client.audio.transcriptions.create(**create_kwargs)
-            )
+            response: (
+                Transcription | TranscriptionVerbose
+            ) = await client.audio.transcriptions.create(**create_kwargs)
         except openai.APIStatusError as e:
             if 400 <= e.status_code < 500:
                 raise ModelInvokerBadRequest(
