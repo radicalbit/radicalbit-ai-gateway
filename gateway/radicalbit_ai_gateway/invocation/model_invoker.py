@@ -90,7 +90,7 @@ class ModelInvoker:
         route_name: str,
         model: Model,
         model_type: str,
-        token_count: int,
+        token_count: int | float,
         where: str,
         cache_type: str | None,
         is_cached_tokens: bool = False,
@@ -129,6 +129,55 @@ class ModelInvoker:
             token_count,
             {'route_name': route_name, 'model_name': model.model_id},
         )
+        return cost
+
+    def _emit_output_token_metrics(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        group_uuid: str,
+        route_name: str,
+        model: Model,
+        model_type: str,
+        token_count: int | float,
+        cache_type: str | None = None,
+        project_uuid: str = '',
+        project_name: str = '',
+    ):
+        cost = self.cost_service.compute_cost(
+            model_id=model.model_id,
+            token_processed=token_count,
+            where='output',
+        )
+        emit_event(
+            OutputTokenProcessedPayload(
+                request_uuid=request_uuid,
+                event_type=EventType.OUTPUT_TOKEN_PROCESSED,
+                route_name=route_name,
+                value=token_count,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                cost=cost,
+                model_id=model.model_id,
+                model_type=model_type,
+                cache_type=cache_type,
+                project_uuid=project_uuid,
+                project_name=project_name,
+            )
+        )
+        total_tokens_counter_output.add(
+            token_count,
+            {'route_name': route_name, 'model_name': model.model_id},
+        )
+        tokens_per_request_histogram_output.record(
+            token_count,
+            {'route_name': route_name, 'model_name': model.model_id},
+        )
+        return cost
 
     def _record_metrics(
         self,
@@ -213,36 +262,10 @@ class ModelInvoker:
                 )
 
         if token_output_count is not None:
-            cost = self.cost_service.compute_cost(
-                model_id=model.model_id,
-                token_processed=token_output_count,
-                where='output',
-            )
-            emit_event(
-                OutputTokenProcessedPayload(
-                    request_uuid=request_uuid,
-                    event_type=EventType.OUTPUT_TOKEN_PROCESSED,
-                    route_name=route_name,
-                    value=token_output_count,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    api_key_name=api_key_name,
-                    group_name=group_name,
-                    cost=cost,
-                    model_id=model.model_id,
-                    model_type=model_type,
-                    cache_type=cache_type,
-                    project_uuid=project_uuid,
-                    project_name=project_name,
-                )
-            )
-            total_tokens_counter_output.add(
-                token_output_count,
-                {'route_name': route_name, 'model_name': model.model_id},
-            )
-            tokens_per_request_histogram_output.record(
-                token_output_count,
-                {'route_name': route_name, 'model_name': model.model_id},
+            self._emit_output_token_metrics(
+                **common,
+                token_count=token_output_count,
+                cache_type=cache_type,
             )
 
         if fallback_triggered:

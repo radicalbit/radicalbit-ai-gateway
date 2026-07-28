@@ -188,6 +188,10 @@ class DetailedCostBreakdown(Base):
     embedding_input_total: float = 0.0
     embedding_input_direct: float = 0.0
     embedding_input_semantic_cache: float = 0.0
+    transcription_duration: float = 0.0
+    transcription_audio: float = 0.0
+    transcription_text: float = 0.0
+    transcription_output: float = 0.0
 
     model_config = ConfigDict(
         populate_by_name=True,

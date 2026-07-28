@@ -209,6 +209,7 @@ def build_project_route_registrar(
         project_cost_service = CostService(
             chat_models_by_id=project_gateway_config.chat_models_by_id,
             embedding_models_by_id=project_gateway_config.embedding_models_by_id,
+            transcription_models_by_id=project_gateway_config.transcription_models_by_id,
         )
         project_guardrail_engine = GuardrailEngine(
             presidio_engine=presidio_engine,

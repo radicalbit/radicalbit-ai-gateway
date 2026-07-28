@@ -723,9 +723,7 @@ class GatewayRoute:
             project_name=self.project_name,
         )
 
-        if self.budget_limiter:
-            # TODO(AG-892): replace 0.0 with the real dollar cost.
-            await self.budget_limiter.count_cost(cost=0.0)
+        await self._count_transcription_usage(result.usage, model_selected)
 
         return result
 
@@ -1621,6 +1619,52 @@ class GatewayRoute:
         if self.budget_limiter and model_selected.output_cost_per_token:
             await self.budget_limiter.count_output(
                 token_count=completion_tokens,
+                output_cost_per_token=model_selected.output_cost_per_token,
+            )
+
+    async def _count_transcription_usage(
+        self,
+        usage,
+        model_selected: Model,
+    ) -> None:
+        """Count budget usage from a transcription response, mirroring _count_usage.
+
+        No token_limiter counting: token/duration limiting isn't applicable to
+        audio (AG-887 analysis).
+        """
+        if not self.budget_limiter or usage is None:
+            return
+
+        if usage.type == 'duration':
+            if model_selected.input_cost_per_second:
+                # `count_input` is plain count x price; for whisper-1-style
+                # duration billing `token_count` carries seconds and
+                # `input_cost_per_token` the per-second price.
+                await self.budget_limiter.count_input(
+                    token_count=usage.seconds,
+                    input_cost_per_token=model_selected.input_cost_per_second,
+                )
+            return
+
+        details = getattr(usage, 'input_token_details', None)
+        audio_tokens = getattr(details, 'audio_tokens', None) or 0
+        text_tokens = getattr(details, 'text_tokens', None)
+        if text_tokens is None:
+            text_tokens = usage.input_tokens
+
+        if audio_tokens > 0 and model_selected.input_cost_per_audio_token:
+            await self.budget_limiter.count_input(
+                token_count=audio_tokens,
+                input_cost_per_token=model_selected.input_cost_per_audio_token,
+            )
+        if text_tokens > 0 and model_selected.input_cost_per_token:
+            await self.budget_limiter.count_input(
+                token_count=text_tokens,
+                input_cost_per_token=model_selected.input_cost_per_token,
+            )
+        if usage.output_tokens > 0 and model_selected.output_cost_per_token:
+            await self.budget_limiter.count_output(
+                token_count=usage.output_tokens,
                 output_cost_per_token=model_selected.output_cost_per_token,
             )
 

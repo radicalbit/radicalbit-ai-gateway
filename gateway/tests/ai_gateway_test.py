@@ -1,4 +1,5 @@
 import datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from freezegun import freeze_time
@@ -842,12 +843,14 @@ async def test_invoke_embeddings_budget_limit_exceeded(
     pook.disable_network()
 
 
-def _make_transcription_route_config(**budget_kwargs) -> GatewayRouteConfig:
+def _make_transcription_route_config(
+    model_id: str = 'whisper-1', **budget_kwargs
+) -> GatewayRouteConfig:
     budget_limiting = BudgetLimiting(**budget_kwargs) if budget_kwargs else None
     return GatewayRouteConfig(
         route_name='rb-gateway',
         chat_models=[],
-        transcription_models=['whisper-1'],
+        transcription_models=[model_id],
         budget_limiting=budget_limiting,
     )
 
@@ -888,7 +891,7 @@ async def test_invoke_transcription_success():
     )
 
     assert result is fake_result
-    # transcribe() now records its own metrics internally (mirroring
+    # transcribe() now records its own metrics/cost internally (mirroring
     # ChatModelInvoker.complete()/EmbeddingModelInvoker.embed()), so
     # ai_gateway just has to wire the identity/project params through.
     ai_gateway.transcription_invoker.transcribe.assert_awaited_once_with(
@@ -911,17 +914,24 @@ async def test_invoke_transcription_success():
 
 
 @pytest.mark.asyncio
-async def test_invoke_transcription_checks_and_counts_budget():
+async def test_invoke_transcription_counts_budget_duration():
+    """usage.type == 'duration' (whisper-1): budget counted via count_input,
+    seconds standing in for token_count and input_cost_per_second for the
+    per-token price — same count_input/count_output primitives _count_usage
+    uses for chat, just fed a duration instead of a token count.
+    """
     cost_service = MagicMock(spec_set=CostService)
     whisper_model = Model(
         model_id='whisper-1',
         model='openai/whisper-1',
         credentials=Credentials(api_key='sk-test'),
+        input_cost_per_second=Decimal('0.0001'),
     )
     route_cfg = _make_transcription_route_config(max_budget=10.0, window_size=3600)
     budget_limiter = route_cfg.get_budget_limiter()
     budget_limiter.check_budget = AsyncMock()
-    budget_limiter.count_cost = AsyncMock()
+    budget_limiter.count_input = AsyncMock()
+    budget_limiter.count_output = AsyncMock()
 
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -950,7 +960,82 @@ async def test_invoke_transcription_checks_and_counts_budget():
     )
 
     budget_limiter.check_budget.assert_awaited_once()
-    budget_limiter.count_cost.assert_awaited_once_with(cost=0.0)
+    budget_limiter.count_input.assert_awaited_once_with(
+        token_count=3, input_cost_per_token=Decimal('0.0001')
+    )
+    budget_limiter.count_output.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invoke_transcription_counts_budget_tokens():
+    """usage.type == 'tokens' (gpt-4o-transcribe family): audio and text
+    tokens both counted via count_input (two separate calls, one per price),
+    output tokens via count_output — mirrors _count_usage's gating on each
+    price being non-zero before counting.
+    """
+    cost_service = MagicMock(spec_set=CostService)
+    gpt4o_model = Model(
+        model_id='gpt4o-transcribe',
+        model='openai/gpt-4o-transcribe',
+        credentials=Credentials(api_key='sk-test'),
+        input_cost_per_million_tokens=Decimal('2.5'),
+        output_cost_per_million_tokens=Decimal('10.0'),
+        input_cost_per_audio_token=Decimal('0.000006'),
+    )
+    route_cfg = _make_transcription_route_config(
+        model_id='gpt4o-transcribe', max_budget=10.0, window_size=3600
+    )
+    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter.check_budget = AsyncMock()
+    budget_limiter.count_input = AsyncMock()
+    budget_limiter.count_output = AsyncMock()
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[gpt4o_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+        budget_limiter=budget_limiter,
+    )
+
+    fake_result = MagicMock(
+        usage=MagicMock(
+            type='tokens',
+            input_tokens=87,
+            output_tokens=38,
+            input_token_details=MagicMock(audio_tokens=82, text_tokens=5),
+        )
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    await ai_gateway.invoke_transcription(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        route_name='rb-gateway',
+        audio_bytes=b'fake-audio',
+        filename='test.wav',
+        content_type='audio/wav',
+    )
+
+    budget_limiter.check_budget.assert_awaited_once()
+    count_input_calls = budget_limiter.count_input.call_args_list
+    assert len(count_input_calls) == 2
+    assert {
+        (c.kwargs['token_count'], c.kwargs['input_cost_per_token'])
+        for c in count_input_calls
+    } == {
+        (82, gpt4o_model.input_cost_per_audio_token),
+        (5, gpt4o_model.input_cost_per_token),
+    }
+    budget_limiter.count_output.assert_awaited_once_with(
+        token_count=38, output_cost_per_token=gpt4o_model.output_cost_per_token
+    )
 
 
 @pytest.mark.asyncio
