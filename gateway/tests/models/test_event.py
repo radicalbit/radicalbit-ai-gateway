@@ -4,7 +4,11 @@ from tests.common.mocked_gateway_config import (
     get_gateway_with_routing,
 )
 
-from radicalbit_ai_gateway.db.models.event import CostData, SemanticCacheCostData
+from radicalbit_ai_gateway.db.models.event import (
+    CostData,
+    DetailedCostBreakdown,
+    SemanticCacheCostData,
+)
 from radicalbit_ai_gateway.models.event_dto import CostDataDTO, EventsDTO
 
 
@@ -149,3 +153,52 @@ def test_from_dao_semantic_cache_zero_values():
     assert result.input_cost == 10.0
     assert result.output_cost == 20.0
     assert result.total_cost == 30.0
+
+
+def test_from_dao_with_transcription_models():
+    """CostDataDTO.from_dao builds a transcription_models breakdown parallel to
+    chat/embedding, and folds it into totals/total when has_transcription_models.
+    """
+    cost_data = CostData(input_cost=0.0, output_cost=0.0, total_cost=0.0)
+    detailed_breakdown = DetailedCostBreakdown(
+        transcription_duration=0.000825,
+        transcription_audio=0.000492,
+        transcription_text=0.0000125,
+        transcription_output=0.00038,
+    )
+
+    result = CostDataDTO.from_dao(
+        cost_data,
+        None,
+        detailed_breakdown,
+        has_chat_models=False,
+        has_transcription_models=True,
+    )
+
+    assert result.transcription_models is not None
+    assert result.transcription_models.input.duration == 0.000825
+    assert result.transcription_models.input.audio == 0.000492
+    assert result.transcription_models.input.text == 0.0000125
+    assert result.transcription_models.input.total == (
+        0.000825 + 0.000492 + 0.0000125
+    )
+    assert result.transcription_models.output == 0.00038
+    assert result.transcription_models.total == (
+        0.000825 + 0.000492 + 0.0000125 + 0.00038
+    )
+    assert result.totals is not None
+    assert result.totals.input == result.transcription_models.input.total
+    assert result.totals.output == 0.00038
+    assert result.total == result.transcription_models.total
+
+
+def test_from_dao_without_transcription_models_is_none():
+    """has_transcription_models=False (default) keeps transcription_models unset."""
+    cost_data = CostData(input_cost=0.0, output_cost=0.0, total_cost=0.0)
+    detailed_breakdown = DetailedCostBreakdown()
+
+    result = CostDataDTO.from_dao(
+        cost_data, None, detailed_breakdown, has_chat_models=False
+    )
+
+    assert result.transcription_models is None
