@@ -78,6 +78,13 @@ class BudgetLimiter:
             return
         await self.limiter.hit(self.item, cost=cost)
 
+    async def count_cost(self, cost: float) -> None:
+        """Add a pre-computed dollar cost, bypassing the token×price math of count_input/count_output."""
+        cost_units = int(cost * BUDGET_MULTIPLIER)
+        if not self.limiter or not self.item:
+            return
+        await self.limiter.hit(self.item, cost=cost_units)
+
     @task(name='check_budget_limit')
     async def check_budget(self) -> None:
         """Check if budget counter is exceeded. Raise BudgetLimitExceededError if limit is exceeded."""

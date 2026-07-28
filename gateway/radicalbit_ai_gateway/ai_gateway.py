@@ -10,6 +10,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 import numpy as np
+from openai.types.audio.transcription import Transcription
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
@@ -22,6 +23,9 @@ from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EmbeddingModelInvoker,
+)
+from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
+    TranscriptionModelInvoker,
 )
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
@@ -85,7 +89,7 @@ class GatewayRoute:
     def __init__(
         self,
         gateway_route_config: GatewayRouteConfig,
-        chat_models: list[Model],
+        chat_models: list[Model] | None,
         embedding_models: list[Model] | None,
         guardrail_engine: GuardrailEngine,
         cost_service: CostService,
@@ -105,7 +109,7 @@ class GatewayRoute:
         self.gateway_route_config = gateway_route_config
         self.project_uuid = project_uuid
         self.project_name = project_name
-        self._chat_models = chat_models
+        self._chat_models = chat_models or []
         self._embedding_models = embedding_models or []
         self._transcription_models = transcription_models or []
         self.router = router
@@ -145,6 +149,18 @@ class GatewayRoute:
             self.embedding_invoker = EmbeddingModelInvoker(
                 models=embedding_models,
                 fallbacks=embedding_fallbacks,
+                cost_service=self.cost_service,
+                httpx_client=httpx_client,
+            )
+
+        self.transcription_invoker: TranscriptionModelInvoker | None = None
+        transcription_models = self._transcription_models
+
+        if transcription_models:
+            # TODO(AG-901): no fallback support yet for transcription models.
+            self.transcription_invoker = TranscriptionModelInvoker(
+                models=transcription_models,
+                fallbacks=None,
                 cost_service=self.cost_service,
                 httpx_client=httpx_client,
             )
@@ -658,6 +674,61 @@ class GatewayRoute:
 
         return response
 
+    async def invoke_transcription(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str | None,
+        language: str | None = None,
+        prompt: str | None = None,
+        temperature: float | None = None,
+    ) -> Transcription:
+        if route_name != self.gateway_route_config.route_name:
+            raise GatewayBadRequest(f'{route_name} must be the route name')
+
+        if not self.transcription_invoker:
+            raise GatewayBadRequest(
+                f'Route {route_name} has no transcription models defined'
+            )
+
+        set_operation_category(OperationCategory.ROUTING)
+        model_selected = self._select_and_prepare_transcription_model()
+
+        if self.budget_limiter:
+            set_operation_category(OperationCategory.LIMITING)
+            await self.budget_limiter.check_budget()
+
+        set_operation_category(OperationCategory.INVOCATION)
+        result = await self.transcription_invoker.transcribe(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            audio_bytes=audio_bytes,
+            filename=filename,
+            content_type=content_type,
+            model_id=model_selected.model_id,
+            language=language,
+            prompt=prompt,
+            temperature=temperature,
+            project_uuid=self.project_uuid,
+            project_name=self.project_name,
+        )
+
+        if self.budget_limiter:
+            # TODO(AG-892): replace 0.0 with the real dollar cost.
+            await self.budget_limiter.count_cost(cost=0.0)
+
+        return result
+
     # ============================================================================
     # Pre Process Request
     # ============================================================================
@@ -918,6 +989,26 @@ class GatewayRoute:
 
         logger.debug(
             'Selected embedding model: %s',
+            model_selected.model_id,
+        )
+
+        return model_selected
+
+    def _get_first_transcription_model(self) -> Model | None:
+        """Return the first transcription model"""
+        if not self._transcription_models:
+            return None
+        return self._transcription_models[0]
+
+    @task(name='select_transcription_model')
+    def _select_and_prepare_transcription_model(self) -> Model:
+        """Select transcription model for transcription invocation"""
+        model_selected = self._get_first_transcription_model()
+        if not model_selected:
+            raise ValueError('Configuration for transcription model not found.')
+
+        logger.debug(
+            'Selected transcription model: %s',
             model_selected.model_id,
         )
 

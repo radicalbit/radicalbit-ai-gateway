@@ -195,7 +195,7 @@ AnyRoutingConfigOut = Annotated[
 
 
 class GatewayRouteConfigOut(GatewayRouteConfig):
-    chat_models: list[ModelOut]
+    chat_models: list[ModelOut] | None
     embedding_models: list[ModelOut] | None
     transcription_models: list[ModelOut] | None
     rate_limiting: RateLimitingOut | None

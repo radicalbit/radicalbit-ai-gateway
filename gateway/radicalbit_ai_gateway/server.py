@@ -4,10 +4,11 @@ import json
 import logging.config
 import os
 import time
+from typing import Annotated
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -104,6 +105,7 @@ from radicalbit_ai_gateway.utils.logging_hooks import apply_log_filters
 from radicalbit_ai_gateway.utils.open_ai_types import (
     CompletionCreateParams,
     ResponseCreateParamsCustom,
+    TranscriptionCreateParamsCustom,
 )
 from radicalbit_ai_gateway.utils.request_context import (
     reset_route_context,
@@ -393,9 +395,15 @@ app.include_router(
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = [{'loc': e.get('loc'), 'type': e.get('type')} for e in exc.errors()]
     logger.error('Validation error: %s', errors)
+    try:
+        body = (await request.body()).decode()
+    except RuntimeError:
+        # Multipart/form requests (e.g. /v1/audio/transcriptions) have
+        # already consumed the body stream by the time validation fails.
+        body = ''
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={'detail': exc.errors(), 'body': (await request.body()).decode()},
+        content={'detail': exc.errors(), 'body': body},
     )
 
 
@@ -825,6 +833,97 @@ async def embeddings(
         group_uuid=key_details.group_uuid,
         group_name=key_details.group_name,
     )
+
+
+@app.post('/v1/audio/transcriptions')
+@otel_metrics_decorator
+@workflow(name='audio_transcriptions')
+@ensure_endpoint_category
+async def audio_transcriptions(
+    request: Request,
+    transcription_params: Annotated[TranscriptionCreateParamsCustom, Form()],
+    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
+    request_uuid: str = Depends(set_request_uuid),
+):
+    route_key = transcription_params.model
+    route = gateway_routes.get(route_key)
+
+    _set_early_project_trace_attributes(route_key, route)
+
+    if route is None:
+        raise GatewayBadRequest(
+            f'The route name [{route_key}] was not found in the config'
+        )
+    route_name = route.gateway_route_config.route_name
+
+    # Mark the root workflow span with ENDPOINT category
+    set_operation_category(OperationCategory.ENDPOINT)
+
+    # Set early trace attributes
+    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+
+    # Populate request event context first (before auth, so route_name is always captured)
+    ctx = RequestEventContext.get_or_create(request)
+    ctx.route_name = route_name
+    ctx.is_streaming = False
+
+    # Validate API key after context is populated
+    set_operation_category(OperationCategory.AUTH)
+    key_details = await set_api_key_uuid(
+        request, route.project_uuid, route.project_name
+    )
+
+    # Set auth-related trace attributes
+    set_trace_attributes(
+        api_key_uuid=key_details.api_key_uuid,
+        api_key_name=key_details.api_key_name,
+        group_uuid=key_details.group_uuid,
+        group_name=key_details.group_name,
+        project_uuid=route.project_uuid,
+        project_name=route.project_name,
+    )
+
+    if not group_service.check_key_uuid_for_route(
+        route_key, UUID(key_details.api_key_uuid)
+    ):
+        raise InvalidApiKey('Incorrect API key provided.')
+
+    ctx.project_uuid = route.project_uuid
+    ctx.project_name = route.project_name
+    request.state.otel_route_name = route_name
+
+    # Check and count request rate limits BEFORE any processing
+    if route.request_rate_limiter:
+        await route.request_rate_limiter.check_and_count_request(
+            request_uuid=request_uuid,
+            api_key_uuid=key_details.api_key_uuid,
+            group_uuid=key_details.group_uuid,
+            api_key_name=key_details.api_key_name,
+            group_name=key_details.group_name,
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+        )
+
+    file = transcription_params.file
+    content = await file.read()
+
+    set_operation_category(OperationCategory.ENDPOINT)
+    result = await route.invoke_transcription(
+        request_uuid=request_uuid,
+        api_key_uuid=key_details.api_key_uuid,
+        api_key_name=key_details.api_key_name,
+        group_uuid=key_details.group_uuid,
+        group_name=key_details.group_name,
+        route_name=route_name,
+        audio_bytes=content,
+        filename=file.filename or 'audio',
+        content_type=file.content_type,
+        language=transcription_params.language,
+        prompt=transcription_params.prompt,
+        temperature=transcription_params.temperature,
+    )
+
+    return JSONResponse(content=jsonable_encoder(result))
 
 
 # This endpoint follows the OpenAI Responses API standard (stateless Phase 1):

@@ -103,7 +103,11 @@ def build_gateway_routes_from_config(
     transcription_by_id = gateway_config.transcription_models_by_id
 
     for route_name, route_config in gateway_config.routes.items():
-        chat_models = [chat_by_id[mid] for mid in route_config.chat_models]
+        chat_models = (
+            [chat_by_id[mid] for mid in (route_config.chat_models or [])]
+            if route_config.chat_models
+            else None
+        )
         embedding_models = (
             [emb_by_id[mid] for mid in (route_config.embedding_models or [])]
             if route_config.embedding_models
@@ -132,7 +136,7 @@ def build_gateway_routes_from_config(
         if route_config.routing and gateway_config.routing:
             routing_config = gateway_config.routing_by_name.get(route_config.routing)
             if routing_config:
-                route_models_by_id = {m.model_id: m for m in chat_models}
+                route_models_by_id = {m.model_id: m for m in (chat_models or [])}
                 if isinstance(routing_config, TextClassificationRoutingConfig):
                     router = TextClassificationRouter(
                         config=routing_config,

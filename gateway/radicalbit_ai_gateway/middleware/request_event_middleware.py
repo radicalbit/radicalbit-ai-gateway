@@ -27,7 +27,12 @@ class RequestEventMiddleware:
     after exception handlers have processed the error.
     """
 
-    TRACKED_PATHS = {'/v1/chat/completions', '/v1/embeddings', '/v1/responses'}
+    TRACKED_PATHS = {
+        '/v1/chat/completions',
+        '/v1/embeddings',
+        '/v1/responses',
+        '/v1/audio/transcriptions',
+    }
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -98,11 +103,12 @@ class RequestEventMiddleware:
                 return
 
             status = self._determine_status(status_code, ctx)
-            request_type = (
-                RequestType.EMBEDDINGS
-                if '/embeddings' in request.url.path
-                else RequestType.CHAT_COMPLETIONS
-            )
+            if '/audio/transcriptions' in request.url.path:
+                request_type = RequestType.TRANSCRIPTIONS
+            elif '/embeddings' in request.url.path:
+                request_type = RequestType.EMBEDDINGS
+            else:
+                request_type = RequestType.CHAT_COMPLETIONS
 
             emit_request_event(
                 RequestEventPayload(
