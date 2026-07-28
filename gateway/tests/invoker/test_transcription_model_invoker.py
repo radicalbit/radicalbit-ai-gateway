@@ -1,3 +1,4 @@
+from decimal import Decimal
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -196,6 +197,120 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
     def test_model_map_initialization(self):
         invoker = self._build_invoker(WHISPER_MODEL)
         assert 'whisper' in invoker.model_map
+
+    def test_record_transcription_usage_cost_duration(self):
+        invoker = self._build_invoker(WHISPER_MODEL)
+        invoker.cost_service.compute_cost.return_value = Decimal('0.000825')
+        usage = MagicMock(type='duration', seconds=8.25)
+
+        total_cost = invoker._record_transcription_usage_cost(
+            request_uuid='req',
+            api_key_uuid='key',
+            api_key_name='rb-key',
+            group_name='test-group',
+            group_uuid='grp',
+            route_name='test-route',
+            model=WHISPER_MODEL,
+            usage=usage,
+        )
+
+        assert total_cost == Decimal('0.000825')
+        invoker.cost_service.compute_cost.assert_called_once_with(
+            model_id='whisper', token_processed=8.25, where='duration'
+        )
+        assert self.mock_emit_event.call_count == 1
+        payload = self.mock_emit_event.call_args.args[0]
+        assert payload.cache_type == 'duration'
+        assert payload.value == 8.25
+
+    def test_record_transcription_usage_cost_tokens_with_details(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+
+        def _side_effect(**kwargs):
+            return {
+                'audio': Decimal('0.000492'),
+                'input': Decimal('0.0000125'),
+                'output': Decimal('0.00038'),
+            }[kwargs['where']]
+
+        invoker.cost_service.compute_cost.side_effect = _side_effect
+        usage = MagicMock(
+            type='tokens',
+            input_tokens=87,
+            output_tokens=38,
+            input_token_details=MagicMock(audio_tokens=82, text_tokens=5),
+        )
+
+        total_cost = invoker._record_transcription_usage_cost(
+            request_uuid='req',
+            api_key_uuid='key',
+            api_key_name='rb-key',
+            group_name='test-group',
+            group_uuid='grp',
+            route_name='test-route',
+            model=GPT4O_TRANSCRIBE_MODEL,
+            usage=usage,
+        )
+
+        assert total_cost == (
+            Decimal('0.000492') + Decimal('0.0000125') + Decimal('0.00038')
+        )
+        compute_calls = invoker.cost_service.compute_cost.call_args_list
+        where_args = {c.kwargs['where'] for c in compute_calls}
+        assert where_args == {'audio', 'input', 'output'}
+        audio_call = next(c for c in compute_calls if c.kwargs['where'] == 'audio')
+        assert audio_call.kwargs['token_processed'] == 82
+        text_call = next(c for c in compute_calls if c.kwargs['where'] == 'input')
+        assert text_call.kwargs['token_processed'] == 5
+        output_call = next(c for c in compute_calls if c.kwargs['where'] == 'output')
+        assert output_call.kwargs['token_processed'] == 38
+        assert self.mock_emit_event.call_count == 3
+
+    def test_record_transcription_usage_cost_tokens_without_details(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        invoker.cost_service.compute_cost.return_value = Decimal('0.0001')
+        usage = MagicMock(
+            type='tokens',
+            input_tokens=50,
+            output_tokens=0,
+            input_token_details=None,
+        )
+
+        total_cost = invoker._record_transcription_usage_cost(
+            request_uuid='req',
+            api_key_uuid='key',
+            api_key_name='rb-key',
+            group_name='test-group',
+            group_uuid='grp',
+            route_name='test-route',
+            model=GPT4O_TRANSCRIBE_MODEL,
+            usage=usage,
+        )
+
+        # No input_token_details: all input treated as text-priced;
+        # output_tokens == 0 is skipped.
+        invoker.cost_service.compute_cost.assert_called_once_with(
+            model_id='gpt4o-transcribe', token_processed=50, where='input'
+        )
+        assert total_cost == Decimal('0.0001')
+        assert self.mock_emit_event.call_count == 1
+
+    def test_record_transcription_usage_cost_no_usage(self):
+        invoker = self._build_invoker(WHISPER_MODEL)
+
+        total_cost = invoker._record_transcription_usage_cost(
+            request_uuid='req',
+            api_key_uuid='key',
+            api_key_name='rb-key',
+            group_name='test-group',
+            group_uuid='grp',
+            route_name='test-route',
+            model=WHISPER_MODEL,
+            usage=None,
+        )
+
+        assert total_cost == Decimal(0)
+        invoker.cost_service.compute_cost.assert_not_called()
 
 
 if __name__ == '__main__':

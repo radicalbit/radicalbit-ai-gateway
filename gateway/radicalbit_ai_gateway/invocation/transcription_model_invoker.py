@@ -1,3 +1,4 @@
+from decimal import Decimal
 import logging
 import time
 
@@ -145,5 +146,82 @@ class TranscriptionModelInvoker(ModelInvoker):
             project_uuid=project_uuid,
             project_name=project_name,
         )
+        self._record_transcription_usage_cost(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            model=model,
+            usage=usage,
+            project_uuid=project_uuid,
+            project_name=project_name,
+        )
 
         return body
+
+    def _record_transcription_usage_cost(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        group_uuid: str,
+        route_name: str,
+        model: Model,
+        usage,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> Decimal:
+        if usage is None:
+            return Decimal(0)
+
+        common = {
+            'request_uuid': request_uuid,
+            'api_key_uuid': api_key_uuid,
+            'api_key_name': api_key_name,
+            'group_name': group_name,
+            'group_uuid': group_uuid,
+            'route_name': route_name,
+            'model': model,
+            'model_type': 'transcription',
+            'project_uuid': project_uuid,
+            'project_name': project_name,
+        }
+
+        if usage.type == 'duration':
+            return self._emit_input_token_metrics(
+                **common,
+                token_count=usage.seconds,
+                where='duration',
+                cache_type='duration',
+            )
+
+        details = getattr(usage, 'input_token_details', None)
+        audio_tokens = getattr(details, 'audio_tokens', None) or 0
+        text_tokens = getattr(details, 'text_tokens', None)
+        if text_tokens is None:
+            text_tokens = usage.input_tokens
+
+        total_cost = Decimal(0)
+        if audio_tokens > 0:
+            total_cost += self._emit_input_token_metrics(
+                **common,
+                token_count=audio_tokens,
+                where='audio',
+                cache_type='audio',
+            )
+        if text_tokens > 0:
+            total_cost += self._emit_input_token_metrics(
+                **common,
+                token_count=text_tokens,
+                where='input',
+                cache_type=None,
+            )
+        if usage.output_tokens > 0:
+            total_cost += self._emit_output_token_metrics(
+                **common,
+                token_count=usage.output_tokens,
+            )
+        return total_cost

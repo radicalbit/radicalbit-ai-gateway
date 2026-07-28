@@ -13,16 +13,19 @@ class CostService:
         self,
         chat_models_by_id: dict | None = None,
         embedding_models_by_id: dict | None = None,
+        transcription_models_by_id: dict | None = None,
     ):
         self.prices = self._extract_model_costs(
             chat_models_by_id or {},
             embedding_models_by_id or {},
+            transcription_models_by_id or {},
         )
 
     @staticmethod
     def _extract_model_costs(
         chat_models_by_id: dict,
         embedding_models_by_id: dict,
+        transcription_models_by_id: dict | None = None,
     ) -> dict:
         results = {}
         for m in chat_models_by_id.values():
@@ -32,6 +35,8 @@ class CostService:
                 m.input_cached_cost_per_token,
                 m.input_cache_creation_5m_cost_per_token,
                 m.input_cache_creation_1h_cost_per_token,
+                m.input_cost_per_second,
+                m.input_cost_per_audio_token,
             )
         for e in embedding_models_by_id.values():
             results[e.model_id] = (
@@ -40,10 +45,24 @@ class CostService:
                 e.input_cached_cost_per_token,
                 e.input_cache_creation_5m_cost_per_token,
                 e.input_cache_creation_1h_cost_per_token,
+                e.input_cost_per_second,
+                e.input_cost_per_audio_token,
+            )
+        for t in (transcription_models_by_id or {}).values():
+            results[t.model_id] = (
+                t.input_cost_per_token,
+                t.output_cost_per_token,
+                t.input_cached_cost_per_token,
+                t.input_cache_creation_5m_cost_per_token,
+                t.input_cache_creation_1h_cost_per_token,
+                t.input_cost_per_second,
+                t.input_cost_per_audio_token,
             )
         return results
 
-    def compute_cost(self, token_processed: int, where: str, model_id: str) -> float:
+    def compute_cost(
+        self, token_processed: int | float, where: str, model_id: str
+    ) -> float:
         try:
             match where:
                 case 'input':
@@ -56,6 +75,10 @@ class CostService:
                     cost_per_token = self.prices[model_id][3]
                 case 'cached_creation_1h':
                     cost_per_token = self.prices[model_id][4]
+                case 'duration':
+                    cost_per_token = self.prices[model_id][5]
+                case 'audio':
+                    cost_per_token = self.prices[model_id][6]
                 case _:
                     raise ValueError(f'Invalid where value: {where}')
         except KeyError:
@@ -63,4 +86,4 @@ class CostService:
                 'Failed to compute cost for %s',
                 model_id,
             )
-        return Decimal(token_processed) * cost_per_token
+        return Decimal(str(token_processed)) * cost_per_token

@@ -2266,6 +2266,57 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         # Embedding input semantic cache: 0.6
         assert res.embedding_input_semantic_cache == 0.6
 
+    def test_detailed_cost_breakdown_transcription(self):
+        base_time = datetime.datetime(
+            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        test_events = [
+            # whisper-1 style: duration-based input
+            db_mock.get_sample_event(
+                event_type='INPUT_TOKEN_PROCESSED',
+                timestamp=base_time,
+                cost=0.000825,
+                model_type='transcription',
+                cache_type='duration',
+            ),
+            # gpt-4o-transcribe style: audio-token input
+            db_mock.get_sample_event(
+                event_type='INPUT_TOKEN_PROCESSED',
+                timestamp=base_time,
+                cost=0.000492,
+                model_type='transcription',
+                cache_type='audio',
+            ),
+            # gpt-4o-transcribe style: text-token input
+            db_mock.get_sample_event(
+                event_type='INPUT_TOKEN_PROCESSED',
+                timestamp=base_time,
+                cost=0.0000125,
+                model_type='transcription',
+                cache_type='',
+            ),
+            # gpt-4o-transcribe style: output tokens
+            db_mock.get_sample_event(
+                event_type='OUTPUT_TOKEN_PROCESSED',
+                timestamp=base_time,
+                cost=0.00038,
+                model_type='transcription',
+            ),
+        ]
+        self.insert(test_events)
+
+        _from = base_time
+        _to = base_time + datetime.timedelta(hours=1)
+
+        res = self.event_dao.get_detailed_cost_breakdown(
+            None, ['rb-gateway'], _from, _to
+        )
+        assert res is not None
+        assert res.transcription_duration == 0.000825
+        assert res.transcription_audio == 0.000492
+        assert res.transcription_text == 0.0000125
+        assert res.transcription_output == 0.00038
+
     def test_get_all_routes_detailed_cost_breakdown(self):
         base_time = datetime.datetime(
             2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
@@ -2324,6 +2375,22 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
                 model_type='embeddings',
                 cache_type='semantic',
             ),
+            # route-D: transcription
+            db_mock.get_sample_event(
+                event_type='INPUT_TOKEN_PROCESSED',
+                route_name='route-D',
+                timestamp=base_time,
+                cost=0.000825,
+                model_type='transcription',
+                cache_type='duration',
+            ),
+            db_mock.get_sample_event(
+                event_type='OUTPUT_TOKEN_PROCESSED',
+                route_name='route-D',
+                timestamp=base_time,
+                cost=0.00038,
+                model_type='transcription',
+            ),
         ]
         self.insert(test_events)
 
@@ -2371,6 +2438,18 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         assert by_route['route-C'].embedding_input_total == 1.0
         assert by_route['route-C'].embedding_input_direct == 0.4
         assert by_route['route-C'].embedding_input_semantic_cache == 0.6
+        assert by_route['route-C'].transcription_duration == 0.0
+        assert by_route['route-C'].transcription_output == 0.0
+
+        # route-D: transcription — confirms the field_names/columns alignment
+        # (chat/embedding fields must stay 0 for this route)
+        assert 'route-D' in by_route
+        assert by_route['route-D'].chat_input_direct == 0.0
+        assert by_route['route-D'].embedding_input_total == 0.0
+        assert by_route['route-D'].transcription_duration == 0.000825
+        assert by_route['route-D'].transcription_audio == 0.0
+        assert by_route['route-D'].transcription_text == 0.0
+        assert by_route['route-D'].transcription_output == 0.00038
 
     def test_get_all_routes_detailed_cost_breakdown_empty(self):
         now = datetime.datetime.now(datetime.timezone.utc)

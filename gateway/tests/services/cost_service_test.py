@@ -10,7 +10,21 @@ from tests.common.mocked_gateway_config import (
 )
 
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.services.cost_service import CostService
+
+WHISPER_MODEL = Model(
+    model_id='whisper',
+    model='openai/whisper-1',
+    input_cost_per_second=Decimal('0.0001'),
+)
+GPT4O_TRANSCRIBE_MODEL = Model(
+    model_id='gpt4o-transcribe',
+    model='openai/gpt-4o-transcribe',
+    input_cost_per_million_tokens=Decimal('2.5'),
+    output_cost_per_million_tokens=Decimal('10.0'),
+    input_cost_per_audio_token=Decimal('0.000006'),
+)
 
 
 class CostServiceTest(unittest.TestCase):
@@ -23,6 +37,7 @@ class CostServiceTest(unittest.TestCase):
         cls.gateway_config = GatewayConfig(
             chat_models=gw_a.chat_models,
             embedding_models=gw_a.embedding_models,
+            transcription_models=[WHISPER_MODEL, GPT4O_TRANSCRIBE_MODEL],
             routes={'route-A': gw_a.routes['route-A']},
             guardrails=global_guardrails,
             cache=get_default_cache_config(),
@@ -30,12 +45,14 @@ class CostServiceTest(unittest.TestCase):
         cls.cost_service = CostService(
             chat_models_by_id=cls.gateway_config.chat_models_by_id,
             embedding_models_by_id=cls.gateway_config.embedding_models_by_id,
+            transcription_models_by_id=cls.gateway_config.transcription_models_by_id,
         )
 
     def test_extract_model_costs(self):
         prices = CostService._extract_model_costs(
             self.gateway_config.chat_models_by_id,
             self.gateway_config.embedding_models_by_id,
+            self.gateway_config.transcription_models_by_id,
         )
         assert prices is not None
         assert isinstance(prices, dict)
@@ -46,11 +63,15 @@ class CostServiceTest(unittest.TestCase):
                 Decimal('3e-08'),
                 Decimal('0'),
                 Decimal('0'),
+                Decimal('0'),
+                Decimal('0'),
             ),
             'azure': (
                 Decimal('2.e-07'),
                 Decimal('0.0'),
                 Decimal('2.e-08'),
+                Decimal('0'),
+                Decimal('0'),
                 Decimal('0'),
                 Decimal('0'),
             ),
@@ -60,6 +81,8 @@ class CostServiceTest(unittest.TestCase):
                 Decimal('0.0'),
                 Decimal('0'),
                 Decimal('0'),
+                Decimal('0'),
+                Decimal('0'),
             ),
             'text-embedding-3-small': (
                 Decimal('2e-08'),
@@ -67,8 +90,48 @@ class CostServiceTest(unittest.TestCase):
                 Decimal('0.0'),
                 Decimal('0'),
                 Decimal('0'),
+                Decimal('0'),
+                Decimal('0'),
+            ),
+            'whisper': (
+                Decimal('0'),
+                Decimal('0'),
+                Decimal('0'),
+                Decimal('0'),
+                Decimal('0'),
+                Decimal('0.0001'),
+                Decimal('0'),
+            ),
+            'gpt4o-transcribe': (
+                Decimal('2.5e-6'),
+                Decimal('1e-5'),
+                Decimal('0'),
+                Decimal('0'),
+                Decimal('0'),
+                Decimal('0'),
+                Decimal('0.000006'),
             ),
         }
+
+    def test_compute_cost_duration_seconds(self):
+        # whisper model has duration cost of 0.0001 per second
+        cost = self.cost_service.compute_cost(
+            token_processed=8.25,
+            where='duration',
+            model_id='whisper',
+        )
+        expected_cost = Decimal('8.25') * Decimal('0.0001')
+        assert cost == expected_cost
+
+    def test_compute_cost_audio_tokens(self):
+        # gpt4o-transcribe model has audio-token cost of 0.000006 per token
+        cost = self.cost_service.compute_cost(
+            token_processed=82,
+            where='audio',
+            model_id='gpt4o-transcribe',
+        )
+        expected_cost = Decimal('82') * Decimal('0.000006')
+        assert cost == expected_cost
 
     def test_compute_cost_input_tokens(self):
         # openai model has input cost of 3e-07 per token

@@ -150,6 +150,41 @@ class EventDAO:
             ),
         )
 
+        transcription_duration = F.sumIf(
+            T.c['COST'],
+            F.and_(
+                T.c['EVENT_TYPE'] == 'INPUT_TOKEN_PROCESSED',
+                T.c['MODEL_TYPE'] == 'transcription',
+                T.c['CACHE_TYPE'] == 'duration',
+            ),
+        )
+
+        transcription_audio = F.sumIf(
+            T.c['COST'],
+            F.and_(
+                T.c['EVENT_TYPE'] == 'INPUT_TOKEN_PROCESSED',
+                T.c['MODEL_TYPE'] == 'transcription',
+                T.c['CACHE_TYPE'] == 'audio',
+            ),
+        )
+
+        transcription_text = F.sumIf(
+            T.c['COST'],
+            F.and_(
+                T.c['EVENT_TYPE'] == 'INPUT_TOKEN_PROCESSED',
+                T.c['MODEL_TYPE'] == 'transcription',
+                T.c['CACHE_TYPE'] == '',
+            ),
+        )
+
+        transcription_output = F.sumIf(
+            T.c['COST'],
+            F.and_(
+                T.c['EVENT_TYPE'] == 'OUTPUT_TOKEN_PROCESSED',
+                T.c['MODEL_TYPE'] == 'transcription',
+            ),
+        )
+
         return [
             chat_input_direct.label('chat_input_direct'),
             chat_input_cached.label('chat_input_cached'),
@@ -160,6 +195,10 @@ class EventDAO:
             embedding_input_total.label('embedding_input_total'),
             embedding_input_direct.label('embedding_input_direct'),
             embedding_input_semantic_cache.label('embedding_input_semantic_cache'),
+            transcription_duration.label('transcription_duration'),
+            transcription_audio.label('transcription_audio'),
+            transcription_text.label('transcription_text'),
+            transcription_output.label('transcription_output'),
         ]
 
     def _get_attrs_per_metric(self, event_type: str) -> list:
@@ -972,6 +1011,10 @@ class EventDAO:
                 'embedding_input_total',
                 'embedding_input_direct',
                 'embedding_input_semantic_cache',
+                'transcription_duration',
+                'transcription_audio',
+                'transcription_text',
+                'transcription_output',
             ]
             return [
                 RouteDetailedCostBreakdown.model_validate(dict(zip(field_names, row)))
