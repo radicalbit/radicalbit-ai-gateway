@@ -960,8 +960,11 @@ async def test_invoke_transcription_counts_budget_duration():
     )
 
     budget_limiter.check_budget.assert_awaited_once()
+    # input_cost_per_second is cast to float here (unlike chat/embedding's
+    # int token_count, whisper's seconds is itself a float, and count_input's
+    # arithmetic can't mix float*Decimal — see _count_transcription_usage).
     budget_limiter.count_input.assert_awaited_once_with(
-        token_count=3, input_cost_per_token=Decimal('0.0001')
+        token_count=3, input_cost_per_token=0.0001
     )
     budget_limiter.count_output.assert_not_awaited()
 

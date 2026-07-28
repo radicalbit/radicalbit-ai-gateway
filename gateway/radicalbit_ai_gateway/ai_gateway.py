@@ -1638,11 +1638,15 @@ class GatewayRoute:
         if usage.type == 'duration':
             if model_selected.input_cost_per_second:
                 # `count_input` is plain count x price; for whisper-1-style
-                # duration billing `token_count` carries seconds and
-                # `input_cost_per_token` the per-second price.
+                # duration billing `token_count` carries seconds (a float) and
+                # `input_cost_per_token` the per-second price. count_input's
+                # arithmetic assumes a plain float price (as chat/embedding
+                # always pass an int token_count against a Decimal price,
+                # relying on int*Decimal support) — cast here rather than in
+                # count_input, so chat/embedding's math stays untouched.
                 await self.budget_limiter.count_input(
                     token_count=usage.seconds,
-                    input_cost_per_token=model_selected.input_cost_per_second,
+                    input_cost_per_token=float(model_selected.input_cost_per_second),
                 )
             return
 
