@@ -465,7 +465,7 @@ class EventService:
         else:
             route_dict['guardrails'] = []
 
-        chat_by_id = {m.model_id: m for m in config.chat_models}
+        chat_by_id = {m.model_id: m for m in (config.chat_models or [])}
         embed_by_id = {m.model_id: m for m in (config.embedding_models or [])}
         transcription_by_id = {
             m.model_id: m for m in (config.transcription_models or [])

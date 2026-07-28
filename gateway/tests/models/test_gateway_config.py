@@ -127,6 +127,22 @@ def test_transcription_only_route_without_chat_models_is_valid():
     assert gateway_config.routes['r'].transcription_models == ['w1']
 
 
+def test_transcription_only_gateway_without_top_level_chat_models_is_valid():
+    """A whole gateway config with no chat_models declared anywhere (top-level
+    included), only transcription_models, is valid end-to-end.
+    """
+    raw = {
+        'transcription_models': [{'model_id': 'w1', 'model': 'openai/whisper-1'}],
+        'routes': {
+            'r': {'transcription_models': ['w1']},
+        },
+    }
+    gateway_config = GatewayConfig.model_validate(raw)
+    assert gateway_config.chat_models is None
+    assert gateway_config.chat_models_by_id == {}
+    assert gateway_config.routes['r'].transcription_models == ['w1']
+
+
 def test_route_without_any_model_category_rejected():
     raw = {
         'chat_models': [{'model_id': 'c1', 'model': 'openai/gpt-4o-mini'}],

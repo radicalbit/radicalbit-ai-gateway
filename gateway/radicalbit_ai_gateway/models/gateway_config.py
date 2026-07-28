@@ -71,7 +71,7 @@ class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     routes: dict[str, GatewayRouteConfig] = {}
-    chat_models: list[Model]
+    chat_models: list[Model] | None = None
     embedding_models: list[Model] | None = None
     transcription_models: list[Model] | None = None
     cache: CacheConfig | None = None
@@ -81,7 +81,7 @@ class GatewayConfig(BaseModel):
 
     @property
     def chat_models_by_id(self) -> dict[str, Model]:
-        return {m.model_id: m for m in self.chat_models}
+        return {m.model_id: m for m in (self.chat_models or [])}
 
     @property
     def embedding_models_by_id(self) -> dict[str, Model]:
@@ -154,7 +154,7 @@ class GatewayConfig(BaseModel):
 
     @model_validator(mode='after')
     def validate_models_and_routes(self) -> Self:
-        chat_ids = [m.model_id for m in self.chat_models]
+        chat_ids = [m.model_id for m in (self.chat_models or [])]
         emb_ids = [m.model_id for m in (self.embedding_models or [])]
         transcription_ids = [m.model_id for m in (self.transcription_models or [])]
 
