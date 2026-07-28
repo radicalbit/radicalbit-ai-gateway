@@ -99,8 +99,6 @@ class TranscriptionModelInvoker(ModelInvoker):
         model, client, _fallbacks = self.model_map[model_id]
         _, model_name = parse_provider_and_model(model.model)
         is_whisper = model_name.startswith(WHISPER_FAMILY_PREFIX)
-        # Richest JSON-based format each family supports, so `usage` is
-        # always present (AG-835 decision).
         upstream_format = 'verbose_json' if is_whisper else 'json'
 
         create_kwargs: dict = {
