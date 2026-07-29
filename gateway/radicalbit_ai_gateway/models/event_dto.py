@@ -581,10 +581,12 @@ class InputCostBreakdownDTO(BaseModel):
 
 class TotalCostDTO(BaseModel):
     input: float = Field(
-        description='Total input costs from all model types (chat + embedding)'
+        description='Total input costs from all model types (chat + embedding + transcription)'
     )
     cached_input: float = Field(description='Total cached input costs from chat models')
-    output: float = Field(description='Total output costs from chat models')
+    output: float = Field(
+        description='Total output costs from chat and transcription models'
+    )
     saved: float | None = Field(
         default=None, description='Total amount saved from caching'
     )
@@ -703,6 +705,50 @@ class EmbeddingModelsCostDTO(BaseModel):
     )
 
 
+class TranscriptionModelsInputBreakdownDTO(BaseModel):
+    total: float = Field(
+        default=0,
+        description='Total input costs for transcription models (duration + audio + text)',
+    )
+    duration: float = Field(
+        default=0,
+        description='Duration-based input costs (e.g. whisper-1, priced per second)',
+    )
+    audio: float = Field(
+        default=0,
+        description='Audio-token input costs (e.g. gpt-4o-transcribe family)',
+    )
+    text: float = Field(
+        default=0,
+        description='Text-token input costs (e.g. gpt-4o-transcribe family)',
+    )
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+        protected_namespaces=(),
+    )
+
+
+class TranscriptionModelsCostDTO(BaseModel):
+    input: TranscriptionModelsInputBreakdownDTO = Field(
+        description='Input costs broken down by duration/audio/text'
+    )
+    output: float = Field(
+        default=0,
+        description='Output token costs for transcription models (e.g. gpt-4o-transcribe family)',
+    )
+    total: float = Field(
+        description='Sum of all transcription model costs (input + output)'
+    )
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+        protected_namespaces=(),
+    )
+
+
 class CostDataDTO(BaseModel):
     input_cost: Annotated[
         float,
@@ -793,6 +839,10 @@ class CostDataDTO(BaseModel):
         default=None,
         description='Cost breakdown for embedding models (direct + semantic cache)',
     )
+    transcription_models: TranscriptionModelsCostDTO | None = Field(
+        default=None,
+        description='Cost breakdown for transcription models (duration/audio/text input + output)',
+    )
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -809,6 +859,7 @@ class CostDataDTO(BaseModel):
         has_judges: bool = False,
         has_embedding_models: bool = False,
         has_semantic_cache: bool = False,
+        has_transcription_models: bool = False,
     ) -> 'CostDataDTO':
         cache_triggered: int | None = None
         input_cost = cost_data.input_cost
@@ -888,6 +939,7 @@ class CostDataDTO(BaseModel):
         total_all: float | None = None
         chat_models_cost: ChatModelsCostDTO | None = None
         embedding_models_cost: EmbeddingModelsCostDTO | None = None
+        transcription_models_cost: TranscriptionModelsCostDTO | None = None
 
         if detailed_breakdown:
             # Calculate chat models breakdown (None if no chat models)
@@ -940,27 +992,59 @@ class CostDataDTO(BaseModel):
                     total=detailed_breakdown.embedding_input_total,
                 )
 
+            # Calculate transcription models breakdown (None if no transcription models)
+            if has_transcription_models:
+                transcription_input_total = (
+                    detailed_breakdown.transcription_duration
+                    + detailed_breakdown.transcription_audio
+                    + detailed_breakdown.transcription_text
+                )
+                transcription_models_cost = TranscriptionModelsCostDTO(
+                    input=TranscriptionModelsInputBreakdownDTO(
+                        total=transcription_input_total,
+                        duration=detailed_breakdown.transcription_duration,
+                        audio=detailed_breakdown.transcription_audio,
+                        text=detailed_breakdown.transcription_text,
+                    ),
+                    output=detailed_breakdown.transcription_output,
+                    total=transcription_input_total
+                    + detailed_breakdown.transcription_output,
+                )
+
             # Calculate total DTO
             chat_input_total = chat_models_cost.input.total if chat_models_cost else 0
             embed_input_total = (
                 embedding_models_cost.input.total if embedding_models_cost else 0
             )
+            transcription_input_grand_total = (
+                transcription_models_cost.input.total
+                if transcription_models_cost
+                else 0
+            )
             chat_cached_total = (
                 chat_models_cost.cached_input.total if chat_models_cost else 0
             )
             chat_output_total = chat_models_cost.output.total if chat_models_cost else 0
+            transcription_output_total = (
+                transcription_models_cost.output if transcription_models_cost else 0
+            )
 
             total_dto = TotalCostDTO(
-                input=chat_input_total + embed_input_total,
+                input=chat_input_total
+                + embed_input_total
+                + transcription_input_grand_total,
                 cached_input=chat_cached_total,
-                output=chat_output_total,
+                output=chat_output_total + transcription_output_total,
                 saved=total_saved_amount,
             )
 
             # Calculate grand total
             chat_total = chat_models_cost.total if chat_models_cost else 0
             embed_total = embedding_models_cost.total if embedding_models_cost else 0
-            total_all = chat_total + embed_total
+            transcription_total = (
+                transcription_models_cost.total if transcription_models_cost else 0
+            )
+            total_all = chat_total + embed_total + transcription_total
 
         return CostDataDTO(
             input_cost=input_cost,
@@ -977,6 +1061,7 @@ class CostDataDTO(BaseModel):
             totals=total_dto,
             chat_models=chat_models_cost,
             embedding_models=embedding_models_cost,
+            transcription_models=transcription_models_cost,
         )
 
 
