@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from freezegun import freeze_time
 from langchain_core.messages import HumanMessage, SystemMessage
 from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
 import pook
@@ -488,15 +489,58 @@ class TestServer(unittest.TestCase):
             audio_bytes=b'fake-audio-bytes',
             filename='test.wav',
             content_type='audio/wav',
+            requested_response_format='json',
+            language=None,
+            prompt=None,
+            temperature=None,
+        )
+
+    def test_audio_transcriptions_success_verbose_json(self):
+        api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
+        key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+
+        mock_result = TranscriptionVerbose(
+            task='transcribe',
+            language='italian',
+            duration=8.25,
+            text='Ciao mondo',
+            segments=[],
+            usage={'type': 'duration', 'seconds': 9},
+        )
+        self.gateways_mock['rb-gateway'].invoke_transcription = AsyncMock(
+            return_value=mock_result
+        )
+
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway', 'response_format': 'verbose_json'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+            headers=self.headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json() == mock_result.model_dump()
+        self.gateways_mock['rb-gateway'].invoke_transcription.assert_awaited_once_with(
+            request_uuid=str(db_mock.REQUEST_UUID),
+            api_key_uuid=str(api_key.uuid),
+            api_key_name=api_key.name,
+            group_uuid=str(db_mock.GROUP_UUID),
+            group_name='group',
+            route_name='rb-gateway',
+            audio_bytes=b'fake-audio-bytes',
+            filename='test.wav',
+            content_type='audio/wav',
+            requested_response_format='verbose_json',
             language=None,
             prompt=None,
             temperature=None,
         )
 
     def test_audio_transcriptions_rejects_unsupported_response_format(self):
-        """response_format is pinned to `Literal['json']` at the request
-        schema — this is the only place that value is validated (the invoker
-        no longer re-checks it), so this is the one test covering rejection.
+        """response_format is pinned to `Literal['json', 'verbose_json']` at
+        the request schema — anything else is rejected before it even
+        reaches the invoker.
         """
         api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
         key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
@@ -504,7 +548,7 @@ class TestServer(unittest.TestCase):
 
         response = self.client.post(
             '/v1/audio/transcriptions',
-            data={'model': 'rb-gateway', 'response_format': 'verbose_json'},
+            data={'model': 'rb-gateway', 'response_format': 'text'},
             files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
             headers=self.headers,
         )

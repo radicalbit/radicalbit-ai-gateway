@@ -210,6 +210,63 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         assert 'transcription.response.duration_seconds' not in set_attrs
         assert 'transcription.response.segment_count' not in set_attrs
 
+    async def test_transcribe_whisper_verbose_json_passthrough(self):
+        invoker = self._build_invoker(WHISPER_MODEL)
+        mock_client = MockTranscriptionClient(response=WHISPER_VERBOSE_RESPONSE)
+        invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
+
+        result = await invoker.transcribe(
+            **_COMMON_TRANSCRIBE_KWARGS,
+            audio_bytes=b'fake-audio',
+            filename='test.wav',
+            content_type='audio/wav',
+            model_id='whisper',
+            requested_response_format='verbose_json',
+        )
+
+        # verbose_json matches whisper's upstream call exactly: the raw
+        # TranscriptionVerbose is returned as-is, no conversion needed.
+        assert result is WHISPER_VERBOSE_RESPONSE
+        assert isinstance(result, TranscriptionVerbose)
+        assert result.segments == []
+        assert result.duration == 8.25
+
+    async def test_transcribe_gpt4o_rejects_verbose_json(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        mock_client = MockTranscriptionClient(response=GPT4O_JSON_RESPONSE)
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            mock_client,
+            [],
+        )
+
+        with pytest.raises(
+            ModelInvokerBadRequest, match='only supported for whisper-1'
+        ):
+            await invoker.transcribe(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+                requested_response_format='verbose_json',
+            )
+
+    async def test_transcribe_rejects_unsupported_response_format(self):
+        invoker = self._build_invoker(WHISPER_MODEL)
+        mock_client = MockTranscriptionClient(response=WHISPER_VERBOSE_RESPONSE)
+        invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
+
+        with pytest.raises(ModelInvokerBadRequest, match='Unsupported response_format'):
+            await invoker.transcribe(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='whisper',
+                requested_response_format='text',
+            )
+
     async def test_transcribe_unknown_model_id_raises_bad_request(self):
         invoker = self._build_invoker(WHISPER_MODEL)
 

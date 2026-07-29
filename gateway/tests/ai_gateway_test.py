@@ -905,11 +905,56 @@ async def test_invoke_transcription_success():
         filename='test.wav',
         content_type='audio/wav',
         model_id='whisper-1',
+        requested_response_format='json',
         language=None,
         prompt=None,
         temperature=None,
         project_uuid='',
         project_name='',
+    )
+
+
+@pytest.mark.asyncio
+async def test_invoke_transcription_passes_through_requested_response_format():
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = _make_transcription_route_config()
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+    )
+
+    fake_result = MagicMock(usage=MagicMock(type='duration', seconds=9))
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    await ai_gateway.invoke_transcription(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        route_name='rb-gateway',
+        audio_bytes=b'fake-audio',
+        filename='test.wav',
+        content_type='audio/wav',
+        requested_response_format='verbose_json',
+    )
+
+    assert (
+        ai_gateway.transcription_invoker.transcribe.call_args.kwargs[
+            'requested_response_format'
+        ]
+        == 'verbose_json'
     )
 
 

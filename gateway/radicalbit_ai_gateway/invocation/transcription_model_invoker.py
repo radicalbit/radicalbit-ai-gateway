@@ -26,6 +26,7 @@ app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 WHISPER_FAMILY_PREFIX = 'whisper'
+SUPPORTED_RESPONSE_FORMATS = {'json', 'verbose_json'}
 
 
 def _set_transcription_request_attributes(
@@ -125,18 +126,28 @@ class TranscriptionModelInvoker(ModelInvoker):
         filename: str,
         content_type: str | None,
         model_id: str,
+        requested_response_format: str = 'json',
         language: str | None = None,
         prompt: str | None = None,
         temperature: float | None = None,
         project_uuid: str = '',
         project_name: str = '',
-    ) -> Transcription:
+    ) -> Transcription | TranscriptionVerbose:
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Transcription model {model_id} not defined')
+        if requested_response_format not in SUPPORTED_RESPONSE_FORMATS:
+            raise ModelInvokerBadRequest(
+                f'Unsupported response_format {requested_response_format!r}. '
+                f'Supported formats: {sorted(SUPPORTED_RESPONSE_FORMATS)}.'
+            )
 
         model, client, _fallbacks = self.model_map[model_id]
         _, model_name = parse_provider_and_model(model.model)
         is_whisper = model_name.startswith(WHISPER_FAMILY_PREFIX)
+        if requested_response_format == 'verbose_json' and not is_whisper:
+            raise ModelInvokerBadRequest(
+                'response_format=verbose_json is only supported for whisper-1 models.'
+            )
         upstream_format = 'verbose_json' if is_whisper else 'json'
 
         _set_transcription_request_attributes(
@@ -179,7 +190,10 @@ class TranscriptionModelInvoker(ModelInvoker):
         _set_transcription_response_attributes(response, is_whisper)
 
         usage = response.usage
-        if is_whisper:
+        if requested_response_format == 'verbose_json':
+            # Only reachable for whisper-1
+            body = response
+        elif is_whisper:
             body = Transcription(
                 text=response.text,
                 usage=usage.model_dump() if usage else None,
