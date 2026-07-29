@@ -126,6 +126,90 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         assert result.usage.type == 'tokens'
         assert result.usage.input_token_details.audio_tokens == 82
 
+    async def test_transcribe_whisper_sets_span_attributes_without_audio_bytes(self):
+        invoker = self._build_invoker(WHISPER_MODEL)
+        mock_client = MockTranscriptionClient(response=WHISPER_VERBOSE_RESPONSE)
+        invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
+
+        mock_span = MagicMock()
+        mock_span.is_recording.return_value = True
+
+        with patch(
+            'radicalbit_ai_gateway.invocation.transcription_model_invoker.trace.get_current_span',
+            return_value=mock_span,
+        ):
+            await invoker.transcribe(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='whisper',
+            )
+
+        mock_span.set_attribute.assert_any_call(
+            'transcription.request.filename', 'test.wav'
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.request.content_type', 'audio/wav'
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.request.audio_size_bytes', len(b'fake-audio')
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.request.model_id', 'whisper'
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.text_length', len('Ciao, questo è un test.')
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.language', 'italian'
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.duration_seconds', 8.25
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.segment_count', 0
+        )
+        # AG-895: never the raw audio content, only its size.
+        for call in mock_span.set_attribute.call_args_list:
+            assert b'fake-audio' not in call.args
+
+    async def test_transcribe_gpt4o_sets_span_attributes_without_whisper_fields(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        mock_client = MockTranscriptionClient(response=GPT4O_JSON_RESPONSE)
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            mock_client,
+            [],
+        )
+
+        mock_span = MagicMock()
+        mock_span.is_recording.return_value = True
+
+        with patch(
+            'radicalbit_ai_gateway.invocation.transcription_model_invoker.trace.get_current_span',
+            return_value=mock_span,
+        ):
+            await invoker.transcribe(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+            )
+
+        mock_span.set_attribute.assert_any_call(
+            'transcription.request.model_id', 'gpt4o-transcribe'
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.text_length', len('Ciao, questo è un test.')
+        )
+        # gpt-4o-transcribe's Transcription has no language/duration/segments.
+        set_attrs = {c.args[0] for c in mock_span.set_attribute.call_args_list}
+        assert 'transcription.response.language' not in set_attrs
+        assert 'transcription.response.duration_seconds' not in set_attrs
+        assert 'transcription.response.segment_count' not in set_attrs
+
     async def test_transcribe_unknown_model_id_raises_bad_request(self):
         invoker = self._build_invoker(WHISPER_MODEL)
 
