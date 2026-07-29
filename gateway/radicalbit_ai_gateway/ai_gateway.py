@@ -11,6 +11,7 @@ from langchain_core.messages import (
 )
 import numpy as np
 from openai.types.audio.transcription import Transcription, UsageDuration, UsageTokens
+from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
@@ -685,10 +686,11 @@ class GatewayRoute:
         audio_bytes: bytes,
         filename: str,
         content_type: str | None,
+        requested_response_format: str = 'json',
         language: str | None = None,
         prompt: str | None = None,
         temperature: float | None = None,
-    ) -> Transcription:
+    ) -> Transcription | TranscriptionVerbose:
         if route_name != self.gateway_route_config.route_name:
             raise GatewayBadRequest(f'{route_name} must be the route name')
 
@@ -716,6 +718,7 @@ class GatewayRoute:
             filename=filename,
             content_type=content_type,
             model_id=model_selected.model_id,
+            requested_response_format=requested_response_format,
             language=language,
             prompt=prompt,
             temperature=temperature,

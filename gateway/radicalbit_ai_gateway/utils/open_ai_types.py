@@ -568,8 +568,9 @@ class TranscriptionCreateParamsCustom(BaseModel):
     prompt: str | None = None
     """An optional text to guide the model's style or continue a previous audio segment."""
 
-    response_format: Literal['json'] = 'json'
-    """The format of the transcript output. verbose_json/text/srt/vtt aren't supported yet."""
+    response_format: Literal['json', 'verbose_json'] = 'json'
+    """The format of the transcript output. verbose_json is only supported for whisper-1;
+    text/srt/vtt aren't supported yet."""
 
     temperature: float | None = None
     """Sampling temperature, between 0 and 1."""

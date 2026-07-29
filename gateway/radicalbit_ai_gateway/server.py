@@ -918,6 +918,7 @@ async def audio_transcriptions(
         audio_bytes=content,
         filename=file.filename or 'audio',
         content_type=file.content_type,
+        requested_response_format=transcription_params.response_format,
         language=transcription_params.language,
         prompt=transcription_params.prompt,
         temperature=transcription_params.temperature,
