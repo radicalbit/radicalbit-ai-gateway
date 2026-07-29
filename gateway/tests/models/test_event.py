@@ -179,9 +179,7 @@ def test_from_dao_with_transcription_models():
     assert result.transcription_models.input.duration == 0.000825
     assert result.transcription_models.input.audio == 0.000492
     assert result.transcription_models.input.text == 0.0000125
-    assert result.transcription_models.input.total == (
-        0.000825 + 0.000492 + 0.0000125
-    )
+    assert result.transcription_models.input.total == (0.000825 + 0.000492 + 0.0000125)
     assert result.transcription_models.output == 0.00038
     assert result.transcription_models.total == (
         0.000825 + 0.000492 + 0.0000125 + 0.00038
