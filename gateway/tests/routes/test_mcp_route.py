@@ -406,41 +406,30 @@ class _StampRequestUuid:
         await self.app(scope, receive, send)
 
 
-def test_request_uuid_is_stamped_on_the_trace():
+def test_the_service_reports_the_request_uuid_the_middleware_stamped():
+    """RequestEventMiddleware owns generation; the service only reads it."""
+    client, _ = _make_client()
+    stamped = str(uuid.uuid4())
+    client.app.add_middleware(_StampRequestUuid, value=stamped)
+
+    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] == stamped
+
+
+def test_no_request_uuid_is_invented_without_the_middleware():
+    """None is dropped by set_trace_attributes rather than becoming a fake id."""
     client, _ = _make_client()
 
     with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
         assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
 
-    recorded = mock_set_attrs.call_args_list[0].kwargs['request_uuid']
-    # a real uuid4, not a placeholder
-    assert uuid.UUID(recorded).version == 4
-
-
-def test_request_uuid_is_reused_when_already_set():
-    """Keeps MCP correct if it is ever added to RequestEventMiddleware."""
-    client, _ = _make_client()
-    existing = str(uuid.uuid4())
-    client.app.add_middleware(_StampRequestUuid, value=existing)
-
-    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
-        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
-
-    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] == existing
-
-
-def test_request_uuid_is_stamped_even_when_auth_fails():
-    client, _ = _make_client()
-    client.app.state.token_validator = SimpleNamespace(
-        validate_token=AsyncMock(side_effect=InvalidApiKey('nope'))
-    )
-
-    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
-        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 401
-
-    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid']
+    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] is None
 
 
 # Span status and attribute placement are asserted against a real OTel pipeline
 # in tests/mcp/test_span_attributes.py — mocks here cannot tell which span an
-# attribute lands on, which is the property that matters.
+# attribute lands on, which is the property that matters. Middleware path
+# matching and uuid stamping live in
+# tests/middlewares/test_request_event_middleware.py.

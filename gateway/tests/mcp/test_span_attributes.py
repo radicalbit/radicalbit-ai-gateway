@@ -1,4 +1,4 @@
-"""End-to-end span assertions for the MCP path, against a real OTel pipeline.
+"""End-to-end telemetry assertions for the MCP path, with production wiring.
 
 The mock-based tests in ``test_mcp_service.py`` verify that the helpers are
 *called*; they cannot verify where the attributes actually land. That
@@ -6,14 +6,18 @@ distinction matters: Traceloop's ``@task`` detaches its context token on exit,
 so anything set inside a task reaches that task's span only and never the
 enclosing ``mcp_request`` workflow span — which is the span
 ``OtelTracesDAO.get_root_traces_paginated`` queries. These tests boot Traceloop
-against an in-memory exporter and assert on the emitted spans.
+against an in-memory exporter and assert on the emitted spans, plus on the
+REQUEST event payloads the same request produces.
 
-Note: ``Traceloop.init`` installs a global tracer provider for the rest of the
-session. That only means other tests emit spans nobody collects.
+Note: ``Traceloop.init`` installs a global tracer provider that cannot be
+uninstalled, so the ``exporter`` fixture disables the wrapper on teardown. Without
+that, every later test in the session keeps feeding this exporter and the run is
+OOM-killed.
 """
 
+from collections.abc import Iterator
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 from fastapi import FastAPI
@@ -24,16 +28,22 @@ from opentelemetry.trace import StatusCode
 import pytest
 from starlette.testclient import TestClient
 from traceloop.sdk import Traceloop
+from traceloop.sdk.tracing.tracing import TracerWrapper
 
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
+from radicalbit_ai_gateway.middleware.request_event_middleware import (
+    RequestEventMiddleware,
+)
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
+from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 from radicalbit_ai_gateway.routes.mcp_route import McpRoute
 from radicalbit_ai_gateway.services.mcp_service import McpService, encode_resource_uri
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
+    InvalidApiKey,
     McpTransportError,
     api_key_exception_handler,
     mcp_transport_exception_handler,
@@ -46,7 +56,7 @@ ROOT_SPAN = 'mcp_request.workflow'
 
 
 @pytest.fixture(scope='module')
-def exporter() -> InMemorySpanExporter:
+def exporter() -> Iterator[InMemorySpanExporter]:
     exp = InMemorySpanExporter()
     Traceloop.init(
         app_name='test-gateway',
@@ -54,7 +64,16 @@ def exporter() -> InMemorySpanExporter:
         disable_batch=True,
         processor=SimpleSpanProcessor(exp),
     )
-    return exp
+    TracerWrapper.set_disabled(False)
+    yield exp
+    # Traceloop installs a global tracer provider that cannot be uninstalled, so
+    # without this every later test in the session would keep emitting spans into
+    # this exporter — unbounded growth that OOM-kills the full run. Disabling the
+    # wrapper makes the decorators no-op again, restoring the behaviour the rest
+    # of the suite has always had (Traceloop is never initialized in production
+    # tests).
+    TracerWrapper.set_disabled(True)
+    exp.clear()
 
 
 @pytest.fixture
@@ -93,6 +112,9 @@ def client(exporter, upstream) -> TestClient:
     group_service.check_key_uuid_for_route.return_value = True
 
     app = FastAPI()
+    # request_uuid is stamped here in production, so the test app must have it
+    # too — otherwise the root span's request_uuid assertion proves nothing.
+    app.add_middleware(RequestEventMiddleware)
     app.include_router(
         McpRoute.get_mcp_router(
             McpService(
@@ -257,3 +279,76 @@ def test_a_notification_leaves_the_root_span_unset(client, exporter):
     root = _span(exporter, ROOT_SPAN)
     assert root.status.status_code is not StatusCode.ERROR
     assert _mcp_attrs(root) == {'method': 'notifications/initialized'}
+
+
+# ---------------------------------------------------------------------------
+# REQUEST events (same wiring, other pipeline)
+# ---------------------------------------------------------------------------
+
+EMIT = 'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
+
+
+def test_the_request_event_carries_route_project_and_key_identity(client):
+    """Empty identity columns would make the rows useless to the dashboard."""
+    with patch(EMIT) as emit:
+        assert (
+            _post(client, 'tools/call', {'name': 'github__get_issue'}).status_code
+            == 200
+        )
+
+    payload = emit.call_args.args[0]
+    assert payload.request_type is RequestType.MCP
+    assert payload.route_name == 'my-route'
+    assert payload.project_name == 'proj'
+    assert payload.project_uuid
+    assert payload.api_key_name == 'my-key'
+    assert payload.group_name == 'team-a'
+    assert payload.status is RequestStatus.SUCCESS
+    assert payload.duration_ms > 0
+
+
+def test_the_request_event_shares_the_request_uuid_with_the_span(client, exporter):
+    """Pin the join that the traces and events pipelines rely on."""
+    with patch(EMIT) as emit:
+        assert _post(client, 'ping').status_code == 200
+
+    span_uuid = _span(exporter, ROOT_SPAN).attributes[f'{ASSOC}request_uuid']
+    assert emit.call_args.args[0].request_uuid == span_uuid
+
+
+def test_a_jsonrpc_error_is_a_handled_error_in_the_request_event(client):
+    with patch(EMIT) as emit:
+        assert _post(client, 'tools/call', {'name': 'nope__missing'}).status_code == 200
+
+    payload = emit.call_args.args[0]
+    assert payload.http_status_code == 200
+    assert payload.status is RequestStatus.HANDLED_ERROR
+    assert payload.error_type == 'mcp_jsonrpc_error'
+    assert payload.error_code == '-32602'
+
+
+def test_a_notification_emits_no_request_event(client):
+    with patch(EMIT) as emit:
+        response = client.post(
+            PATH,
+            json={'jsonrpc': '2.0', 'method': 'notifications/initialized'},
+            headers=AUTH,
+        )
+
+    assert response.status_code == 202
+    emit.assert_not_called()
+
+
+def test_an_auth_failure_still_reports_the_route_it_targeted(client):
+    """Context is populated before auth, so 401s stay attributable to a route."""
+    client.app.state.token_validator = SimpleNamespace(
+        validate_token=AsyncMock(side_effect=InvalidApiKey('nope'))
+    )
+
+    with patch(EMIT) as emit:
+        assert _post(client, 'ping').status_code == 401
+
+    payload = emit.call_args.args[0]
+    assert payload.route_name == 'my-route'
+    assert payload.project_name == 'proj'
+    assert payload.status is RequestStatus.HANDLED_ERROR

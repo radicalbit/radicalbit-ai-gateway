@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version as _package_version
 import logging
 from urllib.parse import quote, unquote
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import Request
 from opentelemetry.trace import Status, StatusCode, get_current_span
@@ -16,6 +16,7 @@ from radicalbit_ai_gateway.mcp_proxy.errors import (
     McpUpstreamError,
 )
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
+from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.models.mcp_dispatch_result import McpDispatchResult
 from radicalbit_ai_gateway.models.mcp_server import ALIAS_TOOL_SEPARATOR, AnyMcpServer
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
@@ -152,12 +153,11 @@ class McpService:
         self, request: Request, project_name: str, route_name: str
     ) -> McpDispatchResult:
         """Authenticate and authorize the POST, then dispatch its JSON-RPC message."""
-        # Stamped before origin/auth checks so rejected requests stay
-        # correlatable. Unlike the /v1/* endpoints, whose request_uuid comes from
-        # RequestEventMiddleware, MCP is not a tracked path there — so reuse an
-        # existing id if one was set, else mint our own.
-        request_uuid = getattr(request.state, 'request_uuid', None) or str(uuid4())
-        request.state.request_uuid = request_uuid
+        # Stamped by RequestEventMiddleware before this handler runs, so it is
+        # present even when origin or auth checks reject the request. Absent
+        # only when McpService is driven without the middleware (unit tests),
+        # where set_trace_attributes drops the None.
+        request_uuid = getattr(request.state, 'request_uuid', None)
 
         self._validate_origin(request)
 
@@ -169,6 +169,13 @@ class McpService:
             project_name=project_name,
             route_name=route_name,
         )
+
+        # Populated before auth so the REQUEST event still identifies the route
+        # and project when the key is missing, invalid, or unbound.
+        ctx = RequestEventContext.get_or_create(request)
+        ctx.route_name = route_name
+        ctx.project_uuid = project_uuid
+        ctx.project_name = project_name
 
         set_operation_category(OperationCategory.AUTH)
         key_details = await authenticate_bearer_request(
@@ -196,36 +203,46 @@ class McpService:
             body = await request.json()
         except Exception:
             return self._record_error_outcome(
+                request,
                 McpDispatchResult(
                     status_code=400,
                     payload=jsonrpc.error_message(
                         None, jsonrpc.PARSE_ERROR, 'Parse error'
                     ),
-                )
+                ),
             )
 
         servers = entry.config.get_route_mcp_servers(route_name)
         set_operation_category(OperationCategory.INVOCATION)
         return self._record_error_outcome(
-            await self._dispatch(body, servers, request.headers)
+            request, await self._dispatch(body, servers, request.headers)
         )
 
     @staticmethod
-    def _record_error_outcome(result: McpDispatchResult) -> McpDispatchResult:
-        """Mark the workflow span when the response carries a JSON-RPC error.
+    def _record_error_outcome(
+        request: Request, result: McpDispatchResult
+    ) -> McpDispatchResult:
+        """Report a JSON-RPC error body to both telemetry pipelines.
 
-        ``_dispatch`` returns protocol and upstream failures as ``error``
-        bodies over HTTP 200, so without this a failed ``tools/call`` is
-        indistinguishable from a success in the traces UI. Returns ``result``
-        so it can wrap a return statement.
+        ``_dispatch`` returns protocol and upstream failures as ``error`` bodies
+        over HTTP 200, so without this a failed ``tools/call`` is
+        indistinguishable from a success in the traces UI and lands in
+        ``request_event`` as ``success``. Returns ``result`` so it can wrap a
+        return statement.
         """
         error = (result.payload or {}).get('error')
         if not error:
             return result
-        set_mcp_attributes(error_code=error.get('code'))
+        code = error.get('code')
+        set_mcp_attributes(error_code=code)
         span = get_current_span()
         if span and span.is_recording():
             span.set_status(Status(StatusCode.ERROR, error.get('message', '')))
+        ctx = RequestEventContext.get(request)
+        if ctx:
+            # Read back by _determine_status to downgrade the 200 to an error.
+            ctx.error_type = 'mcp_jsonrpc_error'
+            ctx.error_code = str(code)
         return result
 
     @staticmethod
