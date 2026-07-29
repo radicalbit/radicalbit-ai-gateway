@@ -65,12 +65,23 @@ def set_trace_attributes(
 def set_mcp_attributes(
     method: str | None = None,
     alias: str | None = None,
-    tool_name: str | None = None,
+    target: str | None = None,
+    error_code: int | None = None,
 ) -> None:
+    """Record MCP-specific attributes on the current trace.
+
+    ``target`` is the method's subject: a tool name for ``tools/call``, a
+    prompt name for ``prompts/get``, or the upstream URI for
+    ``resources/read``. ``method`` disambiguates which, so one attribute
+    serves all three instead of one per kind.
+    """
     properties = {
         'rb.gateway.mcp_method': method,
         'rb.gateway.mcp_alias': alias,
-        'rb.gateway.mcp_tool_name': tool_name,
+        'rb.gateway.mcp_target': target,
+        'rb.gateway.mcp_error_code': str(error_code)
+        if error_code is not None
+        else None,
     }
     properties = {k: v for k, v in properties.items() if v is not None}
     if properties:

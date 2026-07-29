@@ -72,6 +72,7 @@ class McpUpstreamClient:
             server, lambda session: session.call_tool(name, arguments), client_headers
         )
 
+    @task(name='mcp_upstream_list_prompts')
     async def list_prompts(
         self,
         server: AnyMcpServer,
@@ -83,6 +84,7 @@ class McpUpstreamClient:
             server, lambda session: session.list_prompts(cursor), client_headers
         )
 
+    @task(name='mcp_upstream_get_prompt')
     async def get_prompt(
         self,
         server: AnyMcpServer,
@@ -95,6 +97,7 @@ class McpUpstreamClient:
             server, lambda session: session.get_prompt(name, arguments), client_headers
         )
 
+    @task(name='mcp_upstream_list_resources')
     async def list_resources(
         self,
         server: AnyMcpServer,
@@ -106,6 +109,7 @@ class McpUpstreamClient:
             server, lambda session: session.list_resources(cursor), client_headers
         )
 
+    @task(name='mcp_upstream_read_resource')
     async def read_resource(
         self,
         server: AnyMcpServer,

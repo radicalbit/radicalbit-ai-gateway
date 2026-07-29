@@ -3,9 +3,10 @@ from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version as _package_version
 import logging
 from urllib.parse import quote, unquote
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import Request
+from opentelemetry.trace import Status, StatusCode, get_current_span
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
@@ -96,6 +97,29 @@ def decode_resource_uri(uri: str) -> tuple[str, str] | None:
     return unquote(alias_enc), unquote(uri_enc)
 
 
+def target_attributes(method: str, params: dict) -> dict:
+    """Best-effort ``alias``/``target`` for the methods addressing one object.
+
+    Resolved here rather than inside each handler because a ``@task`` detaches
+    its context on exit: attributes set inside one reach that task's span only,
+    never the enclosing ``mcp_request`` workflow span the traces list queries.
+    Called from the workflow scope, these land on the root span and are
+    inherited by the child task span.
+
+    An unresolvable name is still reported, since knowing what the client asked
+    for is what makes the failure diagnosable.
+    """
+    if method in ('tools/call', 'prompts/get'):
+        name = params.get('name')
+        split = split_alias_name(name) if isinstance(name, str) else None
+    elif method == 'resources/read':
+        uri = params.get('uri')
+        split = decode_resource_uri(uri) if isinstance(uri, str) else None
+    else:
+        return {}
+    return {'alias': split[0], 'target': split[1]} if split else {}
+
+
 class _McpMethodError(Exception):
     """Protocol-level failure inside a dispatched method → JSON-RPC error."""
 
@@ -128,12 +152,22 @@ class McpService:
         self, request: Request, project_name: str, route_name: str
     ) -> McpDispatchResult:
         """Authenticate and authorize the POST, then dispatch its JSON-RPC message."""
+        # Stamped before origin/auth checks so rejected requests stay
+        # correlatable. Unlike the /v1/* endpoints, whose request_uuid comes from
+        # RequestEventMiddleware, MCP is not a tracked path there — so reuse an
+        # existing id if one was set, else mint our own.
+        request_uuid = getattr(request.state, 'request_uuid', None) or str(uuid4())
+        request.state.request_uuid = request_uuid
+
         self._validate_origin(request)
 
         entry: ProjectEntry | None = request.app.state.project_configs.get(project_name)
         project_uuid = str(entry.uuid) if entry else ''
         set_trace_attributes(
-            project_uuid=project_uuid, project_name=project_name, route_name=route_name
+            request_uuid=request_uuid,
+            project_uuid=project_uuid,
+            project_name=project_name,
+            route_name=route_name,
         )
 
         set_operation_category(OperationCategory.AUTH)
@@ -161,14 +195,52 @@ class McpService:
         try:
             body = await request.json()
         except Exception:
-            return McpDispatchResult(
-                status_code=400,
-                payload=jsonrpc.error_message(None, jsonrpc.PARSE_ERROR, 'Parse error'),
+            return self._record_error_outcome(
+                McpDispatchResult(
+                    status_code=400,
+                    payload=jsonrpc.error_message(
+                        None, jsonrpc.PARSE_ERROR, 'Parse error'
+                    ),
+                )
             )
 
         servers = entry.config.get_route_mcp_servers(route_name)
         set_operation_category(OperationCategory.INVOCATION)
-        return await self._dispatch(body, servers, request.headers)
+        return self._record_error_outcome(
+            await self._dispatch(body, servers, request.headers)
+        )
+
+    @staticmethod
+    def _record_error_outcome(result: McpDispatchResult) -> McpDispatchResult:
+        """Mark the workflow span when the response carries a JSON-RPC error.
+
+        ``_dispatch`` returns protocol and upstream failures as ``error``
+        bodies over HTTP 200, so without this a failed ``tools/call`` is
+        indistinguishable from a success in the traces UI. Returns ``result``
+        so it can wrap a return statement.
+        """
+        error = (result.payload or {}).get('error')
+        if not error:
+            return result
+        set_mcp_attributes(error_code=error.get('code'))
+        span = get_current_span()
+        if span and span.is_recording():
+            span.set_status(Status(StatusCode.ERROR, error.get('message', '')))
+        return result
+
+    @staticmethod
+    def _record_fanout(total: int, failed: list[str], count: int) -> None:
+        """Record the outcome of a list method's fan-out on its own span.
+
+        Partial upstream failures are otherwise log-only, so a short list
+        can't be told from a degraded one. Always set, so ``mcp.result.count``
+        is present and ``mcp.upstream.failed`` is empty rather than absent.
+        """
+        span = get_current_span()
+        if span and span.is_recording():
+            span.set_attribute('mcp.upstream.total', total)
+            span.set_attribute('mcp.upstream.failed', ','.join(failed))
+            span.set_attribute('mcp.result.count', count)
 
     async def _dispatch(
         self,
@@ -192,6 +264,9 @@ class McpService:
                 ),
             )
         method = body['method']
+        # Recorded before the notification early-return so every dispatched
+        # message is attributable by method, not just the ones that reply.
+        set_mcp_attributes(method=method)
 
         if 'id' not in body:
             # Notifications (e.g. notifications/initialized) get no response.
@@ -217,6 +292,8 @@ class McpService:
                     request_id, jsonrpc.INVALID_PARAMS, 'params must be an object'
                 ),
             )
+
+        set_mcp_attributes(**target_attributes(method, params or {}))
 
         try:
             if method == 'initialize':
@@ -310,6 +387,7 @@ class McpService:
                 data = tool.model_dump(mode='json', by_alias=True, exclude_none=True)
                 data['name'] = f'{server.alias}{ALIAS_TOOL_SEPARATOR}{tool.name}'
                 tools.append(data)
+        self._record_fanout(len(servers), failed, len(tools))
         if failed:
             if len(failed) == len(servers):
                 raise _McpMethodError(
@@ -350,12 +428,12 @@ class McpService:
         )
         if split is None or server is None:
             raise _McpMethodError(jsonrpc.INVALID_PARAMS, f'Unknown tool: {name}')
-        set_mcp_attributes(method='tools/call', alias=split[0], tool_name=split[1])
         result = await self._upstream_client.call_tool(
             server, split[1], arguments, client_headers=client_headers
         )
         return result.model_dump(mode='json', by_alias=True, exclude_none=True)
 
+    @task(name='mcp_prompts_list')
     async def _prompts_list(
         self,
         servers: list[AnyMcpServer],
@@ -386,6 +464,7 @@ class McpService:
                 data = prompt.model_dump(mode='json', by_alias=True, exclude_none=True)
                 data['name'] = f'{server.alias}{ALIAS_TOOL_SEPARATOR}{prompt.name}'
                 prompts.append(data)
+        self._record_fanout(len(servers), failed, len(prompts))
         if failed:
             if len(failed) == len(servers):
                 raise _McpMethodError(
@@ -397,6 +476,7 @@ class McpService:
             )
         return {'prompts': prompts}
 
+    @task(name='mcp_prompts_get')
     async def _prompts_get(
         self,
         params: dict,
@@ -428,6 +508,7 @@ class McpService:
         )
         return result.model_dump(mode='json', by_alias=True, exclude_none=True)
 
+    @task(name='mcp_resources_list')
     async def _resources_list(
         self,
         servers: list[AnyMcpServer],
@@ -460,6 +541,7 @@ class McpService:
                 )
                 data['uri'] = encode_resource_uri(server.alias, data['uri'])
                 resources.append(data)
+        self._record_fanout(len(servers), failed, len(resources))
         if failed:
             if len(failed) == len(servers):
                 raise _McpMethodError(
@@ -471,6 +553,7 @@ class McpService:
             )
         return {'resources': resources}
 
+    @task(name='mcp_resources_read')
     async def _resources_read(
         self,
         params: dict,

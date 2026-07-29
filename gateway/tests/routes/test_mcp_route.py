@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 from fastapi import FastAPI
@@ -385,3 +385,62 @@ async def test_end_to_end_against_real_upstream():
             result = res.json()['result']
             assert result['isError'] is False
             assert result['content'][0] == {'type': 'text', 'text': 'echo: hi'}
+
+
+# ---------------------------------------------------------------------------
+# Telemetry
+# ---------------------------------------------------------------------------
+
+MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
+
+
+class _StampRequestUuid:
+    """Pure-ASGI stand-in for RequestEventMiddleware's request_uuid stamping."""
+
+    def __init__(self, app, value: str):
+        self.app = app
+        self.value = value
+
+    async def __call__(self, scope, receive, send):
+        scope.setdefault('state', {})['request_uuid'] = self.value
+        await self.app(scope, receive, send)
+
+
+def test_request_uuid_is_stamped_on_the_trace():
+    client, _ = _make_client()
+
+    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+    recorded = mock_set_attrs.call_args_list[0].kwargs['request_uuid']
+    # a real uuid4, not a placeholder
+    assert uuid.UUID(recorded).version == 4
+
+
+def test_request_uuid_is_reused_when_already_set():
+    """Keeps MCP correct if it is ever added to RequestEventMiddleware."""
+    client, _ = _make_client()
+    existing = str(uuid.uuid4())
+    client.app.add_middleware(_StampRequestUuid, value=existing)
+
+    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] == existing
+
+
+def test_request_uuid_is_stamped_even_when_auth_fails():
+    client, _ = _make_client()
+    client.app.state.token_validator = SimpleNamespace(
+        validate_token=AsyncMock(side_effect=InvalidApiKey('nope'))
+    )
+
+    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 401
+
+    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid']
+
+
+# Span status and attribute placement are asserted against a real OTel pipeline
+# in tests/mcp/test_span_attributes.py — mocks here cannot tell which span an
+# attribute lands on, which is the property that matters.
