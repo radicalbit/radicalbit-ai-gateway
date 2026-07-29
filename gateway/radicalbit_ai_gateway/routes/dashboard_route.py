@@ -88,7 +88,7 @@ def _get_route_prompts(route_name: str, config: GatewayConfig) -> RoutePromptsOu
     route_config = config.routes[route_name]
     chat_items = [
         _build_chat_prompt_item(model)
-        for model_id in route_config.chat_models
+        for model_id in (route_config.chat_models or [])
         if (model := config.chat_models_by_id.get(model_id)) is not None
     ]
     global_guardrails = {g.name: g for g in (config.guardrails or [])}

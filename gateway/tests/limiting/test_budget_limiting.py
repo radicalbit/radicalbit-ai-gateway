@@ -86,6 +86,25 @@ class TestBudgetLimiter:
         assert '[action=BLOCK]' in msg
 
     @pytest.mark.asyncio
+    async def test_count_duration_exceeds_limit(self):
+        """count_duration is a dedicated method for whisper-1-style duration
+        billing, where both operands are floats — unlike count_input/count_output's
+        int token counts.
+        """
+        config = Limiting(max_budget=0.0005, window_size='1 minute')
+        limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+
+        await limiter.count_duration(8.25, 0.0001)
+
+        with pytest.raises(BudgetLimitExceededError) as exc:
+            await limiter.check_budget()
+
+        msg = getattr(exc.value, 'log_message', str(exc.value))
+        assert '[BUDGET LIMIT]' in msg
+        assert '[route=rb-gateway]' in msg
+        assert '[limit=0.0005]' in msg
+
+    @pytest.mark.asyncio
     async def test_combined_input_output_exhausts_budget(self):
         """Input + output costs together exhaust the shared budget."""
         config = Limiting(max_budget=1, window_size='1 minute')

@@ -465,25 +465,28 @@ class EventService:
         else:
             route_dict['guardrails'] = []
 
-        chat_by_id = {m.model_id: m for m in config.chat_models}
+        chat_by_id = {m.model_id: m for m in (config.chat_models or [])}
         embed_by_id = {m.model_id: m for m in (config.embedding_models or [])}
         transcription_by_id = {
             m.model_id: m for m in (config.transcription_models or [])
         }
 
-        chat_ids: list[str] = route_dict.get('chat_models')
-        resolved_chat: list[dict] = []
-        for mid in chat_ids:
-            chat_model = chat_by_id.get(mid)
-            if chat_model is None:
-                logger.warning(
-                    'Chat model_id %s referenced by route %s not found in top-level chat_models registry',
-                    mid,
-                    route_config.route_name,
-                )
-                continue
-            resolved_chat.append(chat_model.model_dump())
-        route_dict['chat_models'] = resolved_chat
+        chat_ids: list[str] | None = route_dict.get('chat_models')
+        if chat_ids is None:
+            route_dict['chat_models'] = None
+        else:
+            resolved_chat: list[dict] = []
+            for mid in chat_ids:
+                chat_model = chat_by_id.get(mid)
+                if chat_model is None:
+                    logger.warning(
+                        'Chat model_id %s referenced by route %s not found in top-level chat_models registry',
+                        mid,
+                        route_config.route_name,
+                    )
+                    continue
+                resolved_chat.append(chat_model.model_dump())
+            route_dict['chat_models'] = resolved_chat
 
         embed_ids: list[str] | None = route_dict.get('embedding_models')
         if embed_ids is None:

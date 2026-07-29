@@ -71,7 +71,7 @@ class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     routes: dict[str, GatewayRouteConfig] = {}
-    chat_models: list[Model]
+    chat_models: list[Model] | None = None
     embedding_models: list[Model] | None = None
     transcription_models: list[Model] | None = None
     cache: CacheConfig | None = None
@@ -81,7 +81,7 @@ class GatewayConfig(BaseModel):
 
     @property
     def chat_models_by_id(self) -> dict[str, Model]:
-        return {m.model_id: m for m in self.chat_models}
+        return {m.model_id: m for m in (self.chat_models or [])}
 
     @property
     def embedding_models_by_id(self) -> dict[str, Model]:
@@ -133,7 +133,7 @@ class GatewayConfig(BaseModel):
             Tuple of (has_chat_models, has_judges, has_embedding_models, has_semantic_cache)
 
         """
-        has_chat_models = len(route_config.chat_models) > 0
+        has_chat_models = bool(route_config.chat_models)
         has_judges = self.has_judge_guardrail(route_config)
         has_embedding_models = (
             route_config.embedding_models is not None
@@ -154,7 +154,7 @@ class GatewayConfig(BaseModel):
 
     @model_validator(mode='after')
     def validate_models_and_routes(self) -> Self:
-        chat_ids = [m.model_id for m in self.chat_models]
+        chat_ids = [m.model_id for m in (self.chat_models or [])]
         emb_ids = [m.model_id for m in (self.embedding_models or [])]
         transcription_ids = [m.model_id for m in (self.transcription_models or [])]
 
@@ -175,10 +175,16 @@ class GatewayConfig(BaseModel):
 
         # Route-level reference validation
         for route_name, route in self.routes.items():
-            route_chat_ids = route.chat_models
+            route_chat_ids = list(route.chat_models or [])
             route_emb_ids = list(route.embedding_models or [])
             route_transcription_ids = list(route.transcription_models or [])
             scope = f'Route {route_name}: '
+
+            if not (route_chat_ids or route_emb_ids or route_transcription_ids):
+                raise ValueError(
+                    f'{scope}must reference at least one of chat_models, '
+                    'embedding_models, or transcription_models.'
+                )
 
             _check_unique_ids(route_chat_ids, 'chat_models', scope)
             _check_unique_ids(route_emb_ids, 'embedding_models', scope)
@@ -332,7 +338,7 @@ class GatewayConfig(BaseModel):
                 )
 
             routing_config = routing_by_name[route.routing]
-            route_model_ids = set(route.chat_models)
+            route_model_ids = set(route.chat_models or [])
 
             if isinstance(routing_config, SemanticRoutingConfig):
                 if routing_config.embedding_model_id not in set(

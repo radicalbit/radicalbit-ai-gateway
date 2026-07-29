@@ -20,8 +20,8 @@ class GatewayRouteConfig(BaseModel):
         description='Unique name for the route configuration.',
         examples=['example_route', 'production_route'],
     )
-    chat_models: list[str] = Field(
-        ...,
+    chat_models: list[str] | None = Field(
+        default=None,
         description='List of chat model IDs for the route.',
     )
     embedding_models: list[str] | None = Field(

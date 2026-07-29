@@ -10,8 +10,10 @@ from radicalbit_ai_gateway.services.mcp_service import (
     LATEST_PROTOCOL_VERSION,
     MCP_SERVER_NAME,
     McpService,
+    decode_resource_uri,
+    encode_resource_uri,
     negotiate_protocol_version,
-    split_tool_name,
+    split_alias_name,
 )
 
 GITHUB = McpHttpServer(alias='github', url='https://github.example.com/mcp/')
@@ -25,6 +27,14 @@ def _tool(name: str, description: str = 'a tool') -> types.Tool:
         description=description,
         inputSchema={'type': 'object', 'properties': {}},
     )
+
+
+def _prompt(name: str, description: str = 'a prompt') -> types.Prompt:
+    return types.Prompt(name=name, description=description)
+
+
+def _resource(uri: str, name: str = 'a resource') -> types.Resource:
+    return types.Resource(uri=uri, name=name)
 
 
 def _service(upstream_client=None) -> McpService:
@@ -57,13 +67,31 @@ def test_negotiate_falls_back_to_latest(version):
     assert negotiate_protocol_version(version) == LATEST_PROTOCOL_VERSION
 
 
-def test_split_tool_name():
-    assert split_tool_name('github__get_issue') == ('github', 'get_issue')
-    # only the first '__' separates alias and tool
-    assert split_tool_name('github__ns__tool') == ('github', 'ns__tool')
-    assert split_tool_name('no_separator') is None
-    assert split_tool_name('__tool') is None
-    assert split_tool_name('alias__') is None
+def test_split_alias_name():
+    assert split_alias_name('github__get_issue') == ('github', 'get_issue')
+    # only the first '__' separates alias and name
+    assert split_alias_name('github__ns__tool') == ('github', 'ns__tool')
+    assert split_alias_name('no_separator') is None
+    assert split_alias_name('__tool') is None
+    assert split_alias_name('alias__') is None
+
+
+def test_resource_uri_round_trips():
+    encoded = encode_resource_uri('github', 'https://example.com/a/b?x=1')
+    assert decode_resource_uri(encoded) == ('github', 'https://example.com/a/b?x=1')
+
+
+def test_resource_uri_round_trips_reserved_characters():
+    encoded = encode_resource_uri('my alias/x', 'file:///etc/hosts#frag')
+    assert decode_resource_uri(encoded) == ('my alias/x', 'file:///etc/hosts#frag')
+
+
+@pytest.mark.parametrize(
+    'uri',
+    ['https://example.com/plain', 'mcp-resource:no-slash', 'mcp-resource:/', ''],
+)
+def test_decode_resource_uri_rejects_foreign_or_malformed(uri):
+    assert decode_resource_uri(uri) is None
 
 
 # ---------------------------------------------------------------------------
@@ -118,10 +146,10 @@ async def test_notifications_get_202_and_no_body():
 
 
 async def test_unknown_method_is_32601():
-    result = await _service()._dispatch(_request('resources/list'), SERVERS, None)
+    result = await _service()._dispatch(_request('completion/complete'), SERVERS, None)
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32601
-    assert 'resources/list' in result.payload['error']['message']
+    assert 'completion/complete' in result.payload['error']['message']
 
 
 async def test_non_object_params_is_32602():
@@ -137,7 +165,7 @@ async def test_non_object_params_is_32602():
 # ---------------------------------------------------------------------------
 
 
-async def test_initialize_advertises_tools_only():
+async def test_initialize_advertises_capabilities():
     result = await _service()._dispatch(
         _request('initialize', params={'protocolVersion': '2025-06-18'}),
         SERVERS,
@@ -146,7 +174,12 @@ async def test_initialize_advertises_tools_only():
     assert result.status_code == 200
     payload_result = result.payload['result']
     assert payload_result['protocolVersion'] == '2025-06-18'
-    assert payload_result['capabilities'] == {'tools': {}}  # no listChanged
+    # no listChanged on any of the three
+    assert payload_result['capabilities'] == {
+        'tools': {},
+        'prompts': {},
+        'resources': {},
+    }
     assert payload_result['serverInfo']['name'] == MCP_SERVER_NAME
     assert payload_result['serverInfo']['version']
 
@@ -337,3 +370,308 @@ async def test_unexpected_exception_is_sanitized_internal_error():
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32603
     assert 'secret detail' not in result.payload['error']['message']
+
+
+# ---------------------------------------------------------------------------
+# prompts/list
+# ---------------------------------------------------------------------------
+
+
+async def test_prompts_list_fans_out_and_prefixes():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_prompts = AsyncMock(
+        side_effect=[
+            types.ListPromptsResult(
+                prompts=[_prompt('summarize'), _prompt('translate')]
+            ),
+            types.ListPromptsResult(prompts=[_prompt('search')]),
+        ]
+    )
+    headers = {'x-user-jwt': 'jwt-1'}
+
+    result = await _service(client)._dispatch(
+        _request('prompts/list'), SERVERS, headers
+    )
+
+    assert result.status_code == 200
+    prompts = result.payload['result']['prompts']
+    assert [p['name'] for p in prompts] == [
+        'github__summarize',
+        'github__translate',
+        'jira__search',
+    ]
+    assert prompts[0]['description'] == 'a prompt'
+    for call, server in zip(client.list_prompts.await_args_list, SERVERS, strict=True):
+        assert call.args == (server,)
+        assert call.kwargs['client_headers'] == headers
+
+
+async def test_prompts_list_without_servers_is_empty():
+    result = await _service()._dispatch(_request('prompts/list'), [], None)
+    assert result.status_code == 200
+    assert result.payload['result'] == {'prompts': []}
+
+
+async def test_prompts_list_tolerates_one_failing_upstream():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_prompts = AsyncMock(
+        side_effect=[
+            McpUpstreamError('github', 'boom'),
+            types.ListPromptsResult(prompts=[_prompt('search')]),
+        ]
+    )
+    result = await _service(client)._dispatch(_request('prompts/list'), SERVERS, None)
+    assert result.status_code == 200
+    assert [p['name'] for p in result.payload['result']['prompts']] == ['jira__search']
+
+
+async def test_prompts_list_all_upstreams_failing_is_32000():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_prompts = AsyncMock(side_effect=McpUpstreamError('github', 'boom'))
+    result = await _service(client)._dispatch(_request('prompts/list'), SERVERS, None)
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32000
+
+
+# ---------------------------------------------------------------------------
+# prompts/get
+# ---------------------------------------------------------------------------
+
+
+async def test_prompts_get_forwards_and_passes_result_through():
+    result = types.GetPromptResult(
+        description='a rendered prompt',
+        messages=[
+            types.PromptMessage(
+                role='user', content=types.TextContent(type='text', text='hello')
+            )
+        ],
+    )
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.get_prompt = AsyncMock(return_value=result)
+    headers = {'x-user-jwt': 'jwt-1'}
+
+    dispatch_result = await _service(client)._dispatch(
+        _request(
+            'prompts/get',
+            params={'name': 'github__summarize', 'arguments': {'id': '42'}},
+        ),
+        SERVERS,
+        headers,
+    )
+
+    assert dispatch_result.status_code == 200
+    assert dispatch_result.payload['result']['description'] == 'a rendered prompt'
+    client.get_prompt.assert_awaited_once_with(
+        GITHUB, 'summarize', {'id': '42'}, client_headers=headers
+    )
+
+
+async def test_prompts_get_splits_on_first_separator_only():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.get_prompt = AsyncMock(return_value=types.GetPromptResult(messages=[]))
+    await _service(client)._dispatch(
+        _request('prompts/get', params={'name': 'github__ns__prompt'}), SERVERS, None
+    )
+    assert client.get_prompt.await_args.args[1] == 'ns__prompt'
+
+
+@pytest.mark.parametrize(
+    'name', ['unknown__prompt', 'no_separator', 'github', '', 'confluence__x']
+)
+async def test_prompts_get_unknown_prompt_is_32602(name):
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.get_prompt = AsyncMock()
+    result = await _service(client)._dispatch(
+        _request('prompts/get', params={'name': name}), SERVERS, None
+    )
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32602
+    client.get_prompt.assert_not_awaited()
+
+
+async def test_prompts_get_alias_outside_scope_is_32602():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.get_prompt = AsyncMock()
+    result = await _service(client)._dispatch(
+        _request('prompts/get', params={'name': 'jira__search'}), [GITHUB], None
+    )
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32602
+    client.get_prompt.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    'params',
+    [{}, {'name': 7}, {'name': 'github__x', 'arguments': 'not-a-dict'}],
+)
+async def test_prompts_get_bad_params_is_32602(params):
+    result = await _service()._dispatch(
+        _request('prompts/get', params=params), SERVERS, None
+    )
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32602
+
+
+async def test_prompts_get_upstream_error_maps_to_jsonrpc_error():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.get_prompt = AsyncMock(
+        side_effect=McpUpstreamError('github', "Upstream MCP server 'github' timed out")
+    )
+    result = await _service(client)._dispatch(
+        _request('prompts/get', params={'name': 'github__summarize'}), SERVERS, None
+    )
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32000
+    assert 'timed out' in result.payload['error']['message']
+
+
+# ---------------------------------------------------------------------------
+# resources/list
+# ---------------------------------------------------------------------------
+
+
+async def test_resources_list_fans_out_and_aliases_uris():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_resources = AsyncMock(
+        side_effect=[
+            types.ListResourcesResult(
+                resources=[_resource('https://github.example.com/readme')]
+            ),
+            types.ListResourcesResult(
+                resources=[_resource('https://jira.example.com/board')]
+            ),
+        ]
+    )
+    headers = {'x-user-jwt': 'jwt-1'}
+
+    result = await _service(client)._dispatch(
+        _request('resources/list'), SERVERS, headers
+    )
+
+    assert result.status_code == 200
+    resources = result.payload['result']['resources']
+    assert decode_resource_uri(resources[0]['uri']) == (
+        'github',
+        'https://github.example.com/readme',
+    )
+    assert decode_resource_uri(resources[1]['uri']) == (
+        'jira',
+        'https://jira.example.com/board',
+    )
+    assert resources[0]['name'] == 'a resource'
+    for call, server in zip(
+        client.list_resources.await_args_list, SERVERS, strict=True
+    ):
+        assert call.args == (server,)
+        assert call.kwargs['client_headers'] == headers
+
+
+async def test_resources_list_without_servers_is_empty():
+    result = await _service()._dispatch(_request('resources/list'), [], None)
+    assert result.status_code == 200
+    assert result.payload['result'] == {'resources': []}
+
+
+async def test_resources_list_tolerates_one_failing_upstream():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_resources = AsyncMock(
+        side_effect=[
+            McpUpstreamError('github', 'boom'),
+            types.ListResourcesResult(
+                resources=[_resource('https://jira.example.com/board')]
+            ),
+        ]
+    )
+    result = await _service(client)._dispatch(_request('resources/list'), SERVERS, None)
+    assert result.status_code == 200
+    resources = result.payload['result']['resources']
+    assert len(resources) == 1
+    assert decode_resource_uri(resources[0]['uri'])[0] == 'jira'
+
+
+async def test_resources_list_all_upstreams_failing_is_32000():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_resources = AsyncMock(side_effect=McpUpstreamError('github', 'boom'))
+    result = await _service(client)._dispatch(_request('resources/list'), SERVERS, None)
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32000
+
+
+# ---------------------------------------------------------------------------
+# resources/read
+# ---------------------------------------------------------------------------
+
+
+async def test_resources_read_forwards_and_realiases_result():
+    upstream_uri = 'https://github.example.com/readme'
+    result = types.ReadResourceResult(
+        contents=[
+            types.TextResourceContents(
+                uri=upstream_uri, text='hello', mimeType='text/plain'
+            )
+        ]
+    )
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.read_resource = AsyncMock(return_value=result)
+    headers = {'x-user-jwt': 'jwt-1'}
+    encoded = encode_resource_uri('github', upstream_uri)
+
+    dispatch_result = await _service(client)._dispatch(
+        _request('resources/read', params={'uri': encoded}), SERVERS, headers
+    )
+
+    assert dispatch_result.status_code == 200
+    contents = dispatch_result.payload['result']['contents']
+    assert contents[0]['text'] == 'hello'
+    assert decode_resource_uri(contents[0]['uri']) == ('github', upstream_uri)
+    client.read_resource.assert_awaited_once_with(
+        GITHUB, upstream_uri, client_headers=headers
+    )
+
+
+@pytest.mark.parametrize(
+    'params',
+    [
+        {},
+        {'uri': 7},
+        {'uri': ''},
+        {'uri': 'https://example.com/plain'},  # not one of our wrapped URIs
+        {'uri': encode_resource_uri('confluence', 'https://x')},  # out of scope
+    ],
+)
+async def test_resources_read_bad_or_unknown_uri_is_32602(params):
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.read_resource = AsyncMock()
+    result = await _service(client)._dispatch(
+        _request('resources/read', params=params), SERVERS, None
+    )
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32602
+    client.read_resource.assert_not_awaited()
+
+
+async def test_resources_read_alias_outside_scope_is_32602():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.read_resource = AsyncMock()
+    encoded = encode_resource_uri('jira', 'https://jira.example.com/board')
+    result = await _service(client)._dispatch(
+        _request('resources/read', params={'uri': encoded}), [GITHUB], None
+    )
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32602
+    client.read_resource.assert_not_awaited()
+
+
+async def test_resources_read_upstream_error_maps_to_jsonrpc_error():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.read_resource = AsyncMock(
+        side_effect=McpUpstreamError('github', "Upstream MCP server 'github' timed out")
+    )
+    encoded = encode_resource_uri('github', 'https://github.example.com/readme')
+    result = await _service(client)._dispatch(
+        _request('resources/read', params={'uri': encoded}), SERVERS, None
+    )
+    assert result.status_code == 200
+    assert result.payload['error']['code'] == -32000
+    assert 'timed out' in result.payload['error']['message']

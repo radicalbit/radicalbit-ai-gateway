@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version as _package_version
 import logging
+from urllib.parse import quote, unquote
 from uuid import UUID
 
 from fastapi import Request
@@ -35,6 +36,14 @@ LATEST_PROTOCOL_VERSION = '2025-11-25'
 PROTOCOL_VERSION_HEADER = 'mcp-protocol-version'
 MCP_SERVER_NAME = 'radicalbit-ai-gateway-mcp'
 
+# Resources are identified by an arbitrary URI, not a name, so the
+# '{alias}__{name}' prefix used for tools/prompts can't apply directly (an
+# upstream URI's own scheme would collide with it). Instead the alias and the
+# original URI are packed into an opaque, non-hierarchical URI (no '//'
+# authority, like 'mailto:' or 'urn:') with both parts percent-encoded, so the
+# encoding never depends on either's character set.
+RESOURCE_URI_SCHEME = 'mcp-resource'
+
 
 def gateway_version() -> str:
     try:
@@ -54,16 +63,37 @@ def negotiate_protocol_version(requested: object) -> str:
     return LATEST_PROTOCOL_VERSION
 
 
-def split_tool_name(name: str) -> tuple[str, str] | None:
-    """Split ``'{alias}__{tool}'`` on the first separator.
+def split_alias_name(name: str) -> tuple[str, str] | None:
+    """Split ``'{alias}__{name}'`` on the first separator.
 
-    Returns ``(alias, tool)`` or ``None`` when the name carries no alias
-    prefix. Tool names containing further ``'__'`` keep them intact.
+    Returns ``(alias, name)`` or ``None`` when the name carries no alias
+    prefix. Names containing further ``'__'`` keep them intact. Used for both
+    tool and prompt names, which share the same ``{alias}__{name}`` scheme.
     """
-    alias, sep, tool = name.partition(ALIAS_TOOL_SEPARATOR)
-    if not sep or not alias or not tool:
+    alias, sep, rest = name.partition(ALIAS_TOOL_SEPARATOR)
+    if not sep or not alias or not rest:
         return None
-    return alias, tool
+    return alias, rest
+
+
+def encode_resource_uri(alias: str, uri: str) -> str:
+    """Wrap an upstream resource URI so ``resources/read`` can route it back."""
+    return f'{RESOURCE_URI_SCHEME}:{quote(alias, safe="")}/{quote(uri, safe="")}'
+
+
+def decode_resource_uri(uri: str) -> tuple[str, str] | None:
+    """Reverse :func:`encode_resource_uri`.
+
+    Returns ``(alias, original_uri)`` or ``None`` if ``uri`` isn't one of our
+    wrapped resource URIs.
+    """
+    prefix = f'{RESOURCE_URI_SCHEME}:'
+    if not uri.startswith(prefix):
+        return None
+    alias_enc, sep, uri_enc = uri[len(prefix) :].partition('/')
+    if not sep or not alias_enc or not uri_enc:
+        return None
+    return unquote(alias_enc), unquote(uri_enc)
 
 
 class _McpMethodError(Exception):
@@ -197,6 +227,16 @@ class McpService:
                 result = await self._tools_list(servers, client_headers)
             elif method == 'tools/call':
                 result = await self._tools_call(params or {}, servers, client_headers)
+            elif method == 'prompts/list':
+                result = await self._prompts_list(servers, client_headers)
+            elif method == 'prompts/get':
+                result = await self._prompts_get(params or {}, servers, client_headers)
+            elif method == 'resources/list':
+                result = await self._resources_list(servers, client_headers)
+            elif method == 'resources/read':
+                result = await self._resources_read(
+                    params or {}, servers, client_headers
+                )
             else:
                 return McpDispatchResult(
                     status_code=200,
@@ -234,7 +274,7 @@ class McpService:
             'protocolVersion': negotiate_protocol_version(
                 params.get('protocolVersion')
             ),
-            'capabilities': {'tools': {}},
+            'capabilities': {'tools': {}, 'prompts': {}, 'resources': {}},
             'serverInfo': {'name': MCP_SERVER_NAME, 'version': gateway_version()},
         }
 
@@ -304,7 +344,7 @@ class McpService:
             raise _McpMethodError(
                 jsonrpc.INVALID_PARAMS, 'params.arguments must be an object'
             )
-        split = split_tool_name(name)
+        split = split_alias_name(name)
         server = (
             next((s for s in servers if s.alias == split[0]), None) if split else None
         )
@@ -315,6 +355,156 @@ class McpService:
             server, split[1], arguments, client_headers=client_headers
         )
         return result.model_dump(mode='json', by_alias=True, exclude_none=True)
+
+    async def _prompts_list(
+        self,
+        servers: list[AnyMcpServer],
+        client_headers: Mapping[str, str] | None,
+    ) -> dict:
+        """Fan out to the route's upstreams and merge their prompts.
+
+        Same shape as :meth:`_tools_list`: each prompt name is prefixed
+        ``'{alias}__{name}'``; a failing upstream yields a partial list
+        (logged), unless every upstream failed.
+        """
+        if not servers:
+            return {'prompts': []}
+        results = await asyncio.gather(
+            *(
+                self._upstream_client.list_prompts(s, client_headers=client_headers)
+                for s in servers
+            ),
+            return_exceptions=True,
+        )
+        prompts: list[dict] = []
+        failed: list[str] = []
+        for server, result in zip(servers, results, strict=True):
+            if isinstance(result, BaseException):
+                failed.append(server.alias)
+                continue
+            for prompt in result.prompts:
+                data = prompt.model_dump(mode='json', by_alias=True, exclude_none=True)
+                data['name'] = f'{server.alias}{ALIAS_TOOL_SEPARATOR}{prompt.name}'
+                prompts.append(data)
+        if failed:
+            if len(failed) == len(servers):
+                raise _McpMethodError(
+                    JSON_RPC_UPSTREAM_ERROR, 'All upstream MCP servers failed'
+                )
+            logger.warning(
+                'prompts/list: partial result, upstream MCP servers failed: %s',
+                ', '.join(failed),
+            )
+        return {'prompts': prompts}
+
+    async def _prompts_get(
+        self,
+        params: dict,
+        servers: list[AnyMcpServer],
+        client_headers: Mapping[str, str] | None,
+    ) -> dict:
+        """Resolve the ``'{alias}__{name}'`` prefix and forward the call.
+
+        Same shape as :meth:`_tools_call`.
+        """
+        name = params.get('name')
+        if not isinstance(name, str) or not name:
+            raise _McpMethodError(
+                jsonrpc.INVALID_PARAMS, 'prompts/get requires a string params.name'
+            )
+        arguments = params.get('arguments')
+        if arguments is not None and not isinstance(arguments, dict):
+            raise _McpMethodError(
+                jsonrpc.INVALID_PARAMS, 'params.arguments must be an object'
+            )
+        split = split_alias_name(name)
+        server = (
+            next((s for s in servers if s.alias == split[0]), None) if split else None
+        )
+        if split is None or server is None:
+            raise _McpMethodError(jsonrpc.INVALID_PARAMS, f'Unknown prompt: {name}')
+        result = await self._upstream_client.get_prompt(
+            server, split[1], arguments, client_headers=client_headers
+        )
+        return result.model_dump(mode='json', by_alias=True, exclude_none=True)
+
+    async def _resources_list(
+        self,
+        servers: list[AnyMcpServer],
+        client_headers: Mapping[str, str] | None,
+    ) -> dict:
+        """Fan out to the route's upstreams and merge their resources.
+
+        Each resource ``uri`` is wrapped via :func:`encode_resource_uri` so
+        ``resources/read`` can route it back to the right upstream; a failing
+        upstream yields a partial list (logged), unless every upstream failed.
+        """
+        if not servers:
+            return {'resources': []}
+        results = await asyncio.gather(
+            *(
+                self._upstream_client.list_resources(s, client_headers=client_headers)
+                for s in servers
+            ),
+            return_exceptions=True,
+        )
+        resources: list[dict] = []
+        failed: list[str] = []
+        for server, result in zip(servers, results, strict=True):
+            if isinstance(result, BaseException):
+                failed.append(server.alias)
+                continue
+            for resource in result.resources:
+                data = resource.model_dump(
+                    mode='json', by_alias=True, exclude_none=True
+                )
+                data['uri'] = encode_resource_uri(server.alias, data['uri'])
+                resources.append(data)
+        if failed:
+            if len(failed) == len(servers):
+                raise _McpMethodError(
+                    JSON_RPC_UPSTREAM_ERROR, 'All upstream MCP servers failed'
+                )
+            logger.warning(
+                'resources/list: partial result, upstream MCP servers failed: %s',
+                ', '.join(failed),
+            )
+        return {'resources': resources}
+
+    async def _resources_read(
+        self,
+        params: dict,
+        servers: list[AnyMcpServer],
+        client_headers: Mapping[str, str] | None,
+    ) -> dict:
+        """Unwrap the aliased ``uri`` and forward the read.
+
+        The returned ``contents[].uri`` is re-wrapped so the raw upstream URI
+        never reaches the client (mirrors how ``tools/list``'s prefix keeps
+        the upstream's raw tool name from being client-visible).
+        """
+        uri = params.get('uri')
+        if not isinstance(uri, str) or not uri:
+            raise _McpMethodError(
+                jsonrpc.INVALID_PARAMS, 'resources/read requires a string params.uri'
+            )
+        decoded = decode_resource_uri(uri)
+        server = (
+            next((s for s in servers if s.alias == decoded[0]), None)
+            if decoded
+            else None
+        )
+        if decoded is None or server is None:
+            raise _McpMethodError(jsonrpc.INVALID_PARAMS, f'Unknown resource: {uri}')
+        alias, upstream_uri = decoded
+        result = await self._upstream_client.read_resource(
+            server, upstream_uri, client_headers=client_headers
+        )
+        data = result.model_dump(mode='json', by_alias=True, exclude_none=True)
+        for content in data.get('contents', []):
+            if 'uri' in content:
+                content['uri'] = encode_resource_uri(alias, content['uri'])
+        return data
 
     def _validate_origin(self, request: Request) -> None:
         """DNS-rebinding defense: reject browser Origins not in the allowlist.
