@@ -63,6 +63,12 @@ def exporter() -> Iterator[InMemorySpanExporter]:
         telemetry_enabled=False,
         disable_batch=True,
         processor=SimpleSpanProcessor(exp),
+        # Omitting this enables every instrumentor Traceloop ships (openai,
+        # httpx, ...), which monkeypatch their libraries globally and are not
+        # undone by set_disabled below — they would stay installed for the rest
+        # of the session. The MCP path needs none of them, and production only
+        # enables LANGCHAIN.
+        instruments=set(),
     )
     TracerWrapper.set_disabled(False)
     yield exp
@@ -214,13 +220,11 @@ def test_a_jsonrpc_error_marks_the_root_span(client, exporter):
     assert response.status_code == 200
     root = _span(exporter, ROOT_SPAN)
     assert root.status.status_code is StatusCode.ERROR
-    # what was attempted, so the failure is diagnosable
-    assert _mcp_attrs(root) == {
-        'method': 'tools/call',
-        'alias': 'nope',
-        'target': 'missing',
-        'error_code': '-32602',
-    }
+    # 'nope' resolves to no configured upstream, so the client-supplied name is
+    # kept out of the attributes (unbounded cardinality) ...
+    assert _mcp_attrs(root) == {'method': 'tools/call', 'error_code': '-32602'}
+    # ... and stays diagnosable through the free-text status description
+    assert root.status.description == 'Unknown tool: nope__missing'
 
 
 def test_a_successful_call_leaves_the_root_span_unset(client, exporter):
@@ -242,9 +246,62 @@ def test_a_partial_fanout_failure_is_recorded_on_the_task_span(
     assert _post(client, 'tools/list').status_code == 200
 
     attrs = _span(exporter, 'mcp_tools_list.task').attributes
-    assert attrs['mcp.upstream.total'] == 2
-    assert attrs['mcp.upstream.failed'] == 'jira'
-    assert attrs['mcp.result.count'] == 1
+    assert attrs['rb.gateway.mcp_upstream_total'] == 2
+    assert attrs['rb.gateway.mcp_upstream_failed'] == 'jira'
+    assert attrs['rb.gateway.mcp_result_count'] == 1
+
+
+def test_a_partial_fanout_failure_also_reaches_the_root_span(
+    client, exporter, upstream
+):
+    """The task span is invisible to the root-span query behind the traces list."""
+    upstream.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[types.Tool(name='t', inputSchema={})]),
+            McpUpstreamError('jira', 'boom'),
+        ]
+    )
+
+    assert _post(client, 'tools/list').status_code == 200
+
+    root = _span(exporter, ROOT_SPAN)
+    assert _mcp_attrs(root) == {'method': 'tools/list', 'upstream_failed': 'jira'}
+    # a degraded fan-out is still a 200 with results — not a failed request
+    assert root.status.status_code is not StatusCode.ERROR
+
+
+def test_a_healthy_fanout_leaves_the_root_span_without_the_degraded_marker(
+    client, exporter, upstream
+):
+    upstream.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+
+    assert _post(client, 'tools/list').status_code == 200
+
+    assert _mcp_attrs(_span(exporter, ROOT_SPAN)) == {'method': 'tools/list'}
+
+
+def test_one_requests_degradation_does_not_leak_into_the_next(
+    client, exporter, upstream
+):
+    """The marker crosses a task boundary via a ContextVar, so prove the scope.
+
+    Each request is its own asyncio task with a copied context; a module-level
+    ContextVar would otherwise mark every later request as degraded.
+    """
+    upstream.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[]),
+            McpUpstreamError('jira', 'boom'),
+            types.ListToolsResult(tools=[]),
+            types.ListToolsResult(tools=[]),
+        ]
+    )
+
+    assert _post(client, 'tools/list').status_code == 200
+    assert _mcp_attrs(_span(exporter, ROOT_SPAN))['upstream_failed'] == 'jira'
+
+    assert _post(client, 'tools/list').status_code == 200
+    assert 'upstream_failed' not in _mcp_attrs(_span(exporter, ROOT_SPAN))
 
 
 def test_upstream_calls_get_their_own_child_span(client, exporter, upstream):

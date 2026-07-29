@@ -67,6 +67,7 @@ def set_mcp_attributes(
     alias: str | None = None,
     target: str | None = None,
     error_code: int | None = None,
+    upstream_failed: str | None = None,
 ) -> None:
     """Record MCP-specific attributes on the current trace.
 
@@ -74,6 +75,9 @@ def set_mcp_attributes(
     prompt name for ``prompts/get``, or the upstream URI for
     ``resources/read``. ``method`` disambiguates which, so one attribute
     serves all three instead of one per kind.
+
+    ``upstream_failed`` is the comma-joined aliases a list method's fan-out
+    could not reach, set only when a fan-out was actually degraded.
     """
     properties = {
         'rb.gateway.mcp_method': method,
@@ -82,6 +86,7 @@ def set_mcp_attributes(
         'rb.gateway.mcp_error_code': str(error_code)
         if error_code is not None
         else None,
+        'rb.gateway.mcp_upstream_failed': upstream_failed,
     }
     properties = {k: v for k, v in properties.items() if v is not None}
     if properties:

@@ -428,6 +428,21 @@ def test_no_request_uuid_is_invented_without_the_middleware():
     assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] is None
 
 
+def test_a_rejected_origin_still_reports_the_route_it_targeted():
+    """Attribution runs before the first check that can reject, origin included."""
+    client, _ = _make_client()
+
+    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
+        res = client.post(
+            PATH, json=_ping(), headers={**AUTH, 'Origin': 'http://evil.example'}
+        )
+
+    assert res.status_code == 403
+    recorded = mock_set_attrs.call_args_list[0].kwargs
+    assert recorded['route_name'] == 'my-route'
+    assert recorded['project_name'] == 'proj'
+
+
 # Span status and attribute placement are asserted against a real OTel pipeline
 # in tests/mcp/test_span_attributes.py — mocks here cannot tell which span an
 # attribute lands on, which is the property that matters. Middleware path

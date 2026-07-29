@@ -14,6 +14,7 @@ from radicalbit_ai_gateway.services.mcp_service import (
     encode_resource_uri,
     negotiate_protocol_version,
     split_alias_name,
+    strip_uri_credentials,
 )
 
 GITHUB = McpHttpServer(alias='github', url='https://github.example.com/mcp/')
@@ -92,6 +93,29 @@ def test_resource_uri_round_trips_reserved_characters():
 )
 def test_decode_resource_uri_rejects_foreign_or_malformed(uri):
     assert decode_resource_uri(uri) is None
+
+
+@pytest.mark.parametrize(
+    ('uri', 'expected'),
+    [
+        # the identifying part survives untouched
+        ('https://h.example/readme', 'https://h.example/readme'),
+        ('https://h.example:8443/readme', 'https://h.example:8443/readme'),
+        ('urn:isbn:123', 'urn:isbn:123'),
+        ('file:///etc/hosts', 'file:///etc/hosts'),
+        # signed-URL tokens and basic-auth credentials do not
+        ('https://h.example/r?token=s3cret', 'https://h.example/r'),
+        ('https://h.example/r#frag', 'https://h.example/r'),
+        ('https://user:pass@h.example/r', 'https://h.example/r'),
+        ('file:///etc/hosts?x=1', 'file:///etc/hosts'),
+        # unparseable input is passed through rather than raising
+        ('https://h.example:99999/r', 'https://h.example:99999/r'),
+        ('not a uri at all', 'not a uri at all'),
+        ('', ''),
+    ],
+)
+def test_strip_uri_credentials(uri, expected):
+    assert strip_uri_credentials(uri) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -783,8 +807,12 @@ async def test_resources_read_records_alias_and_the_upstream_uri():
     mock_set_attrs.assert_any_call(alias='github', target=upstream_uri)
 
 
-async def test_a_target_naming_no_known_upstream_is_still_recorded():
-    """What the client asked for is what makes the -32602 diagnosable."""
+async def test_a_target_naming_no_known_upstream_records_nothing():
+    """params.name is client-controlled: echoing it back is unbounded cardinality.
+
+    The name is still diagnosable from the span status description, which
+    _record_error_outcome sets from the JSON-RPC error message.
+    """
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock()
 
@@ -794,7 +822,32 @@ async def test_a_target_naming_no_known_upstream_is_still_recorded():
         )
 
     assert result.payload['error']['code'] == -32602
-    mock_set_attrs.assert_any_call(alias='unknown', target='tool')
+    assert 'unknown__tool' in result.payload['error']['message']
+    assert all(c.kwargs.get('alias') is None for c in mock_set_attrs.call_args_list)
+    assert all(c.kwargs.get('target') is None for c in mock_set_attrs.call_args_list)
+
+
+async def test_a_resource_uris_credentials_are_stripped_before_reaching_a_span():
+    """Signed-URL tokens live in the query; the path is the resource identity."""
+    upstream_uri = 'https://user:pw@github.example.com/readme?token=s3cret#frag'
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.read_resource = AsyncMock(return_value=types.ReadResourceResult(contents=[]))
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        await _service(client)._dispatch(
+            _request(
+                'resources/read',
+                params={'uri': encode_resource_uri('github', upstream_uri)},
+            ),
+            SERVERS,
+            None,
+        )
+
+    mock_set_attrs.assert_any_call(
+        alias='github', target='https://github.example.com/readme'
+    )
+    # only the span attribute is redacted; the upstream still gets the URI whole
+    assert client.read_resource.await_args.args[1] == upstream_uri
 
 
 @pytest.mark.parametrize(
@@ -861,9 +914,9 @@ async def test_tools_list_records_fanout_on_a_partial_failure():
         await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
 
     assert _span_attrs(span) == {
-        'mcp.upstream.total': 2,
-        'mcp.upstream.failed': 'github',
-        'mcp.result.count': 1,
+        'rb.gateway.mcp_upstream_total': 2,
+        'rb.gateway.mcp_upstream_failed': 'github',
+        'rb.gateway.mcp_result_count': 1,
     }
 
 
@@ -882,9 +935,9 @@ async def test_list_records_fanout_on_full_success():
         await _service(client)._dispatch(_request('prompts/list'), SERVERS, None)
 
     assert _span_attrs(span) == {
-        'mcp.upstream.total': 2,
-        'mcp.upstream.failed': '',
-        'mcp.result.count': 3,
+        'rb.gateway.mcp_upstream_total': 2,
+        'rb.gateway.mcp_upstream_failed': '',
+        'rb.gateway.mcp_result_count': 3,
     }
 
 
@@ -901,7 +954,7 @@ async def test_resources_list_records_fanout():
     with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
         await _service(client)._dispatch(_request('resources/list'), SERVERS, None)
 
-    assert _span_attrs(span)['mcp.upstream.failed'] == 'jira'
+    assert _span_attrs(span)['rb.gateway.mcp_upstream_failed'] == 'jira'
 
 
 async def test_fanout_is_not_recorded_on_a_non_recording_span():

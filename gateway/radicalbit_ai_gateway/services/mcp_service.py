@@ -1,8 +1,9 @@
 import asyncio
 from collections.abc import Mapping
+from contextvars import ContextVar
 from importlib.metadata import PackageNotFoundError, version as _package_version
 import logging
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from uuid import UUID
 
 from fastapi import Request
@@ -45,6 +46,16 @@ MCP_SERVER_NAME = 'radicalbit-ai-gateway-mcp'
 # authority, like 'mailto:' or 'urn:') with both parts percent-encoded, so the
 # encoding never depends on either's character set.
 RESOURCE_URI_SCHEME = 'mcp-resource'
+
+# Written inside a ``@task``, read back from the enclosing workflow scope. A
+# task detaches its OTel context on exit, so nothing set inside one can reach
+# the root span — but a ContextVar mutated by an awaited coroutine belongs to
+# the enclosing request's context and outlives the task's return. Each request
+# runs in its own asyncio task, whose context is a copy, so this never bleeds
+# between requests.
+_fanout_failed: ContextVar[tuple[str, ...]] = ContextVar(
+    'mcp_fanout_failed', default=()
+)
 
 
 def gateway_version() -> str:
@@ -98,8 +109,32 @@ def decode_resource_uri(uri: str) -> tuple[str, str] | None:
     return unquote(alias_enc), unquote(uri_enc)
 
 
-def target_attributes(method: str, params: dict) -> dict:
-    """Best-effort ``alias``/``target`` for the methods addressing one object.
+def strip_uri_credentials(uri: str) -> str:
+    """Reduce a resource URI to the part that identifies the resource.
+
+    Scheme, host and path are what make the attribute useful; the query and the
+    ``user:pass@`` userinfo are where signed-URL tokens and basic-auth
+    credentials live. Spans reach every configured OTLP endpoint, third-party
+    ones included, so those parts must not travel with them.
+
+    Malformed input is returned unchanged rather than raising — an attribute is
+    never worth failing a request over, and an unparseable URI cannot resolve to
+    a configured alias in the first place.
+    """
+    try:
+        split = urlsplit(uri)
+        authority = split.hostname or ''
+        if authority and split.port:
+            authority = f'{authority}:{split.port}'
+        if not split.query and not split.fragment and authority == split.netloc:
+            return uri
+        return urlunsplit((split.scheme, authority, split.path, '', ''))
+    except ValueError:
+        return uri
+
+
+def target_attributes(method: str, params: dict, servers: list[AnyMcpServer]) -> dict:
+    """``alias``/``target`` for the methods addressing one object.
 
     Resolved here rather than inside each handler because a ``@task`` detaches
     its context on exit: attributes set inside one reach that task's span only,
@@ -107,8 +142,14 @@ def target_attributes(method: str, params: dict) -> dict:
     Called from the workflow scope, these land on the root span and are
     inherited by the child task span.
 
-    An unresolvable name is still reported, since knowing what the client asked
-    for is what makes the failure diagnosable.
+    Only a name resolving to a server configured on the route is recorded.
+    ``params`` is client-controlled and these become span attributes — indexed
+    dimensions — so echoing back an unresolvable name would let any caller mint
+    unlimited distinct values in the trace backend. Diagnosability is kept
+    without that: the rejected name still reaches the trace as the span status
+    description (``Unknown tool: {name}``, set from the JSON-RPC error message
+    by :meth:`McpService._record_error_outcome`), which is a free-text field
+    rather than a dimension.
     """
     if method in ('tools/call', 'prompts/get'):
         name = params.get('name')
@@ -118,7 +159,15 @@ def target_attributes(method: str, params: dict) -> dict:
         split = decode_resource_uri(uri) if isinstance(uri, str) else None
     else:
         return {}
-    return {'alias': split[0], 'target': split[1]} if split else {}
+    if split is None or not any(server.alias == split[0] for server in servers):
+        return {}
+    alias, target = split
+    return {
+        'alias': alias,
+        'target': strip_uri_credentials(target)
+        if method == 'resources/read'
+        else target,
+    }
 
 
 class _McpMethodError(Exception):
@@ -159,23 +208,24 @@ class McpService:
         # where set_trace_attributes drops the None.
         request_uuid = getattr(request.state, 'request_uuid', None)
 
-        self._validate_origin(request)
-
         entry: ProjectEntry | None = request.app.state.project_configs.get(project_name)
         project_uuid = str(entry.uuid) if entry else ''
+
+        # Populated before the first check that can reject, so every outcome —
+        # a rejected Origin, a missing, invalid or unbound key — still names the
+        # route and project it targeted in both the span and the REQUEST event.
         set_trace_attributes(
             request_uuid=request_uuid,
             project_uuid=project_uuid,
             project_name=project_name,
             route_name=route_name,
         )
-
-        # Populated before auth so the REQUEST event still identifies the route
-        # and project when the key is missing, invalid, or unbound.
         ctx = RequestEventContext.get_or_create(request)
         ctx.route_name = route_name
         ctx.project_uuid = project_uuid
         ctx.project_name = project_name
+
+        self._validate_origin(request)
 
         set_operation_category(OperationCategory.AUTH)
         key_details = await authenticate_bearer_request(
@@ -214,9 +264,9 @@ class McpService:
 
         servers = entry.config.get_route_mcp_servers(route_name)
         set_operation_category(OperationCategory.INVOCATION)
-        return self._record_error_outcome(
-            request, await self._dispatch(body, servers, request.headers)
-        )
+        result = await self._dispatch(body, servers, request.headers)
+        self._record_degradation()
+        return self._record_error_outcome(request, result)
 
     @staticmethod
     def _record_error_outcome(
@@ -242,22 +292,38 @@ class McpService:
         if ctx:
             # Read back by _determine_status to downgrade the 200 to an error.
             ctx.error_type = 'mcp_jsonrpc_error'
-            ctx.error_code = str(code)
+            ctx.error_code = str(code) if code is not None else None
         return result
 
     @staticmethod
     def _record_fanout(total: int, failed: list[str], count: int) -> None:
         """Record the outcome of a list method's fan-out on its own span.
 
-        Partial upstream failures are otherwise log-only, so a short list
-        can't be told from a degraded one. Always set, so ``mcp.result.count``
-        is present and ``mcp.upstream.failed`` is empty rather than absent.
+        Partial upstream failures are otherwise log-only, so a short list can't
+        be told from a degraded one. Always set, so
+        ``rb.gateway.mcp_result_count`` is present and
+        ``rb.gateway.mcp_upstream_failed`` is empty rather than absent.
         """
+        _fanout_failed.set(tuple(failed))
         span = get_current_span()
         if span and span.is_recording():
-            span.set_attribute('mcp.upstream.total', total)
-            span.set_attribute('mcp.upstream.failed', ','.join(failed))
-            span.set_attribute('mcp.result.count', count)
+            span.set_attribute('rb.gateway.mcp_upstream_total', total)
+            span.set_attribute('rb.gateway.mcp_upstream_failed', ','.join(failed))
+            span.set_attribute('rb.gateway.mcp_result_count', count)
+
+    @staticmethod
+    def _record_degradation() -> None:
+        """Hoist a fan-out's failed upstreams onto the root span.
+
+        :meth:`_record_fanout` can only reach the task's own span, which the
+        root-span query behind the traces list never reads — so "which requests
+        were served from a degraded fan-out?" would be unanswerable there. Only
+        the failures are hoisted: the counts stay per-task detail, while this is
+        the signal worth filtering a trace list on.
+        """
+        failed = _fanout_failed.get()
+        if failed:
+            set_mcp_attributes(upstream_failed=','.join(failed))
 
     async def _dispatch(
         self,
@@ -287,6 +353,9 @@ class McpService:
 
         if 'id' not in body:
             # Notifications (e.g. notifications/initialized) get no response.
+            # The 202 is load-bearing beyond HTTP semantics: it is the only
+            # signal RequestEventMiddleware._emit_event has for "notification,
+            # emit no REQUEST event". Keep the two in step.
             logger.debug('MCP notification accepted: %s', method)
             return McpDispatchResult(status_code=202)
 
@@ -310,7 +379,7 @@ class McpService:
                 ),
             )
 
-        set_mcp_attributes(**target_attributes(method, params or {}))
+        set_mcp_attributes(**target_attributes(method, params or {}, servers))
 
         try:
             if method == 'initialize':

@@ -131,6 +131,21 @@ def test_set_mcp_attributes_preserves_existing_properties(mock_set_props):
 @patch(
     'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
 )
+def test_set_mcp_attributes_records_the_failed_upstreams(mock_set_props):
+    with patch(
+        'radicalbit_ai_gateway.utils.trace_attributes.get_value',
+        return_value=None,
+    ):
+        set_mcp_attributes(upstream_failed='github,jira')
+
+    mock_set_props.assert_called_once_with(
+        {'rb.gateway.mcp_upstream_failed': 'github,jira'}
+    )
+
+
+@patch(
+    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
+)
 def test_set_mcp_attributes_records_a_zero_error_code(mock_set_props):
     """0 is falsy but a legitimate code — only None means 'unset'."""
     with patch(

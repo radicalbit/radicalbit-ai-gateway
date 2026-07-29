@@ -38,8 +38,11 @@ def _span_name(func) -> str | None:
     """Recover a Traceloop entity name from the decorator's closure.
 
     Traceloop exposes no public accessor for it, so this reads the closed-over
-    name. If a future SDK version changes that, this returns None and only the
-    name assertions loosen — the ``__wrapped__`` check below still holds.
+    name. ``traceloop-sdk`` is an open version range, so a future release
+    closing over a second string would make this ambiguous; it returns None
+    there, and callers must treat None as "can't tell" rather than as a
+    mismatch — otherwise an SDK bump reads as a missing decorator, which the
+    ``__wrapped__`` assertions check independently anyway.
     """
     names = [
         cell.cell_contents
@@ -49,23 +52,30 @@ def _span_name(func) -> str | None:
     return names[0] if len(names) == 1 else None
 
 
+def _assert_span_name(func, expected: str) -> None:
+    actual = _span_name(func)
+    assert actual in (expected, None), (
+        f'expected span name {expected!r}, found {actual!r}'
+    )
+
+
 @pytest.mark.parametrize(('method', 'span'), sorted(SERVICE_SPANS.items()))
 def test_service_handlers_are_instrumented(method, span):
     func = getattr(McpService, method)
     assert hasattr(func, '__wrapped__'), f'{method} is missing its @task decorator'
-    assert _span_name(func) == span
+    _assert_span_name(func, span)
 
 
 @pytest.mark.parametrize(('method', 'span'), sorted(UPSTREAM_SPANS.items()))
 def test_upstream_calls_are_instrumented(method, span):
     func = getattr(McpUpstreamClient, method)
     assert hasattr(func, '__wrapped__'), f'{method} is missing its @task decorator'
-    assert _span_name(func) == span
+    _assert_span_name(func, span)
 
 
 def test_handle_post_is_the_root_workflow():
     assert hasattr(McpService.handle_post, '__wrapped__')
-    assert _span_name(McpService.handle_post) == 'mcp_request'
+    _assert_span_name(McpService.handle_post, 'mcp_request')
 
 
 def test_every_public_upstream_operation_is_covered():

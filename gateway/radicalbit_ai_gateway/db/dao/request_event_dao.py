@@ -28,10 +28,22 @@ class RequestEventDAO:
         self.T = RequestEvent.__table__
 
     def _base_columns(self):
+        # Classified by REQUEST_STATUS, not HTTP_STATUS_CODE, so every reader in
+        # this DAO shares one definition of failure (get_error_breakdown and
+        # get_most_route_with_error already used it). The status code is not a
+        # reliable proxy: MCP returns JSON-RPC failures as an `error` body over
+        # HTTP 200, which the old `== 200` / `>= 400` pair counted as a success
+        # while the error breakdown in the same response counted it as an error.
+        # It also closes a gap for any 2xx that is not exactly 200, which
+        # previously counted as neither success nor error.
         T = self.T
         return [
-            F.countIf(T.c['HTTP_STATUS_CODE'] == 200).label('successful_requests'),
-            F.countIf(T.c['HTTP_STATUS_CODE'] >= 400).label('error_requests'),
+            F.countIf(T.c['REQUEST_STATUS'] == RequestStatus.SUCCESS).label(
+                'successful_requests'
+            ),
+            F.countIf(T.c['REQUEST_STATUS'] != RequestStatus.SUCCESS).label(
+                'error_requests'
+            ),
             F.count().label('total_requests'),
             # nullIf converts epoch (returned by MAX on empty result sets) to NULL
             F.nullIf(F.max(T.c['TIMESTAMP']), text('toDateTime(0)')).label(

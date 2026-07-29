@@ -54,8 +54,9 @@ class RequestEventMiddleware:
         segments = [segment for segment in scope.get('path', '').split('/') if segment]
         return len(segments) == 3 and segments[2] == 'mcp'
 
-    def is_tracked(self, scope: Scope) -> bool:
-        return scope.get('path', '') in self.TRACKED_PATHS or self.is_mcp_request(scope)
+    @classmethod
+    def is_tracked(cls, scope: Scope) -> bool:
+        return scope.get('path', '') in cls.TRACKED_PATHS or cls.is_mcp_request(scope)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope['type'] != 'http':
@@ -164,7 +165,7 @@ class RequestEventMiddleware:
     def _determine_status(
         http_code: int,
         ctx: RequestEventContext,
-        request_type: RequestType | None = None,
+        request_type: RequestType,
     ) -> RequestStatus:
         # MCP returns JSON-RPC failures as an `error` body over HTTP 200, so the
         # status code alone would report every failed tools/call as a success.
