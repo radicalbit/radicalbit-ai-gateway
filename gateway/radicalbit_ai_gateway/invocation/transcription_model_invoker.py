@@ -6,6 +6,7 @@ import openai
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
+from opentelemetry import trace
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
@@ -25,6 +26,52 @@ app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 WHISPER_FAMILY_PREFIX = 'whisper'
+
+
+def _set_transcription_request_attributes(
+    filename: str,
+    content_type: str | None,
+    audio_size_bytes: int,
+    model_id: str,
+) -> None:
+    """Metadata only — never the raw audio bytes."""
+    try:
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute('transcription.request.filename', filename)
+            span.set_attribute('transcription.request.content_type', content_type or '')
+            span.set_attribute(
+                'transcription.request.audio_size_bytes', audio_size_bytes
+            )
+            span.set_attribute('transcription.request.model_id', model_id)
+    except Exception:
+        pass
+
+
+def _set_transcription_response_attributes(
+    response: Transcription | TranscriptionVerbose,
+    is_whisper: bool,
+) -> None:
+    """Metadata only — never the full segments/timestamps array."""
+    try:
+        span = trace.get_current_span()
+        if not span.is_recording():
+            return
+        span.set_attribute(
+            'transcription.response.text_length', len(response.text or '')
+        )
+        if is_whisper:
+            span.set_attribute(
+                'transcription.response.language', response.language or ''
+            )
+            span.set_attribute(
+                'transcription.response.duration_seconds', response.duration or 0
+            )
+            span.set_attribute(
+                'transcription.response.segment_count', len(response.segments or [])
+            )
+    except Exception:
+        pass
 
 
 class TranscriptionModelInvoker(ModelInvoker):
@@ -92,6 +139,13 @@ class TranscriptionModelInvoker(ModelInvoker):
         is_whisper = model_name.startswith(WHISPER_FAMILY_PREFIX)
         upstream_format = 'verbose_json' if is_whisper else 'json'
 
+        _set_transcription_request_attributes(
+            filename=filename,
+            content_type=content_type,
+            audio_size_bytes=len(audio_bytes),
+            model_id=model_id,
+        )
+
         create_kwargs: dict = {
             'model': model_name,
             'file': (filename, audio_bytes, content_type or 'application/octet-stream'),
@@ -122,6 +176,7 @@ class TranscriptionModelInvoker(ModelInvoker):
                 f'Transcription upstream call failed: {e}'
             ) from e
         latency_ms = (time.monotonic() - start_time) * 1000
+        _set_transcription_response_attributes(response, is_whisper)
 
         usage = response.usage
         if is_whisper:
