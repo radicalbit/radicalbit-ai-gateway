@@ -531,6 +531,15 @@ class EventService:
         else:
             route_dict['routing'] = None
 
+        mcp_aliases: list[str] | None = route_dict.get('mcp_servers')
+        if mcp_aliases is None:
+            route_dict['mcp_servers'] = None
+        else:
+            route_dict['mcp_servers'] = [
+                server.model_dump()
+                for server in config.get_route_mcp_servers(route_config.route_name)
+            ]
+
         return GatewayRouteConfigOut(**route_dict)
 
     def get_costs_chart_data(

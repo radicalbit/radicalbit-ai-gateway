@@ -1263,6 +1263,62 @@ class TestDashboardRoute(unittest.TestCase):
         out = EventService._build_route_config_out(route_config, self.gateway_config)
         assert out.routing is None
 
+    def test_build_route_config_out_resolves_mcp_servers(self):
+        """mcp_servers aliases are resolved to full server objects, secrets masked."""
+        raw = {
+            'chat_models': [
+                {
+                    'model_id': 'default_model',
+                    'model': 'openai/gpt-4o',
+                    'credentials': {'api_key': 'sk-dummy'},
+                },
+            ],
+            'mcp_servers': [
+                {
+                    'alias': 'github',
+                    'transport': 'streamable_http',
+                    'url': 'https://api.githubcopilot.com/mcp/',
+                    'headers': {'authorization': 'Bearer sk-super-secret'},
+                },
+                {
+                    'alias': 'local-tools',
+                    'transport': 'stdio',
+                    'command': 'python',
+                    'args': ['-m', 'tools'],
+                    'env': {'API_KEY': 'sk-another-secret'},
+                },
+            ],
+            'routes': {
+                'mcp_route': {
+                    'chat_models': ['default_model'],
+                    'mcp_servers': ['github', 'local-tools'],
+                },
+                'plain_route': {'chat_models': ['default_model']},
+            },
+        }
+        config = GatewayConfig.model_validate(raw)
+
+        out = EventService._build_route_config_out(
+            config.routes['mcp_route'], config
+        )
+        assert len(out.mcp_servers) == 2
+        http_server, stdio_server = out.mcp_servers
+        assert http_server.alias == 'github'
+        assert http_server.url == 'https://api.githubcopilot.com/mcp/'
+        assert str(http_server.headers['authorization']) == '**********'
+        assert (
+            http_server.headers['authorization'].get_secret_value()
+            == 'Bearer sk-super-secret'
+        )
+        assert stdio_server.alias == 'local-tools'
+        assert stdio_server.command == 'python'
+        assert str(stdio_server.env['API_KEY']) == '**********'
+
+        out_no_mcp = EventService._build_route_config_out(
+            config.routes['plain_route'], config
+        )
+        assert out_no_mcp.mcp_servers is None
+
     def test_get_cost_breakdown_by_model(self):
         model_id = 'gpt-4'
         timestamp = 1736208000

@@ -15,6 +15,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     RedactParameter,
 )
 from radicalbit_ai_gateway.models.limiting import Limiting, RateLimiting, TokenLimiting
+from radicalbit_ai_gateway.models.mcp_server import McpHttpServer, McpStdioServer
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
     BudgetConditions,
@@ -194,6 +195,28 @@ AnyRoutingConfigOut = Annotated[
 ]
 
 
+class McpHttpServerOut(McpHttpServer):
+    headers: dict[str, SecretStr] | None = None
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+
+class McpStdioServerOut(McpStdioServer):
+    env: dict[str, SecretStr] | None = None
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+
+AnyMcpServerOut = Annotated[
+    Union[McpHttpServerOut, McpStdioServerOut],
+    Field(discriminator='transport'),
+]
+
+
 class GatewayRouteConfigOut(GatewayRouteConfig):
     chat_models: list[ModelOut] | None
     embedding_models: list[ModelOut] | None
@@ -204,6 +227,7 @@ class GatewayRouteConfigOut(GatewayRouteConfig):
     guardrails: list[GuardrailOut] | None
     caching: AnyCachingOut | None
     routing: AnyRoutingConfigOut | None
+    mcp_servers: list[AnyMcpServerOut] | None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
