@@ -572,5 +572,9 @@ class TranscriptionCreateParamsCustom(BaseModel):
     """The format of the transcript output. verbose_json is only supported for whisper-1;
     text/srt/vtt aren't supported yet."""
 
+    stream: bool = False
+    """Stream the transcript as it's generated via SSE. Only supported for the
+    gpt-4o-transcribe family; whisper-1 does not support streaming."""
+
     temperature: float | None = None
     """Sampling temperature, between 0 and 1."""

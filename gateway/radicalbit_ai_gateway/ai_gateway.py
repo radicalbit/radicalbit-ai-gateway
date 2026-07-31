@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 import datetime
 import json
 import logging
@@ -11,6 +12,7 @@ from langchain_core.messages import (
 )
 import numpy as np
 from openai.types.audio.transcription import Transcription, UsageDuration, UsageTokens
+from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
@@ -729,6 +731,63 @@ class GatewayRoute:
         await self._count_transcription_usage(result.usage, model_selected)
 
         return result
+
+    async def invoke_transcription_stream(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str | None,
+        language: str | None = None,
+        prompt: str | None = None,
+        temperature: float | None = None,
+    ) -> AsyncIterator[TranscriptionStreamEvent]:
+        if route_name != self.gateway_route_config.route_name:
+            raise GatewayBadRequest(f'{route_name} must be the route name')
+
+        if not self.transcription_invoker:
+            raise GatewayBadRequest(
+                f'Route {route_name} has no transcription models defined'
+            )
+
+        set_operation_category(OperationCategory.ROUTING)
+        model_selected = self._select_and_prepare_transcription_model()
+
+        if self.budget_limiter:
+            set_operation_category(OperationCategory.LIMITING)
+            await self.budget_limiter.check_budget()
+
+        set_operation_category(OperationCategory.INVOCATION)
+        final_event: TranscriptionStreamEvent | None = None
+        async for event in self.transcription_invoker.stream(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            audio_bytes=audio_bytes,
+            filename=filename,
+            content_type=content_type,
+            model_id=model_selected.model_id,
+            language=language,
+            prompt=prompt,
+            temperature=temperature,
+            project_uuid=self.project_uuid,
+            project_name=self.project_name,
+        ):
+            final_event = event
+            yield event
+
+        if final_event is not None:
+            await self._count_transcription_usage(
+                getattr(final_event, 'usage', None), model_selected
+            )
 
     # ============================================================================
     # Pre Process Request

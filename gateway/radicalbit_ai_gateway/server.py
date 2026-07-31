@@ -865,7 +865,7 @@ async def audio_transcriptions(
     # Populate request event context first (before auth, so route_name is always captured)
     ctx = RequestEventContext.get_or_create(request)
     ctx.route_name = route_name
-    ctx.is_streaming = False
+    ctx.is_streaming = transcription_params.stream
 
     # Validate API key after context is populated
     set_operation_category(OperationCategory.AUTH)
@@ -908,6 +908,60 @@ async def audio_transcriptions(
     content = await file.read()
 
     set_operation_category(OperationCategory.ENDPOINT)
+
+    if transcription_params.stream:
+
+        async def event_generator():
+            try:
+                async for event in route.invoke_transcription_stream(
+                    request_uuid=request_uuid,
+                    api_key_uuid=key_details.api_key_uuid,
+                    api_key_name=key_details.api_key_name,
+                    group_uuid=key_details.group_uuid,
+                    group_name=key_details.group_name,
+                    route_name=route_name,
+                    audio_bytes=content,
+                    filename=file.filename or 'audio',
+                    content_type=file.content_type,
+                    language=transcription_params.language,
+                    prompt=transcription_params.prompt,
+                    temperature=transcription_params.temperature,
+                ):
+                    event_json = event.model_dump_json(exclude_none=True)
+                    logger.debug('Streaming transcription event: %s', event_json)
+                    yield f'data: {event_json}\n\n'
+                logger.debug('Streaming finished: [DONE]')
+                yield 'data: [DONE]\n\n'
+            except AppError as exc:
+                error_body = json.dumps(
+                    {
+                        'error': {
+                            'message': exc.client_message,
+                            'type': 'model_invoker_error',
+                            'param': None,
+                            'code': exc.status_code,
+                        }
+                    }
+                )
+                yield error_body, exc.status_code
+            except Exception:
+                logger.exception('Unhandled error during transcription streaming')
+                error_body = json.dumps(
+                    {
+                        'error': {
+                            'message': 'Unhandled error during streaming',
+                            'type': 'internal_error',
+                            'param': None,
+                            'code': 500,
+                        }
+                    }
+                )
+                yield error_body, 500
+
+        return StreamingResponseWithStatusCode(
+            event_generator(), media_type='text/event-stream'
+        )
+
     result = await route.invoke_transcription(
         request_uuid=request_uuid,
         api_key_uuid=key_details.api_key_uuid,

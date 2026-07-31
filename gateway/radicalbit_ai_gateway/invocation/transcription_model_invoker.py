@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from decimal import Decimal
 import logging
 import time
@@ -5,6 +6,7 @@ import time
 import openai
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from opentelemetry import trace
 from traceloop.sdk.decorators import task
@@ -113,67 +115,22 @@ class TranscriptionModelInvoker(ModelInvoker):
             http_client=self.httpx_client,
         )
 
-    @task(name='llm_transcribe')
-    async def transcribe(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
-        audio_bytes: bytes,
-        filename: str,
-        content_type: str | None,
-        model_id: str,
-        requested_response_format: str = 'json',
-        language: str | None = None,
-        prompt: str | None = None,
-        temperature: float | None = None,
-        project_uuid: str = '',
-        project_name: str = '',
-    ) -> Transcription | TranscriptionVerbose:
+    def _resolve_model(
+        self, model_id: str
+    ) -> tuple[Model, AsyncOpenAI | AsyncAzureOpenAI, bool, str]:
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Transcription model {model_id} not defined')
-        if requested_response_format not in SUPPORTED_RESPONSE_FORMATS:
-            raise ModelInvokerBadRequest(
-                f'Unsupported response_format {requested_response_format!r}. '
-                f'Supported formats: {sorted(SUPPORTED_RESPONSE_FORMATS)}.'
-            )
-
         model, client, _fallbacks = self.model_map[model_id]
         _, model_name = parse_provider_and_model(model.model)
         is_whisper = model_name.startswith(WHISPER_FAMILY_PREFIX)
-        if requested_response_format == 'verbose_json' and not is_whisper:
-            raise ModelInvokerBadRequest(
-                'response_format=verbose_json is only supported for whisper-1 models.'
-            )
-        upstream_format = 'verbose_json' if is_whisper else 'json'
+        return model, client, is_whisper, model_name
 
-        _set_transcription_request_attributes(
-            filename=filename,
-            content_type=content_type,
-            audio_size_bytes=len(audio_bytes),
-            model_id=model_id,
-        )
-
-        create_kwargs: dict = {
-            'model': model_name,
-            'file': (filename, audio_bytes, content_type or 'application/octet-stream'),
-            'response_format': upstream_format,
-        }
-        if language:
-            create_kwargs['language'] = language
-        if prompt:
-            create_kwargs['prompt'] = prompt
-        if temperature is not None:
-            create_kwargs['temperature'] = temperature
-
-        start_time = time.monotonic()
+    @staticmethod
+    async def _create_upstream(
+        client: AsyncOpenAI | AsyncAzureOpenAI, create_kwargs: dict
+    ):
         try:
-            response: (
-                Transcription | TranscriptionVerbose
-            ) = await client.audio.transcriptions.create(**create_kwargs)
+            return await client.audio.transcriptions.create(**create_kwargs)
         except openai.APIStatusError as e:
             if 400 <= e.status_code < 500:
                 raise ModelInvokerBadRequest(
@@ -186,21 +143,23 @@ class TranscriptionModelInvoker(ModelInvoker):
             raise ModelInvokerInternalError(
                 f'Transcription upstream call failed: {e}'
             ) from e
-        latency_ms = (time.monotonic() - start_time) * 1000
-        _set_transcription_response_attributes(response, is_whisper)
 
-        usage = response.usage
-        if requested_response_format == 'verbose_json':
-            # Only reachable for whisper-1
-            body = response
-        elif is_whisper:
-            body = Transcription(
-                text=response.text,
-                usage=usage.model_dump() if usage else None,
-            )
-        else:
-            body = response
-
+    def _finalize_transcription(
+        self,
+        *,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        model_id: str,
+        model: Model,
+        latency_ms: float,
+        usage,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> None:
         self._record_metrics(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
@@ -228,7 +187,175 @@ class TranscriptionModelInvoker(ModelInvoker):
             project_name=project_name,
         )
 
+    @task(name='llm_transcribe')
+    async def transcribe(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str | None,
+        model_id: str,
+        requested_response_format: str = 'json',
+        language: str | None = None,
+        prompt: str | None = None,
+        temperature: float | None = None,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> Transcription | TranscriptionVerbose:
+        model, client, is_whisper, model_name = self._resolve_model(model_id)
+        if requested_response_format not in SUPPORTED_RESPONSE_FORMATS:
+            raise ModelInvokerBadRequest(
+                f'Unsupported response_format {requested_response_format!r}. '
+                f'Supported formats: {sorted(SUPPORTED_RESPONSE_FORMATS)}.'
+            )
+        if requested_response_format == 'verbose_json' and not is_whisper:
+            raise ModelInvokerBadRequest(
+                'response_format=verbose_json is only supported for whisper-1 models.'
+            )
+        upstream_format = 'verbose_json' if is_whisper else 'json'
+
+        _set_transcription_request_attributes(
+            filename=filename,
+            content_type=content_type,
+            audio_size_bytes=len(audio_bytes),
+            model_id=model_id,
+        )
+
+        create_kwargs: dict = {
+            'model': model_name,
+            'file': (filename, audio_bytes, content_type or 'application/octet-stream'),
+            'response_format': upstream_format,
+        }
+        if language:
+            create_kwargs['language'] = language
+        if prompt:
+            create_kwargs['prompt'] = prompt
+        if temperature is not None:
+            create_kwargs['temperature'] = temperature
+
+        start_time = time.monotonic()
+        response: Transcription | TranscriptionVerbose = await self._create_upstream(
+            client, create_kwargs
+        )
+        latency_ms = (time.monotonic() - start_time) * 1000
+        _set_transcription_response_attributes(response, is_whisper)
+
+        usage = response.usage
+        if requested_response_format == 'verbose_json':
+            # Only reachable for whisper-1
+            body = response
+        elif is_whisper:
+            body = Transcription(
+                text=response.text,
+                usage=usage.model_dump() if usage else None,
+            )
+        else:
+            body = response
+
+        self._finalize_transcription(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            model_id=model_id,
+            model=model,
+            latency_ms=latency_ms,
+            usage=usage,
+            project_uuid=project_uuid,
+            project_name=project_name,
+        )
+
         return body
+
+    @task(name='llm_transcribe_stream')
+    async def stream(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str | None,
+        model_id: str,
+        language: str | None = None,
+        prompt: str | None = None,
+        temperature: float | None = None,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> AsyncIterator[TranscriptionStreamEvent]:
+        model, client, is_whisper, model_name = self._resolve_model(model_id)
+        if is_whisper:
+            raise ModelInvokerBadRequest(
+                'stream=true is only supported for the gpt-4o-transcribe family; '
+                'whisper-1 does not support streaming.'
+            )
+
+        _set_transcription_request_attributes(
+            filename=filename,
+            content_type=content_type,
+            audio_size_bytes=len(audio_bytes),
+            model_id=model_id,
+        )
+
+        create_kwargs: dict = {
+            'model': model_name,
+            'file': (filename, audio_bytes, content_type or 'application/octet-stream'),
+            'response_format': 'json',
+            'stream': True,
+        }
+        if language:
+            create_kwargs['language'] = language
+        if prompt:
+            create_kwargs['prompt'] = prompt
+        if temperature is not None:
+            create_kwargs['temperature'] = temperature
+
+        start_time = time.monotonic()
+        upstream_stream = await self._create_upstream(client, create_kwargs)
+
+        final_usage = None
+        text_parts: list[str] = []
+        async for event in upstream_stream:
+            if event.type == 'transcript.text.delta':
+                text_parts.append(event.delta)
+            elif event.type == 'transcript.text.done':
+                final_usage = event.usage
+            yield event
+        latency_ms = (time.monotonic() - start_time) * 1000
+
+        try:
+            span = trace.get_current_span()
+            if span.is_recording():
+                span.set_attribute(
+                    'transcription.response.text_length', len(''.join(text_parts))
+                )
+        except Exception:
+            pass
+
+        self._finalize_transcription(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            model_id=model_id,
+            model=model,
+            latency_ms=latency_ms,
+            usage=final_usage,
+            project_uuid=project_uuid,
+            project_name=project_name,
+        )
 
     def _record_transcription_usage_cost(
         self,

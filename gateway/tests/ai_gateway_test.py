@@ -1114,6 +1114,115 @@ async def test_invoke_transcription_no_models_configured_raises():
         )
 
 
+@pytest.mark.asyncio
+async def test_invoke_transcription_stream_relays_events_and_counts_usage_once():
+    cost_service = MagicMock(spec_set=CostService)
+    gpt4o_model = Model(
+        model_id='gpt4o-transcribe',
+        model='openai/gpt-4o-transcribe',
+        credentials=Credentials(api_key='sk-test'),
+        input_cost_per_million_tokens=Decimal('2.5'),
+        output_cost_per_million_tokens=Decimal('10.0'),
+        input_cost_per_audio_token=Decimal('0.000006'),
+    )
+    route_cfg = _make_transcription_route_config(
+        model_id='gpt4o-transcribe', max_budget=10.0, window_size=3600
+    )
+    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter.check_budget = AsyncMock()
+    budget_limiter.count_input = AsyncMock()
+    budget_limiter.count_output = AsyncMock()
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[gpt4o_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+        budget_limiter=budget_limiter,
+    )
+
+    delta_event = MagicMock(usage=None)
+    done_event = MagicMock(
+        usage=MagicMock(
+            type='tokens',
+            input_tokens=87,
+            output_tokens=38,
+            input_token_details=MagicMock(audio_tokens=82, text_tokens=5),
+        )
+    )
+
+    async def fake_stream(**kwargs):
+        yield delta_event
+        yield done_event
+
+    ai_gateway.transcription_invoker.stream = fake_stream
+
+    events = [
+        event
+        async for event in ai_gateway.invoke_transcription_stream(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='rb-key',
+            group_name='test-group',
+            route_name='rb-gateway',
+            audio_bytes=b'fake-audio',
+            filename='test.wav',
+            content_type='audio/wav',
+        )
+    ]
+
+    assert events == [delta_event, done_event]
+    budget_limiter.check_budget.assert_awaited_once()
+    # Usage is only available on the final event — budget counting must use
+    # that one, not the (usage=None) delta in between.
+    count_input_calls = budget_limiter.count_input.call_args_list
+    assert len(count_input_calls) == 2
+    assert {
+        (c.kwargs['token_count'], c.kwargs['input_cost_per_token'])
+        for c in count_input_calls
+    } == {
+        (82, gpt4o_model.input_cost_per_audio_token),
+        (5, gpt4o_model.input_cost_per_token),
+    }
+    budget_limiter.count_output.assert_awaited_once_with(
+        token_count=38, output_cost_per_token=gpt4o_model.output_cost_per_token
+    )
+
+
+@pytest.mark.asyncio
+async def test_invoke_transcription_stream_no_models_configured_raises():
+    cost_service = MagicMock(spec_set=CostService)
+    route_cfg = GatewayRouteConfig(route_name='rb-gateway', chat_models=[])
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=None,
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+    )
+
+    with pytest.raises(GatewayBadRequest, match='no transcription models defined'):
+        async for _ in ai_gateway.invoke_transcription_stream(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='rb-key',
+            group_name='test-group',
+            route_name='rb-gateway',
+            audio_bytes=b'fake-audio',
+            filename='test.wav',
+            content_type='audio/wav',
+        ):
+            pass
+
+
 @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
 @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
 @pook.activate
