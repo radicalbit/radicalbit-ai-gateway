@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from mcp import types
 import pytest
@@ -14,6 +14,7 @@ from radicalbit_ai_gateway.services.mcp_service import (
     encode_resource_uri,
     negotiate_protocol_version,
     split_alias_name,
+    strip_uri_credentials,
 )
 
 GITHUB = McpHttpServer(alias='github', url='https://github.example.com/mcp/')
@@ -92,6 +93,29 @@ def test_resource_uri_round_trips_reserved_characters():
 )
 def test_decode_resource_uri_rejects_foreign_or_malformed(uri):
     assert decode_resource_uri(uri) is None
+
+
+@pytest.mark.parametrize(
+    ('uri', 'expected'),
+    [
+        # the identifying part survives untouched
+        ('https://h.example/readme', 'https://h.example/readme'),
+        ('https://h.example:8443/readme', 'https://h.example:8443/readme'),
+        ('urn:isbn:123', 'urn:isbn:123'),
+        ('file:///etc/hosts', 'file:///etc/hosts'),
+        # signed-URL tokens and basic-auth credentials do not
+        ('https://h.example/r?token=s3cret', 'https://h.example/r'),
+        ('https://h.example/r#frag', 'https://h.example/r'),
+        ('https://user:pass@h.example/r', 'https://h.example/r'),
+        ('file:///etc/hosts?x=1', 'file:///etc/hosts'),
+        # unparseable input is passed through rather than raising
+        ('https://h.example:99999/r', 'https://h.example:99999/r'),
+        ('not a uri at all', 'not a uri at all'),
+        ('', ''),
+    ],
+)
+def test_strip_uri_credentials(uri, expected):
+    assert strip_uri_credentials(uri) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -675,3 +699,271 @@ async def test_resources_read_upstream_error_maps_to_jsonrpc_error():
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32000
     assert 'timed out' in result.payload['error']['message']
+
+
+# ---------------------------------------------------------------------------
+# Telemetry
+# ---------------------------------------------------------------------------
+
+MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
+
+
+def _recorded_methods(mock_set_attrs) -> list[str]:
+    return [
+        c.kwargs['method']
+        for c in mock_set_attrs.call_args_list
+        if c.kwargs.get('method') is not None
+    ]
+
+
+@pytest.mark.parametrize(
+    'method',
+    [
+        'initialize',
+        'ping',
+        'tools/list',
+        'tools/call',
+        'prompts/list',
+        'prompts/get',
+        'resources/list',
+        'resources/read',
+        'completion/complete',  # unsupported, still attributed
+    ],
+)
+async def test_dispatch_records_the_method_for_every_request(method):
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    client.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
+    client.list_resources = AsyncMock(
+        return_value=types.ListResourcesResult(resources=[])
+    )
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        await _service(client)._dispatch(_request(method), SERVERS, None)
+
+    assert _recorded_methods(mock_set_attrs) == [method]
+
+
+async def test_dispatch_records_the_method_for_notifications():
+    """Notifications return 202 with no body, but still belong in traces."""
+    body = {'jsonrpc': '2.0', 'method': 'notifications/initialized'}
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        result = await _service()._dispatch(body, SERVERS, None)
+
+    assert result.status_code == 202
+    assert _recorded_methods(mock_set_attrs) == ['notifications/initialized']
+
+
+async def test_dispatch_records_no_method_for_a_malformed_envelope():
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        await _service()._dispatch({'jsonrpc': '1.0'}, SERVERS, None)
+
+    assert _recorded_methods(mock_set_attrs) == []
+
+
+async def test_tools_call_records_alias_and_target():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        await _service(client)._dispatch(
+            _request('tools/call', params={'name': 'github__get_issue'}),
+            SERVERS,
+            None,
+        )
+
+    mock_set_attrs.assert_any_call(alias='github', target='get_issue')
+
+
+async def test_prompts_get_records_alias_and_target():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.get_prompt = AsyncMock(return_value=types.GetPromptResult(messages=[]))
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        await _service(client)._dispatch(
+            _request('prompts/get', params={'name': 'github__review'}), SERVERS, None
+        )
+
+    mock_set_attrs.assert_any_call(alias='github', target='review')
+
+
+async def test_resources_read_records_alias_and_the_upstream_uri():
+    upstream_uri = 'https://github.example.com/readme'
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.read_resource = AsyncMock(return_value=types.ReadResourceResult(contents=[]))
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        await _service(client)._dispatch(
+            _request(
+                'resources/read',
+                params={'uri': encode_resource_uri('github', upstream_uri)},
+            ),
+            SERVERS,
+            None,
+        )
+
+    # the decoded upstream URI, not the wrapped mcp-resource: form
+    mock_set_attrs.assert_any_call(alias='github', target=upstream_uri)
+
+
+async def test_a_target_naming_no_known_upstream_records_nothing():
+    """params.name is client-controlled: echoing it back is unbounded cardinality.
+
+    The name is still diagnosable from the span status description, which
+    _record_error_outcome sets from the JSON-RPC error message.
+    """
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.call_tool = AsyncMock()
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        result = await _service(client)._dispatch(
+            _request('tools/call', params={'name': 'unknown__tool'}), SERVERS, None
+        )
+
+    assert result.payload['error']['code'] == -32602
+    assert 'unknown__tool' in result.payload['error']['message']
+    assert all(c.kwargs.get('alias') is None for c in mock_set_attrs.call_args_list)
+    assert all(c.kwargs.get('target') is None for c in mock_set_attrs.call_args_list)
+
+
+async def test_a_resource_uris_credentials_are_stripped_before_reaching_a_span():
+    """Signed-URL tokens live in the query; the path is the resource identity."""
+    upstream_uri = 'https://user:pw@github.example.com/readme?token=s3cret#frag'
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.read_resource = AsyncMock(return_value=types.ReadResourceResult(contents=[]))
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        await _service(client)._dispatch(
+            _request(
+                'resources/read',
+                params={'uri': encode_resource_uri('github', upstream_uri)},
+            ),
+            SERVERS,
+            None,
+        )
+
+    mock_set_attrs.assert_any_call(
+        alias='github', target='https://github.example.com/readme'
+    )
+    # only the span attribute is redacted; the upstream still gets the URI whole
+    assert client.read_resource.await_args.args[1] == upstream_uri
+
+
+@pytest.mark.parametrize(
+    'params',
+    [
+        {'name': 'no_separator'},  # unsplittable
+        {'name': 7},  # not a string
+        {},  # absent
+    ],
+)
+async def test_an_unsplittable_target_records_nothing(params):
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.call_tool = AsyncMock()
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        await _service(client)._dispatch(
+            _request('tools/call', params=params), SERVERS, None
+        )
+
+    assert all(c.kwargs.get('alias') is None for c in mock_set_attrs.call_args_list)
+
+
+@pytest.mark.parametrize(
+    'method', ['initialize', 'ping', 'tools/list', 'prompts/list', 'resources/list']
+)
+async def test_methods_without_a_single_target_record_none(method):
+    """target_attributes only applies to the object-addressing methods."""
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    client.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
+    client.list_resources = AsyncMock(
+        return_value=types.ListResourcesResult(resources=[])
+    )
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        await _service(client)._dispatch(
+            _request(method, params={'name': 'github__x'}), SERVERS, None
+        )
+
+    assert all(c.kwargs.get('target') is None for c in mock_set_attrs.call_args_list)
+
+
+def _recording_span() -> MagicMock:
+    span = MagicMock()
+    span.is_recording.return_value = True
+    return span
+
+
+def _span_attrs(span: MagicMock) -> dict:
+    return {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
+
+
+async def test_tools_list_records_fanout_on_a_partial_failure():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(
+        side_effect=[
+            McpUpstreamError('github', 'boom'),
+            types.ListToolsResult(tools=[_tool('search')]),
+        ]
+    )
+    span = _recording_span()
+
+    with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
+        await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
+
+    assert _span_attrs(span) == {
+        'rb.gateway.mcp_upstream_total': 2,
+        'rb.gateway.mcp_upstream_failed': 'github',
+        'rb.gateway.mcp_result_count': 1,
+    }
+
+
+async def test_list_records_fanout_on_full_success():
+    """Always recorded, so a healthy fan-out is distinguishable from an absent one."""
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_prompts = AsyncMock(
+        side_effect=[
+            types.ListPromptsResult(prompts=[_prompt('a'), _prompt('b')]),
+            types.ListPromptsResult(prompts=[_prompt('c')]),
+        ]
+    )
+    span = _recording_span()
+
+    with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
+        await _service(client)._dispatch(_request('prompts/list'), SERVERS, None)
+
+    assert _span_attrs(span) == {
+        'rb.gateway.mcp_upstream_total': 2,
+        'rb.gateway.mcp_upstream_failed': '',
+        'rb.gateway.mcp_result_count': 3,
+    }
+
+
+async def test_resources_list_records_fanout():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_resources = AsyncMock(
+        side_effect=[
+            types.ListResourcesResult(resources=[_resource('https://a.example/1')]),
+            McpUpstreamError('jira', 'boom'),
+        ]
+    )
+    span = _recording_span()
+
+    with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
+        await _service(client)._dispatch(_request('resources/list'), SERVERS, None)
+
+    assert _span_attrs(span)['rb.gateway.mcp_upstream_failed'] == 'jira'
+
+
+async def test_fanout_is_not_recorded_on_a_non_recording_span():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    span = MagicMock()
+    span.is_recording.return_value = False
+
+    with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
+        await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
+
+    span.set_attribute.assert_not_called()

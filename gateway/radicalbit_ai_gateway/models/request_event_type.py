@@ -5,6 +5,7 @@ class RequestType(str, Enum):
     CHAT_COMPLETIONS = 'chat_completions'
     EMBEDDINGS = 'embeddings'
     TRANSCRIPTIONS = 'transcriptions'
+    MCP = 'mcp'
 
 
 class RequestStatus(str, Enum):

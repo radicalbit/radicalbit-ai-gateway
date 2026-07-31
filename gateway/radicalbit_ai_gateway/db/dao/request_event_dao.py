@@ -30,8 +30,12 @@ class RequestEventDAO:
     def _base_columns(self):
         T = self.T
         return [
-            F.countIf(T.c['HTTP_STATUS_CODE'] == 200).label('successful_requests'),
-            F.countIf(T.c['HTTP_STATUS_CODE'] >= 400).label('error_requests'),
+            F.countIf(T.c['REQUEST_STATUS'] == RequestStatus.SUCCESS).label(
+                'successful_requests'
+            ),
+            F.countIf(T.c['REQUEST_STATUS'] != RequestStatus.SUCCESS).label(
+                'error_requests'
+            ),
             F.count().label('total_requests'),
             # nullIf converts epoch (returned by MAX on empty result sets) to NULL
             F.nullIf(F.max(T.c['TIMESTAMP']), text('toDateTime(0)')).label(

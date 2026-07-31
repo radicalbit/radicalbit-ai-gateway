@@ -98,6 +98,7 @@ class RequestEventPayload(BaseModel):
         RequestType.CHAT_COMPLETIONS,
         RequestType.EMBEDDINGS,
         RequestType.TRANSCRIPTIONS,
+        RequestType.MCP,
     ]
     is_streaming: bool = False
     status: Literal[

@@ -1,4 +1,4 @@
-"""Middleware that emits REQUEST events for chat completions and embeddings."""
+"""Middleware that emits REQUEST events for the gateway's proxy endpoints."""
 
 from __future__ import annotations
 
@@ -21,10 +21,13 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 
 
 class RequestEventMiddleware:
-    """Emits REQUEST event for chat completions and embeddings.
+    """Stamps ``request_uuid`` and emits a REQUEST event per proxied request.
 
     Pure ASGI middleware that properly handles exceptions by emitting events
     after exception handlers have processed the error.
+
+    ``request_uuid`` is generated here, and only here, so traces and events
+    share one correlation id.
     """
 
     TRACKED_PATHS = {
@@ -37,13 +40,30 @@ class RequestEventMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
+    @staticmethod
+    def is_mcp_request(scope: Scope) -> bool:
+        """Match ``POST /{project_name}/{route_name}/mcp``.
+
+        The inbound MCP proxy is mounted at the root with a dynamic path, so it
+        cannot be a literal in :attr:`TRACKED_PATHS`. Matching on an exact
+        segment count and the POST method keeps the SPA catch-all and the
+        ``/public/api/v1/...`` routes from colliding with it.
+        """
+        if scope.get('method') != 'POST':
+            return False
+        segments = [segment for segment in scope.get('path', '').split('/') if segment]
+        return len(segments) == 3 and segments[2] == 'mcp'
+
+    @classmethod
+    def is_tracked(cls, scope: Scope) -> bool:
+        return scope.get('path', '') in cls.TRACKED_PATHS or cls.is_mcp_request(scope)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope['type'] != 'http':
             await self.app(scope, receive, send)
             return
 
-        path = scope.get('path', '')
-        if path not in self.TRACKED_PATHS:
+        if not self.is_tracked(scope):
             await self.app(scope, receive, send)
             return
 
@@ -102,13 +122,21 @@ class RequestEventMiddleware:
                 )
                 return
 
-            status = self._determine_status(status_code, ctx)
-            if '/audio/transcriptions' in request.url.path:
+            if self.is_mcp_request(request.scope):
+                request_type = RequestType.MCP
+                if status_code == 202:
+                    # 202 is only ever a JSON-RPC notification (no id, no
+                    # response body). Emitting would fill request_event with
+                    # no-op handshake traffic.
+                    return
+            elif '/audio/transcriptions' in request.url.path:
                 request_type = RequestType.TRANSCRIPTIONS
             elif '/embeddings' in request.url.path:
                 request_type = RequestType.EMBEDDINGS
             else:
                 request_type = RequestType.CHAT_COMPLETIONS
+
+            status = self._determine_status(status_code, ctx, request_type)
 
             emit_request_event(
                 RequestEventPayload(
@@ -134,7 +162,17 @@ class RequestEventMiddleware:
             logger.exception('Failed to emit REQUEST event')
 
     @staticmethod
-    def _determine_status(http_code: int, ctx: RequestEventContext) -> RequestStatus:
+    def _determine_status(
+        http_code: int,
+        ctx: RequestEventContext,
+        request_type: RequestType,
+    ) -> RequestStatus:
+        # MCP returns JSON-RPC failures as an `error` body over HTTP 200, so the
+        # status code alone would report every failed tools/call as a success.
+        # Scoped to MCP: on the /v1/* endpoints an error always carries a 4xx/5xx,
+        # and widening this would reclassify anything that recovered to a 2xx.
+        if request_type is RequestType.MCP and http_code < 400 and ctx.error_type:
+            return RequestStatus.HANDLED_ERROR
         if http_code < 400:
             return RequestStatus.SUCCESS
         if ctx.is_unhandled_error:

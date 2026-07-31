@@ -6,7 +6,7 @@ from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
-from radicalbit_ai_gateway.models.request_event_type import RequestStatus
+from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 
 
 class RequestEventDAOTest(DatabaseIntegrationClickhouse):
@@ -234,6 +234,7 @@ class RequestEventDAOTest(DatabaseIntegrationClickhouse):
             db_mock.get_sample_request_event(
                 timestamp=base_time + datetime.timedelta(minutes=20),
                 route_name='route-a',
+                request_status=RequestStatus.UNHANDLED_ERROR,
                 http_status_code=500,
             ),
         ]
@@ -246,6 +247,43 @@ class RequestEventDAOTest(DatabaseIntegrationClickhouse):
         assert res.error_requests == 1
         assert res.total_requests == 3
         assert res.last_request_timestamp is not None
+
+    def test_get_request_stats_counts_an_mcp_error_over_http_200_as_an_error(self):
+        """MCP returns JSON-RPC failures as an `error` body over HTTP 200.
+
+        Classifying on HTTP_STATUS_CODE counted these as successes here while
+        get_error_breakdown, which reads REQUEST_STATUS, counted them as errors —
+        two contradictory numbers in one dashboard response.
+        """
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        test_events = [
+            db_mock.get_sample_request_event(
+                timestamp=base_time,
+                route_name='route-a',
+                request_type=RequestType.MCP,
+                request_status=RequestStatus.SUCCESS,
+                http_status_code=200,
+            ),
+            db_mock.get_sample_request_event(
+                timestamp=base_time + datetime.timedelta(minutes=10),
+                route_name='route-a',
+                request_type=RequestType.MCP,
+                request_status=RequestStatus.HANDLED_ERROR,
+                http_status_code=200,
+                error_type='mcp_jsonrpc_error',
+                error_code='-32602',
+            ),
+        ]
+        self.insert(test_events)
+
+        res = self.request_event_dao.get_request_stats_global(
+            None, _from=base_time, _to=base_time + datetime.timedelta(hours=1)
+        )
+        assert res.successful_requests == 1
+        assert res.error_requests == 1
+        assert res.total_requests == 2
 
     def test_get_request_stats_global_filters_by_time_range(self):
         base_time = datetime.datetime(

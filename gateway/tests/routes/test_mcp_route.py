@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 from fastapi import FastAPI
@@ -385,3 +385,66 @@ async def test_end_to_end_against_real_upstream():
             result = res.json()['result']
             assert result['isError'] is False
             assert result['content'][0] == {'type': 'text', 'text': 'echo: hi'}
+
+
+# ---------------------------------------------------------------------------
+# Telemetry
+# ---------------------------------------------------------------------------
+
+MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
+
+
+class _StampRequestUuid:
+    """Pure-ASGI stand-in for RequestEventMiddleware's request_uuid stamping."""
+
+    def __init__(self, app, value: str):
+        self.app = app
+        self.value = value
+
+    async def __call__(self, scope, receive, send):
+        scope.setdefault('state', {})['request_uuid'] = self.value
+        await self.app(scope, receive, send)
+
+
+def test_the_service_reports_the_request_uuid_the_middleware_stamped():
+    """RequestEventMiddleware owns generation; the service only reads it."""
+    client, _ = _make_client()
+    stamped = str(uuid.uuid4())
+    client.app.add_middleware(_StampRequestUuid, value=stamped)
+
+    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] == stamped
+
+
+def test_no_request_uuid_is_invented_without_the_middleware():
+    """None is dropped by set_trace_attributes rather than becoming a fake id."""
+    client, _ = _make_client()
+
+    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] is None
+
+
+def test_a_rejected_origin_still_reports_the_route_it_targeted():
+    """Attribution runs before the first check that can reject, origin included."""
+    client, _ = _make_client()
+
+    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
+        res = client.post(
+            PATH, json=_ping(), headers={**AUTH, 'Origin': 'http://evil.example'}
+        )
+
+    assert res.status_code == 403
+    recorded = mock_set_attrs.call_args_list[0].kwargs
+    assert recorded['route_name'] == 'my-route'
+    assert recorded['project_name'] == 'proj'
+
+
+# Span status and attribute placement are asserted against a real OTel pipeline
+# in tests/mcp/test_span_attributes.py — mocks here cannot tell which span an
+# attribute lands on, which is the property that matters. Middleware path
+# matching and uuid stamping live in
+# tests/middlewares/test_request_event_middleware.py.
