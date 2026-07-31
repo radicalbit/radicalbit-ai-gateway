@@ -1298,9 +1298,7 @@ class TestDashboardRoute(unittest.TestCase):
         }
         config = GatewayConfig.model_validate(raw)
 
-        out = EventService._build_route_config_out(
-            config.routes['mcp_route'], config
-        )
+        out = EventService._build_route_config_out(config.routes['mcp_route'], config)
         assert len(out.mcp_servers) == 2
         http_server, stdio_server = out.mcp_servers
         assert http_server.alias == 'github'
