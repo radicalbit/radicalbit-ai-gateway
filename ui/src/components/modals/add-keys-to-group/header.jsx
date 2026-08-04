@@ -42,7 +42,6 @@ function Header() {
         </div>
       )}
       title="Associate credentials"
-      titleColor="primary"
     />
   );
 }

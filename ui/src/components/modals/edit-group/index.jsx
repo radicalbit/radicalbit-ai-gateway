@@ -33,7 +33,6 @@ function EditGroupOuter() {
         <SectionTitle
           align="center"
           title="Edit Group"
-          titleColor="primary"
         />
       )}
       onCancel={hideModal}

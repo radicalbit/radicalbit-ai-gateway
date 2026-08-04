@@ -48,7 +48,6 @@ function CreateAlertRuleInner() {
         <SectionTitle
           subtitle={subtitle}
           title="Create Alert"
-          titleColor="primary"
         />
       )}
       onCancel={hideModal}
