@@ -3,12 +3,13 @@ import SuccessMessage from '@Components/success-message';
 import { DATE_FORMAT, GATEWAY_OWNER } from '@Src/constants';
 import { useGetGroupQuery, useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import {
+  Button,
   DataTableAction,
   Popconfirm, RelativeDateTime, SectionTitle, Skeleton, TextWithBold,
   Tooltip,
   Truncate,
 } from '@radicalbit/radicalbit-design-system';
-import { Trash2 } from 'lucide-react';
+import { Trash } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
 const columns = [
@@ -42,7 +43,7 @@ const columns = [
     dataIndex: 'uuid',
     align: 'uuid',
     width: '10%',
-    render: (uuid, record) => <DataTableAction><Actions record={record} uuid={uuid} /></DataTableAction>,
+    render: (uuid, record) => <DataTableAction noHide><Actions record={record} uuid={uuid} /></DataTableAction>,
   },
 ];
 
@@ -79,31 +80,33 @@ function Actions({ uuid: keyUUID, record: { name } }) {
 
   if (isExternallyManaged) {
     return (
-      <div className="flex">
-        <Tooltip title={DISABLED_GROUP_TOOLTIP}>
-          <span>
-            <Lucide icon={Trash2} />
-          </span>
-        </Tooltip>
-      </div>
+      <Tooltip title={DISABLED_GROUP_TOOLTIP}>
+        <div>
+          <Button disabled size="small" type="text">
+            <Lucide disabled icon={Trash} />
+          </Button>
+        </div>
+      </Tooltip>
     );
   }
 
   return (
-    <div className="flex">
-      <Tooltip title="Remove">
-        <Popconfirm
-          cancelButtonProps={{ type: 'secondary-light' }}
-          description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove the group from the credential" />}
-          label={<Lucide icon={Trash2} />}
-          okText={<div className="is-error">Remove</div>}
-          okType="error-light"
-          onCancel={handleOnCancel}
-          onConfirm={handleOnDelete}
-          title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
-        />
-      </Tooltip>
-    </div>
+    <Tooltip title="Remove">
+      <Popconfirm
+        cancelButtonProps={{ type: 'secondary-light' }}
+        description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove the group from the credential" />}
+        label={(
+          <Button size="small" type="text">
+            <Lucide icon={Trash} type="error" />
+          </Button>
+          )}
+        okText={<div className="is-error">Remove</div>}
+        okType="error-light"
+        onCancel={handleOnCancel}
+        onConfirm={handleOnDelete}
+        title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
+      />
+    </Tooltip>
   );
 }
 

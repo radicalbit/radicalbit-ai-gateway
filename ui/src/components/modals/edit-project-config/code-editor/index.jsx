@@ -13,7 +13,7 @@ function CodeEditor() {
   }
 
   return (
-    <div className="flex flex-col min-h-0 gap-2 h-full">
+    <div className="flex flex-col min-h-0 gap-4 h-full">
 
       <Feedbacks config={activeConfig} />
 

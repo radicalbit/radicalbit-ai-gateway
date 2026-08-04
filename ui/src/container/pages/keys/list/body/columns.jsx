@@ -6,6 +6,7 @@ import { DATE_FORMAT, GATEWAY_OWNER, PathsEnum, SEARCH_PARAMS } from '@Src/const
 import { useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import { useGetKeyQuery } from '@State/keys/api';
 import {
+  Button,
   DataTableAction,
   Popconfirm,
   RelativeDateTime,
@@ -14,11 +15,12 @@ import {
   TextWithBold,
   Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
-import { Pencil, Plus, Trash2, X } from 'lucide-react';
+import { PencilLine, Plus, Trash, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DeleteKey from '../delete-key';
 
 const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and cannot be modified';
+const NO_GROUPS_TOOLTIP = 'No groups are available to associate';
 
 const columns = [
   {
@@ -74,7 +76,7 @@ const columns = [
     title: '',
     dataIndex: 'uuid',
     key: 'uuid',
-    render: (uuid) => <DataTableAction><Actions uuid={uuid} /></DataTableAction>,
+    render: (uuid) => <DataTableAction noHide><Actions uuid={uuid} /></DataTableAction>,
   },
 ];
 
@@ -98,7 +100,7 @@ function AssociatedGroup({ group }) {
 
 function Actions({ uuid }) {
   return (
-    <div className="flex">
+    <div className="flex justify-center items-center">
       <ActionAssociateGroup uuid={uuid} />
 
       <ActionRemoveGroup uuid={uuid} />
@@ -123,7 +125,7 @@ function ActionAssociateGroup({ uuid }) {
   };
 
   if (isLoading) {
-    return <Skeleton.Avatar active shape="square" size="small" />;
+    return <IsLoadingAction />;
   }
 
   if (!isSuccess || isError) {
@@ -131,22 +133,34 @@ function ActionAssociateGroup({ uuid }) {
   }
 
   if (isAssociateGroupDisabled) {
-    return false;
+    return (
+      <Tooltip title={NO_GROUPS_TOOLTIP}>
+        <div>
+          <Button disabled size="small" type="text">
+            <Lucide icon={Plus} />
+          </Button>
+        </div>
+      </Tooltip>
+    );
   }
 
   if (isExternallyManaged) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
-        <span>
-          <Lucide className="px-4" icon={Plus} />
-        </span>
+        <div>
+          <Button disabled size="small" type="text">
+            <Lucide icon={Plus} />
+          </Button>
+        </div>
       </Tooltip>
     );
   }
 
   return (
     <Tooltip title="Associate group">
-      <Lucide className="px-4" icon={Plus} onClick={handleOnAdd} />
+      <Button onClick={handleOnAdd} size="small" type="text">
+        <Lucide icon={Plus} />
+      </Button>
     </Tooltip>
   );
 }
@@ -175,7 +189,7 @@ function ActionRemoveGroup({ uuid }) {
   const handleOnCancel = (e) => { e.stopPropagation(); };
 
   if (isLoading) {
-    return <Skeleton.Avatar active shape="square" size="small" />;
+    return <IsLoadingAction />;
   }
 
   if (!groupName || !isSuccess || isError) {
@@ -184,31 +198,33 @@ function ActionRemoveGroup({ uuid }) {
 
   if (isExternallyManaged) {
     return (
-      <div className="flex">
-        <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
-          <span>
-            <Lucide className="px-4" icon={Trash2} />
-          </span>
-        </Tooltip>
-      </div>
+      <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
+        <div>
+          <Button disabled size="small" type="text">
+            <Lucide icon={X} />
+          </Button>
+        </div>
+      </Tooltip>
     );
   }
 
   return (
-    <div className="flex">
-      <Tooltip title="Remove group">
-        <Popconfirm
-          cancelButtonProps={{ type: 'secondary-light' }}
-          description={<TextWithBold bold={groupName} isQuestion text="Are you sure you want to remove the credential from the group" />}
-          label={<Lucide className="px-4" icon={X} />}
-          okText={<div className="is-error">Remove</div>}
-          okType="error-light"
-          onCancel={handleOnCancel}
-          onConfirm={handleOnDelete}
-          title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
-        />
-      </Tooltip>
-    </div>
+    <Tooltip title="Remove group">
+      <Popconfirm
+        cancelButtonProps={{ type: 'secondary-light' }}
+        description={<TextWithBold bold={groupName} isQuestion text="Are you sure you want to remove the credential from the group" />}
+        label={(
+          <Button size="small" type="text">
+            <Lucide icon={X} />
+          </Button>
+          )}
+        okText={<div className="is-error">Remove</div>}
+        okType="error-light"
+        onCancel={handleOnCancel}
+        onConfirm={handleOnDelete}
+        title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
+      />
+    </Tooltip>
   );
 }
 
@@ -224,7 +240,7 @@ function ActionEditKey({ uuid }) {
   };
 
   if (isLoading) {
-    return <Skeleton.Avatar active shape="square" size="small" />;
+    return <IsLoadingAction />;
   }
 
   if (!isSuccess || isError) {
@@ -234,16 +250,20 @@ function ActionEditKey({ uuid }) {
   if (isExternallyManaged) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
-        <span>
-          <Lucide className="px-4" icon={Pencil} />
-        </span>
+        <div>
+          <Button disabled size="small" type="text">
+            <Lucide icon={PencilLine} />
+          </Button>
+        </div>
       </Tooltip>
     );
   }
 
   return (
     <Tooltip title="Edit credential">
-      <Lucide className="px-4" icon={Pencil} onClick={handleOnEditKey} />
+      <Button onClick={handleOnEditKey} size="small" type="text">
+        <Lucide icon={PencilLine} />
+      </Button>
     </Tooltip>
   );
 }
@@ -254,7 +274,7 @@ function ActionDeleteKey({ uuid }) {
   const isExternallyManaged = owner !== GATEWAY_OWNER;
 
   if (isLoading) {
-    return <Skeleton.Avatar active shape="square" size="small" />;
+    return <IsLoadingAction />;
   }
 
   if (!isSuccess || isError) {
@@ -264,9 +284,11 @@ function ActionDeleteKey({ uuid }) {
   if (isExternallyManaged) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
-        <span>
-          <Lucide className="px-4" icon={Trash2} />
-        </span>
+        <div>
+          <Button disabled size="small" type="text">
+            <Lucide icon={Trash} />
+          </Button>
+        </div>
       </Tooltip>
     );
   }
@@ -274,9 +296,19 @@ function ActionDeleteKey({ uuid }) {
   return (
     <DeleteKey uuid={uuid}>
       <Tooltip title="Delete credential">
-        <Lucide className="px-4" icon={Trash2} />
+        <Button size="small" type="text">
+          <Lucide icon={Trash} type="error" />
+        </Button>
       </Tooltip>
     </DeleteKey>
+  );
+}
+
+function IsLoadingAction() {
+  return (
+    <div className="p-4">
+      <Skeleton.Avatar active shape="square" size="small" />
+    </div>
   );
 }
 

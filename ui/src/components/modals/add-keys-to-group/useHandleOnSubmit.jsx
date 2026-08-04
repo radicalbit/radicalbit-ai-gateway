@@ -12,10 +12,11 @@ export default () => {
   const { data } = useGetGroupQuery(uuid);
   const name = data?.name;
 
-  const { isFormInvalid, isDirty, submitForm } = useFormbitContext();
+  const { form, isFormInvalid, isDirty, submitForm } = useFormbitContext();
 
   const [trigger, args] = useAddKeysToGroupMutation({ fixedCacheKey: `add-keys-to-groups-${uuid}` });
-  const isSubmitDisabled = !isDirty || isFormInvalid();
+  const hasNoSelectedKeys = !form?.keys?.length;
+  const isSubmitDisabled = !isDirty || isFormInvalid() || hasNoSelectedKeys;
 
   const handleOnSubmit = useCallback(() => {
     if (isSubmitDisabled || args.isLoading) {

@@ -159,7 +159,7 @@ export const usageApiSlice = apiService.injectEndpoints({
 
     getCostsChartStream: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: { loading: true, error: false, chart: null } }),
       async onCacheEntryAdded(
         {
           projectUuid, routes, groupBy, from, to, gte,
@@ -182,15 +182,22 @@ export const usageApiSlice = apiService.injectEndpoints({
 
           eventSource.onmessage = ({ data }) => {
             const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
+            updateCachedData(() => ({ loading: false, error: false, chart: parsed }));
           };
 
-          eventSource.onerror = (e) => { console.error(e); };
+          eventSource.onerror = (e) => {
+            console.error(e);
+
+            if (eventSource.readyState === EventSource.CLOSED) {
+              updateCachedData((draft) => { draft.loading = false; draft.error = true; });
+            }
+          };
 
           await cacheEntryRemoved;
           eventSource.close();
         } catch (error) {
           console.error(error);
+          updateCachedData((draft) => { draft.loading = false; draft.error = true; });
         }
       },
     }),

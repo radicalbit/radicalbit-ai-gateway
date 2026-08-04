@@ -184,25 +184,30 @@ const useNavigateNavBarWithKeyboard = () => {
 
       if ((isMac && e.ctrlKey && e.code === 'Digit2')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.ROUTES}`);
+        navigate(`/${PathsEnum.CONFIGURATIONS}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit3')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.USAGE}`);
+        navigate(`/${PathsEnum.ROUTES}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit4')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.TRACING}`);
+        navigate(`/${PathsEnum.USAGE}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit5')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.GROUPS}`);
+        navigate(`/${PathsEnum.TRACING}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit6')) {
+        e.preventDefault();
+        navigate(`/${PathsEnum.GROUPS}`);
+      }
+
+      if ((isMac && e.ctrlKey && e.code === 'Digit7')) {
         e.preventDefault();
         navigate(`/${PathsEnum.CREDENTIALS}`);
       }

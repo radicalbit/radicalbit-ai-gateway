@@ -12,7 +12,7 @@ function Header({ activeConfigUuid, configs, onSelectConfig }) {
             size="small"
             title={`Slot ${config.slot}`}
           />
-      )}
+        )}
       />
     ),
   }));

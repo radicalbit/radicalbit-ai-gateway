@@ -29,13 +29,13 @@ export default function Logo({ className = '', onClick, title }) {
   const svg = logos[shape][color];
 
   return (
-    <a
-      className={`${className} p-4`}
+    <div
+      className={`${className} p-4 cursor-pointer`}
       onClick={onClick}
       role="presentation"
       title={title}
     >
       {svg}
-    </a>
+    </div>
   );
 }

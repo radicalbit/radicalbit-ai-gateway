@@ -49,7 +49,7 @@ function ProjectFilter() {
       onChange={handleOnChange}
       options={options}
       placeholder="Please select"
-      style={{ width: 400 }}
+      style={{ width: 250 }}
       value={projectUuid}
     />
   );

@@ -7,7 +7,7 @@ import {
   useGetCostsByKeyStreamWithRange,
   useGetCostsByModelStreamWithRange,
 } from '@State/usage/vertical-hooks';
-import { Button, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
+import { Board, Button, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import { BarChart } from 'echarts/charts';
 import {
@@ -67,13 +67,20 @@ function CostsGraphDrillDown() {
 function IsEmpty() {
   return (
     <div className="relative">
-      <Void
-        description="No cost data available yet. Chart will appear automatically when some data arrived."
-        style={chartWidthAndHeight}
-        title="Cost Analysis Overview"
-      />
+      <Board
+        main={(
+          <>
+            <Void
+              description="No cost data available yet. Chart will appear automatically when some data arrived."
+              style={chartWidthAndHeight}
+              title="Cost Analysis Overview"
+            />
 
-      <BackButton />
+            <BackButton />
+          </>
+        )}
+        size="xsmall"
+      />
     </div>
   );
 }

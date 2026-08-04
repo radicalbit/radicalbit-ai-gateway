@@ -13,7 +13,7 @@ const useGetNameToId = () => {
   const { data } = useGetCostsChartStreamWithRange({ routes, groupBy });
 
   return useMemo(() => {
-    const d = data?.data || [];
+    const d = data?.chart?.data || [];
     const idMap = {};
 
     d.forEach(({ name, uuid }) => {
@@ -25,7 +25,7 @@ const useGetNameToId = () => {
     });
 
     return idMap;
-  }, [data?.data, groupBy]);
+  }, [data?.chart?.data, groupBy]);
 };
 
 export default useGetNameToId;

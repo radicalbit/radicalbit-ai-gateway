@@ -72,7 +72,7 @@ const projects = (hasLeftColumnCollapsed) => ({
 
 const configurations = (hasLeftColumnCollapsed) => ({
   position: 3,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle>Configurations</CollapsedTitle> : 'Configurations',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '2', shape: 'circle' }] }}>Configurations</CollapsedTitle> : 'Configurations',
   icon: <Lucide icon={Settings2} size="md" />,
   key: PathsEnum.CONFIGURATIONS,
   link: getLink(PathsEnum.CONFIGURATIONS),
@@ -80,7 +80,7 @@ const configurations = (hasLeftColumnCollapsed) => ({
 
 const routes = (hasLeftColumnCollapsed) => ({
   position: 6,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '2', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
   icon: <Lucide icon={Gauge} size="md" />,
   key: PathsEnum.ROUTES,
   link: getLink(PathsEnum.ROUTES),
@@ -88,7 +88,7 @@ const routes = (hasLeftColumnCollapsed) => ({
 
 const usage = (hasLeftColumnCollapsed) => ({
   position: 7,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
   icon: <Lucide icon={Signpost} size="md" />,
   key: PathsEnum.USAGE,
   link: getLink(PathsEnum.USAGE),
@@ -96,7 +96,7 @@ const usage = (hasLeftColumnCollapsed) => ({
 
 const tracing = (hasLeftColumnCollapsed) => ({
   position: 8,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
   icon: <Lucide icon={Route} size="md" />,
   key: PathsEnum.TRACING,
   link: getLink(PathsEnum.TRACING),
@@ -104,7 +104,7 @@ const tracing = (hasLeftColumnCollapsed) => ({
 
 const groups = (hasLeftColumnCollapsed) => ({
   position: 11,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
   icon: <Lucide icon={Users} size="md" />,
   key: PathsEnum.GROUPS,
   link: getLink(PathsEnum.GROUPS),
@@ -112,7 +112,7 @@ const groups = (hasLeftColumnCollapsed) => ({
 
 const keys = (hasLeftColumnCollapsed) => ({
   position: 12,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '7', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
   icon: <Lucide icon={Key} size="md" />,
   key: PathsEnum.CREDENTIALS,
   link: getLink(PathsEnum.CREDENTIALS),
