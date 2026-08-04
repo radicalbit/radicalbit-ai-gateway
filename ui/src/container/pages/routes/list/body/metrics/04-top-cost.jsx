@@ -13,6 +13,7 @@ import {
   echarts,
   ReactEChartsCore,
   GRANULARITY_LABEL,
+  SPARKLINE_COLOR,
   sparklineOption,
   formatIncrement,
 } from './options';
@@ -111,7 +112,7 @@ function IsSuccess({ data }) {
           echarts={echarts}
           lazyUpdate
           notMerge={false}
-          option={sparklineOption(chart, formatDollar)}
+          option={sparklineOption(chart, formatDollar, SPARKLINE_COLOR.topCost)}
           style={sparklineWidthAndHeight}
         />
       )}

@@ -46,7 +46,7 @@ function TracingList() {
 
 function NoProjectSelected() {
   return (
-    <div className="flex flex-col gap-4 p-4">
+    <div className="flex flex-col gap-4 py-4">
       <Void description="Select a project to view tracing data" />
     </div>
   );
@@ -62,7 +62,7 @@ function ProjectSelected() {
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4">
+    <div className="flex flex-col gap-4 py-4">
       <Tabs
         activeKey={activeKey}
         items={items}

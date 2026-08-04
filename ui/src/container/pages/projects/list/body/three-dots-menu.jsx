@@ -17,7 +17,7 @@ import {
   Play,
   Square,
   SquarePen,
-  Trash2,
+  Trash,
 } from 'lucide-react';
 
 export const useGetThreeDotsMenuItems = (uuid) => {
@@ -179,7 +179,7 @@ const useDeleteProjectItems = (uuid) => [
     label: (
       <DeleteProject uuid={uuid}>
         <div className="is-error flex items-center gap-2">
-          <Lucide icon={Trash2} />
+          <Lucide icon={Trash} type="error" />
 
           Delete project
         </div>

@@ -76,7 +76,8 @@ const numberFormatterFloat = (number, options = {}) => {
 
 const echartNumberFormatter = (options = defaultNumberFormatter) => new Intl.NumberFormat('en-US', options);
 
-const CHART_COLORS = ['#3E75D8', '#4C95A4', '#F1B143', '#EF9337', '#84929E', '#70A268', '#467EA8', '#1D15B1', '#9242A5'];
+// Categorical palette for echarts series — design-system "Visualization Colors"
+const CHART_COLORS = ['#00E6C7', '#B61CD4', '#00A35C', '#D16900', '#006FFA', '#F33D23', '#ED32B9', '#FF8C00'];
 
 const DATE_FORMAT = ' DD MMM YYYY, HH:mm:ss';
 
