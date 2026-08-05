@@ -134,7 +134,8 @@ function RowWithSpinner({ children, ...other }) {
 }
 
 function IsSuccess({ searchValue }) {
-  const { popup, openPopup, closePopup } = usePopup();
+  // const { popup, openPopup, closePopup } = usePopup();
+  const { popup, closePopup } = usePopup();
   const items = useGetThreeDotsMenuItems(popup?.record?.uuid);
 
   const { uuid } = useParams();
@@ -153,11 +154,12 @@ function IsSuccess({ searchValue }) {
         columns={columns}
         components={components}
         dataSource={filteredData}
-        onRow={(record) => ({
-          onContextMenu: (event) => {
-            openPopup(event, record);
-          },
-        })}
+        // FIXME: UI is broken
+        // onRow={(record) => ({
+        //   onContextMenu: (event) => {
+        //     openPopup(event, record);
+        //   },
+        // })}
         pagination={{
           hideOnSinglePage: true,
         }}

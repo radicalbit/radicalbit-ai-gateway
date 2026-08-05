@@ -3,10 +3,11 @@ import SuccessMessage from '@Components/success-message';
 import { useRemoveRouteFromGroupMutation } from '@State/groups/api';
 import { useGetProjectQuery } from '@State/projects/api';
 import {
+  Button,
   DataTableAction, Popconfirm,
   SectionTitle, Skeleton, TextWithBold, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
-import { Trash2 } from 'lucide-react';
+import { Trash } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
 const columns = [
@@ -33,7 +34,7 @@ const columns = [
     dataIndex: 'name',
     key: 'actions',
     width: '10%',
-    render: (name, record) => <DataTableAction><Actions name={name} record={record} /></DataTableAction>,
+    render: (name, record) => <DataTableAction noHide><Actions name={name} record={record} /></DataTableAction>,
   },
 ];
 
@@ -80,20 +81,22 @@ function Actions({ name, record }) {
   const handleOnCancel = (e) => { e.stopPropagation(); };
 
   return (
-    <div className="flex">
-      <Tooltip title="Remove">
-        <Popconfirm
-          cancelButtonProps={{ type: 'secondary-light' }}
-          description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove the group from the route" />}
-          label={<Lucide icon={Trash2} />}
-          okText={<div className="is-error">Remove</div>}
-          okType="error-light"
-          onCancel={handleOnCancel}
-          onConfirm={handleOnDelete}
-          title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
-        />
-      </Tooltip>
-    </div>
+    <Tooltip title="Remove">
+      <Popconfirm
+        cancelButtonProps={{ type: 'secondary-light' }}
+        description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove the group from the route" />}
+        label={(
+          <Button size="small" type="text">
+            <Lucide icon={Trash} type="error" />
+          </Button>
+          )}
+        okText={<div className="is-error">Remove</div>}
+        okType="error-light"
+        onCancel={handleOnCancel}
+        onConfirm={handleOnDelete}
+        title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
+      />
+    </Tooltip>
   );
 }
 

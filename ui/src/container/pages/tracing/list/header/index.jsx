@@ -67,7 +67,7 @@ function RouteSelector() {
       <Select
         disabled
         placeholder="Select a project first"
-        style={{ width: 400 }}
+        style={{ width: 250 }}
       />
     );
   }
@@ -80,7 +80,7 @@ function RouteSelector() {
       onChange={handleChange}
       options={routeNames.map((name) => ({ label: name, value: name }))}
       placeholder="All routes"
-      style={{ width: 400 }}
+      style={{ width: 250 }}
       value={selectedRoutes}
     />
   );

@@ -85,7 +85,8 @@ function GroupsCount({ searchValue }) {
 }
 
 function GroupsTable({ searchValue }) {
-  const { popup, openPopup, closePopup } = usePopup();
+  // const { popup, openPopup, closePopup } = usePopup();
+  const { popup, closePopup } = usePopup();
   const items = useGetThreeDotsMenuItems(popup?.record?.uuid);
 
   const navigate = useNavigate();
@@ -138,9 +139,10 @@ function GroupsTable({ searchValue }) {
           onClick: () => {
             handleOnRowClick(record);
           },
-          onContextMenu: (event) => {
-            openPopup(event, record);
-          },
+          // FIXME: UI is broken
+          // onContextMenu: (event) => {
+          //   openPopup(event, record);
+          // },
         })}
         pagination={{
           hideOnSinglePage: true,

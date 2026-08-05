@@ -52,6 +52,7 @@ function EditProjectConfigOuter() {
 
   return (
     <RbitModal
+      backgroundLevel={0}
       closable={false}
       defaultMaximize
       header={<Header />}

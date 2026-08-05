@@ -14,9 +14,10 @@ export default () => {
   const [searchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid');
 
-  const { isFormInvalid, isDirty, submitForm } = useFormbitContext();
+  const { form, isFormInvalid, isDirty, submitForm } = useFormbitContext();
   const [trigger, args] = useAddGroupsToRouteMutation({ fixedCacheKey: `add-groups-to-route-${name}` });
-  const isSubmitDisabled = !isDirty || isFormInvalid();
+  const hasNoSelectedGroups = !form?.groups?.length;
+  const isSubmitDisabled = !isDirty || isFormInvalid() || hasNoSelectedGroups;
 
   const handleOnSubmit = useCallback(() => {
     if (isSubmitDisabled || args.isLoading) {

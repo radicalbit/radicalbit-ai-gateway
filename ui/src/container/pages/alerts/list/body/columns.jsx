@@ -1,9 +1,9 @@
 import Lucide from '@Components/lucide';
 import {
-  DataTableAction, Tooltip, Truncate,
+  Button, DataTableAction, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
 import {
-  CircleCheck, CircleX, TriangleAlert, Trash2,
+  CircleCheck, CircleX, TriangleAlert, Trash,
 } from 'lucide-react';
 import DeleteAlert from '../delete-alert';
 
@@ -105,7 +105,9 @@ function Actions({ uuid, name }) {
     <DataTableAction noHide>
       <span onClick={handleOnClick} role="presentation">
         <DeleteAlert name={name} uuid={uuid}>
-          <Lucide className="px-4" icon={Trash2} />
+          <Button size="small" type="text">
+            <Lucide icon={Trash} type="error" />
+          </Button>
         </DeleteAlert>
       </span>
     </DataTableAction>

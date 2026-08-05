@@ -22,6 +22,7 @@ function ChatbotServed() {
         />
 
         <Board
+          backgroundLevel={0}
           borderType="none"
           footer={(
             <NewHeader

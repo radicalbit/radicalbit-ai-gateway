@@ -16,7 +16,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import columns from './columns';
 
 function RoutesTable({ searchValue }) {
-  const { popup, openPopup, closePopup } = usePopup();
+  // const { popup, openPopup, closePopup } = usePopup();
+  const { popup, closePopup } = usePopup();
   const items = useGetThreeDotsMenuItems(popup?.record?.routeName);
 
   const navigate = useNavigate();
@@ -64,9 +65,10 @@ function RoutesTable({ searchValue }) {
           onClick: () => {
             handleOnRowClick(record);
           },
-          onContextMenu: (event) => {
-            openPopup(event, record);
-          },
+          // FIXME: UI is broken
+          // onContextMenu: (event) => {
+          //   openPopup(event, record);
+          // },
         })}
         pagination={{
           hideOnSinglePage: true,

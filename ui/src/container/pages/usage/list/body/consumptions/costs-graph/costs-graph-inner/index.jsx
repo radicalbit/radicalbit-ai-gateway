@@ -1,7 +1,7 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetCostsChartStreamWithRange } from '@State/usage/vertical-hooks';
-import { Board, Radio, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
+import { Board, Segmented, Spinner, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import { BarChart } from 'echarts/charts';
 import {
@@ -43,17 +43,17 @@ function CostsGraphInner() {
     ? searchParams.get('routes').split(',')
     : [];
 
-  const { data, isError, isLoading, isSuccess } = useGetCostsChartStreamWithRange({ routes, groupBy });
+  const { data, isError, isSuccess } = useGetCostsChartStreamWithRange({ routes, groupBy });
 
-  if (isLoading) {
-    return <Skeleton.Input active block style={chartWidthAndHeight} />;
+  if (data?.loading) {
+    return <IsLoading />;
   }
 
-  if (isError) {
+  if (isError || data?.error) {
     return <SomethingWentWrong size="small" style={chartWidthAndHeight} />;
   }
 
-  if (!data?.data?.length) {
+  if (!data?.chart?.data?.length) {
     return <IsEmpty />;
   }
 
@@ -62,6 +62,28 @@ function CostsGraphInner() {
   }
 
   return <IsSuccess />;
+}
+
+function IsLoading() {
+  return (
+    <div className="relative">
+      <Board
+        main={(
+          <>
+            <Void
+              actions={<Spinner spinning />}
+              description="Fetching the latest cost data. The chart will appear as soon as it is ready."
+              style={chartWidthAndHeight}
+              title="Loading Cost Analysis"
+            />
+
+            <GroupByTabs />
+          </>
+        )}
+        size="xsmall"
+      />
+    </div>
+  );
 }
 
 function IsEmpty() {
@@ -80,7 +102,6 @@ function IsEmpty() {
           </>
         )}
         size="xsmall"
-        type="secondary-light"
       />
     </div>
   );
@@ -98,10 +119,11 @@ function IsSuccess() {
   const { routeBreakdownCacheRef, handleOnMouseOver } = useRouteBreakdownTooltip(chartRef);
 
   const { data } = useGetCostsChartStreamWithRange({ routes, groupBy });
-  const series = useMemo(() => (data.data || []).map(({ name, data: d }) => ({
+  const chart = data?.chart;
+  const series = useMemo(() => (chart?.data || []).map(({ name, data: d }) => ({
     name,
     data: d || [],
-  })), [data.data]);
+  })), [chart?.data]);
 
   const handleOnClick = (params) => {
     const id = nameToId[params.seriesName];
@@ -128,10 +150,10 @@ function IsSuccess() {
         onChartReady={() => updateTheme(chartRef)}
         onEvents={{ click: handleOnClick, mouseover: handleOnMouseOver }}
         option={option({
-          xAxisData: data.timestamp || [],
+          xAxisData: chart?.timestamp || [],
           series,
-          granularity: data.granularity,
-          total: data.total,
+          granularity: chart?.granularity,
+          total: chart?.total,
           routeBreakdownCache: routeBreakdownCacheRef.current,
         })}
         ref={chartRef}
@@ -151,26 +173,28 @@ function GroupByTabs() {
   const [searchParams, setSearchParams] = useSearchParams();
   const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
 
-  const handleOnChangeGroupBy = (e) => {
+  const options = [
+    { value: GROUP_BY.groups.key, label: GROUP_BY.groups.label },
+    { value: GROUP_BY.credentials.key, label: GROUP_BY.credentials.label },
+    { value: GROUP_BY.models.key, label: GROUP_BY.models.label },
+  ];
+
+  const handleOnChangeGroupBy = (value) => {
     setSearchParams((prev) => {
-      prev.set('groupBy', e.target.value);
+      prev.set('groupBy', value);
       return prev;
     });
   };
 
   return (
     <div className="absolute right-4 top-4 z-10">
-      <Radio.Group
-        className="c-echart-radio-button"
+      <Segmented
         onChange={handleOnChangeGroupBy}
+        options={options}
+        size="large"
+        type="highlighted"
         value={groupBy}
-      >
-        <Radio.Button value={GROUP_BY.groups.key}>{GROUP_BY.groups.label}</Radio.Button>
-
-        <Radio.Button value={GROUP_BY.credentials.key}>{GROUP_BY.credentials.label}</Radio.Button>
-
-        <Radio.Button value={GROUP_BY.models.key}>{GROUP_BY.models.label}</Radio.Button>
-      </Radio.Group>
+      />
     </div>
   );
 }
@@ -188,7 +212,7 @@ const useRouteBreakdownTooltip = (chartRef) => {
   const routes = searchParams.get('routes')?.split(',') ?? [];
 
   const { data } = useGetCostsChartStreamWithRange({ routes, groupBy });
-  const granularity = data?.granularity;
+  const granularity = data?.chart?.granularity;
   const routesKey = routes.join(',');
 
   useEffect(() => {

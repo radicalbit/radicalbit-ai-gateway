@@ -12,10 +12,11 @@ export default () => {
   const { data } = useGetGroupQuery(uuid);
   const name = data?.name;
 
-  const { isFormInvalid, isDirty, submitForm } = useFormbitContext();
+  const { form, isFormInvalid, isDirty, submitForm } = useFormbitContext();
 
   const [trigger, args] = useAddRoutesToGroupMutation({ fixedCacheKey: `add-routes-to-groups-${uuid}` });
-  const isSubmitDisabled = !isDirty || isFormInvalid();
+  const hasNoSelectedRoutes = !form?.routes?.length;
+  const isSubmitDisabled = !isDirty || isFormInvalid() || hasNoSelectedRoutes;
 
   const handleOnSubmit = useCallback(() => {
     if (isSubmitDisabled || args.isLoading) {

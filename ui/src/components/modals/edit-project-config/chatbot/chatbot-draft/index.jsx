@@ -15,7 +15,7 @@ function ChatbotDraft({ config, projectUuid }) {
   const [isGenerated, setIsGenerated] = useState(false);
 
   return (
-    <div className="flex flex-col min-h-0">
+    <div className="flex flex-col min-h-0 gap-4">
       <NewHeader title={(
         <SectionTitle
           subtitle="AI can make mistakes, please check the answer"
@@ -28,6 +28,7 @@ function ChatbotDraft({ config, projectUuid }) {
       <ErrorAlert error={error} />
 
       <Board
+        backgroundLevel={0}
         className="min-h-0"
         main={(
           <div className="flex flex-col h-full min-h-0">

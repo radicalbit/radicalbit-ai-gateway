@@ -33,7 +33,6 @@ function EditKeyOuter() {
         <SectionTitle
           align="center"
           title="Edit credential"
-          titleColor="primary"
         />
       )}
       onCancel={hideModal}
