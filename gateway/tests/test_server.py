@@ -1,4 +1,5 @@
 import datetime
+import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,6 +8,10 @@ from fastapi.testclient import TestClient
 from freezegun import freeze_time
 from langchain_core.messages import HumanMessage, SystemMessage
 from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription_text_delta_event import (
+    TranscriptionTextDeltaEvent,
+)
+from openai.types.audio.transcription_text_done_event import TranscriptionTextDoneEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
@@ -619,6 +624,93 @@ class TestServer(unittest.TestCase):
         )
         assert response.status_code == 200
         self.gateways_mock['rb-gateway'].invoke_transcription.assert_awaited_once()
+
+    def test_audio_transcriptions_streaming(self):
+        key_service.get_key_by_hashed_key = MagicMock(
+            return_value=db_mock.get_sample_key_with_group(
+                group_uuid=db_mock.GROUP_UUID
+            )
+        )
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+
+        async def mock_invoke_transcription_stream(*args, **kwargs):
+            yield TranscriptionTextDeltaEvent(
+                type='transcript.text.delta', delta='Ciao, '
+            )
+            yield TranscriptionTextDeltaEvent(
+                type='transcript.text.delta', delta='mondo.'
+            )
+            yield TranscriptionTextDoneEvent(
+                type='transcript.text.done',
+                text='Ciao, mondo.',
+                usage={
+                    'type': 'tokens',
+                    'input_tokens': 1,
+                    'output_tokens': 1,
+                    'total_tokens': 2,
+                },
+            )
+
+        self.gateways_mock[
+            'rb-gateway'
+        ].invoke_transcription_stream = mock_invoke_transcription_stream
+
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway', 'stream': 'true'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+            headers=self.headers,
+        )
+
+        assert response.status_code == 200
+        assert response.headers['content-type'] == 'text/event-stream; charset=utf-8'
+
+        lines = response.text.strip().split('\n\n')
+        assert len(lines) == 4
+        assert lines[0].startswith('data: ')
+        assert lines[1].startswith('data: ')
+        assert lines[2].startswith('data: ')
+        assert lines[3] == 'data: [DONE]'
+
+        chunk1 = json.loads(lines[0][6:])
+        assert chunk1['delta'] == 'Ciao, '
+        chunk3 = json.loads(lines[2][6:])
+        assert chunk3['text'] == 'Ciao, mondo.'
+
+    def test_audio_transcriptions_streaming_whisper_rejected_returns_error_status(self):
+        """When invoke_transcription_stream fails before yielding anything
+        (e.g. stream=true against a whisper-1 route), the response should be
+        a proper HTTP error, not a 200 with an error hidden in the SSE body.
+        """
+        key_service.get_key_by_hashed_key = MagicMock(
+            return_value=db_mock.get_sample_key_with_group(
+                group_uuid=db_mock.GROUP_UUID
+            )
+        )
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+
+        async def mock_invoke_transcription_stream_error(*args, **kwargs):
+            raise ModelInvokerBadRequest(
+                'stream=true is only supported for the gpt-4o-transcribe family; '
+                'whisper-1 does not support streaming.'
+            )
+            yield  # noqa: RUF027 — makes this an async generator
+
+        self.gateways_mock[
+            'rb-gateway'
+        ].invoke_transcription_stream = mock_invoke_transcription_stream_error
+
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway', 'stream': 'true'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+            headers=self.headers,
+        )
+
+        assert response.status_code == 400
+        body = response.json()
+        assert 'error' in body
+        assert 'whisper-1 does not support streaming' in body['error']['message']
 
     @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
     @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)

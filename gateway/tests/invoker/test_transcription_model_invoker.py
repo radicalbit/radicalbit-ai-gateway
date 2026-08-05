@@ -5,6 +5,10 @@ from unittest.mock import MagicMock, patch
 import httpx
 from openai import APIConnectionError, APIStatusError
 from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription_text_delta_event import (
+    TranscriptionTextDeltaEvent,
+)
+from openai.types.audio.transcription_text_done_event import TranscriptionTextDoneEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 import pytest
 
@@ -334,6 +338,99 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
                 content_type='audio/wav',
                 model_id='whisper',
             )
+
+    async def test_stream_whisper_rejects_before_any_upstream_call(self):
+        invoker = self._build_invoker(WHISPER_MODEL)
+        mock_client = MockTranscriptionClient(response=WHISPER_VERBOSE_RESPONSE)
+        invoker.model_map['whisper'] = (WHISPER_MODEL, mock_client, [])
+
+        with pytest.raises(ModelInvokerBadRequest, match='does not support streaming'):
+            async for _ in invoker.stream(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='whisper',
+            ):
+                pass
+
+        assert mock_client.captured_kwargs == {}
+
+    async def test_stream_gpt4o_relays_events_and_records_usage_once(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        invoker.cost_service.compute_cost.return_value = Decimal('0.000492')
+        delta_1 = TranscriptionTextDeltaEvent(
+            type='transcript.text.delta', delta='Ciao, '
+        )
+        delta_2 = TranscriptionTextDeltaEvent(
+            type='transcript.text.delta', delta='questo è un test.'
+        )
+        done = TranscriptionTextDoneEvent(
+            type='transcript.text.done',
+            text='Ciao, questo è un test.',
+            usage={
+                'type': 'tokens',
+                'input_tokens': 82,
+                'output_tokens': 0,
+                'total_tokens': 82,
+                'input_token_details': {'audio_tokens': 82, 'text_tokens': 0},
+            },
+        )
+        mock_client = MockTranscriptionClient(stream_events=[delta_1, delta_2, done])
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            mock_client,
+            [],
+        )
+
+        events = [
+            event
+            async for event in invoker.stream(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+            )
+        ]
+
+        assert events == [delta_1, delta_2, done]
+        assert mock_client.captured_kwargs['stream'] is True
+        assert mock_client.captured_kwargs['response_format'] == 'json'
+        # One MODEL_INVOCATION event (_record_metrics) + one cost event
+        # (only the audio-token component is non-zero) — both emitted once,
+        # after the stream ends, not per-chunk.
+        assert self.mock_emit_event.call_count == 2
+        invoker.cost_service.compute_cost.assert_called_once_with(
+            model_id='gpt4o-transcribe', token_processed=82, where='audio'
+        )
+        cost_payload = self.mock_emit_event.call_args_list[1].args[0]
+        assert cost_payload.cache_type == 'audio'
+        assert cost_payload.value == 82
+
+    async def test_stream_gpt4o_upstream_5xx_raises_internal_error(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        request = httpx.Request(
+            'POST', 'https://api.openai.com/v1/audio/transcriptions'
+        )
+        response = httpx.Response(status_code=503, request=request)
+        exception = APIStatusError('Service unavailable', response=response, body=None)
+        mock_client = MockTranscriptionClient(exception=exception)
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            mock_client,
+            [],
+        )
+
+        with pytest.raises(ModelInvokerInternalError):
+            async for _ in invoker.stream(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+            ):
+                pass
 
     def test_model_map_initialization(self):
         invoker = self._build_invoker(WHISPER_MODEL)
