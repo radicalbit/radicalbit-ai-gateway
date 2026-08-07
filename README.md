@@ -23,7 +23,8 @@ Radicalbit AI Gateway is a centralized proxy that sits between your applications
 ### Observability
 - **Prometheus metrics** — 20+ metrics (request rates, latency, token usage, cache hits, guardrail triggers, fallback activations) on a dedicated endpoint
 - **OpenTelemetry tracing** — end-to-end distributed tracing with ClickHouse storage and support for custom OTLP exporters (Jaeger, Grafana Tempo, etc.)
-- **UI dashboard** — manage routes, groups, API keys, and monitor cost and events in real time
+- **Alert Rules** — real-time email notifications triggered by guardrails, caching, and route events
+- **UI dashboard** — manage routes, groups, API keys, alert rules, and monitor cost and events in real time
 
 ### Multi-provider support
 Native: OpenAI, Anthropic, Google Gemini, Azure OpenAI, DeepSeek, Mistral

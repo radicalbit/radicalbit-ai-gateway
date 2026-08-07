@@ -62,6 +62,13 @@ COLLECTOR_BASE_URL=http://localhost:4318/v1/traces
 # Plugins
 ENABLED_PLUGINS=
 
+# SMTP Email Notifications (Alert Rules)
+SMTP_HOST=localhost
+SMTP_PORT=25
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=alerts@radicalbit.ai
+
 # CORS
 CORS_ALLOW_ORIGINS='["http://localhost:5173"]'
 CORS_ALLOW_CREDENTIALS=True

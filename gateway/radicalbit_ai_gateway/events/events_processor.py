@@ -5,9 +5,65 @@ from radicalbit_ai_gateway.events.buffer import CeleryBuffer
 from radicalbit_ai_gateway.models.event_payload import EventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
 
+import logging
+
+logger = logging.getLogger('radicalbit-ai-gateway')
+
 # Single buffer instance for metrics events
 _events_buffer = CeleryBuffer(task_name='emit_event', buffer_name='EventsBuffer')
 _events_buffer.register_atexit()
+
+_alert_rule_service: Any = None
+
+
+def set_alert_rule_service(service: Any) -> None:
+    """Set the alert rule service instance for event notification dispatch."""
+    global _alert_rule_service
+    _alert_rule_service = service
+
+
+def _dispatch_alert_if_matching(service: Any, event: EventPayload) -> None:
+    event_type = getattr(event, 'event_type', None)
+    project_uuid = getattr(event, 'project_uuid', '')
+    route_name = getattr(event, 'route_name', '')
+
+    if not project_uuid:
+        logger.error(
+            'Cannot dispatch alert rule notification: project_uuid is missing for route %s',
+            route_name,
+        )
+        return
+
+    if not route_name:
+        return
+
+    event_name = None
+    if event_type == EventType.GUARDRAIL:
+        where = str(getattr(event, 'where', '')).lower()
+        name = str(getattr(event, 'name', '')).lower()
+        event_name = f'guardrail-{where}-{name}'
+    elif event_type in (
+        EventType.CACHE_HIT,
+        EventType.CACHE_INPUT_TOKENS,
+        EventType.CACHE_OUTPUT_TOKENS,
+    ):
+        cache_type = str(getattr(event, 'cache_type', '')).lower()
+        event_name = f'cache-{cache_type}'
+    elif event_type == EventType.FALLBACK:
+        event_name = 'fallback-triggered'
+
+    if event_name:
+        details = (
+            event.model_dump(exclude_none=True)
+            if hasattr(event, 'model_dump')
+            else {}
+        )
+        service.dispatch_event_notification(
+            project_uuid=project_uuid,
+            route_name=route_name,
+            event_name=event_name,
+            event_details=details,
+        )
 
 
 def _create_event_dict(
@@ -83,6 +139,12 @@ def _create_event_dict(
 
 def emit_event(event: EventPayload) -> None:
     """Emit a metrics event. Events are buffered and sent in batches."""
+    if _alert_rule_service is not None:
+        try:
+            _dispatch_alert_if_matching(_alert_rule_service, event)
+        except Exception as e:
+            logger.exception('Error dispatching alert rule notification: %s', e)
+
     data = event.model_dump(exclude_none=True)
 
     request_uuid = data.pop('request_uuid')

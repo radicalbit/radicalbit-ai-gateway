@@ -92,6 +92,14 @@ class ConfigGeneratorConfig(BaseSettings):
     config_generator_max_retries: int = 3
 
 
+class SmtpConfig(BaseSettings):
+    smtp_host: str = 'localhost'
+    smtp_port: int = 25
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str = 'alerts@radicalbit.ai'
+
+
 class CorsConfig(BaseSettings):
     """CORS configuration settings.
 
@@ -214,6 +222,7 @@ class AppConfig(BaseSettings):
     prompt_manager_config: PromptManagerConfig = PromptManagerConfig()
     cors_config: CorsConfig = CorsConfig()
     config_generator_config: ConfigGeneratorConfig = ConfigGeneratorConfig()
+    smtp_config: SmtpConfig = SmtpConfig()
 
     def model_post_init(self, __context) -> None:
         lvl_str = (

@@ -699,6 +699,38 @@ def mcp_transport_exception_handler(request: Request, err: McpTransportError):
     return _log_and_json_response(err, 'mcp_error')
 
 
+class AlertRuleNotFoundError(AppError):
+    def __init__(self, message: str = 'Alert rule not found'):
+        super().__init__(
+            client_message=message,
+            status_code=status.HTTP_404_NOT_FOUND,
+            code='alert_rule_not_found',
+        )
+
+
+class AlertRuleInvalidEventError(AppError):
+    def __init__(self, message: str = 'Invalid event for route'):
+        super().__init__(
+            client_message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code='invalid_alert_rule_event',
+        )
+
+
+class AlertRuleInternalError(AppError):
+    def __init__(self, message: str = 'Alert rule internal error'):
+        super().__init__(
+            client_message=message,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code='alert_rule_internal_error',
+        )
+
+
+def alert_rule_exception_handler(request: Request, err: AppError):
+    set_request_error_info(request, err)
+    return _log_and_json_response(err, 'alert_rule_error')
+
+
 async def rate_limit_exceeded_handler(request: Request, exc: RequestRateLimitExceeded):
     set_request_error_info(request, exc)
     return _log_and_json_response(exc, 'rate_limit_error')
@@ -739,3 +771,4 @@ async def unhandled_exception_handler(request: Request, err: Exception):
             }
         },
     )
+
