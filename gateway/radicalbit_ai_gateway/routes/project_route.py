@@ -47,7 +47,7 @@ class ProjectRouteConfig:
 
 class ProjectRoute:
     @staticmethod
-    def get_project_router(
+    def get_project_router(  # noqa: C901
         project_service: ProjectService,
         group_service: GroupService,
         register_project_routes: Callable[[UUID, str, str], Awaitable[None]]
@@ -158,12 +158,20 @@ class ProjectRoute:
             )
             if alert_rule_service:
                 try:
-                    p_entry = getattr(alert_rule_service, '_project_configs', {}).get(project.name)
+                    p_entry = getattr(alert_rule_service, '_project_configs', {}).get(
+                        project.name
+                    )
                     if p_entry and p_entry.config:
                         for r_name in p_entry.config.routes:
-                            alert_rule_service.validate_rules_on_config_change(project.name, r_name)
+                            alert_rule_service.validate_rules_on_config_change(
+                                project.name, r_name
+                            )
                 except Exception as e:
-                    logger.warning('Failed to validate alert rules on config change for project %s: %s', project.name, e)
+                    logger.warning(
+                        'Failed to validate alert rules on config change for project %s: %s',
+                        project.name,
+                        e,
+                    )
             logger.info(
                 'Served config %s for project %s (removed %d orphaned associations)',
                 config_uuid,

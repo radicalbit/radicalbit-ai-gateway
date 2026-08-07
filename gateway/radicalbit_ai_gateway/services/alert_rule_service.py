@@ -3,6 +3,7 @@ import logging
 from uuid import UUID
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
+from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertableEventItem,
@@ -21,9 +22,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
-
-
-from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 
 
 class AlertRuleService:
