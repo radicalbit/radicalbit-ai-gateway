@@ -35,7 +35,7 @@ class EmailService:
         msg['From'] = self.from_email
         msg['To'] = ', '.join(recipients)
 
-        part = MIMEText(body, 'html' if '<html>' in body else 'plain')
+        part = MIMEText(body, 'html' if ('<' in body and '>' in body) else 'plain')
         msg.attach(part)
 
         try:
