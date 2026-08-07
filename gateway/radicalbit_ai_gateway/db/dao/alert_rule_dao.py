@@ -1,11 +1,14 @@
 from collections.abc import Sequence
 import datetime
+import logging
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
+
+logger = logging.getLogger('radicalbit-ai-gateway')
 
 
 class AlertRuleDAO:
@@ -39,8 +42,7 @@ class AlertRuleDAO:
         self, project_uuid: str, route_name: str
     ) -> Sequence[AlertRule]:
         if not project_uuid:
-            import logging
-            logging.getLogger('radicalbit-ai-gateway').error(
+            logger.error(
                 'Missing project_uuid when querying active alert rules for route %s',
                 route_name,
             )
@@ -103,9 +105,7 @@ class AlertRuleDAO:
             session.flush()
             return rule
 
-    def auto_disable_rule(
-        self, alert_rule_uuid: UUID, reason: str
-    ) -> AlertRule | None:
+    def auto_disable_rule(self, alert_rule_uuid: UUID, reason: str) -> AlertRule | None:
         UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
         now = datetime.datetime.now(tz=UTC)
         with self.db.begin_session() as session:

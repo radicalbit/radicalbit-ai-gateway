@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
@@ -15,7 +16,6 @@ def mock_alert_rule_service():
 
 @pytest.fixture
 def client(mock_alert_rule_service):
-    from fastapi import FastAPI
     app = FastAPI()
     router = AlertRuleRoute.get_alert_rule_router(mock_alert_rule_service)
     app.include_router(router)
@@ -131,7 +131,9 @@ def test_delete_rule(client, mock_alert_rule_service):
 
 def test_get_alertable_events(client, mock_alert_rule_service):
     mock_alert_rule_service.get_alertable_events_for_route.return_value = {
-        'guardrail': [{'event': 'guardrail-input-pii', 'label': 'Guardrail: PII (input)'}],
+        'guardrail': [
+            {'event': 'guardrail-input-pii', 'label': 'Guardrail: PII (input)'}
+        ],
         'caching': [{'event': 'cache-exact', 'label': 'Caching: exact match'}],
         'fallback': [{'event': 'fallback-triggered', 'label': 'Fallback: triggered'}],
     }

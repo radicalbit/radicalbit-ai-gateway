@@ -1,11 +1,10 @@
 from datetime import datetime, timezone
+import logging
 from typing import Any
 
 from radicalbit_ai_gateway.events.buffer import CeleryBuffer
 from radicalbit_ai_gateway.models.event_payload import EventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
-
-import logging
 
 logger = logging.getLogger('radicalbit-ai-gateway')
 
@@ -18,7 +17,7 @@ _alert_rule_service: Any = None
 
 def set_alert_rule_service(service: Any) -> None:
     """Set the alert rule service instance for event notification dispatch."""
-    global _alert_rule_service
+    global _alert_rule_service  # noqa: PLW0603
     _alert_rule_service = service
 
 
@@ -54,9 +53,7 @@ def _dispatch_alert_if_matching(service: Any, event: EventPayload) -> None:
 
     if event_name:
         details = (
-            event.model_dump(exclude_none=True)
-            if hasattr(event, 'model_dump')
-            else {}
+            event.model_dump(exclude_none=True) if hasattr(event, 'model_dump') else {}
         )
         service.dispatch_event_notification(
             project_uuid=project_uuid,
@@ -142,8 +139,8 @@ def emit_event(event: EventPayload) -> None:
     if _alert_rule_service is not None:
         try:
             _dispatch_alert_if_matching(_alert_rule_service, event)
-        except Exception as e:
-            logger.exception('Error dispatching alert rule notification: %s', e)
+        except Exception:
+            logger.exception('Error dispatching alert rule notification')
 
     data = event.model_dump(exclude_none=True)
 

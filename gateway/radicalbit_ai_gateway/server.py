@@ -38,6 +38,7 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
+from radicalbit_ai_gateway.events.events_processor import set_alert_rule_service
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.metrics.define_metrics import (
     request_latency_histogram,
@@ -213,7 +214,6 @@ mcp_service = McpService(
     upstream_client=McpUpstreamClient(),
     group_service=group_service,
 )
-from radicalbit_ai_gateway.events.events_processor import set_alert_rule_service
 
 alert_rule_dao = AlertRuleDAO(database)
 alert_rule_service = AlertRuleService(

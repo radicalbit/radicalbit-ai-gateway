@@ -82,9 +82,7 @@ class AlertRuleRoute:
         def toggle_rule_enabled(
             rule_uuid: UUID = Path(...), toggle_in: AlertRuleToggleIn = ...
         ):
-            return alert_rule_service.toggle_rule_enabled(
-                rule_uuid, toggle_in.enabled
-            )
+            return alert_rule_service.toggle_rule_enabled(rule_uuid, toggle_in.enabled)
 
         @router.delete(
             '/rule/{rule_uuid}',

@@ -1,7 +1,7 @@
-import logging
-import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import logging
+import smtplib
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
@@ -39,13 +39,13 @@ class EmailService:
         msg.attach(part)
 
         try:
-            with smtplib.SMTP(self.smtp_host, int(self.smtp_port), timeout=10) as server:
+            with smtplib.SMTP(
+                self.smtp_host, int(self.smtp_port), timeout=10
+            ) as server:
                 if self.smtp_user and self.smtp_password:
                     server.starttls()
                     server.login(self.smtp_user, self.smtp_password)
                 server.sendmail(self.from_email, recipients, msg.as_string())
-            logger.info('Successfully dispatched alert email notification to %s', recipients)
-            return True
         except Exception as e:
             logger.warning(
                 'Failed to send alert email notification to %s via SMTP (%s:%s): %s',
@@ -55,3 +55,8 @@ class EmailService:
                 e,
             )
             return False
+        else:
+            logger.info(
+                'Successfully dispatched alert email notification to %s', recipients
+            )
+            return True

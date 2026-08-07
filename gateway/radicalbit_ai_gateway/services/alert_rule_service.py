@@ -1,3 +1,4 @@
+import json
 import logging
 from uuid import UUID
 
@@ -15,7 +16,6 @@ from radicalbit_ai_gateway.services.email_service import EmailService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
-    AlertRuleInvalidEventError,
     AlertRuleNotFoundError,
 )
 
@@ -55,13 +55,15 @@ class AlertRuleService:
             rules = self.alert_rule_dao.get_all()
             return [self._to_out(rule) for rule in rules]
         except Exception as e:
-            logger.exception('Failed to fetch alert rules: %s', e)
+            logger.exception('Failed to fetch alert rules')
             raise AlertRuleInternalError(f'Failed to fetch alert rules: {e}') from e
 
     def get_rule_by_uuid(self, alert_rule_uuid: UUID) -> AlertRuleOut:
         rule = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
         if not rule:
-            raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
+            raise AlertRuleNotFoundError(
+                f'Alert rule with UUID {alert_rule_uuid} not found'
+            )
         return self._to_out(rule)
 
     def get_alertable_events_for_route(
@@ -79,7 +81,9 @@ class AlertRuleService:
         # Inspect route config if available
         if project_name and route_name and project_name in self._project_configs:
             entry = self._project_configs[project_name]
-            route_cfg = entry.config.routes.get(route_name) if entry and entry.config else None
+            route_cfg = (
+                entry.config.routes.get(route_name) if entry and entry.config else None
+            )
             if route_cfg:
                 # Add input guardrails if any
                 if getattr(route_cfg, 'guardrails', None):
@@ -101,10 +105,20 @@ class AlertRuleService:
         # Default fallback items if no specific guardrails were derived
         if not guardrails_items:
             guardrails_items = [
-                AlertableEventItem(event='guardrail-input-pii', label='Guardrail: PII (input)'),
-                AlertableEventItem(event='guardrail-input-toxicity', label='Guardrail: Toxicity (input)'),
-                AlertableEventItem(event='guardrail-output-pii', label='Guardrail: PII (output)'),
-                AlertableEventItem(event='guardrail-output-toxicity', label='Guardrail: Toxicity (output)'),
+                AlertableEventItem(
+                    event='guardrail-input-pii', label='Guardrail: PII (input)'
+                ),
+                AlertableEventItem(
+                    event='guardrail-input-toxicity',
+                    label='Guardrail: Toxicity (input)',
+                ),
+                AlertableEventItem(
+                    event='guardrail-output-pii', label='Guardrail: PII (output)'
+                ),
+                AlertableEventItem(
+                    event='guardrail-output-toxicity',
+                    label='Guardrail: Toxicity (output)',
+                ),
             ]
 
         return AlertableEventsOut(
@@ -113,7 +127,9 @@ class AlertRuleService:
             fallback=fallback_items,
         )
 
-    def _get_valid_events_list(self, project_name: str | None, route_name: str | None) -> set[str]:
+    def _get_valid_events_list(
+        self, project_name: str | None, route_name: str | None
+    ) -> set[str]:
         events_out = self.get_alertable_events_for_route(project_name, route_name)
         valid_set = set()
         for item in events_out.guardrail + events_out.caching + events_out.fallback:
@@ -139,7 +155,7 @@ class AlertRuleService:
             logger.info('Created alert rule %s (%s)', inserted.name, inserted.uuid)
             return self._to_out(inserted)
         except Exception as e:
-            logger.exception('Failed to create alert rule: %s', e)
+            logger.exception('Failed to create alert rule')
             raise AlertRuleInternalError(f'Failed to create alert rule: {e}') from e
 
     def update_rule(
@@ -147,7 +163,9 @@ class AlertRuleService:
     ) -> AlertRuleOut:
         existing = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
         if not existing:
-            raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
+            raise AlertRuleNotFoundError(
+                f'Alert rule with UUID {alert_rule_uuid} not found'
+            )
 
         update_dict = alert_rule_in.model_dump(exclude_unset=True)
         if not update_dict:
@@ -155,7 +173,6 @@ class AlertRuleService:
 
         # Handle recipients serialization if provided
         if 'recipients' in update_dict and isinstance(update_dict['recipients'], list):
-            import json
             update_dict['recipients'] = json.dumps(update_dict['recipients'])
 
         # Validate event if route or event changes
@@ -174,23 +191,27 @@ class AlertRuleService:
 
         updated = self.alert_rule_dao.update_rule(alert_rule_uuid, update_dict)
         if not updated:
-            raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
+            raise AlertRuleNotFoundError(
+                f'Alert rule with UUID {alert_rule_uuid} not found'
+            )
 
         logger.info('Updated alert rule %s (%s)', updated.name, updated.uuid)
         return self._to_out(updated)
 
-    def toggle_rule_enabled(
-        self, alert_rule_uuid: UUID, enabled: bool
-    ) -> AlertRuleOut:
+    def toggle_rule_enabled(self, alert_rule_uuid: UUID, enabled: bool) -> AlertRuleOut:
         existing = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
         if not existing:
-            raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
+            raise AlertRuleNotFoundError(
+                f'Alert rule with UUID {alert_rule_uuid} not found'
+            )
 
         updated = self.alert_rule_dao.toggle_enabled(
             alert_rule_uuid, enabled, clear_disabled_reason=True
         )
         if not updated:
-            raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
+            raise AlertRuleNotFoundError(
+                f'Alert rule with UUID {alert_rule_uuid} not found'
+            )
 
         logger.info('Toggled alert rule %s enabled to %s', alert_rule_uuid, enabled)
         return self._to_out(updated)
@@ -198,7 +219,9 @@ class AlertRuleService:
     def delete_rule(self, alert_rule_uuid: UUID) -> AlertRuleOut:
         deleted = self.alert_rule_dao.soft_delete_by_uuid(alert_rule_uuid)
         if not deleted:
-            raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
+            raise AlertRuleNotFoundError(
+                f'Alert rule with UUID {alert_rule_uuid} not found'
+            )
 
         logger.info('Soft deleted alert rule %s', alert_rule_uuid)
         return self._to_out(deleted)
@@ -285,7 +308,7 @@ class AlertRuleService:
         <div style="font-family: Arial, sans-serif; max-width: 650px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; color: #333; background-color: #ffffff;">
             <h2 style="color: #e53e3e; margin-top: 0;">🚨 Alert Notification</h2>
             <p style="font-size: 14px; color: #555;">An alert rule has been triggered on your Radicalbit AI Gateway.</p>
-            
+
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
                 <tr style="background-color: #f7fafc;"><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0; width: 35%;">Rule Name:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{rule_name}</td></tr>
                 <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0;">Description:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{description or 'N/A'}</td></tr>
@@ -340,7 +363,9 @@ class AlertRuleService:
             elif 'output' in event_name.lower():
                 candidate_events.add('guardrail-output-toxicity')
 
-        matching_rules = [r for r in active_rules if r.event.lower() in candidate_events]
+        matching_rules = [
+            r for r in active_rules if r.event.lower() in candidate_events
+        ]
 
         if not matching_rules:
             return 0

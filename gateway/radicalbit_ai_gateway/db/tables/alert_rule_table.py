@@ -22,9 +22,13 @@ class AlertRule(Reflected, BaseTable, BaseDAO):
     route = Column('ROUTE', VARCHAR(), nullable=False)
     scope = Column('SCOPE', VARCHAR(), nullable=False, default='route')
     event = Column('EVENT', VARCHAR(), nullable=False)
-    time_aggregation = Column('TIME_AGGREGATION', VARCHAR(), nullable=False, default='instant')
+    time_aggregation = Column(
+        'TIME_AGGREGATION', VARCHAR(), nullable=False, default='instant'
+    )
     channel = Column('CHANNEL', VARCHAR(), nullable=False, default='email')
-    recipients = Column('RECIPIENTS', TEXT(), nullable=False)  # Stored as JSON string list of emails
+    recipients = Column(
+        'RECIPIENTS', TEXT(), nullable=False
+    )  # Stored as JSON string list of emails
     enabled = Column('ENABLED', BOOLEAN(), nullable=False, default=False)
     disabled_reason = Column('DISABLED_REASON', TEXT(), nullable=True)
     deleted = Column('DELETED', BOOLEAN(), nullable=False, default=False)
