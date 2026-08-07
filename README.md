@@ -30,9 +30,9 @@ Everything is managed through a UI — and an AI assistant that generates the co
 <div align="center">
 
 <!-- TODO: Replace with hero GIF — show: AI-generated config in the UI → Serve button → curl call in terminal -->
-![Radicalbit AI Gateway demo](docs/assets/hero-demo.gif)
+![Radicalbit AI Gateway demo](docs/assets/ai_configuration.gif)
 
-*From your needs to a live API call — under 60 seconds.*
+*From your needs to a live API call, under 60 seconds.*
 
 </div>
 
@@ -49,14 +49,14 @@ Everything is managed through a UI — and an AI assistant that generates the co
 
 ## Quickstart
 
-You need Docker, Docker Compose, and an OpenAI API key.
+For this example, you need Docker, Docker Compose, and an OpenAI API key.
 
 The gateway is provider-agnostic. The examples below use one provider for illustration — swap in any supported provider without changing anything else.
 
 **Step 1 — Clone and add your credentials**
 
 ```bash
-git clone https://github.com/radicalbit/radicalbit-ai-gateway
+git clone https://github.com/radicalbit/radicalbit-ai-gateway-oss
 cd radicalbit-ai-gateway
 ```
 
