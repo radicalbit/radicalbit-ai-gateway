@@ -90,7 +90,9 @@ class AlertRuleOut(BaseModel):
     )
 
     @staticmethod
-    def from_alert_rule(alert_rule: AlertRule) -> 'AlertRuleOut':
+    def from_alert_rule(
+        alert_rule: AlertRule, project_name: str | None = None
+    ) -> 'AlertRuleOut':
         try:
             parsed_recipients = (
                 json.loads(alert_rule.recipients) if alert_rule.recipients else []
@@ -106,7 +108,7 @@ class AlertRuleOut(BaseModel):
             uuid=alert_rule.uuid,
             name=alert_rule.name,
             description=alert_rule.description,
-            project=alert_rule.project,
+            project=project_name if project_name is not None else alert_rule.project,
             route=alert_rule.route,
             scope=alert_rule.scope,
             event=alert_rule.event,

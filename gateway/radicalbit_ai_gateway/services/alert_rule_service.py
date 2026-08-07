@@ -2,6 +2,7 @@ import logging
 from uuid import UUID
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
+from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertableEventItem,
     AlertableEventsOut,
@@ -33,10 +34,26 @@ class AlertRuleService:
         self._project_configs = project_configs if project_configs is not None else {}
         self.email_service = email_service or EmailService()
 
+    def _resolve_project_name(self, project_identifier: str) -> str:
+        if not project_identifier:
+            return project_identifier
+        for key, entry in self._project_configs.items():
+            if (
+                str(key) == project_identifier
+                or getattr(entry, 'project_uuid', None) == project_identifier
+            ):
+                if entry.config and getattr(entry.config, 'project_name', None):
+                    return entry.config.project_name
+        return project_identifier
+
+    def _to_out(self, rule: AlertRule) -> AlertRuleOut:
+        project_name = self._resolve_project_name(rule.project)
+        return AlertRuleOut.from_alert_rule(rule, project_name=project_name)
+
     def get_all_rules(self) -> list[AlertRuleOut]:
         try:
             rules = self.alert_rule_dao.get_all()
-            return [AlertRuleOut.from_alert_rule(rule) for rule in rules]
+            return [self._to_out(rule) for rule in rules]
         except Exception as e:
             logger.exception('Failed to fetch alert rules: %s', e)
             raise AlertRuleInternalError(f'Failed to fetch alert rules: {e}') from e
@@ -45,7 +62,7 @@ class AlertRuleService:
         rule = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
         if not rule:
             raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
-        return AlertRuleOut.from_alert_rule(rule)
+        return self._to_out(rule)
 
     def get_alertable_events_for_route(
         self, project_name: str | None = None, route_name: str | None = None
@@ -120,7 +137,7 @@ class AlertRuleService:
             entity = alert_rule_in.to_alert_rule()
             inserted = self.alert_rule_dao.insert(entity)
             logger.info('Created alert rule %s (%s)', inserted.name, inserted.uuid)
-            return AlertRuleOut.from_alert_rule(inserted)
+            return self._to_out(inserted)
         except Exception as e:
             logger.exception('Failed to create alert rule: %s', e)
             raise AlertRuleInternalError(f'Failed to create alert rule: {e}') from e
@@ -134,7 +151,7 @@ class AlertRuleService:
 
         update_dict = alert_rule_in.model_dump(exclude_unset=True)
         if not update_dict:
-            return AlertRuleOut.from_alert_rule(existing)
+            return self._to_out(existing)
 
         # Handle recipients serialization if provided
         if 'recipients' in update_dict and isinstance(update_dict['recipients'], list):
@@ -160,7 +177,7 @@ class AlertRuleService:
             raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
 
         logger.info('Updated alert rule %s (%s)', updated.name, updated.uuid)
-        return AlertRuleOut.from_alert_rule(updated)
+        return self._to_out(updated)
 
     def toggle_rule_enabled(
         self, alert_rule_uuid: UUID, enabled: bool
@@ -176,7 +193,7 @@ class AlertRuleService:
             raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
 
         logger.info('Toggled alert rule %s enabled to %s', alert_rule_uuid, enabled)
-        return AlertRuleOut.from_alert_rule(updated)
+        return self._to_out(updated)
 
     def delete_rule(self, alert_rule_uuid: UUID) -> AlertRuleOut:
         deleted = self.alert_rule_dao.soft_delete_by_uuid(alert_rule_uuid)
@@ -184,7 +201,7 @@ class AlertRuleService:
             raise AlertRuleNotFoundError(f'Alert rule with UUID {alert_rule_uuid} not found')
 
         logger.info('Soft deleted alert rule %s', alert_rule_uuid)
-        return AlertRuleOut.from_alert_rule(deleted)
+        return self._to_out(deleted)
 
     def validate_rules_on_config_change(
         self, project_name: str, route_name: str
