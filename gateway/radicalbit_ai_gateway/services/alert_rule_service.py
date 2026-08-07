@@ -23,28 +23,38 @@ app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 
+from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
+
+
 class AlertRuleService:
     def __init__(
         self,
         alert_rule_dao: AlertRuleDAO,
         project_configs: dict[str, ProjectEntry] | None = None,
+        project_dao: ProjectDAO | None = None,
         email_service: EmailService | None = None,
     ):
         self.alert_rule_dao = alert_rule_dao
         self._project_configs = project_configs if project_configs is not None else {}
+        self.project_dao = project_dao
         self.email_service = email_service or EmailService()
 
-    def _resolve_project_name(self, project_identifier: str) -> str:
+    def _resolve_project_name(self, project_identifier: str) -> str | None:
         if not project_identifier:
-            return project_identifier
-        for key, entry in self._project_configs.items():
-            if (
-                str(key) == project_identifier
-                or getattr(entry, 'project_uuid', None) == project_identifier
-            ):
-                if entry.config and getattr(entry.config, 'project_name', None):
-                    return entry.config.project_name
-        return project_identifier
+            return None
+        for p_name, entry in self._project_configs.items():
+            p_uuid_str = str(getattr(entry, 'uuid', ''))
+            if project_identifier in (p_name, p_uuid_str):
+                return p_name
+        if self.project_dao is not None:
+            try:
+                p_uuid = UUID(project_identifier)
+                proj = self.project_dao.get_by_uuid(p_uuid)
+                if proj and proj.name:
+                    return proj.name
+            except Exception:
+                pass
+        return None
 
     def _to_out(self, rule: AlertRule) -> AlertRuleOut:
         project_name = self._resolve_project_name(rule.project)
@@ -337,11 +347,12 @@ class AlertRuleService:
         route_name: str,
         event_name: str,
         event_details: dict | None = None,
+        project_name: str = '',
     ) -> int:
         """AG-844: Send email notifications for triggered events on a route."""
-        if not project_uuid:
+        if not project_uuid and not project_name:
             logger.error(
-                'Cannot dispatch alert notification: project_uuid is missing for route %s',
+                'Cannot dispatch alert notification: project identification is missing for route %s',
                 route_name,
             )
             return 0
@@ -349,6 +360,7 @@ class AlertRuleService:
         active_rules = self.alert_rule_dao.get_active_by_route(
             project_uuid=project_uuid,
             route_name=route_name,
+            project_name=project_name,
         )
 
         candidate_events = {event_name.lower()}

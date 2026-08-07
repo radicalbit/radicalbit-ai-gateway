@@ -219,6 +219,7 @@ alert_rule_dao = AlertRuleDAO(database)
 alert_rule_service = AlertRuleService(
     alert_rule_dao=alert_rule_dao,
     project_configs=project_configs,
+    project_dao=project_dao,
 )
 set_alert_rule_service(alert_rule_service)
 

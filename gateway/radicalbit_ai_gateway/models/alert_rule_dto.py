@@ -74,6 +74,7 @@ class AlertRuleOut(BaseModel):
     name: str
     description: str | None = None
     project: str
+    project_name: str | None = Field(None, alias='projectName')
     route: str
     scope: str
     event: str
@@ -108,7 +109,8 @@ class AlertRuleOut(BaseModel):
             uuid=alert_rule.uuid,
             name=alert_rule.name,
             description=alert_rule.description,
-            project=project_name if project_name is not None else alert_rule.project,
+            project=alert_rule.project,
+            project_name=project_name,
             route=alert_rule.route,
             scope=alert_rule.scope,
             event=alert_rule.event,

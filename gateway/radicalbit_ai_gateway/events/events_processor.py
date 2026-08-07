@@ -24,11 +24,12 @@ def set_alert_rule_service(service: Any) -> None:
 def _dispatch_alert_if_matching(service: Any, event: EventPayload) -> None:
     event_type = getattr(event, 'event_type', None)
     project_uuid = getattr(event, 'project_uuid', '')
+    project_name = getattr(event, 'project_name', '')
     route_name = getattr(event, 'route_name', '')
 
-    if not project_uuid:
+    if not project_uuid and not project_name:
         logger.error(
-            'Cannot dispatch alert rule notification: project_uuid is missing for route %s',
+            'Cannot dispatch alert rule notification: project identification is missing for route %s',
             route_name,
         )
         return
@@ -57,6 +58,7 @@ def _dispatch_alert_if_matching(service: Any, event: EventPayload) -> None:
         )
         service.dispatch_event_notification(
             project_uuid=project_uuid,
+            project_name=project_name,
             route_name=route_name,
             event_name=event_name,
             event_details=details,

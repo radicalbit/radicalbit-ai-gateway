@@ -3,7 +3,7 @@ import datetime
 import logging
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
@@ -39,21 +39,32 @@ class AlertRuleDAO:
             return session.scalars(stmt).all()
 
     def get_active_by_route(
-        self, project_uuid: str, route_name: str
+        self, project_uuid: str = '', route_name: str = '', project_name: str = ''
     ) -> Sequence[AlertRule]:
-        if not project_uuid:
+        if not project_uuid and not project_name:
             logger.error(
-                'Missing project_uuid when querying active alert rules for route %s',
+                'Missing project identification when querying active alert rules for route %s',
                 route_name,
             )
             return []
+
         with self.db.begin_session() as session:
-            stmt = select(AlertRule).where(
-                AlertRule.project == project_uuid,
+            conditions = [
                 AlertRule.route == route_name,
                 AlertRule.enabled == True,  # noqa: E712
                 AlertRule.deleted == False,  # noqa: E712
-            )
+            ]
+
+            p_filters = []
+            if project_uuid:
+                p_filters.append(AlertRule.project == project_uuid)
+            if project_name:
+                p_filters.append(AlertRule.project == project_name)
+
+            if p_filters:
+                conditions.append(or_(*p_filters))
+
+            stmt = select(AlertRule).where(*conditions)
             return session.scalars(stmt).all()
 
     def get_all_by_route(
