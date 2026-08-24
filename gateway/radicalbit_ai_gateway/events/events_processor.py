@@ -113,8 +113,6 @@ def emit_event(event: EventPayload) -> None:
         project_uuid,
         project_name,
         data,
-        # Tags travel out of band via the request context; the rationale
-        # lives in utils/request_context.py.
         list(get_current_request_tags()),
     )
     _events_buffer.add(event_dict)

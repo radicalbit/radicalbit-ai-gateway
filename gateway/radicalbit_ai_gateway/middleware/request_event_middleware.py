@@ -97,18 +97,14 @@ class RequestEventMiddleware:
                     self._emit_event(request, status_code, start_time)
             await send(message)
 
-        # Validate X-RB-Tags here so every proxied endpoint shares one
-        # implementation. This middleware sits outside Starlette's
-        # ExceptionMiddleware, so a raised AppError would become a 500 --
-        # call the registered handler and send its response instead. The
-        # rejected request is still recorded, like any other handled error.
-        # Reset before parsing: the reject path below returns early and skips
-        # the ``finally`` cleanup, so a leaked value from an earlier request
-        # in the same task must not tag this one.
+        # Validate X-RB-Tags for every proxied endpoint. This middleware sits
+        # outside ExceptionMiddleware, so call the registered handler and send
+        # its response instead of raising. Reset first: the reject path returns
+        # early and skips the ``finally`` cleanup below.
         set_current_request_tags(())
         try:
-            # getlist + join: a client may repeat X-RB-Tags; headers.get()
-            # would silently drop every line but the first.
+            # getlist: a client may repeat X-RB-Tags; headers.get() would
+            # silently drop every line but the first.
             tags = parse_tags_header(','.join(request.headers.getlist(TAGS_HEADER)))
         except TagsHeaderError as err:
             response = gateway_exception_handler(request, err)

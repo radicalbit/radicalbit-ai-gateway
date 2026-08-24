@@ -260,7 +260,7 @@ def test_a_malformed_header_is_rejected_uniformly(path):
     assert response.status_code == 400
     error = response.json()['error']
     assert error['type'] == 'gateway_error'
-    assert error['code'] == 'tags_header_malformed'
+    assert error['code'] == 'tags_header_invalid'
     assert 'broken' in error['message']
 
 
@@ -284,7 +284,7 @@ def test_a_rejected_request_still_emits_a_request_event():
     payload = emit.call_args.args[0]
     assert payload.http_status_code == 400
     assert payload.status is RequestStatus.HANDLED_ERROR
-    assert payload.error_code == 'tags_header_malformed'
+    assert payload.error_code == 'tags_header_invalid'
 
 
 def test_a_rejected_request_never_reaches_the_endpoint():

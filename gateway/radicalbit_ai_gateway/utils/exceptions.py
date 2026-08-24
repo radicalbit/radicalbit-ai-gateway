@@ -119,12 +119,7 @@ class GatewayNotFoundError(GatewayError):
 
 
 class TagsHeaderError(GatewayError):
-    """Invalid ``X-RB-Tags`` header.
-
-    One subclass per failure mode so each carries its own machine-readable
-    ``code``, and every one reports the offending input and its position so
-    callers can act on the response without reading gateway logs.
-    """
+    """Invalid ``X-RB-Tags`` header."""
 
     def __init__(self, message: str, code: str, *, log_message: str | None = None):
         super().__init__(
@@ -133,59 +128,6 @@ class TagsHeaderError(GatewayError):
             log_message=log_message,
             code=code,
         )
-
-
-class TagsHeaderTooLarge(TagsHeaderError):
-    def __init__(self, size: int, limit: int):
-        super().__init__(
-            f'X-RB-Tags header is {size} bytes, which exceeds the {limit} byte limit',
-            'tags_header_too_large',
-            log_message=(
-                f'Rejected X-RB-Tags header: {size} bytes exceeds the '
-                f'{limit} byte limit'
-            ),
-        )
-
-
-class TagsHeaderMalformed(TagsHeaderError):
-    def __init__(self, segment: str, position: int, reason: str):
-        super().__init__(
-            f'X-RB-Tags tag {position} ({segment!r}) is malformed: {reason}. '
-            'Expected comma-separated key=value pairs',
-            'tags_header_malformed',
-            log_message=(
-                f'Rejected X-RB-Tags header: tag {position} {segment!r} '
-                f'is malformed ({reason})'
-            ),
-        )
-
-
-class _TagsSegmentInvalid(TagsHeaderError):
-    """One key or value is at fault; message and log share a single shape."""
-
-    _part: str
-    _code: str
-
-    def __init__(self, token: str, position: int, reason: str):
-        super().__init__(
-            f'X-RB-Tags tag {position} has an invalid {self._part} '
-            f'({token!r}): {reason}',
-            self._code,
-            log_message=(
-                f'Rejected X-RB-Tags header: tag {position} {self._part} '
-                f'{token!r} is invalid ({reason})'
-            ),
-        )
-
-
-class TagsKeyInvalid(_TagsSegmentInvalid):
-    _part = 'key'
-    _code = 'tags_key_invalid'
-
-
-class TagsValueInvalid(_TagsSegmentInvalid):
-    _part = 'value'
-    _code = 'tags_value_invalid'
 
 
 class ApiKeyError(AppError):

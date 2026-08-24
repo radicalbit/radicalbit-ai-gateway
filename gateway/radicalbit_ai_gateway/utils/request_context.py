@@ -5,9 +5,8 @@ handler publishes the resolved route config here right after route resolution so
 per-route consumers (e.g. plugins) can read it; ``reset_route_context`` clears it
 when the request finishes. The core never interprets the config.
 
-The client-supplied tags live here for the same reason: ``emit_event`` is called
-from deep inside the invokers, guardrails and limiters, none of which hold the
-request.
+The client-supplied tags live here too: ``emit_event`` is called from deep
+inside invokers, guardrails and limiters, none of which hold the request.
 """
 
 from contextvars import ContextVar
@@ -38,8 +37,7 @@ def reset_route_context(func):
     return wrapper
 
 
-# Canonical ``key=value`` tags parsed from the current request's ``X-RB-Tags``
-# header, or an empty tuple when the request carried none.
+# ``key=value`` tags of the current request, or an empty tuple.
 current_request_tags_ctx: ContextVar[tuple[str, ...]] = ContextVar(
     'current_request_tags', default=()
 )

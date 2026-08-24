@@ -17,7 +17,6 @@ FORBIDDEN_FORWARD_HEADERS = frozenset(
         'upgrade',
         'mcp-session-id',
         'mcp-protocol-version',
-        # Gateway-owned: consumed by RequestEventMiddleware, never proxied.
         'x-rb-tags',
     }
 )

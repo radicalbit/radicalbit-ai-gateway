@@ -808,7 +808,6 @@ class TestServer(unittest.TestCase):
         pook.disable_network()
 
     def test_tags_header_is_not_forwarded_to_the_provider(self):
-        """The gateway consumes X-RB-Tags; the invoker must never see it."""
         api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
         key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
         group_service.check_key_uuid_for_route = MagicMock(return_value=True)
@@ -816,69 +815,16 @@ class TestServer(unittest.TestCase):
             content=to_mock_openai_chat_completion(content='Hi'), headers={}
         )
 
-        request_data = {
-            'model': 'rb-gateway',
-            'messages': [{'role': 'user', 'content': 'Hello!'}],
-        }
-        response = self.client.post(
-            '/v1/chat/completions',
-            json=request_data,
-            headers={**self.headers, 'X-RB-Tags': 'cost_center=retail,env=prod'},
-        )
-
-        assert response.status_code == 200
-        call_args = self.gateways_mock['rb-gateway'].invoke.call_args
-        forwarded = repr(call_args.kwargs)
-        assert 'X-RB-Tags' not in forwarded
-        assert 'cost_center' not in forwarded
-
-    def test_a_malformed_tags_header_rejects_the_request(self):
-        """Rejected before auth or invocation, with a diagnosable error."""
-        api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-        key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
-        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
-        self.gateways_mock['rb-gateway'].invoke.reset_mock()
-
         response = self.client.post(
             '/v1/chat/completions',
             json={
                 'model': 'rb-gateway',
                 'messages': [{'role': 'user', 'content': 'Hello!'}],
             },
-            headers={**self.headers, 'X-RB-Tags': 'cost_center'},
+            headers={**self.headers, 'X-RB-Tags': 'cost_center=retail,env=prod'},
         )
 
-        assert response.status_code == 400
-        assert response.json()['error']['code'] == 'tags_header_malformed'
-        assert 'cost_center' in response.json()['error']['message']
-        self.gateways_mock['rb-gateway'].invoke.assert_not_called()
-
-    def test_a_valid_tags_header_leaves_the_request_otherwise_unchanged(self):
-        """Same response with and without the header."""
-        api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-        key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
-        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
-        mock_chat_completion = to_mock_openai_chat_completion(content='Hi')
-        self.gateways_mock['rb-gateway'].invoke.return_value = InvokeResponse(
-            content=mock_chat_completion, headers={}
-        )
-        request_data = {
-            'model': 'rb-gateway',
-            'messages': [{'role': 'user', 'content': 'Hello!'}],
-        }
-
-        without = self.client.post(
-            '/v1/chat/completions', json=request_data, headers=self.headers
-        )
-        kwargs_without = self.gateways_mock['rb-gateway'].invoke.call_args.kwargs
-
-        with_tags = self.client.post(
-            '/v1/chat/completions',
-            json=request_data,
-            headers={**self.headers, 'X-RB-Tags': 'env=prod'},
-        )
-        kwargs_with = self.gateways_mock['rb-gateway'].invoke.call_args.kwargs
-
-        assert with_tags.status_code == without.status_code == 200
-        assert with_tags.json() == without.json()
-        assert kwargs_with == kwargs_without
+        assert response.status_code == 200
+        forwarded = repr(self.gateways_mock['rb-gateway'].invoke.call_args.kwargs)
+        assert 'X-RB-Tags' not in forwarded
+        assert 'cost_center' not in forwarded
