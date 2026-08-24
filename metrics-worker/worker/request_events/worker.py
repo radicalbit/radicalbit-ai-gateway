@@ -31,6 +31,7 @@ REQUEST_COLUMN_NAMES = [
     'ERROR_TYPE',
     'ERROR_CODE',
     'IS_STREAMING',
+    'TAGS',
 ]
 
 
@@ -157,6 +158,7 @@ def insert_request_event_record(event_payload):
             event_data.get('ERROR_TYPE', ''),
             event_data.get('ERROR_CODE', ''),
             event_data.get('IS_STREAMING', False),
+            event_data.get('TAGS', []),
         ]
 
         buffer.append(data_row)

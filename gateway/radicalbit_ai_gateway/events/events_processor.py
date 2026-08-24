@@ -4,6 +4,7 @@ from typing import Any
 from radicalbit_ai_gateway.events.buffer import CeleryBuffer
 from radicalbit_ai_gateway.models.event_payload import EventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
+from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 
 # Single buffer instance for metrics events
 _events_buffer = CeleryBuffer(task_name='emit_event', buffer_name='EventsBuffer')
@@ -23,6 +24,7 @@ def _create_event_dict(
     project_uuid: str,
     project_name: str,
     extra_attributes: dict[str, Any],
+    tags: list[str],
 ) -> dict[str, Any]:
     """Create a standardized event dictionary.
 
@@ -78,6 +80,7 @@ def _create_event_dict(
         'ROUTING_NAME': routing_name,
         'ROUTING_SELECTED_MODEL_ID': routing_selected_model_id,
         'ATTRIBUTES': extra_attributes_string,
+        'TAGS': tags,
     }
 
 
@@ -110,5 +113,8 @@ def emit_event(event: EventPayload) -> None:
         project_uuid,
         project_name,
         data,
+        # Tags travel out of band via the request context; the rationale
+        # lives in utils/request_context.py.
+        list(get_current_request_tags()),
     )
     _events_buffer.add(event_dict)
