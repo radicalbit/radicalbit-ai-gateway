@@ -160,10 +160,14 @@ class GatewayRoute:
         transcription_models = self._transcription_models
 
         if transcription_models:
-            # TODO(AG-901): no fallback support yet for transcription models.
+            transcription_fallbacks = [
+                fb
+                for fb in (fallback_models or [])
+                if fb.type == FallbackModelType.TRANSCRIPTION
+            ]
             self.transcription_invoker = TranscriptionModelInvoker(
                 models=transcription_models,
-                fallbacks=None,
+                fallbacks=transcription_fallbacks,
                 cost_service=self.cost_service,
                 httpx_client=httpx_client,
             )

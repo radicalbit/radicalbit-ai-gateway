@@ -185,6 +185,52 @@ def test_transcription_models_reject_duplicate_ids_across_categories():
         GatewayConfig.model_validate(raw)
 
 
+def test_transcription_fallback_valid_config():
+    raw = {
+        'transcription_models': [
+            {'model_id': 'gpt4o', 'model': 'openai/gpt-4o-transcribe'},
+            {'model_id': 'gpt4o-mini', 'model': 'openai/gpt-4o-mini-transcribe'},
+        ],
+        'routes': {
+            'r': {
+                'transcription_models': ['gpt4o', 'gpt4o-mini'],
+                'fallback': [
+                    {
+                        'type': 'TRANSCRIPTION',
+                        'target': 'gpt4o',
+                        'fallbacks': ['gpt4o-mini'],
+                    }
+                ],
+            },
+        },
+    }
+    gateway_config = GatewayConfig.model_validate(raw)
+    assert gateway_config.routes['r'].fallback[0].target == 'gpt4o'
+
+
+def test_transcription_fallback_rejects_target_outside_route_transcription_models():
+    raw = {
+        'transcription_models': [
+            {'model_id': 'gpt4o', 'model': 'openai/gpt-4o-transcribe'},
+            {'model_id': 'gpt4o-mini', 'model': 'openai/gpt-4o-mini-transcribe'},
+        ],
+        'routes': {
+            'r': {
+                'transcription_models': ['gpt4o'],
+                'fallback': [
+                    {
+                        'type': 'TRANSCRIPTION',
+                        'target': 'gpt4o-mini',
+                        'fallbacks': ['gpt4o'],
+                    }
+                ],
+            },
+        },
+    }
+    with pytest.raises(ValueError, match='must be present in the transcription models'):
+        GatewayConfig.model_validate(raw)
+
+
 def test_transcription_models_reject_duplicate_ids_within_list():
     raw = {
         'chat_models': [{'model_id': 'c1', 'model': 'openai/gpt-4o-mini'}],

@@ -227,6 +227,9 @@ class GatewayConfig(BaseModel):
                     elif fb.type == FallbackModelType.EMBEDDING:
                         valid_ids = set(route_emb_ids)
                         label = 'embedding'
+                    elif fb.type == FallbackModelType.TRANSCRIPTION:
+                        valid_ids = set(route_transcription_ids)
+                        label = 'transcription'
                     else:
                         raise ValueError(
                             f'Route {route_name}: Unknown fallback type {fb.type.value}'
