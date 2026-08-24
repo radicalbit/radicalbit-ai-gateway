@@ -340,3 +340,14 @@ class RequestEventDAO:
         with self.db.begin_session() as session:
             res = session.execute(stmt).all()
             return {str(row.request_uuid): row.http_status_code for row in res}
+
+    def get_distinct_tags(self, project_uuid: UUID) -> list[str]:
+        T = self.T
+        tag = F.arrayJoin(T.c['TAGS'])
+        stmt = (
+            select(F.distinct(tag))
+            .select_from(RequestEvent)
+            .where(T.c['PROJECT_UUID'] == str(project_uuid))
+        )
+        with self.db.begin_session() as session:
+            return sorted(row[0] for row in session.execute(stmt).fetchall())

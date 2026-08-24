@@ -15,6 +15,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     RequestChartDataDTO,
     RequestGroupedChartDataDTO,
 )
+from radicalbit_ai_gateway.models.tag_dto import TagKeysDTO
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.utils.chart_utils import calculate_increment_percentage
 
@@ -457,3 +458,28 @@ class RequestEventServiceTest(unittest.TestCase):
         assert res.increment_percentage == 0.0
         assert res.chart.total == 0
         assert res.chart.data == []
+
+    def test_get_tag_keys(self):
+        self.request_event_dao.get_distinct_tags = MagicMock(
+            return_value=[
+                'app=leonardo-clm',
+                'cost_center=retail',
+                'env=prod',
+                'env=staging',
+            ]
+        )
+
+        res = self.request_event_service.get_tag_keys(self.TEST_PROJECT_UUID)
+
+        expected = TagKeysDTO(tag_keys=['app', 'cost_center', 'env'])
+        assert res == expected
+        self.request_event_dao.get_distinct_tags.assert_called_once_with(
+            self.TEST_PROJECT_UUID
+        )
+
+    def test_get_tag_keys_empty(self):
+        self.request_event_dao.get_distinct_tags = MagicMock(return_value=[])
+
+        res = self.request_event_service.get_tag_keys(self.TEST_PROJECT_UUID)
+
+        assert res == TagKeysDTO(tag_keys=[])

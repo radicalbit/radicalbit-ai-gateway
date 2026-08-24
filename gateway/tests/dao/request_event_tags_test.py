@@ -13,6 +13,7 @@ from sqlalchemy import distinct, func, select
 from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 
+from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.tables.request_event_table import RequestEvent
 
 PROJECT_A = uuid.UUID('11111111-1111-1111-1111-111111111111')
@@ -142,3 +143,26 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
         with self.db.begin_session() as session:
             tags = sorted(row[0] for row in session.execute(stmt).fetchall())
         assert tags == ['env=prod', 'team=platform']
+
+    def test_dao_get_distinct_tags_returns_sorted_tags(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tags(PROJECT_A) == [
+            'app=leonardo-clm',
+            'cost_center=retail',
+            'env=prod',
+            'env=staging',
+        ]
+
+    def test_dao_get_distinct_tags_is_scoped_to_one_project(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tags(PROJECT_B) == ['env=prod', 'team=platform']
+
+    def test_dao_get_distinct_tags_empty(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert (
+            dao.get_distinct_tags(uuid.UUID('33333333-3333-3333-3333-333333333333'))
+            == []
+        )
