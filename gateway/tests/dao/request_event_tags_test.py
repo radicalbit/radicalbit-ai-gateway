@@ -166,3 +166,32 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
             dao.get_distinct_tags(uuid.UUID('33333333-3333-3333-3333-333333333333'))
             == []
         )
+
+    def test_dao_get_distinct_tag_values_returns_sorted_values(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_A, 'env') == ['prod', 'staging']
+
+    def test_dao_get_distinct_tag_values_is_scoped_to_one_project(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_B, 'env') == ['prod']
+
+    def test_dao_get_distinct_tag_values_matches_only_the_full_key(self):
+        """A tag 'environment=prod' must not be a value of key 'env'."""
+        self.insert(
+            [
+                db_mock.get_sample_request_event(
+                    timestamp=TIMESTAMP,
+                    project_uuid=PROJECT_A,
+                    tags=['environment=prod'],
+                )
+            ]
+        )
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_A, 'env') == []
+
+    def test_dao_get_distinct_tag_values_unknown_key(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_A, 'unknown') == []

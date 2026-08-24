@@ -11,7 +11,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     RequestGroupedChartDataDTO,
 )
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.models.tag_dto import TagKeysDTO
+from radicalbit_ai_gateway.models.tag_dto import TagKeysDTO, TagKeyValuesDTO
 from radicalbit_ai_gateway.utils.chart_utils import (
     calculate_increment_percentage,
     determine_granularity,
@@ -28,6 +28,12 @@ class RequestEventService:
         tags = self.request_event_dao.get_distinct_tags(project_uuid)
         tag_keys = sorted({tag.split('=', 1)[0] for tag in tags})
         return TagKeysDTO(tag_keys=tag_keys)
+
+    def get_tag_key_values(self, project_uuid: UUID, tag_key: str) -> TagKeyValuesDTO:
+        tag_values = self.request_event_dao.get_distinct_tag_values(
+            project_uuid, tag_key
+        )
+        return TagKeyValuesDTO(tag_values=tag_values)
 
     def get_request_chart_data(
         self,

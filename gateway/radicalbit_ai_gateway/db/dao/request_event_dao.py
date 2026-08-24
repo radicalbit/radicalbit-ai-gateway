@@ -351,3 +351,19 @@ class RequestEventDAO:
         )
         with self.db.begin_session() as session:
             return sorted(row[0] for row in session.execute(stmt).fetchall())
+
+    def get_distinct_tag_values(self, project_uuid: UUID, tag_key: str) -> list[str]:
+        T = self.T
+        prefix = f'{tag_key}='
+        tags_sq = (
+            select(F.arrayJoin(T.c['TAGS']).label('tag'))
+            .select_from(RequestEvent)
+            .where(T.c['PROJECT_UUID'] == str(project_uuid))
+            .subquery()
+        )
+        tag = tags_sq.c['tag']
+        stmt = select(F.distinct(F.substring(tag, F.length(prefix) + 1))).where(
+            F.startsWith(tag, prefix)
+        )
+        with self.db.begin_session() as session:
+            return sorted(row[0] for row in session.execute(stmt).fetchall())
