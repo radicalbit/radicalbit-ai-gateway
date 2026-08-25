@@ -34,10 +34,10 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 class TokenLimiter:
     def __init__(
         self,
+        project_uuid: str,
         route_name: str,
         input_config: Limiting | None = None,
         output_config: Limiting | None = None,
-        project_uuid: str = '',
     ):
         self.route_name = route_name
         self.input_config = input_config
@@ -61,14 +61,14 @@ class TokenLimiter:
         )
         self.input_item = (
             self._create_item(
-                input_config, route_name, ScenarioType.TOKEN_INPUT, project_uuid
+                input_config, project_uuid, route_name, ScenarioType.TOKEN_INPUT
             )
             if input_config
             else None
         )
         self.output_item = (
             self._create_item(
-                output_config, route_name, ScenarioType.TOKEN_OUTPUT, project_uuid
+                output_config, project_uuid, route_name, ScenarioType.TOKEN_OUTPUT
             )
             if output_config
             else None
@@ -85,9 +85,9 @@ class TokenLimiter:
     @staticmethod
     def _create_item(
         config: Limiting,
+        project_uuid: str,
         route_name: str,
         scenario_type: ScenarioType,
-        project_uuid: str = '',
     ) -> WindowConfig:
         """Create the item for the window to store max_tokens inside the window_size"""
         if not config.max_tokens:

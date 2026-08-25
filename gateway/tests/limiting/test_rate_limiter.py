@@ -10,6 +10,8 @@ from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType, RateLimiting
 from radicalbit_ai_gateway.utils.exceptions import RequestRateLimitExceeded
 
+_PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+
 
 @pytest.fixture(autouse=True)
 def mock_emit_event():
@@ -21,7 +23,9 @@ def mock_emit_event():
 class TestRequestRateLimiter:
     def test_init_without_config(self):
         """Test RequestRateLimiter initialization without any configuration."""
-        limiter = RequestRateLimiter(route_name='rb-gateway')
+        limiter = RequestRateLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway'
+        )
         assert limiter.limiter is None
 
     def test_init_with_config(self):
@@ -32,7 +36,9 @@ class TestRequestRateLimiter:
             window_size='1 minute',
         )
         limiter = RequestRateLimiter(
-            route_name='rb-gateway', rate_limiting_config=config
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            rate_limiting_config=config,
         )
         assert limiter.limiter is not None
 
@@ -42,12 +48,18 @@ class TestRequestRateLimiter:
         with pytest.raises(
             ValueError, match='max_requests must be set for rate limiting'
         ):
-            RequestRateLimiter(route_name='rb-gateway', rate_limiting_config=config)
+            RequestRateLimiter(
+                project_uuid=_PROJECT_UUID,
+                route_name='rb-gateway',
+                rate_limiting_config=config,
+            )
 
     @pytest.mark.asyncio
     async def test_check_request_no_config(self):
         """Test request checking without configuration does nothing."""
-        limiter = RequestRateLimiter(route_name='rb-gateway')
+        limiter = RequestRateLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway'
+        )
         # Should not raise any exception
         await limiter._check_request(
             request_uuid=str(REQUEST_UUID),
@@ -64,7 +76,9 @@ class TestRequestRateLimiter:
         """Test request checking within limit, and then count_request consumes."""
         config = RateLimiting(max_requests=5, window_size='1 minute')
         limiter = RequestRateLimiter(
-            route_name='rb-gateway', rate_limiting_config=config
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            rate_limiting_config=config,
         )
 
         # check_request should NOT consume
@@ -88,7 +102,9 @@ class TestRequestRateLimiter:
         """Test request checking that exceeds the limit (check-only, no hit)."""
         config = RateLimiting(max_requests=2, window_size='1 minute')
         limiter = RequestRateLimiter(
-            route_name='rb-gateway', rate_limiting_config=config
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            rate_limiting_config=config,
         )
 
         # First request: check passes, then we consume
@@ -134,7 +150,9 @@ class TestRequestRateLimiter:
         """Test that consumption accumulates over multiple requests."""
         config = RateLimiting(max_requests=3, window_size='1 minute')
         limiter = RequestRateLimiter(
-            route_name='rb-gateway', rate_limiting_config=config
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            rate_limiting_config=config,
         )
 
         # First 2: check passes, then we consume via count_request
@@ -184,7 +202,9 @@ class TestRequestRateLimiter:
         with freeze_time(initial_datetime) as frozen_datetime:
             config = RateLimiting(max_requests=2, window_size='10 second')
             limiter = RequestRateLimiter(
-                route_name='rb-gateway', rate_limiting_config=config
+                project_uuid=_PROJECT_UUID,
+                route_name='rb-gateway',
+                rate_limiting_config=config,
             )
 
             # Use up limit
@@ -234,14 +254,18 @@ class TestRequestRateLimiter:
         # Test with string format
         config = RateLimiting(max_requests=100, window_size='1 minute')
         limiter = RequestRateLimiter(
-            route_name='rb-gateway', rate_limiting_config=config
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            rate_limiting_config=config,
         )
         assert limiter.limiter is not None
 
         # Test with per-second format
         config2 = RateLimiting(max_requests=100, window_size='100 seconds')
         limiter2 = RequestRateLimiter(
-            route_name='rb-gateway', rate_limiting_config=config2
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            rate_limiting_config=config2,
         )
         assert limiter2.limiter is not None
 
@@ -250,11 +274,11 @@ class TestProjectScoping:
     """Route names are unique only within a project, so keys must carry it."""
 
     @staticmethod
-    def _limiter(project_uuid: str = '') -> RequestRateLimiter:
+    def _limiter(project_uuid: str) -> RequestRateLimiter:
         return RequestRateLimiter(
+            project_uuid=project_uuid,
             route_name='default',
             rate_limiting_config=RateLimiting(max_requests=2, window_size='1 minute'),
-            project_uuid=project_uuid,
         )
 
     def test_project_uuid_scopes_the_key_but_not_the_route_name(self):
@@ -269,13 +293,15 @@ class TestProjectScoping:
             f'limiter:{project_uuid}:default:request_rate:'
         )
 
-    def test_omitted_project_uuid_keeps_the_unscoped_key(self):
-        limiter = self._limiter()
-
-        assert limiter.item.project_uuid == ''
-        assert limiter.limiter._build_key(limiter.item).startswith(
-            'limiter:default:request_rate:'
-        )
+    def test_project_uuid_is_mandatory(self):
+        """There is no unscoped window: the key always names a project."""
+        with pytest.raises(TypeError):
+            RequestRateLimiter(
+                route_name='default',
+                rate_limiting_config=RateLimiting(
+                    max_requests=2, window_size='1 minute'
+                ),
+            )
 
     @pytest.mark.asyncio
     async def test_two_projects_do_not_share_the_window(self):

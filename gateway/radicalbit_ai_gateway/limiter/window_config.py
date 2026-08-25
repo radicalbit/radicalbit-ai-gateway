@@ -91,38 +91,37 @@ class WindowConfig:
     Attributes:
         limit: Maximum allowed in the window.
         window_seconds: Window duration in seconds.
-        route_name: Name of the route for key isolation.
-        scenario_type: Type of rate limiting scenario (request_rate, token_input, token_output).
         project_uuid: UUID of the owning project, for key isolation only. Route
             names are unique only within a project, so without this two projects
-            declaring the same route name share one window. Empty string keeps
-            the unscoped key format, for call sites with no project context.
+            declaring the same route name share one window.
+        route_name: Name of the route for key isolation.
+        scenario_type: Type of rate limiting scenario (request_rate, token_input, token_output).
 
     """
 
     limit: int
     window_seconds: int
+    project_uuid: str
     route_name: str
     scenario_type: ScenarioType
-    project_uuid: str = ''
 
     @classmethod
     def from_parts(
         cls,
         limit: int,
         window: str | int,
+        project_uuid: str,
         route_name: str,
         scenario_type: ScenarioType,
-        project_uuid: str = '',
     ) -> WindowConfig:
         """Create WindowConfig from limit and window size.
 
         Args:
             limit: Maximum allowed in the window.
             window: Window size as string (e.g., '1 minute') or seconds (int).
+            project_uuid: UUID of the owning project, for key isolation only.
             route_name: Name of the route for key isolation.
             scenario_type: Type of rate limiting scenario.
-            project_uuid: UUID of the owning project, for key isolation only.
 
         Returns:
             WindowConfig instance.
@@ -132,7 +131,7 @@ class WindowConfig:
         return cls(
             limit=limit,
             window_seconds=window_seconds,
+            project_uuid=project_uuid,
             route_name=route_name,
             scenario_type=scenario_type,
-            project_uuid=project_uuid,
         )

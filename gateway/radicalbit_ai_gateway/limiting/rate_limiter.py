@@ -28,9 +28,9 @@ class RequestRateLimiter:
 
     def __init__(
         self,
+        project_uuid: str,
         route_name: str,
         rate_limiting_config: RateLimiting | None = None,
-        project_uuid: str = '',
     ):
         self.route_name = route_name
         self.rate_limiting_config = rate_limiting_config
@@ -47,7 +47,7 @@ class RequestRateLimiter:
         # Create rate limiter and item if config provided
         self.limiter = self._create_limiter() if rate_limiting_config else None
         self.item = (
-            self._create_item(rate_limiting_config, route_name, project_uuid)
+            self._create_item(rate_limiting_config, project_uuid, route_name)
             if rate_limiting_config
             else None
         )
@@ -62,7 +62,7 @@ class RequestRateLimiter:
 
     @staticmethod
     def _create_item(
-        config: RateLimiting, route_name: str, project_uuid: str = ''
+        config: RateLimiting, project_uuid: str, route_name: str
     ) -> WindowConfig:
         if not config.max_requests:
             raise ValueError('max_requests must be set for rate limiting')

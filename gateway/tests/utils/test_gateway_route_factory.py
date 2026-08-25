@@ -38,6 +38,8 @@ from radicalbit_ai_gateway.utils.gateway_route_factory import (
 )
 from radicalbit_ai_gateway.utils.secrets import resolve_secrets_from_string
 
+_PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+
 # Minimal config with a literal api_key (no !secret refs needed here —
 # secret resolution is already covered in test_secrets.py).
 _PROJECT_CONFIG_YAML = """\
@@ -95,6 +97,7 @@ def test_build_gateway_routes_from_config_keys():
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     assert set(routes.keys()) == {'my-route'}
@@ -204,6 +207,7 @@ def test_build_gateway_routes_from_config_resolves_transcription_models():
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     route = routes['my-route']
@@ -226,6 +230,7 @@ def test_build_gateway_routes_from_config_wires_transcription_invoker():
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     route = routes['my-route']
@@ -267,6 +272,7 @@ def test_build_gateway_routes_from_config_transcription_only_route():
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     route = routes['transcription-only-route']
@@ -284,6 +290,7 @@ def test_build_gateway_routes_empty_config():
         redis_client=None,
         cost_service=MagicMock(spec_set=CostService),
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
     assert routes == {}
 
@@ -314,6 +321,7 @@ async def test_project_route_full_pipeline(mock_emit_event, fake_redis_client):
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     project_name = 'my-project'

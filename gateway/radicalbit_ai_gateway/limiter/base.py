@@ -37,12 +37,7 @@ class BaseFixedWindowLimiter(ABC):
         Route names are unique only within a project, so scoping by project is
         what stops two projects sharing one window.
         """
-        scope = (
-            f'{config.project_uuid}:{config.route_name}'
-            if config.project_uuid
-            else config.route_name
-        )
-        return f'limiter:{scope}:{config.scenario_type.value}:{self._window_type}:{config.window_seconds}'
+        return f'limiter:{config.project_uuid}:{config.route_name}:{config.scenario_type.value}:{self._window_type}:{config.window_seconds}'
 
     async def test(self, item: WindowConfig, cost: int = 1) -> bool:
         """Test if operation is allowed WITHOUT consuming capacity.

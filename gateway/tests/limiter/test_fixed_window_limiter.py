@@ -13,6 +13,8 @@ from radicalbit_ai_gateway.limiter import (
 )
 from radicalbit_ai_gateway.limiter.window_config import WindowConfig
 
+_PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+
 
 @pytest.fixture
 def storage() -> InMemoryStorage:
@@ -29,6 +31,7 @@ def config() -> WindowConfig:
     return WindowConfig(
         limit=10,
         window_seconds=60,
+        project_uuid=_PROJECT_UUID,
         route_name='test-route',
         scenario_type=ScenarioType.REQUEST_RATE,
     )
@@ -256,12 +259,14 @@ class TestKeyIsolation:
         config1 = WindowConfig(
             limit=10,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='route-a',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
         config2 = WindowConfig(
             limit=10,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='route-b',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -281,18 +286,21 @@ class TestKeyIsolation:
         config_request = WindowConfig(
             limit=10,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='gpt-4',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
         config_input = WindowConfig(
             limit=1000,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='gpt-4',
             scenario_type=ScenarioType.TOKEN_INPUT,
         )
         config_output = WindowConfig(
             limit=500,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='gpt-4',
             scenario_type=ScenarioType.TOKEN_OUTPUT,
         )
@@ -317,11 +325,12 @@ class TestKeyStructure:
         config = WindowConfig(
             limit=10,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='gpt-4',
             scenario_type=ScenarioType.TOKEN_INPUT,
         )
         key = limiter._build_key(config)
-        assert key == 'limiter:gpt-4:token_input:fixed:60'
+        assert key == f'limiter:{_PROJECT_UUID}:gpt-4:token_input:fixed:60'
 
     def test_build_key_with_different_scenario(
         self, limiter: FixedWindowLimiter
@@ -329,21 +338,23 @@ class TestKeyStructure:
         config = WindowConfig(
             limit=10,
             window_seconds=3600,
+            project_uuid=_PROJECT_UUID,
             route_name='claude-3-sonnet',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
         key = limiter._build_key(config)
-        assert key == 'limiter:claude-3-sonnet:request_rate:fixed:3600'
+        assert key == f'limiter:{_PROJECT_UUID}:claude-3-sonnet:request_rate:fixed:3600'
 
     def test_build_key_with_token_output(self, limiter: FixedWindowLimiter) -> None:
         config = WindowConfig(
             limit=500,
             window_seconds=120,
+            project_uuid=_PROJECT_UUID,
             route_name='my-model',
             scenario_type=ScenarioType.TOKEN_OUTPUT,
         )
         key = limiter._build_key(config)
-        assert key == 'limiter:my-model:token_output:fixed:120'
+        assert key == f'limiter:{_PROJECT_UUID}:my-model:token_output:fixed:120'
 
     def test_build_key_includes_project_uuid(self, limiter: FixedWindowLimiter) -> None:
         """A project-scoped config puts the project ahead of the route."""
@@ -416,12 +427,14 @@ class TestProjectIsolation:
         first = WindowConfig(
             limit=2,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='default',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
         second = WindowConfig(
             limit=2,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='default',
             scenario_type=ScenarioType.REQUEST_RATE,
         )

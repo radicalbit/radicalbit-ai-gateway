@@ -70,24 +70,24 @@ class GatewayRouteConfig(BaseModel):
         description='Aliases of top-level MCP servers exposed on this route.',
     )
 
-    def get_token_limiter(self, project_uuid: str = '') -> TokenLimiter:
+    def get_token_limiter(self, project_uuid: str) -> TokenLimiter:
         return TokenLimiter(
+            project_uuid=project_uuid,
             route_name=self.route_name,
             input_config=getattr(self.token_limiting, 'input', None),
             output_config=getattr(self.token_limiting, 'output', None),
-            project_uuid=project_uuid,
         )
 
-    def get_budget_limiter(self, project_uuid: str = '') -> BudgetLimiter:
+    def get_budget_limiter(self, project_uuid: str) -> BudgetLimiter:
         return BudgetLimiter(
+            project_uuid=project_uuid,
             route_name=self.route_name,
             config=self.budget_limiting,
-            project_uuid=project_uuid,
         )
 
-    def get_rate_limiter(self, project_uuid: str = '') -> RequestRateLimiter:
+    def get_rate_limiter(self, project_uuid: str) -> RequestRateLimiter:
         return RequestRateLimiter(
+            project_uuid=project_uuid,
             route_name=self.route_name,
             rate_limiting_config=self.rate_limiting,
-            project_uuid=project_uuid,
         )

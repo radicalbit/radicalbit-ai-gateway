@@ -74,7 +74,7 @@ async def initialize_async_routers(routes: dict[str, GatewayRoute]) -> None:
 
 
 def get_proper_cache(
-    route_config: GatewayRouteConfig, redis_client: redis.Redis | None
+    route_config: GatewayRouteConfig, redis_client: redis.asyncio.Redis | None
 ) -> AbstractCache | None:
     if not route_config.caching:
         return None
@@ -93,10 +93,10 @@ def get_proper_cache(
 def build_gateway_routes_from_config(
     gateway_config: GatewayConfig,
     guardrail_engine: GuardrailEngine,
-    redis_client: redis.Redis | None,
+    redis_client: redis.asyncio.Redis | None,
     cost_service: CostService,
     httpx_client,
-    project_uuid: str = '',
+    project_uuid: str,
 ) -> dict[str, GatewayRoute]:
     """Build the live routes declared by ``gateway_config``.
 

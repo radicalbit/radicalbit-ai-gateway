@@ -8,6 +8,8 @@ from radicalbit_ai_gateway.limiter.window_config import (
     parse_window,
 )
 
+_PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+
 
 class TestFromParts:
     """Tests for WindowConfig.from_parts() factory method."""
@@ -16,6 +18,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=100,
             window='1 minute',
+            project_uuid=_PROJECT_UUID,
             route_name='gpt-4',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -28,6 +31,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=50,
             window=30,
+            project_uuid=_PROJECT_UUID,
             route_name='my-route',
             scenario_type=ScenarioType.TOKEN_INPUT,
         )
@@ -39,6 +43,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=100,
             window='1 second',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -48,6 +53,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=50,
             window='10 seconds',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -57,6 +63,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=100,
             window='1 minute',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -66,6 +73,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=200,
             window='5 minutes',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -75,6 +83,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=1000,
             window='1 hour',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -84,6 +93,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=5000,
             window='2 hours',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -93,6 +103,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=10000,
             window='1 day',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -102,6 +113,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=50000,
             window='1 week',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -111,6 +123,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=100000,
             window='2 weeks',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -120,6 +133,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=100000,
             window='1 month',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -129,6 +143,7 @@ class TestFromParts:
         config = WindowConfig.from_parts(
             limit=200000,
             window='3 months',
+            project_uuid=_PROJECT_UUID,
             route_name='test',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
