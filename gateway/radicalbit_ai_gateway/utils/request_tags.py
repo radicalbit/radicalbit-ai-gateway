@@ -12,7 +12,6 @@ never affects the stored rows.
 import re
 from typing import Annotated
 
-from radicalbit_ai_gateway.utils.exceptions import TagsHeaderError
 from fastapi import Query
 
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest, TagsHeaderError
