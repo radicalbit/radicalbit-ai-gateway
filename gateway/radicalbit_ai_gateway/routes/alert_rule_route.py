@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, Path
 
 from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertableEventsOut,
@@ -82,16 +82,16 @@ class AlertRuleRoute:
             return alert_rule_service.delete_rule(rule_uuid)
 
         @router.get(
-            '/routes/{route_id}/alertable-events',
+            '/projects/{project_id}/routes/{route_name}/alertable-events',
             status_code=200,
             response_model=AlertableEventsOut,
         )
         def get_route_alertable_events(
-            route_id: str = Path(...),
-            project: str | None = Query(None),
+            project_id: str = Path(...),
+            route_name: str = Path(...),
         ):
             return alert_rule_service.get_alertable_events_for_route(
-                project_name=project, route_name=route_id
+                project_name=project_id, route_name=route_name
             )
 
         return router

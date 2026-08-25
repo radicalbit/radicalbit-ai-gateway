@@ -188,8 +188,11 @@ def test_get_alertable_events(client, mock_alert_rule_service):
         'fallback': [{'event': 'fallback-triggered', 'label': 'Fallback: triggered'}],
     }
 
-    response = client.get('/routes/openai-prod/alertable-events')
+    response = client.get('/projects/proj-123/routes/openai-prod/alertable-events')
     assert response.status_code == 200
     data = response.json()
     assert 'guardrail' in data
     assert data['guardrail'][0]['event'] == 'guardrail-input-pii'
+    mock_alert_rule_service.get_alertable_events_for_route.assert_called_once_with(
+        project_name='proj-123', route_name='openai-prod'
+    )
