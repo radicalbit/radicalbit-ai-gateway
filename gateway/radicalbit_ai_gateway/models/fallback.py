@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 class FallbackModelType(str, Enum):
     CHAT = 'CHAT'
     EMBEDDING = 'EMBEDDING'
+    TRANSCRIPTION = 'TRANSCRIPTION'
 
 
 class Fallback(BaseModel):
@@ -22,6 +23,7 @@ class Fallback(BaseModel):
         examples=[
             'CHAT',
             'EMBEDDING',
+            'TRANSCRIPTION',
         ],
     )
 

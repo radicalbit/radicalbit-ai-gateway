@@ -32,6 +32,11 @@ GPT4O_TRANSCRIBE_MODEL = Model(
     model='openai/gpt-4o-transcribe',
     credentials={'api_key': 'sk-test'},
 )
+GPT4O_MINI_TRANSCRIBE_MODEL = Model(
+    model_id='gpt4o-mini-transcribe',
+    model='openai/gpt-4o-mini-transcribe',
+    credentials={'api_key': 'sk-test'},
+)
 
 WHISPER_VERBOSE_RESPONSE = TranscriptionVerbose(
     task='transcribe',
@@ -52,6 +57,29 @@ GPT4O_JSON_RESPONSE = Transcription(
         'input_token_details': {'audio_tokens': 82, 'text_tokens': 0},
     },
 )
+
+GPT4O_MINI_JSON_RESPONSE = Transcription(
+    text='Ciao, questo è un test.',
+    usage={
+        'type': 'tokens',
+        'input_tokens': 82,
+        'output_tokens': 38,
+        'total_tokens': 120,
+        'input_token_details': {'audio_tokens': 82, 'text_tokens': 0},
+    },
+)
+
+
+def _service_unavailable_exception() -> APIStatusError:
+    request = httpx.Request('POST', 'https://api.openai.com/v1/audio/transcriptions')
+    response = httpx.Response(status_code=503, request=request)
+    return APIStatusError('Service unavailable', response=response, body=None)
+
+
+def _invalid_file_exception() -> APIStatusError:
+    request = httpx.Request('POST', 'https://api.openai.com/v1/audio/transcriptions')
+    response = httpx.Response(status_code=400, request=request)
+    return APIStatusError('Invalid file', response=response, body=None)
 
 
 _COMMON_TRANSCRIBE_KWARGS = {
@@ -173,6 +201,12 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         )
         mock_span.set_attribute.assert_any_call(
             'transcription.response.segment_count', 0
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.model_id', 'whisper'
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.fallback_triggered', False
         )
         # AG-895: never the raw audio content, only its size.
         for call in mock_span.set_attribute.call_args_list:
@@ -339,6 +373,126 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
                 model_id='whisper',
             )
 
+    async def test_transcribe_falls_back_to_secondary_model_on_5xx(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        invoker._record_metrics = MagicMock()
+        primary_client = MockTranscriptionClient(
+            exception=_service_unavailable_exception()
+        )
+        fallback_client = MockTranscriptionClient(response=GPT4O_MINI_JSON_RESPONSE)
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            primary_client,
+            [(GPT4O_MINI_TRANSCRIBE_MODEL, fallback_client)],
+        )
+
+        mock_span = MagicMock()
+        mock_span.is_recording.return_value = True
+        with patch(
+            'radicalbit_ai_gateway.invocation.transcription_model_invoker.trace.get_current_span',
+            return_value=mock_span,
+        ):
+            result = await invoker.transcribe(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+            )
+
+        assert result is GPT4O_MINI_JSON_RESPONSE
+        assert fallback_client.captured_kwargs['model'] == 'gpt-4o-mini-transcribe'
+        invoker._record_metrics.assert_called_once()
+        call_kwargs = invoker._record_metrics.call_args.kwargs
+        assert call_kwargs['target_model_id'] == 'gpt4o-transcribe'
+        assert call_kwargs['model'].model_id == 'gpt4o-mini-transcribe'
+        assert call_kwargs['fallback_triggered'] is True
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.model_id', 'gpt4o-mini-transcribe'
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.fallback_triggered', True
+        )
+
+    async def test_transcribe_bad_request_does_not_trigger_fallback(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        primary_client = MockTranscriptionClient(exception=_invalid_file_exception())
+        fallback_client = MockTranscriptionClient(response=GPT4O_MINI_JSON_RESPONSE)
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            primary_client,
+            [(GPT4O_MINI_TRANSCRIBE_MODEL, fallback_client)],
+        )
+
+        with pytest.raises(ModelInvokerBadRequest):
+            await invoker.transcribe(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+            )
+
+        # A 4xx is a client-input problem, not a model-availability one — it
+        # would fail identically on any fallback, so none is attempted.
+        assert fallback_client.captured_kwargs == {}
+
+    async def test_transcribe_all_models_fail_raises_internal_error(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        primary_client = MockTranscriptionClient(
+            exception=_service_unavailable_exception()
+        )
+        fallback_client = MockTranscriptionClient(
+            exception=_service_unavailable_exception()
+        )
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            primary_client,
+            [(GPT4O_MINI_TRANSCRIBE_MODEL, fallback_client)],
+        )
+
+        with pytest.raises(
+            ModelInvokerInternalError, match='All transcription models failed'
+        ):
+            await invoker.transcribe(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+            )
+
+    async def test_transcribe_falls_back_across_families_returns_matching_shape(self):
+        """Primary is whisper-1 (verbose_json validated up front), but it fails
+        and the configured fallback is gpt-4o-transcribe — a different family
+        that only ever returns a plain `Transcription`. The response shape
+        must follow the model that actually served the request, not the
+        originally-selected one.
+        """
+        invoker = self._build_invoker(WHISPER_MODEL)
+        primary_client = MockTranscriptionClient(
+            exception=_service_unavailable_exception()
+        )
+        fallback_client = MockTranscriptionClient(response=GPT4O_JSON_RESPONSE)
+        invoker.model_map['whisper'] = (
+            WHISPER_MODEL,
+            primary_client,
+            [(GPT4O_TRANSCRIBE_MODEL, fallback_client)],
+        )
+
+        result = await invoker.transcribe(
+            **_COMMON_TRANSCRIBE_KWARGS,
+            audio_bytes=b'fake-audio',
+            filename='test.wav',
+            content_type='audio/wav',
+            model_id='whisper',
+            requested_response_format='verbose_json',
+        )
+
+        assert result is GPT4O_JSON_RESPONSE
+        assert not isinstance(result, TranscriptionVerbose)
+        assert fallback_client.captured_kwargs['response_format'] == 'json'
+
     async def test_stream_whisper_rejects_before_any_upstream_call(self):
         invoker = self._build_invoker(WHISPER_MODEL)
         mock_client = MockTranscriptionClient(response=WHISPER_VERBOSE_RESPONSE)
@@ -431,6 +585,127 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
                 model_id='gpt4o-transcribe',
             ):
                 pass
+
+    async def test_stream_falls_back_to_secondary_model_on_failure(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        invoker._record_metrics = MagicMock()
+        primary_client = MockTranscriptionClient(
+            exception=_service_unavailable_exception()
+        )
+        done = TranscriptionTextDoneEvent(
+            type='transcript.text.done',
+            text='Ciao, questo è un test.',
+            usage={
+                'type': 'tokens',
+                'input_tokens': 82,
+                'output_tokens': 0,
+                'total_tokens': 82,
+                'input_token_details': {'audio_tokens': 82, 'text_tokens': 0},
+            },
+        )
+        fallback_client = MockTranscriptionClient(stream_events=[done])
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            primary_client,
+            [(GPT4O_MINI_TRANSCRIBE_MODEL, fallback_client)],
+        )
+
+        mock_span = MagicMock()
+        mock_span.is_recording.return_value = True
+        with patch(
+            'radicalbit_ai_gateway.invocation.transcription_model_invoker.trace.get_current_span',
+            return_value=mock_span,
+        ):
+            events = [
+                event
+                async for event in invoker.stream(
+                    **_COMMON_TRANSCRIBE_KWARGS,
+                    audio_bytes=b'fake-audio',
+                    filename='test.wav',
+                    content_type='audio/wav',
+                    model_id='gpt4o-transcribe',
+                )
+            ]
+
+        assert events == [done]
+        assert fallback_client.captured_kwargs['model'] == 'gpt-4o-mini-transcribe'
+        assert fallback_client.captured_kwargs['stream'] is True
+        invoker._record_metrics.assert_called_once()
+        call_kwargs = invoker._record_metrics.call_args.kwargs
+        assert call_kwargs['target_model_id'] == 'gpt4o-transcribe'
+        assert call_kwargs['model'].model_id == 'gpt4o-mini-transcribe'
+        assert call_kwargs['fallback_triggered'] is True
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.model_id', 'gpt4o-mini-transcribe'
+        )
+        mock_span.set_attribute.assert_any_call(
+            'transcription.response.fallback_triggered', True
+        )
+
+    async def test_stream_skips_whisper_fallback_and_uses_next_compatible_model(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        primary_client = MockTranscriptionClient(
+            exception=_service_unavailable_exception()
+        )
+        whisper_fallback_client = MockTranscriptionClient(
+            response=WHISPER_VERBOSE_RESPONSE
+        )
+        done = TranscriptionTextDoneEvent(
+            type='transcript.text.done', text='ok', usage=None
+        )
+        gpt4o_mini_fallback_client = MockTranscriptionClient(stream_events=[done])
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            primary_client,
+            [
+                (WHISPER_MODEL, whisper_fallback_client),
+                (GPT4O_MINI_TRANSCRIBE_MODEL, gpt4o_mini_fallback_client),
+            ],
+        )
+
+        events = [
+            event
+            async for event in invoker.stream(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+            )
+        ]
+
+        assert events == [done]
+        # whisper-1 cannot stream: it must never even be attempted.
+        assert whisper_fallback_client.captured_kwargs == {}
+        assert gpt4o_mini_fallback_client.captured_kwargs['stream'] is True
+
+    async def test_stream_bad_request_does_not_trigger_fallback(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        primary_client = MockTranscriptionClient(exception=_invalid_file_exception())
+        fallback_client = MockTranscriptionClient(
+            stream_events=[
+                TranscriptionTextDoneEvent(
+                    type='transcript.text.done', text='ok', usage=None
+                )
+            ]
+        )
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            primary_client,
+            [(GPT4O_MINI_TRANSCRIBE_MODEL, fallback_client)],
+        )
+
+        with pytest.raises(ModelInvokerBadRequest):
+            async for _ in invoker.stream(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+            ):
+                pass
+
+        assert fallback_client.captured_kwargs == {}
 
     def test_model_map_initialization(self):
         invoker = self._build_invoker(WHISPER_MODEL)
