@@ -7,8 +7,10 @@ from typing import Any
 from radicalbit_ai_gateway.events.buffer import CeleryBuffer
 from radicalbit_ai_gateway.models.event_payload import EventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 logger = logging.getLogger('radicalbit-ai-gateway')
+app_config = get_app_config()
 
 # Single buffer instance for metrics events
 _events_buffer = CeleryBuffer(task_name='emit_event', buffer_name='EventsBuffer')
@@ -16,7 +18,8 @@ _events_buffer.register_atexit()
 
 # Thread pool for asynchronous, non-blocking alert notification dispatch
 _alert_executor = ThreadPoolExecutor(
-    max_workers=4, thread_name_prefix='alert_notification'
+    max_workers=app_config.smtp_config.smtp_max_workers,
+    thread_name_prefix='alert_notification',
 )
 atexit.register(lambda: _alert_executor.shutdown(wait=False, cancel_futures=True))
 

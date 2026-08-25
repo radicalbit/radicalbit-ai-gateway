@@ -98,6 +98,7 @@ class SmtpConfig(BaseSettings):
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_from_email: str = 'alerts@radicalbit.ai'
+    smtp_max_workers: int = 4
 
 
 class CorsConfig(BaseSettings):
