@@ -848,10 +848,10 @@ class EventServiceTest(unittest.TestCase):
         )
 
         self.event_dao.get_costs_chart_data_by_route.assert_called_once()
-        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args
-        assert call_kwargs[0][0] == self.TEST_PROJECT_UUID
-        assert call_kwargs[0][1] == 'API_KEY_UUID'
-        assert call_kwargs[0][2] == key_uuid
+        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args.kwargs
+        assert call_kwargs['project_uuid'] == self.TEST_PROJECT_UUID
+        assert call_kwargs['entity_column'] == 'API_KEY_UUID'
+        assert call_kwargs['entity_value'] == key_uuid
 
         assert res.granularity == 'hours'
         assert len(res.data) == 2
@@ -901,10 +901,10 @@ class EventServiceTest(unittest.TestCase):
             project_uuid=self.TEST_PROJECT_UUID,
         )
 
-        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args
-        assert call_kwargs[0][0] == self.TEST_PROJECT_UUID
-        assert call_kwargs[0][1] == 'MODEL_ID'
-        assert call_kwargs[0][2] == 'gpt-4o'
+        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args.kwargs
+        assert call_kwargs['project_uuid'] == self.TEST_PROJECT_UUID
+        assert call_kwargs['entity_column'] == 'MODEL_ID'
+        assert call_kwargs['entity_value'] == 'gpt-4o'
         assert len(res.data) == 1
         assert res.data[0].name == 'route-A'
         assert res.total == 42.0
@@ -932,8 +932,8 @@ class EventServiceTest(unittest.TestCase):
             project_uuid=self.TEST_PROJECT_UUID,
         )
 
-        call_args = self.event_dao.get_costs_chart_data_by_route.call_args
-        assert call_args[0][3] == ['route-A', 'route-B']
+        call_args = self.event_dao.get_costs_chart_data_by_route.call_args.kwargs
+        assert call_args['route_names'] == ['route-A', 'route-B']
 
     def test_get_summary_costs(self):
         base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
@@ -1822,6 +1822,72 @@ class EventServiceTest(unittest.TestCase):
             ],
         )
         assert res == expected
+
+    def test_get_all_routes_costs_forwards_tags_to_event_dao(self):
+        self.event_dao.get_all_routes_summary_costs = MagicMock(return_value=[])
+        self.event_dao.get_all_routes_detailed_cost_breakdown = MagicMock(
+            return_value=[]
+        )
+
+        tags = ['env=prod', 'cost_center=retail']
+        self.event_service.get_all_routes_costs(
+            _from=None,
+            _to=None,
+            _with_saved_tokens=False,
+            project_uuid=self.TEST_PROJECT_UUID,
+            config=self.gateway_config,
+            tags=tags,
+        )
+
+        self.event_dao.get_all_routes_summary_costs.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID,
+            _from=None,
+            _to=None,
+            _with_saved_tokens=False,
+            tags=tags,
+        )
+        self.event_dao.get_all_routes_detailed_cost_breakdown.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
+        )
+
+    def test_get_total_counter_forwards_tags_to_both_daos(self):
+        """get_total_counter blends EventDAO and RequestEventDAO calls; both
+        must receive the same tags filter.
+        """
+        self.event_dao.get_all_counters = MagicMock(return_value=Counters())
+        self.event_dao.get_tokens_by_model = MagicMock(return_value=[])
+        self.event_dao.get_last_event = MagicMock(return_value=None)
+        self.event_dao.get_routing_model_counters = MagicMock(return_value=[])
+        self.request_event_dao.get_request_stats_global = MagicMock(
+            return_value=RequestStats()
+        )
+        self.request_event_dao.get_error_breakdown = MagicMock(return_value=[])
+
+        tags = ['env=prod', 'cost_center=retail']
+        self.event_service.get_total_counter(
+            project_uuid=self.TEST_PROJECT_UUID,
+            config=self.gateway_config,
+            _from=None,
+            _to=None,
+            tags=tags,
+        )
+
+        self.event_dao.get_all_counters.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
+        )
+        self.event_dao.get_tokens_by_model.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
+        )
+        self.request_event_dao.get_request_stats_global.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
+        )
+        self.request_event_dao.get_error_breakdown.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID,
+            route_name=None,
+            _from=None,
+            _to=None,
+            tags=tags,
+        )
 
     def test_get_all_routes_costs_empty(self):
         # Mock batch DAO methods - return empty lists (no routes with events)

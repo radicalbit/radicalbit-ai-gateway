@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import Float, func as F, select, text
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
+from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
 from radicalbit_ai_gateway.db.models.event import (
     ErrorDetail,
     ErrorRequestChartDataPoint,
@@ -60,6 +61,9 @@ class RequestEventDAO:
         if _to is not None:
             conditions.append(self.T.c['TIMESTAMP'] <= _to)
 
+    def _add_tags_filter(self, conditions: list, tags: list[str] | None) -> None:
+        add_tags_filter(conditions, self.T.c['TAGS'], tags=tags)
+
     def _validate_row(
         self, model_class: type[BaseModel], field_names: list[str], row: tuple
     ) -> Any:
@@ -73,6 +77,7 @@ class RequestEventDAO:
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
     ) -> list[RequestChartDataPoint]:
         T = self.T
         FIELD_NAMES = ['bucket', 'total_requests']
@@ -85,6 +90,7 @@ class RequestEventDAO:
 
         conditions = [T.c['ROUTE_NAME'] == route_name]
         self._add_time_filters(project_uuid, conditions, _from, _to)
+        self._add_tags_filter(conditions, tags=tags)
 
         stmt = (
             select(
@@ -112,6 +118,7 @@ class RequestEventDAO:
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
     ) -> list[RequestGroupedChartDataPoint]:
         T = self.T
         FIELD_NAMES = ['bucket', 'success_count', 'error_count']
@@ -124,6 +131,7 @@ class RequestEventDAO:
 
         conditions = [T.c['ROUTE_NAME'] == route_name]
         self._add_time_filters(project_uuid, conditions, _from, _to)
+        self._add_tags_filter(conditions, tags=tags)
 
         stmt = (
             select(
@@ -154,12 +162,14 @@ class RequestEventDAO:
         configured_routes: list[str],
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> str | None:
         if not configured_routes:
             return None
         T = self.T
         conditions = [T.c['ROUTE_NAME'].in_(configured_routes)]
         self._add_time_filters(project_uuid, conditions, _from, _to)
+        self._add_tags_filter(conditions, tags=tags)
 
         stmt = (
             select(
@@ -183,6 +193,7 @@ class RequestEventDAO:
         configured_routes: list[str],
         _from: datetime | None = None,
         _to: datetime | None = None,
+        tags: list[str] | None = None,
     ) -> ErrorRoute | None:
         if not configured_routes:
             return None
@@ -190,6 +201,7 @@ class RequestEventDAO:
         FIELD_NAMES = ['route_name', 'error_perc']
         conditions = [T.c['ROUTE_NAME'].in_(configured_routes)]
         self._add_time_filters(project_uuid, conditions, _from, _to)
+        self._add_tags_filter(conditions, tags=tags)
         non_succeeded_condition = F.countIf(
             T.c['REQUEST_STATUS'] != RequestStatus.SUCCESS
         )
@@ -222,6 +234,7 @@ class RequestEventDAO:
         _from: datetime | None = None,
         _to: datetime | None = None,
         timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
     ) -> list[ErrorRequestChartDataPoint]:
         if route_name is None:
             return []
@@ -237,6 +250,7 @@ class RequestEventDAO:
             T.c['ROUTE_NAME'] == route_name,
         ]
         self._add_time_filters(project_uuid, bucket_conditions, _from, _to)
+        self._add_tags_filter(bucket_conditions, tags=tags)
 
         bucket_stmt = (
             select(
@@ -262,10 +276,12 @@ class RequestEventDAO:
         route_name: str,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> RequestStats:
         T = self.T
         conditions = [T.c['ROUTE_NAME'] == route_name]
         self._add_time_filters(project_uuid, conditions, _from, _to)
+        self._add_tags_filter(conditions, tags=tags)
         stmt = (
             select(*self._base_columns()).where(*conditions).select_from(RequestEvent)
         )
@@ -280,9 +296,11 @@ class RequestEventDAO:
         project_uuid: UUID,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> RequestStats:
         conditions = []
         self._add_time_filters(project_uuid, conditions, _from, _to)
+        self._add_tags_filter(conditions, tags=tags)
         stmt = select(*self._base_columns()).select_from(RequestEvent)
         if conditions:
             stmt = stmt.where(*conditions)
@@ -298,12 +316,14 @@ class RequestEventDAO:
         route_name: str | None,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> list[ErrorDetail]:
         T = self.T
         FIELD_NAMES = ['error_type', 'count']
 
         conditions = [T.c['REQUEST_STATUS'] != RequestStatus.SUCCESS]
         self._add_time_filters(project_uuid, conditions, _from, _to, route_name)
+        self._add_tags_filter(conditions, tags=tags)
 
         stmt = (
             select(
@@ -340,3 +360,30 @@ class RequestEventDAO:
         with self.db.begin_session() as session:
             res = session.execute(stmt).all()
             return {str(row.request_uuid): row.http_status_code for row in res}
+
+    def get_distinct_tags(self, project_uuid: UUID) -> list[str]:
+        T = self.T
+        tag = F.arrayJoin(T.c['TAGS'])
+        stmt = (
+            select(F.distinct(tag))
+            .select_from(RequestEvent)
+            .where(T.c['PROJECT_UUID'] == str(project_uuid))
+        )
+        with self.db.begin_session() as session:
+            return sorted(row[0] for row in session.execute(stmt).fetchall())
+
+    def get_distinct_tag_values(self, project_uuid: UUID, tag_key: str) -> list[str]:
+        T = self.T
+        prefix = f'{tag_key}='
+        tags_sq = (
+            select(F.arrayJoin(T.c['TAGS']).label('tag'))
+            .select_from(RequestEvent)
+            .where(T.c['PROJECT_UUID'] == str(project_uuid))
+            .subquery()
+        )
+        tag = tags_sq.c['tag']
+        stmt = select(F.distinct(F.substring(tag, F.length(prefix) + 1))).where(
+            F.startsWith(tag, prefix)
+        )
+        with self.db.begin_session() as session:
+            return sorted(row[0] for row in session.execute(stmt).fetchall())

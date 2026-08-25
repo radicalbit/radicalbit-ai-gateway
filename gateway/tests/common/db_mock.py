@@ -416,6 +416,8 @@ def get_sample_event(
     model_type: str = '',
     is_cached_tokens: bool = False,
     is_judge: bool = False,
+    project_uuid: uuid.UUID | None = None,
+    tags: list[str] | None = None,
     **kwargs,
 ) -> Event:
     # Extract known attributes for dedicated columns (support both old and new names)
@@ -436,12 +438,14 @@ def get_sample_event(
         date=timestamp.date(),
         event_type=event_type,
         route_name=route_name,
+        project_uuid=project_uuid,
         value=value,
         api_key_uuid=api_key_uuid if api_key_uuid else uuid.uuid4(),
         api_key_name=api_key_name,
         group_uuid=group_uuid if group_uuid else uuid.uuid4(),
         group_name=group_name,
         cost=cost,
+        tags=tags if tags else [],
         attributes=kwargs,
         model_id=model_id,
         model_type=model_type,

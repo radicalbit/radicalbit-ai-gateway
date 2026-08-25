@@ -542,6 +542,55 @@ class TestStreamCostsChart:
                         assert call_kwargs['group_by'] == 'keys'
 
     @pytest.mark.asyncio
+    async def test_stream_costs_chart_filtered_tags(self, sse_test_app):
+        """Test SSE endpoint passes the tags filter to the service on every tick."""
+        app, _request_event_service, event_service = sse_test_app
+
+        mock_dto = CostChartDataDTO(
+            granularity='days',
+            timestamp=[1736208000],
+            data=[CostChartDataSeriesDTO(name='api-key-1', data=[50.0])],
+            total=50.0,
+        )
+        event_service.get_costs_chart_data = MagicMock(side_effect=cycle([mock_dto]))
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    async with async_client.stream(
+                        'GET',
+                        f'{PROJECT_BASE}/routes/costs/stream',
+                        params={
+                            'group_by': 'keys',
+                            'tags': ['env=prod', 'cost_center=retail'],
+                        },
+                    ) as response:
+                        assert response.status_code == 200
+
+                        events = []
+                        current_event_lines = []
+                        async for line in response.aiter_lines():
+                            if line == '':
+                                if current_event_lines:
+                                    events.append('\n'.join(current_event_lines))
+                                    current_event_lines = []
+                                    if len(events) == 1:
+                                        break
+                            else:
+                                current_event_lines.append(line)
+
+                        assert len(events) == 1
+                        call_kwargs = (
+                            event_service.get_costs_chart_data.call_args.kwargs
+                        )
+                        assert call_kwargs['tags'] == ['env=prod', 'cost_center=retail']
+
+    @pytest.mark.asyncio
     async def test_stream_costs_chart_bad_request_gte_and_from(self, sse_test_app):
         """Test that combining _gte with _from returns 400."""
         app, _request_event_service, _event_service = sse_test_app

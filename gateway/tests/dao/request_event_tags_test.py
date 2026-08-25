@@ -13,6 +13,7 @@ from sqlalchemy import distinct, func, select
 from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 
+from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.tables.request_event_table import RequestEvent
 
 PROJECT_A = uuid.UUID('11111111-1111-1111-1111-111111111111')
@@ -142,3 +143,87 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
         with self.db.begin_session() as session:
             tags = sorted(row[0] for row in session.execute(stmt).fetchall())
         assert tags == ['env=prod', 'team=platform']
+
+    def test_dao_get_distinct_tags_returns_sorted_tags(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tags(PROJECT_A) == [
+            'app=leonardo-clm',
+            'cost_center=retail',
+            'env=prod',
+            'env=staging',
+        ]
+
+    def test_dao_get_distinct_tags_is_scoped_to_one_project(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tags(PROJECT_B) == ['env=prod', 'team=platform']
+
+    def test_dao_get_distinct_tags_empty(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert (
+            dao.get_distinct_tags(uuid.UUID('33333333-3333-3333-3333-333333333333'))
+            == []
+        )
+
+    def test_dao_get_distinct_tag_values_returns_sorted_values(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_A, 'env') == ['prod', 'staging']
+
+    def test_dao_get_distinct_tag_values_is_scoped_to_one_project(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_B, 'env') == ['prod']
+
+    def test_dao_get_distinct_tag_values_matches_only_the_full_key(self):
+        """A tag 'environment=prod' must not be a value of key 'env'."""
+        self.insert(
+            [
+                db_mock.get_sample_request_event(
+                    timestamp=TIMESTAMP,
+                    project_uuid=PROJECT_A,
+                    tags=['environment=prod'],
+                )
+            ]
+        )
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_A, 'env') == []
+
+    def test_dao_get_distinct_tag_values_unknown_key(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_A, 'unknown') == []
+
+    def test_dao_filters_by_tags_with_or_within_key_and_and_across_keys(self):
+        """The `tags` param reaches the real query through a public DAO method."""
+        self._seed()
+        dao = RequestEventDAO(self.db)
+
+        # env=prod OR env=staging -> 3 rows (matches _seed's PROJECT_A data).
+        assert (
+            dao.get_request_stats_global(
+                PROJECT_A, _from=None, _to=None, tags=['env=prod', 'env=staging']
+            ).total_requests
+            == 3
+        )
+
+        # env=prod AND cost_center=retail -> only the first seeded row.
+        assert (
+            dao.get_request_stats_global(
+                PROJECT_A,
+                _from=None,
+                _to=None,
+                tags=['env=prod', 'cost_center=retail'],
+            ).total_requests
+            == 1
+        )
+
+        # A tag that matches nothing -> zero rows.
+        assert (
+            dao.get_request_stats_global(
+                PROJECT_A, _from=None, _to=None, tags=['env=unknown']
+            ).total_requests
+            == 0
+        )
