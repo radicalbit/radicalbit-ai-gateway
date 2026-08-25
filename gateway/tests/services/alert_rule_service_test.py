@@ -7,7 +7,10 @@ import pytest
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.models.alert_rule_dto import (
+    AlertRuleChannel,
     AlertRuleIn,
+    AlertRuleOut,
+    AlertRuleScope,
     AlertRuleTimeAggregation,
     AlertRuleUpdateIn,
 )
@@ -517,3 +520,27 @@ def test_alert_rule_dto_recipient_validation():
     assert 'At least one email recipient is required' in str(
         exc_info.value
     ) or 'at least 1 item' in str(exc_info.value)
+
+
+def test_from_alert_rule_handles_uppercase_db_values():
+    now = datetime.now(timezone.utc)
+    rule = AlertRule(
+        uuid=uuid4(),
+        name='Old Rule',
+        description=None,
+        project='p1',
+        route='r1',
+        scope='ROUTE',
+        event='e1',
+        time_aggregation='INSTANT',
+        channel='EMAIL',
+        recipients='["test@example.com"]',
+        enabled=True,
+        disabled_reason=None,
+        created_at=now,
+        updated_at=now,
+    )
+    out = AlertRuleOut.from_alert_rule(rule)
+    assert out.scope == AlertRuleScope.ROUTE
+    assert out.time_aggregation == AlertRuleTimeAggregation.INSTANT
+    assert out.channel == AlertRuleChannel.EMAIL

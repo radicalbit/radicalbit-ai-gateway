@@ -19,8 +19,8 @@ export const alertsApiSlice = apiService.injectEndpoints({
     }),
 
     getAlertableEvents: builder.query({
-      query: (routeId) => ({
-        url: routeId ? `/routes/${routeId}/alertable-events` : '/alertable-events',
+      query: ({ projectUuid, routeName } = {}) => ({
+        url: `/projects/${projectUuid}/routes/${routeName}/alertable-events`,
         method: 'get',
       }),
     }),
@@ -58,7 +58,7 @@ export const alertsApiSlice = apiService.injectEndpoints({
     editAlert: builder.mutation({
       query: ({ uuid, data }) => ({
         url: `/rule/${uuid}`,
-        method: 'put',
+        method: 'patch',
         data,
       }),
       invalidatesTags: (result, error, { uuid }) => {

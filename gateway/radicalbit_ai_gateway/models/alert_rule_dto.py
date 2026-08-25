@@ -29,14 +29,38 @@ def _validate_recipients(recipients: list[str] | None) -> list[str] | None:
 class AlertRuleScope(str, Enum):
     ROUTE = 'route'
 
+    @classmethod
+    def _missing_(cls, value: object):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value == value.lower() or member.name == value.upper():
+                    return member
+        return None
+
 
 class AlertRuleTimeAggregation(str, Enum):
     INSTANT = 'instant'
     WINDOW = 'window'
 
+    @classmethod
+    def _missing_(cls, value: object):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value == value.lower() or member.name == value.upper():
+                    return member
+        return None
+
 
 class AlertRuleChannel(str, Enum):
     EMAIL = 'email'
+
+    @classmethod
+    def _missing_(cls, value: object):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value == value.lower() or member.name == value.upper():
+                    return member
+        return None
 
 
 class AlertRuleIn(BaseModel):
