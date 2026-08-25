@@ -1,3 +1,5 @@
+import atexit
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import logging
 from typing import Any
@@ -11,6 +13,12 @@ logger = logging.getLogger('radicalbit-ai-gateway')
 # Single buffer instance for metrics events
 _events_buffer = CeleryBuffer(task_name='emit_event', buffer_name='EventsBuffer')
 _events_buffer.register_atexit()
+
+# Thread pool for asynchronous, non-blocking alert notification dispatch
+_alert_executor = ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix='alert_notification'
+)
+atexit.register(lambda: _alert_executor.shutdown(wait=False, cancel_futures=True))
 
 _alert_rule_service: Any = None
 
@@ -59,6 +67,13 @@ def _dispatch_alert_if_matching(service: Any, event: EventPayload) -> None:
             event_name=event_name,
             event_details=details,
         )
+
+
+def _safe_dispatch_alert(service: Any, event: EventPayload) -> None:
+    try:
+        _dispatch_alert_if_matching(service, event)
+    except Exception:
+        logger.exception('Error dispatching alert rule notification')
 
 
 def _create_event_dict(
@@ -136,9 +151,9 @@ def emit_event(event: EventPayload) -> None:
     """Emit a metrics event. Events are buffered and sent in batches."""
     if _alert_rule_service is not None:
         try:
-            _dispatch_alert_if_matching(_alert_rule_service, event)
+            _alert_executor.submit(_safe_dispatch_alert, _alert_rule_service, event)
         except Exception:
-            logger.exception('Error dispatching alert rule notification')
+            logger.exception('Failed to submit alert notification to executor')
 
     data = event.model_dump(exclude_none=True)
 
