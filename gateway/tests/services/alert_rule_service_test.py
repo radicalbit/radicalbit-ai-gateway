@@ -254,3 +254,111 @@ def test_get_alertable_events_configured_route():
     # Fallback: triggered
     fallback_events = [item.event for item in events.fallback]
     assert fallback_events == ['fallback-triggered']
+
+
+def test_validate_rules_on_config_change_deleted_route():
+    mock_dao = MagicMock(spec=AlertRuleDAO)
+    project_uuid = uuid4()
+
+    model = Model(model_id='gpt-4', model='gpt-4', provider='openai')
+    route_cfg = GatewayRouteConfig(
+        route_name='active-route',
+        chat_models=['gpt-4'],
+    )
+    gw_cfg = GatewayConfig(
+        routes={'active-route': route_cfg},
+        chat_models=[model],
+    )
+    project_entry = ProjectEntry(uuid=project_uuid, config=gw_cfg)
+
+    # Active rule on a route that is NO LONGER in the config
+    orphaned_rule_uuid = uuid4()
+    now = datetime.now(timezone.utc)
+    orphaned_rule = AlertRule(
+        uuid=orphaned_rule_uuid,
+        name='Orphaned Route Rule',
+        description=None,
+        project='my-project',
+        route='deleted-route',
+        scope='route',
+        event='guardrail-input-pii',
+        time_aggregation='instant',
+        channel='email',
+        recipients='["admin@example.com"]',
+        enabled=True,
+        disabled_reason=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    mock_dao.get_active_by_project.return_value = [orphaned_rule]
+
+    service = AlertRuleService(
+        alert_rule_dao=mock_dao,
+        project_configs={'my-project': project_entry},
+    )
+
+    disabled_count = service.validate_rules_on_config_change(
+        project_name='my-project',
+        project_uuid=str(project_uuid),
+    )
+
+    assert disabled_count == 1
+    mock_dao.auto_disable_rule.assert_called_once_with(
+        orphaned_rule_uuid,
+        'The route "deleted-route" no longer exists in the current project configuration',
+    )
+
+
+def test_validate_rules_on_config_change_invalid_event():
+    mock_dao = MagicMock(spec=AlertRuleDAO)
+    project_uuid = uuid4()
+
+    model = Model(model_id='gpt-4', model='gpt-4', provider='openai')
+    # Route has no guardrails configured
+    route_cfg = GatewayRouteConfig(
+        route_name='active-route',
+        chat_models=['gpt-4'],
+    )
+    gw_cfg = GatewayConfig(
+        routes={'active-route': route_cfg},
+        chat_models=[model],
+    )
+    project_entry = ProjectEntry(uuid=project_uuid, config=gw_cfg)
+
+    rule_uuid = uuid4()
+    now = datetime.now(timezone.utc)
+    invalid_event_rule = AlertRule(
+        uuid=rule_uuid,
+        name='Invalid Guardrail Rule',
+        description=None,
+        project='my-project',
+        route='active-route',
+        scope='route',
+        event='guardrail-input-removed_guardrail',
+        time_aggregation='instant',
+        channel='email',
+        recipients='["admin@example.com"]',
+        enabled=True,
+        disabled_reason=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    mock_dao.get_active_by_project.return_value = [invalid_event_rule]
+
+    service = AlertRuleService(
+        alert_rule_dao=mock_dao,
+        project_configs={'my-project': project_entry},
+    )
+
+    disabled_count = service.validate_rules_on_config_change(
+        project_name='my-project',
+        project_uuid=str(project_uuid),
+    )
+
+    assert disabled_count == 1
+    mock_dao.auto_disable_rule.assert_called_once_with(
+        rule_uuid,
+        'The event "guardrail-input-removed_guardrail" is no longer valid for the current route configuration',
+    )

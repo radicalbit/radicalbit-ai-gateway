@@ -67,6 +67,33 @@ class AlertRuleDAO:
             stmt = select(AlertRule).where(*conditions)
             return session.scalars(stmt).all()
 
+    def get_active_by_project(
+        self, project_uuid: str = '', project_name: str = ''
+    ) -> Sequence[AlertRule]:
+        if not project_uuid and not project_name:
+            logger.error(
+                'Missing project identification when querying active alert rules for project'
+            )
+            return []
+
+        with self.db.begin_session() as session:
+            conditions = [
+                AlertRule.enabled == True,  # noqa: E712
+                AlertRule.deleted == False,  # noqa: E712
+            ]
+
+            p_filters = []
+            if project_uuid:
+                p_filters.append(AlertRule.project == project_uuid)
+            if project_name:
+                p_filters.append(AlertRule.project == project_name)
+
+            if p_filters:
+                conditions.append(or_(*p_filters))
+
+            stmt = select(AlertRule).where(*conditions)
+            return session.scalars(stmt).all()
+
     def get_all_by_route(
         self, project_name: str, route_name: str
     ) -> Sequence[AlertRule]:

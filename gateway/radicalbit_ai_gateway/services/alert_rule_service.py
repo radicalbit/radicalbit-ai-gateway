@@ -273,20 +273,58 @@ class AlertRuleService:
         return self._to_out(deleted)
 
     def validate_rules_on_config_change(
-        self, project_name: str, route_name: str
+        self,
+        project_name: str,
+        route_name: str | None = None,
+        project_uuid: str = '',
     ) -> int:
-        """AG-843: Check active rules for a route when config changes.
+        """AG-843: Check active rules when config changes.
 
-        Auto-disable any rule whose event is no longer valid for the route.
+        Auto-disable any rule whose route no longer exists or whose event is no longer valid.
         """
-        active_rules = self.alert_rule_dao.get_active_by_route(project_name, route_name)
+        resolved_project = (
+            self._resolve_project_name(project_name) if project_name else None
+        )
+        project_key = resolved_project or project_name
+        entry = self._project_configs.get(project_key) if project_key else None
+        valid_routes = (
+            set(entry.config.routes.keys())
+            if (entry and entry.config and entry.config.routes)
+            else set()
+        )
+
+        if route_name:
+            active_rules = self.alert_rule_dao.get_active_by_route(
+                project_name=project_name,
+                route_name=route_name,
+                project_uuid=project_uuid,
+            )
+        else:
+            active_rules = self.alert_rule_dao.get_active_by_project(
+                project_name=project_name,
+                project_uuid=project_uuid,
+            )
+
         if not active_rules:
             return 0
 
-        valid_events = self._get_valid_events_list(project_name, route_name)
         disabled_count = 0
-
         for rule in active_rules:
+            # 1. Check if the route itself was deleted from the config
+            if rule.route not in valid_routes:
+                reason = f'The route "{rule.route}" no longer exists in the current project configuration'
+                self.alert_rule_dao.auto_disable_rule(rule.uuid, reason)
+                disabled_count += 1
+                logger.warning(
+                    'Auto-disabled alert rule %s (%s) due to deleted route: %s',
+                    rule.name,
+                    rule.uuid,
+                    reason,
+                )
+                continue
+
+            # 2. Check if the event is no longer valid for the route
+            valid_events = self._get_valid_events_list(project_name, rule.route)
             if rule.event not in valid_events:
                 reason = f'The event "{rule.event}" is no longer valid for the current route configuration'
                 self.alert_rule_dao.auto_disable_rule(rule.uuid, reason)

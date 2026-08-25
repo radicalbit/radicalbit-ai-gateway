@@ -158,14 +158,10 @@ class ProjectRoute:
             )
             if alert_rule_service:
                 try:
-                    p_entry = getattr(alert_rule_service, '_project_configs', {}).get(
-                        project.name
+                    alert_rule_service.validate_rules_on_config_change(
+                        project_name=project.name,
+                        project_uuid=str(project_uuid),
                     )
-                    if p_entry and p_entry.config:
-                        for r_name in p_entry.config.routes:
-                            alert_rule_service.validate_rules_on_config_change(
-                                project.name, r_name
-                            )
                 except Exception as e:
                     logger.warning(
                         'Failed to validate alert rules on config change for project %s: %s',
