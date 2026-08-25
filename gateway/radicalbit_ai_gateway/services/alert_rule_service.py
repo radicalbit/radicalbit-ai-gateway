@@ -45,16 +45,21 @@ class AlertRuleService:
         self.project_dao = project_dao
         self.email_service = email_service or EmailService()
 
-    def _resolve_project_name(self, project_identifier: str) -> str | None:
-        if not project_identifier:
+    def _resolve_project_name(self, project_uuid: UUID | str | None) -> str | None:
+        if not project_uuid:
             return None
+        target_uuid_str = str(project_uuid)
         for p_name, entry in self._project_configs.items():
             p_uuid_str = str(getattr(entry, 'uuid', ''))
-            if project_identifier in (p_name, p_uuid_str):
+            if target_uuid_str in (p_name, p_uuid_str):
                 return p_name
         if self.project_dao is not None:
             try:
-                p_uuid = UUID(project_identifier)
+                p_uuid = (
+                    UUID(target_uuid_str)
+                    if isinstance(project_uuid, str)
+                    else project_uuid
+                )
                 proj = self.project_dao.get_by_uuid(p_uuid)
                 if proj and proj.name:
                     return proj.name
@@ -83,16 +88,18 @@ class AlertRuleService:
         return self._to_out(rule)
 
     def get_alertable_events_for_route(
-        self, project_name: str | None = None, route_name: str | None = None
+        self,
+        project_uuid: UUID | str | None = None,
+        route_name: str | None = None,
     ) -> AlertableEventsOut:
         guardrails_items: list[AlertableEventItem] = []
         caching_items: list[AlertableEventItem] = []
         fallback_items: list[AlertableEventItem] = []
 
         resolved_project = (
-            self._resolve_project_name(project_name) if project_name else None
+            self._resolve_project_name(project_uuid) if project_uuid else None
         )
-        project_key = resolved_project or project_name
+        project_key = resolved_project or (str(project_uuid) if project_uuid else None)
 
         # Inspect route config if available
         if project_key and route_name and project_key in self._project_configs:
@@ -172,9 +179,9 @@ class AlertRuleService:
         )
 
     def _get_valid_events_list(
-        self, project_name: str | None, route_name: str | None
+        self, project_uuid: UUID | str | None, route_name: str | None
     ) -> set[str]:
-        events_out = self.get_alertable_events_for_route(project_name, route_name)
+        events_out = self.get_alertable_events_for_route(project_uuid, route_name)
         valid_set = set()
         for item in events_out.guardrail + events_out.caching + events_out.fallback:
             valid_set.add(item.event)

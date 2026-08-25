@@ -180,6 +180,7 @@ def test_delete_rule(client, mock_alert_rule_service):
 
 
 def test_get_alertable_events(client, mock_alert_rule_service):
+    project_uuid = uuid4()
     mock_alert_rule_service.get_alertable_events_for_route.return_value = {
         'guardrail': [
             {'event': 'guardrail-input-pii', 'label': 'Guardrail: PII (input)'}
@@ -188,11 +189,13 @@ def test_get_alertable_events(client, mock_alert_rule_service):
         'fallback': [{'event': 'fallback-triggered', 'label': 'Fallback: triggered'}],
     }
 
-    response = client.get('/projects/proj-123/routes/openai-prod/alertable-events')
+    response = client.get(
+        f'/projects/{project_uuid}/routes/openai-prod/alertable-events'
+    )
     assert response.status_code == 200
     data = response.json()
     assert 'guardrail' in data
     assert data['guardrail'][0]['event'] == 'guardrail-input-pii'
     mock_alert_rule_service.get_alertable_events_for_route.assert_called_once_with(
-        project_name='proj-123', route_name='openai-prod'
+        project_uuid=project_uuid, route_name='openai-prod'
     )

@@ -197,7 +197,9 @@ def test_get_alertable_events_empty_when_no_guardrails_or_features():
         project_configs={'my-project': project_entry},
     )
 
-    events = service.get_alertable_events_for_route('my-project', 'plain-route')
+    events = service.get_alertable_events_for_route(
+        project_uuid=project_uuid, route_name='plain-route'
+    )
     assert events.guardrail == []
     assert events.caching == []
     assert events.fallback == []
@@ -248,7 +250,9 @@ def test_get_alertable_events_configured_route():
         project_configs={'my-project': project_entry},
     )
 
-    events = service.get_alertable_events_for_route('my-project', 'protected-route')
+    events = service.get_alertable_events_for_route(
+        project_uuid=project_uuid, route_name='protected-route'
+    )
 
     # Guardrails: pii_check is only input; toxicity_check is io (input and output)
     guardrail_events = [item.event for item in events.guardrail]
