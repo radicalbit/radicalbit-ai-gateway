@@ -3,6 +3,7 @@ import uuid
 from clickhouse_sqlalchemy.engines import MergeTree
 from clickhouse_sqlalchemy.types import (
     UUID,
+    Array,
     DateTime64,
     Decimal,
     Float,
@@ -47,6 +48,7 @@ class Event(ClickHouseBaseTable):
     routing_selected_model_id = Column(
         'ROUTING_SELECTED_MODEL_ID', LowCardinality(String), default=''
     )
+    tags = Column('TAGS', Array(String), default=[])
     value = Column('VALUE', Float, default=1.0)
     cost = Column('COST', Decimal(64, 9), default=0.0)
     __table_args__ = (

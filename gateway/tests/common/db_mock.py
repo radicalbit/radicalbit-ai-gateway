@@ -507,12 +507,16 @@ def get_sample_request_event(
     error_type: str = '',
     error_code: str = '',
     is_streaming: bool = False,
+    project_uuid: uuid.UUID | None = None,
+    tags: list[str] | None = None,
 ) -> RequestEvent:
     return RequestEvent(
         request_uuid=request_uuid if request_uuid else uuid.uuid4(),
         timestamp=timestamp,
         date=timestamp.date(),
         route_name=route_name,
+        project_uuid=project_uuid,
+        tags=tags if tags else [],
         api_key_uuid=api_key_uuid if api_key_uuid else uuid.uuid4(),
         api_key_name=api_key_name,
         group_uuid=group_uuid if group_uuid else uuid.uuid4(),

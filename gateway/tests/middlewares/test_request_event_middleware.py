@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
@@ -21,6 +21,7 @@ from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
+from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 
 EMIT = 'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
 
@@ -165,3 +166,184 @@ def test_each_mcp_request_gets_its_own_request_uuid():
         second = client.post('/proj/my-route/mcp').json()['request_uuid']
 
     assert first != second
+
+
+def _tags_app(path: str) -> TestClient:
+    """One-route app that echoes what the middleware resolved from X-RB-Tags.
+
+    Reports both the request context and the ContextVar, since ``event`` rows
+    reach the tags through the latter (``emit_event`` never sees the request).
+    """
+
+    async def endpoint(request):
+        ctx = RequestEventContext.get_or_create(request)
+        return JSONResponse(
+            {
+                'ctx_tags': list(ctx.tags),
+                'contextvar_tags': list(get_current_request_tags()),
+            }
+        )
+
+    app = Starlette(routes=[Route(path, endpoint, methods=['POST'])])
+    app.add_middleware(RequestEventMiddleware)
+    return TestClient(app)
+
+
+# Imported from the middleware so this file cannot drift from it.
+ALL_TAGGABLE_PATHS = sorted(RequestEventMiddleware.TRACKED_PATHS)
+
+
+@pytest.mark.parametrize('path', ALL_TAGGABLE_PATHS)
+def test_tags_are_parsed_on_every_tracked_path(path):
+    """Validation lives in the middleware precisely so it is uniform."""
+    with patch(EMIT) as emit:
+        body = _tags_app(path).post(
+            path, headers={'X-RB-Tags': 'cost_center=retail,env=prod'}
+        )
+
+    assert body.json()['ctx_tags'] == ['cost_center=retail', 'env=prod']
+    assert emit.call_args.args[0].tags == ['cost_center=retail', 'env=prod']
+
+
+def test_tags_are_parsed_on_the_mcp_path():
+    with patch(EMIT) as emit:
+        _tags_app('/{project_name}/{route_name}/mcp').post(
+            '/proj/my-route/mcp', headers={'X-RB-Tags': 'env=prod'}
+        )
+
+    assert emit.call_args.args[0].tags == ['env=prod']
+
+
+def test_tags_reach_the_contextvar_that_feeds_event_rows():
+    body = (
+        _tags_app('/v1/chat/completions')
+        .post('/v1/chat/completions', headers={'X-RB-Tags': 'env=prod,app=x'})
+        .json()
+    )
+    assert body['contextvar_tags'] == ['app=x', 'env=prod']
+
+
+def test_repeated_tags_headers_are_combined():
+    """headers.get() would silently drop all but the first X-RB-Tags line."""
+    body = (
+        _tags_app('/v1/chat/completions')
+        .post(
+            '/v1/chat/completions',
+            headers=[('X-RB-Tags', 'env=prod'), ('X-RB-Tags', 'app=x')],
+        )
+        .json()
+    )
+    assert body['ctx_tags'] == ['app=x', 'env=prod']
+
+
+def test_the_contextvar_does_not_leak_between_requests():
+    client = _tags_app('/v1/chat/completions')
+    client.post('/v1/chat/completions', headers={'X-RB-Tags': 'env=prod'})
+    body = client.post('/v1/chat/completions').json()
+    assert body['contextvar_tags'] == []
+
+
+def test_no_header_means_no_tags_and_no_error():
+    with patch(EMIT) as emit:
+        response = _tags_app('/v1/chat/completions').post('/v1/chat/completions')
+
+    assert response.status_code == 200
+    assert response.json()['ctx_tags'] == []
+    assert emit.call_args.args[0].tags == []
+
+
+@pytest.mark.parametrize('path', ALL_TAGGABLE_PATHS)
+def test_a_malformed_header_is_rejected_uniformly(path):
+    with patch(EMIT):
+        response = _tags_app(path).post(path, headers={'X-RB-Tags': 'broken'})
+
+    assert response.status_code == 400
+    error = response.json()['error']
+    assert error['type'] == 'gateway_error'
+    assert error['code'] == 'tags_header_invalid'
+    assert 'broken' in error['message']
+
+
+def test_an_oversized_header_is_rejected():
+    with patch(EMIT):
+        response = _tags_app('/v1/chat/completions').post(
+            '/v1/chat/completions', headers={'X-RB-Tags': 'a=1,' * 2000}
+        )
+
+    assert response.status_code == 400
+    assert response.json()['error']['code'] == 'tags_header_too_large'
+
+
+def test_a_rejected_request_still_emits_a_request_event():
+    """A 400 from the middleware must not become a hole in request_event."""
+    with patch(EMIT) as emit:
+        _tags_app('/v1/chat/completions').post(
+            '/v1/chat/completions', headers={'X-RB-Tags': 'broken'}
+        )
+
+    payload = emit.call_args.args[0]
+    assert payload.http_status_code == 400
+    assert payload.status is RequestStatus.HANDLED_ERROR
+    assert payload.error_code == 'tags_header_invalid'
+
+
+def test_a_rejected_request_never_reaches_the_endpoint():
+    reached = []
+
+    async def endpoint(request):
+        reached.append(True)
+        return JSONResponse({})
+
+    app = Starlette(
+        routes=[Route('/v1/chat/completions', endpoint, methods=['POST'])],
+    )
+    app.add_middleware(RequestEventMiddleware)
+
+    with patch(EMIT):
+        response = TestClient(app).post(
+            '/v1/chat/completions', headers={'X-RB-Tags': 'broken'}
+        )
+
+    assert response.status_code == 400
+    assert reached == []
+
+
+def test_untracked_paths_do_not_validate_tags():
+    """The middleware only guards the proxied endpoints."""
+
+    async def endpoint(request):
+        return JSONResponse({'ok': True})
+
+    app = Starlette(routes=[Route('/health', endpoint, methods=['POST'])])
+    app.add_middleware(RequestEventMiddleware)
+
+    response = TestClient(app).post('/health', headers={'X-RB-Tags': 'broken'})
+    assert response.status_code == 200
+
+
+def test_tags_stay_visible_while_a_streaming_response_is_produced():
+    """Metric events are emitted mid-stream, so the ContextVar must outlive it."""
+    seen = []
+
+    async def endpoint(request):
+        async def body():
+            for _ in range(3):
+                # Stands in for emit_event() being called during the stream.
+                seen.append(get_current_request_tags())
+                yield b'data: chunk\n\n'
+
+        return StreamingResponse(body(), media_type='text/event-stream')
+
+    app = Starlette(
+        routes=[Route('/v1/chat/completions', endpoint, methods=['POST'])],
+    )
+    app.add_middleware(RequestEventMiddleware)
+
+    with patch(EMIT) as emit:
+        response = TestClient(app).post(
+            '/v1/chat/completions', headers={'X-RB-Tags': 'env=prod,app=x'}
+        )
+
+    assert response.status_code == 200
+    assert seen == [('app=x', 'env=prod')] * 3
+    assert emit.call_args.args[0].tags == ['app=x', 'env=prod']

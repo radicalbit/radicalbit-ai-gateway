@@ -118,6 +118,18 @@ class GatewayNotFoundError(GatewayError):
         )
 
 
+class TagsHeaderError(GatewayError):
+    """Invalid ``X-RB-Tags`` header."""
+
+    def __init__(self, message: str, code: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_400_BAD_REQUEST,
+            log_message=log_message,
+            code=code,
+        )
+
+
 class ApiKeyError(AppError):
     def __init__(self, message: str, code: str, *, log_message: str | None = None):
         super().__init__(

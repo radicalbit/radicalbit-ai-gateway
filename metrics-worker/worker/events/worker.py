@@ -43,6 +43,7 @@ COLUMN_NAMES = [
     'IS_JUDGE',
     'ROUTING_NAME',
     'ROUTING_SELECTED_MODEL_ID',
+    'TAGS',
 ]
 
 
@@ -185,6 +186,7 @@ def insert_event_record_connect_async(event_payload):
             event_data.get('IS_JUDGE', False),
             event_data.get('ROUTING_NAME', ''),
             event_data.get('ROUTING_SELECTED_MODEL_ID', ''),
+            event_data.get('TAGS', []),
         ]
 
         buffer.append(data_row)
