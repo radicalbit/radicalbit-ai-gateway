@@ -21,6 +21,8 @@ def _validate_recipients(recipients: list[str] | None) -> list[str] | None:
         if not email or not EMAIL_REGEX.match(email):
             raise ValueError(f'Invalid email recipient format: "{r}"')
         cleaned.append(email)
+    if not cleaned:
+        raise ValueError('At least one email recipient is required')
     return cleaned
 
 
@@ -48,7 +50,7 @@ class AlertRuleIn(BaseModel):
         AlertRuleTimeAggregation.INSTANT, alias='timeAggregation'
     )
     channel: AlertRuleChannel = AlertRuleChannel.EMAIL
-    recipients: list[str] = Field(default_factory=list)
+    recipients: list[str] = Field(..., min_length=1)
     enabled: bool = False
 
     model_config = ConfigDict(
@@ -102,7 +104,7 @@ class AlertRuleUpdateIn(BaseModel):
         None, alias='timeAggregation'
     )
     channel: AlertRuleChannel | None = None
-    recipients: list[str] | None = None
+    recipients: list[str] | None = Field(None, min_length=1)
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()

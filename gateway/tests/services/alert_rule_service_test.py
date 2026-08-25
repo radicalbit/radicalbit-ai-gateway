@@ -500,3 +500,16 @@ def test_alert_rule_dto_recipient_validation():
             recipients=['not-an-email'],
         )
     assert 'Invalid email recipient format' in str(exc_info.value)
+
+    # Empty recipients raises ValueError / ValidationError
+    with pytest.raises(ValueError) as exc_info:
+        AlertRuleIn(
+            name='Empty',
+            project='p1',
+            route='r1',
+            event='e1',
+            recipients=[],
+        )
+    assert 'At least one email recipient is required' in str(
+        exc_info.value
+    ) or 'at least 1 item' in str(exc_info.value)
