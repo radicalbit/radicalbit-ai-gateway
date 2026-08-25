@@ -127,7 +127,7 @@ routes:
 """
 
 
-def _build_limited_routes(project_uuid: str = ''):
+def _build_limited_routes(project_uuid: str):
     resolved = resolve_secrets_from_string(_PROJECT_CONFIG_WITH_LIMITS_YAML)
     config = GatewayConfig.model_validate(resolved)
     return build_gateway_routes_from_config(
@@ -162,14 +162,27 @@ def test_build_gateway_routes_scopes_every_limiter_by_project():
         assert item.route_name == 'my-route'
 
 
-def test_build_gateway_routes_without_project_leaves_limiters_unscoped():
-    """The default keeps the pre-fix key format for call sites with no project."""
-    route = _build_limited_routes()['my-route']
+def test_build_gateway_routes_gives_each_project_its_own_keys():
+    """Two projects declaring the same route must not collide in storage."""
+    routes_a = _build_limited_routes('2f1c6d4e-0000-4000-8000-00000000000a')
+    routes_b = _build_limited_routes('2f1c6d4e-0000-4000-8000-00000000000b')
 
-    assert route.request_rate_limiter.item.project_uuid == ''
-    assert route.token_limiter.input_item.project_uuid == ''
-    assert route.token_limiter.output_item.project_uuid == ''
-    assert route.budget_limiter.item.project_uuid == ''
+    def keys(routes):
+        route = routes['my-route']
+        limiter = route.request_rate_limiter.limiter
+        return {
+            limiter._build_key(item)
+            for item in (
+                route.request_rate_limiter.item,
+                route.token_limiter.input_item,
+                route.token_limiter.output_item,
+                route.budget_limiter.item,
+            )
+        }
+
+    keys_a, keys_b = keys(routes_a), keys(routes_b)
+    assert len(keys_a) == 4
+    assert keys_a.isdisjoint(keys_b)
 
 
 _PROJECT_CONFIG_WITH_TRANSCRIPTION_YAML = """\

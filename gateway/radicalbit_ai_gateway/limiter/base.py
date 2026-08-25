@@ -32,10 +32,11 @@ class BaseFixedWindowLimiter(ABC):
         Key format: limiter:{project_uuid}:{route_name}:{scenario_type}:{window_type}:{window_seconds}
         Example: limiter:0e6f...:my-route:token_input:fixed:60
 
-        The project segment is omitted when ``project_uuid`` is empty, which
-        keeps the key stable for call sites that have no project context.
-        Route names are unique only within a project, so scoping by project is
-        what stops two projects sharing one window.
+        Route names are unique only within a project, so the project segment
+        is what stops two projects sharing one window. It is always present:
+        ``project_uuid`` is a required field. Passing an empty string yields a
+        third, malformed keyspace (``limiter::route:...``) that matches neither
+        the scoped nor the pre-fix format — callers must supply a real uuid.
         """
         return f'limiter:{config.project_uuid}:{config.route_name}:{config.scenario_type.value}:{self._window_type}:{config.window_seconds}'
 

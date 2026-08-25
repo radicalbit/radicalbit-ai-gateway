@@ -309,9 +309,10 @@ class TestProjectScoping:
         project_a = self._limiter('2f1c6d4e-0000-4000-8000-00000000000a')
         project_b = self._limiter('2f1c6d4e-0000-4000-8000-00000000000b')
         # Both limiters must talk to the same storage for the test to mean
-        # anything — in production that is the shared Redis.
-        project_b.storage = project_a.storage
+        # anything — in production that is the shared Redis. Only the limiter's
+        # own reference matters: self.storage is read once, during __init__.
         project_b.limiter._storage = project_a.limiter._storage
+        assert project_a.limiter._storage is project_b.limiter._storage
 
         args = {
             'request_uuid': str(REQUEST_UUID),

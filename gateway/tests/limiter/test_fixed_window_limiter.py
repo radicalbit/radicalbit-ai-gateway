@@ -321,7 +321,7 @@ class TestKeyStructure:
     """Tests for the Redis key structure."""
 
     def test_build_key_format(self, limiter: FixedWindowLimiter) -> None:
-        """A config with no project falls back to the unscoped key format."""
+        """Key format: limiter:{project}:{route}:{scenario}:fixed:{seconds}."""
         config = WindowConfig(
             limit=10,
             window_seconds=60,
@@ -420,10 +420,14 @@ class TestProjectIsolation:
         assert await limiter.hit(project_b) is True
 
     @pytest.mark.asyncio
-    async def test_unscoped_configs_still_share_a_window(
+    async def test_same_project_and_route_share_a_window(
         self, limiter: FixedWindowLimiter
     ) -> None:
-        """Without a project the pre-fix behaviour is preserved deliberately."""
+        """The counterpart to isolation: scoping must not over-isolate.
+
+        Two configs naming the same project and route are the same window, so a
+        route's budget is shared across the requests that target it.
+        """
         first = WindowConfig(
             limit=2,
             window_seconds=60,

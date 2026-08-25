@@ -440,7 +440,7 @@ class TestKeyStructure:
     """Tests for the Redis key structure."""
 
     def test_build_key_format(self, limiter: AlignedFixedWindowLimiter) -> None:
-        """A config with no project falls back to the unscoped key format."""
+        """Key format: limiter:{project}:{route}:{scenario}:aligned:{seconds}."""
         config = WindowConfig(
             limit=10,
             window_seconds=60,
