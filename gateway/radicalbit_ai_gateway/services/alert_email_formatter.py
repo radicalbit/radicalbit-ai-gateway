@@ -1,3 +1,4 @@
+import html
 from typing import Any
 
 
@@ -14,22 +15,36 @@ def build_alert_email_body(
     event_name: str,
     event_details: dict[str, Any] | None = None,
 ) -> str:
-    """Build the HTML body for an alert notification email."""
+    """Build the HTML body for an alert notification email with escaped values."""
     details = event_details or {}
-    req_uuid = details.get('request_uuid', 'N/A')
-    project_name = details.get('project_name', 'N/A')
-    api_key_name = details.get('api_key_name', 'N/A')
-    group_name = details.get('group_name', 'N/A')
+    req_uuid = html.escape(str(details.get('request_uuid', 'N/A')))
+    project_name = html.escape(str(details.get('project_name', 'N/A')))
+    api_key_name = html.escape(str(details.get('api_key_name', 'N/A')))
+    group_name = html.escape(str(details.get('group_name', 'N/A')))
 
-    g_name = details.get('name', 'N/A')
-    g_type = details.get('type', 'N/A')
-    g_where = details.get('where', 'N/A')
-    g_behavior = details.get('behavior', 'N/A')
-    g_params = details.get('parameters', 'N/A')
+    g_name = html.escape(str(details.get('name', 'N/A')))
+    g_type = html.escape(str(details.get('type', 'N/A')))
+    g_where = html.escape(str(details.get('where', 'N/A')))
+    g_behavior = html.escape(str(details.get('behavior', 'N/A')))
+    g_params = html.escape(str(details.get('parameters', 'N/A')))
 
-    cache_type = details.get('cache_type')
-    fallback_target = details.get('target')
-    fallback_dest = details.get('fallback')
+    cache_type = (
+        html.escape(str(details.get('cache_type')))
+        if details.get('cache_type')
+        else None
+    )
+    fallback_target = (
+        html.escape(str(details.get('target'))) if details.get('target') else None
+    )
+    fallback_dest = (
+        html.escape(str(details.get('fallback'))) if details.get('fallback') else None
+    )
+
+    escaped_rule_name = html.escape(str(rule_name))
+    escaped_description = html.escape(str(description)) if description else 'N/A'
+    escaped_project_uuid = html.escape(str(project_uuid))
+    escaped_route_name = html.escape(str(route_name))
+    escaped_event_name = html.escape(str(event_name))
 
     extra_rows = ''
     if g_name != 'N/A':
@@ -62,11 +77,11 @@ def build_alert_email_body(
         <p style="font-size: 14px; color: #555;">An alert rule has been triggered on your Radicalbit AI Gateway.</p>
 
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-            <tr style="background-color: #f7fafc;"><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0; width: 35%;">Rule Name:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{rule_name}</td></tr>
-            <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0;">Description:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{description or 'N/A'}</td></tr>
-            <tr style="background-color: #f7fafc;"><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0;">Project:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{project_name} <span style="font-size: 12px; color: #718096;">({project_uuid})</span></td></tr>
-            <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0;">Route:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{route_name}</td></tr>
-            <tr style="background-color: #f7fafc;"><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0;">Event:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #c53030; font-weight: bold;">{event_name}</td></tr>
+            <tr style="background-color: #f7fafc;"><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0; width: 35%;">Rule Name:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{escaped_rule_name}</td></tr>
+            <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0;">Description:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{escaped_description}</td></tr>
+            <tr style="background-color: #f7fafc;"><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0;">Project:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{project_name} <span style="font-size: 12px; color: #718096;">({escaped_project_uuid})</span></td></tr>
+            <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0;">Route:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">{escaped_route_name}</td></tr>
+            <tr style="background-color: #f7fafc;"><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #e2e8f0;">Event:</td><td style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #c53030; font-weight: bold;">{escaped_event_name}</td></tr>
         </table>
 
         <h3 style="color: #2d3748; border-bottom: 2px solid #edf2f7; padding-bottom: 8px; margin-top: 25px;">Event Details</h3>

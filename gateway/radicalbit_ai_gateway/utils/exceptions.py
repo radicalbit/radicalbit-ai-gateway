@@ -717,6 +717,18 @@ class AlertRuleInvalidEventError(AppError):
         )
 
 
+class AlertRuleUnsupportedTimeAggregationError(AppError):
+    def __init__(
+        self,
+        message: str = 'Time aggregation "window" is not currently supported. Only "instant" is supported.',
+    ):
+        super().__init__(
+            client_message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code='unsupported_time_aggregation',
+        )
+
+
 class AlertRuleInternalError(AppError):
     def __init__(self, message: str = 'Alert rule internal error'):
         super().__init__(

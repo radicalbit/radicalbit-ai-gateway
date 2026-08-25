@@ -79,6 +79,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
     AlertRuleInvalidEventError,
     AlertRuleNotFoundError,
+    AlertRuleUnsupportedTimeAggregationError,
     ApiKeyError,
     AppError,
     AuthRegistryError,
@@ -388,6 +389,9 @@ app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
 app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
 app.add_exception_handler(AlertRuleNotFoundError, alert_rule_exception_handler)
 app.add_exception_handler(AlertRuleInvalidEventError, alert_rule_exception_handler)
+app.add_exception_handler(
+    AlertRuleUnsupportedTimeAggregationError, alert_rule_exception_handler
+)
 app.add_exception_handler(AlertRuleInternalError, alert_rule_exception_handler)
 app.include_router(KeyRoute.get_key_router(key_service), prefix=prefix)
 app.include_router(

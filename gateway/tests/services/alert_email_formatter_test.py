@@ -67,3 +67,26 @@ def test_build_html_body_full():
     assert 'exact' in html
     assert 'Fallback:' in html
     assert 'primary_model &rarr; backup_model' in html
+
+
+def test_build_html_body_escapes_html_entities():
+    details = {
+        'request_uuid': '<script>alert(1)</script>',
+        'name': '<b>malicious_guardrail</b>',
+        'parameters': '<tag attr="val">',
+    }
+    html = build_alert_email_body(
+        rule_name='<Rule & Test>',
+        description='<img src=x onerror=alert(1)>',
+        project_uuid='proj<123>',
+        route_name='route<name>',
+        event_name='event<name>',
+        event_details=details,
+    )
+
+    assert '<script>' not in html
+    assert '&lt;script&gt;alert(1)&lt;/script&gt;' in html
+    assert '&lt;Rule &amp; Test&gt;' in html
+    assert '&lt;img src=x onerror=alert(1)&gt;' in html
+    assert '&lt;b&gt;malicious_guardrail&lt;/b&gt;' in html
+    assert '&lt;tag attr=&quot;val&quot;&gt;' in html

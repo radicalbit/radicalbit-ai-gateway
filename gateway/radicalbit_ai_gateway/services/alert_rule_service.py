@@ -23,7 +23,9 @@ from radicalbit_ai_gateway.services.email_service import EmailService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
+    AlertRuleInvalidEventError,
     AlertRuleNotFoundError,
+    AlertRuleUnsupportedTimeAggregationError,
 )
 
 app_config = get_app_config()
@@ -179,19 +181,20 @@ class AlertRuleService:
         return valid_set
 
     def create_rule(self, alert_rule_in: AlertRuleIn) -> AlertRuleOut:
-        try:
-            # Validate event against route alertable events
-            valid_events = self._get_valid_events_list(
-                alert_rule_in.project, alert_rule_in.route
+        if alert_rule_in.time_aggregation != AlertRuleTimeAggregation.INSTANT:
+            raise AlertRuleUnsupportedTimeAggregationError(
+                f'Time aggregation "{alert_rule_in.time_aggregation}" is not supported. Only "instant" is supported.'
             )
-            if alert_rule_in.event not in valid_events:
-                logger.info(
-                    'Event %s is not in route %s alertable events %s, proceeding with creation',
-                    alert_rule_in.event,
-                    alert_rule_in.route,
-                    valid_events,
-                )
 
+        valid_events = self._get_valid_events_list(
+            alert_rule_in.project, alert_rule_in.route
+        )
+        if alert_rule_in.event not in valid_events:
+            raise AlertRuleInvalidEventError(
+                f'Event "{alert_rule_in.event}" is not valid for route "{alert_rule_in.route}"'
+            )
+
+        try:
             entity = alert_rule_in.to_alert_rule()
             inserted = self.alert_rule_dao.insert(entity)
             logger.info('Created alert rule %s (%s)', inserted.name, inserted.uuid)
@@ -209,6 +212,14 @@ class AlertRuleService:
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
 
+        if (
+            alert_rule_in.time_aggregation is not None
+            and alert_rule_in.time_aggregation != AlertRuleTimeAggregation.INSTANT
+        ):
+            raise AlertRuleUnsupportedTimeAggregationError(
+                f'Time aggregation "{alert_rule_in.time_aggregation}" is not supported. Only "instant" is supported.'
+            )
+
         update_dict = alert_rule_in.model_dump(exclude_unset=True)
         if not update_dict:
             return self._to_out(existing)
@@ -221,18 +232,16 @@ class AlertRuleService:
         if 'recipients' in update_dict and isinstance(update_dict['recipients'], list):
             update_dict['recipients'] = json.dumps(update_dict['recipients'])
 
-        # Validate event if route or event changes
+        # Validate event if route, event or project changes
         new_project = update_dict.get('project', existing.project)
         new_route = update_dict.get('route', existing.route)
         new_event = update_dict.get('event', existing.event)
 
-        if 'route' in update_dict or 'event' in update_dict:
+        if 'route' in update_dict or 'event' in update_dict or 'project' in update_dict:
             valid_events = self._get_valid_events_list(new_project, new_route)
             if new_event not in valid_events:
-                logger.info(
-                    'Updated event %s is not in route %s alertable events',
-                    new_event,
-                    new_route,
+                raise AlertRuleInvalidEventError(
+                    f'Event "{new_event}" is not valid for route "{new_route}"'
                 )
 
         updated = self.alert_rule_dao.update_rule(alert_rule_uuid, update_dict)

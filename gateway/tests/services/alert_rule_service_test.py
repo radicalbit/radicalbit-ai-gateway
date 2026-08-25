@@ -2,8 +2,15 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import pytest
+
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
+from radicalbit_ai_gateway.models.alert_rule_dto import (
+    AlertRuleIn,
+    AlertRuleTimeAggregation,
+    AlertRuleUpdateIn,
+)
 from radicalbit_ai_gateway.models.caching import CacheConfig, SemanticCaching
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -17,6 +24,10 @@ from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
 from radicalbit_ai_gateway.services.email_service import EmailService
+from radicalbit_ai_gateway.utils.exceptions import (
+    AlertRuleInvalidEventError,
+    AlertRuleUnsupportedTimeAggregationError,
+)
 
 
 @patch('radicalbit_ai_gateway.services.alert_rule_service.build_alert_email_body')
@@ -362,3 +373,130 @@ def test_validate_rules_on_config_change_invalid_event():
         rule_uuid,
         'The event "guardrail-input-removed_guardrail" is no longer valid for the current route configuration',
     )
+
+
+def test_create_rule_raises_on_invalid_event():
+    mock_dao = MagicMock(spec=AlertRuleDAO)
+    project_uuid = uuid4()
+    model = Model(model_id='gpt-4', model='gpt-4', provider='openai')
+    route_cfg = GatewayRouteConfig(
+        route_name='active-route',
+        chat_models=['gpt-4'],
+    )
+    gw_cfg = GatewayConfig(
+        routes={'active-route': route_cfg},
+        chat_models=[model],
+    )
+    project_entry = ProjectEntry(uuid=project_uuid, config=gw_cfg)
+
+    service = AlertRuleService(
+        alert_rule_dao=mock_dao,
+        project_configs={'my-project': project_entry},
+    )
+
+    rule_in = AlertRuleIn(
+        name='Invalid Event Rule',
+        project='my-project',
+        route='active-route',
+        event='non-existent-event',
+        recipients=['admin@example.com'],
+    )
+
+    with pytest.raises(AlertRuleInvalidEventError) as exc_info:
+        service.create_rule(rule_in)
+    assert 'not valid for route "active-route"' in str(exc_info.value)
+
+
+def test_create_rule_raises_on_window_time_aggregation():
+    mock_dao = MagicMock(spec=AlertRuleDAO)
+    service = AlertRuleService(
+        alert_rule_dao=mock_dao,
+        project_configs={},
+    )
+
+    rule_in = AlertRuleIn(
+        name='Window Rule',
+        project='my-project',
+        route='active-route',
+        event='fallback-triggered',
+        time_aggregation=AlertRuleTimeAggregation.WINDOW,
+        recipients=['admin@example.com'],
+    )
+
+    with pytest.raises(AlertRuleUnsupportedTimeAggregationError) as exc_info:
+        service.create_rule(rule_in)
+    assert 'not supported' in str(exc_info.value)
+
+
+def test_update_rule_raises_on_invalid_event_or_window():
+    mock_dao = MagicMock(spec=AlertRuleDAO)
+    project_uuid = uuid4()
+    model = Model(model_id='gpt-4', model='gpt-4', provider='openai')
+    route_cfg = GatewayRouteConfig(
+        route_name='active-route',
+        chat_models=['gpt-4'],
+    )
+    gw_cfg = GatewayConfig(
+        routes={'active-route': route_cfg},
+        chat_models=[model],
+    )
+    project_entry = ProjectEntry(uuid=project_uuid, config=gw_cfg)
+
+    now = datetime.now(timezone.utc)
+    rule_id = uuid4()
+    existing = AlertRule(
+        uuid=rule_id,
+        name='Existing Rule',
+        description=None,
+        project='my-project',
+        route='active-route',
+        scope='route',
+        event='fallback-triggered',
+        time_aggregation='instant',
+        channel='email',
+        recipients='["admin@example.com"]',
+        enabled=True,
+        disabled_reason=None,
+        created_at=now,
+        updated_at=now,
+    )
+    mock_dao.get_by_uuid.return_value = existing
+
+    service = AlertRuleService(
+        alert_rule_dao=mock_dao,
+        project_configs={'my-project': project_entry},
+    )
+
+    # 1. Update with invalid event
+    with pytest.raises(AlertRuleInvalidEventError):
+        service.update_rule(rule_id, AlertRuleUpdateIn(event='invalid-event'))
+
+    # 2. Update with window time aggregation
+    with pytest.raises(AlertRuleUnsupportedTimeAggregationError):
+        service.update_rule(
+            rule_id,
+            AlertRuleUpdateIn(time_aggregation=AlertRuleTimeAggregation.WINDOW),
+        )
+
+
+def test_alert_rule_dto_recipient_validation():
+    # Valid recipients
+    valid_dto = AlertRuleIn(
+        name='Valid',
+        project='p1',
+        route='r1',
+        event='e1',
+        recipients=['test@example.com', 'user.name+tag@sub.domain.co.uk'],
+    )
+    assert len(valid_dto.recipients) == 2
+
+    # Invalid recipient raises ValueError
+    with pytest.raises(ValueError) as exc_info:
+        AlertRuleIn(
+            name='Invalid',
+            project='p1',
+            route='r1',
+            event='e1',
+            recipients=['not-an-email'],
+        )
+    assert 'Invalid email recipient format' in str(exc_info.value)

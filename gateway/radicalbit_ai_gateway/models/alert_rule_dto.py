@@ -1,12 +1,27 @@
 import datetime
 from enum import Enum
 import json
+import re
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
+
+EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
+
+
+def _validate_recipients(recipients: list[str] | None) -> list[str] | None:
+    if recipients is None:
+        return None
+    cleaned = []
+    for r in recipients:
+        email = r.strip()
+        if not email or not EMAIL_REGEX.match(email):
+            raise ValueError(f'Invalid email recipient format: "{r}"')
+        cleaned.append(email)
+    return cleaned
 
 
 class AlertRuleScope(str, Enum):
@@ -39,6 +54,11 @@ class AlertRuleIn(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
     )
+
+    @field_validator('recipients')
+    @classmethod
+    def validate_recipients_format(cls, v: list[str]) -> list[str]:
+        return _validate_recipients(v) or []
 
     def to_alert_rule(self) -> AlertRule:
         UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
@@ -87,6 +107,11 @@ class AlertRuleUpdateIn(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
     )
+
+    @field_validator('recipients')
+    @classmethod
+    def validate_recipients_format(cls, v: list[str] | None) -> list[str] | None:
+        return _validate_recipients(v)
 
 
 class AlertRuleToggleIn(BaseModel):
