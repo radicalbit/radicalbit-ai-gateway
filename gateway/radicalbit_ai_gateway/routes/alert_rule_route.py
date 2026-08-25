@@ -28,12 +28,6 @@ class AlertRuleRoute:
             status_code=200,
             response_model=list[AlertRuleOut],
         )
-        @router.get(
-            '/rules',
-            status_code=200,
-            response_model=list[AlertRuleOut],
-            include_in_schema=False,
-        )
         def get_all_rules():
             return alert_rule_service.get_all_rules()
 
@@ -54,16 +48,10 @@ class AlertRuleRoute:
         def create_rule(alert_rule_in: AlertRuleIn):
             return alert_rule_service.create_rule(alert_rule_in)
 
-        @router.put(
-            '/rule/{rule_uuid}',
-            status_code=200,
-            response_model=AlertRuleOut,
-        )
         @router.patch(
             '/rule/{rule_uuid}',
             status_code=200,
             response_model=AlertRuleOut,
-            include_in_schema=False,
         )
         @route_meta(entity_type='ALERT_RULE', entity_uuid_param='rule_uuid')
         def update_rule(
@@ -104,20 +92,6 @@ class AlertRuleRoute:
         ):
             return alert_rule_service.get_alertable_events_for_route(
                 project_name=project, route_name=route_id
-            )
-
-        @router.get(
-            '/alertable-events',
-            status_code=200,
-            response_model=AlertableEventsOut,
-            include_in_schema=False,
-        )
-        def get_query_alertable_events(
-            project: str | None = Query(None),
-            route: str | None = Query(None),
-        ):
-            return alert_rule_service.get_alertable_events_for_route(
-                project_name=project, route_name=route
             )
 
         return router

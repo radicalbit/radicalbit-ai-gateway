@@ -81,6 +81,56 @@ def test_create_rule(client, mock_alert_rule_service):
     assert response.json()['uuid'] == rule_id
 
 
+def test_get_rule_by_uuid(client, mock_alert_rule_service):
+    rule_id = str(uuid4())
+    mock_alert_rule_service.get_rule_by_uuid.return_value = {
+        'uuid': rule_id,
+        'name': 'Fetched Rule',
+        'description': None,
+        'project': 'p1',
+        'route': 'r1',
+        'scope': 'route',
+        'event': 'guardrail-input-pii',
+        'timeAggregation': 'instant',
+        'channel': 'email',
+        'recipients': ['dev@example.com'],
+        'enabled': True,
+        'disabledReason': None,
+        'createdAt': '2026-08-07T12:00:00Z',
+        'updatedAt': '2026-08-07T12:00:00Z',
+    }
+
+    response = client.get(f'/rule/{rule_id}')
+    assert response.status_code == 200
+    assert response.json()['uuid'] == rule_id
+
+
+def test_update_rule(client, mock_alert_rule_service):
+    rule_id = str(uuid4())
+    mock_alert_rule_service.update_rule.return_value = {
+        'uuid': rule_id,
+        'name': 'Updated Rule',
+        'description': 'Updated Desc',
+        'project': 'p1',
+        'route': 'r1',
+        'scope': 'route',
+        'event': 'guardrail-input-pii',
+        'timeAggregation': 'instant',
+        'channel': 'email',
+        'recipients': ['dev2@example.com'],
+        'enabled': True,
+        'disabledReason': None,
+        'createdAt': '2026-08-07T12:00:00Z',
+        'updatedAt': '2026-08-07T12:00:00Z',
+    }
+
+    response = client.patch(
+        f'/rule/{rule_id}', json={'name': 'Updated Rule', 'description': 'Updated Desc'}
+    )
+    assert response.status_code == 200
+    assert response.json()['name'] == 'Updated Rule'
+
+
 def test_toggle_rule_enabled(client, mock_alert_rule_service):
     rule_id = str(uuid4())
     mock_alert_rule_service.toggle_rule_enabled.return_value = {
