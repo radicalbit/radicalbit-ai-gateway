@@ -126,6 +126,46 @@ def test_dispatch_event_notification_e2e_formatting():
     assert 'req-fallback' in call_args['body']
 
 
+def test_dispatch_event_notification_skips_window_time_aggregation():
+    mock_dao = MagicMock(spec=AlertRuleDAO)
+    mock_email = MagicMock(spec=EmailService)
+
+    now = datetime.now(timezone.utc)
+    rule = AlertRule(
+        uuid=uuid4(),
+        name='Window Rule',
+        description='Desc',
+        project='p1',
+        route='route1',
+        scope='route',
+        event='fallback-triggered',
+        time_aggregation='window',
+        channel='email',
+        recipients='["admin@example.com"]',
+        enabled=True,
+        disabled_reason=None,
+        created_at=now,
+        updated_at=now,
+    )
+    mock_dao.get_active_by_route.return_value = [rule]
+
+    service = AlertRuleService(
+        alert_rule_dao=mock_dao,
+        email_service=mock_email,
+    )
+
+    dispatched = service.dispatch_event_notification(
+        project_uuid='p1',
+        route_name='route1',
+        event_name='fallback-triggered',
+        event_details={'request_uuid': 'req-fallback'},
+    )
+
+    # Should not dispatch anything because time_aggregation is window
+    assert dispatched == 0
+    mock_email.send_email.assert_not_called()
+
+
 def test_get_alertable_events_empty_when_no_guardrails_or_features():
     mock_dao = MagicMock(spec=AlertRuleDAO)
     project_uuid = uuid4()

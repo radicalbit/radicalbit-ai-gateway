@@ -15,6 +15,7 @@ class AlertRuleScope(str, Enum):
 
 class AlertRuleTimeAggregation(str, Enum):
     INSTANT = 'instant'
+    WINDOW = 'window'
 
 
 class AlertRuleChannel(str, Enum):

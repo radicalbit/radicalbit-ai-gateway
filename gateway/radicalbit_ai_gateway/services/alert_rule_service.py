@@ -11,6 +11,7 @@ from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertableEventsOut,
     AlertRuleIn,
     AlertRuleOut,
+    AlertRuleTimeAggregation,
     AlertRuleUpdateIn,
 )
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
@@ -321,20 +322,9 @@ class AlertRuleService:
             project_name=project_name,
         )
 
-        candidate_events = {event_name.lower()}
-        if any(k in event_name.lower() for k in ('presidio', 'pii', 'personal_id')):
-            if 'input' in event_name.lower():
-                candidate_events.add('guardrail-input-pii')
-            elif 'output' in event_name.lower():
-                candidate_events.add('guardrail-output-pii')
-        if 'toxicity' in event_name.lower():
-            if 'input' in event_name.lower():
-                candidate_events.add('guardrail-input-toxicity')
-            elif 'output' in event_name.lower():
-                candidate_events.add('guardrail-output-toxicity')
-
+        target_event = event_name.strip().lower()
         matching_rules = [
-            r for r in active_rules if r.event.lower() in candidate_events
+            r for r in active_rules if r.event.strip().lower() == target_event
         ]
 
         if not matching_rules:
@@ -343,6 +333,18 @@ class AlertRuleService:
         dispatched_count = 0
         for rule in matching_rules:
             rule_out = AlertRuleOut.from_alert_rule(rule)
+            # TODO: Remove this check once time window aggregation (e.g. 'window') is implemented
+            if rule_out.time_aggregation != AlertRuleTimeAggregation.INSTANT:
+                logger.error(
+                    'Time aggregation "%s" is not supported for immediate event dispatch on alert rule "%s" (%s). Only "instant" is supported.',
+                    rule_out.time_aggregation.value
+                    if isinstance(rule_out.time_aggregation, Enum)
+                    else rule_out.time_aggregation,
+                    rule.name,
+                    rule.uuid,
+                )
+                continue
+
             subject = build_alert_email_subject(rule.name, route_name)
             body = build_alert_email_body(
                 rule_name=rule.name,
