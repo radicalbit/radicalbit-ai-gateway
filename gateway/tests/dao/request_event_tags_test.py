@@ -195,3 +195,35 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
         self._seed()
         dao = RequestEventDAO(self.db)
         assert dao.get_distinct_tag_values(PROJECT_A, 'unknown') == []
+
+    def test_dao_filters_by_tags_with_or_within_key_and_and_across_keys(self):
+        """The `tags` param reaches the real query through a public DAO method."""
+        self._seed()
+        dao = RequestEventDAO(self.db)
+
+        # env=prod OR env=staging -> 3 rows (matches _seed's PROJECT_A data).
+        assert (
+            dao.get_request_stats_global(
+                PROJECT_A, _from=None, _to=None, tags=['env=prod', 'env=staging']
+            ).total_requests
+            == 3
+        )
+
+        # env=prod AND cost_center=retail -> only the first seeded row.
+        assert (
+            dao.get_request_stats_global(
+                PROJECT_A,
+                _from=None,
+                _to=None,
+                tags=['env=prod', 'cost_center=retail'],
+            ).total_requests
+            == 1
+        )
+
+        # A tag that matches nothing -> zero rows.
+        assert (
+            dao.get_request_stats_global(
+                PROJECT_A, _from=None, _to=None, tags=['env=unknown']
+            ).total_requests
+            == 0
+        )

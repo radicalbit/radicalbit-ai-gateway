@@ -38,6 +38,7 @@ from radicalbit_ai_gateway.services.request_event_service import RequestEventSer
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.chart_utils import determine_granularity
 from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
+from radicalbit_ai_gateway.utils.request_tags import parse_tags_query
 from radicalbit_ai_gateway.utils.sse_params import (
     compute_sse_time_range,
     validate_sse_params,
@@ -121,6 +122,7 @@ class DashboardRoute:
             request: Request,
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
@@ -131,6 +133,7 @@ class DashboardRoute:
                 config=project_entry.config,
                 _from=datetime.fromtimestamp(_from) if _from else None,
                 _to=datetime.fromtimestamp(_to) if _to else None,
+                tags=tags,
             )
 
         @router.get(
@@ -145,6 +148,7 @@ class DashboardRoute:
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
             include_groups: bool = False,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
@@ -157,6 +161,7 @@ class DashboardRoute:
                 include_groups=include_groups,
                 _from=datetime.fromtimestamp(_from) if _from else None,
                 _to=datetime.fromtimestamp(_to) if _to else None,
+                tags=tags,
             )
 
         @router.get(
@@ -172,6 +177,7 @@ class DashboardRoute:
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
             include_groups: bool = False,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
@@ -191,6 +197,7 @@ class DashboardRoute:
                 include_groups=include_groups,
                 _from=datetime.fromtimestamp(_from) if _from else None,
                 _to=datetime.fromtimestamp(_to) if _to else None,
+                tags=tags,
             )
 
         @router.get(
@@ -206,6 +213,7 @@ class DashboardRoute:
             n: int = Query(10),
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
@@ -224,6 +232,7 @@ class DashboardRoute:
                 n=n,
                 _from=datetime.fromtimestamp(_from) if _from else None,
                 _to=datetime.fromtimestamp(_to) if _to else None,
+                tags=tags,
             )
 
         @router.get(
@@ -239,6 +248,7 @@ class DashboardRoute:
             _from: Annotated[datetime | None, Query()] = None,
             _to: Annotated[datetime | None, Query()] = None,
             group_by: Literal['keys', 'groups', 'models'] = Query(),
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
@@ -256,6 +266,7 @@ class DashboardRoute:
                 _from=_from,
                 _to=_to,
                 group_by=group_by,
+                tags=tags,
             )
 
         @router.get(
@@ -271,6 +282,7 @@ class DashboardRoute:
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
             _with_saved_tokens: bool = Query(False),
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry: ProjectEntry = request.app.state.project_configs.get(
@@ -291,6 +303,7 @@ class DashboardRoute:
                 _from=datetime.fromtimestamp(_from, timezone.utc) if _from else None,
                 _to=datetime.fromtimestamp(_to, timezone.utc) if _to else None,
                 _with_saved_tokens=_with_saved_tokens,
+                tags=tags,
             )
 
         @router.get(
@@ -305,6 +318,7 @@ class DashboardRoute:
             request: Request,
             _from: Annotated[datetime | None, Query()] = None,
             _to: Annotated[datetime | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
@@ -323,6 +337,7 @@ class DashboardRoute:
                 _from=_from,
                 _to=_to,
                 granularity=granularity,
+                tags=tags,
             )
 
         @router.get(
@@ -341,6 +356,7 @@ class DashboardRoute:
             ] = None,
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project_service.validate_exists(project_uuid)
@@ -353,6 +369,7 @@ class DashboardRoute:
                     _from=from_datetime,
                     _to=to_datetime,
                     granularity=granularity,
+                    tags=tags,
                 )
                 yield result.model_dump(by_alias=True)
                 sleep(10)
@@ -370,6 +387,7 @@ class DashboardRoute:
             _from: Annotated[datetime | None, Query()] = None,
             _to: Annotated[datetime | None, Query()] = None,
             show_errors: Annotated[bool, Query()] = False,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
@@ -389,6 +407,7 @@ class DashboardRoute:
                     _from=_from,
                     _to=_to,
                     granularity=granularity,
+                    tags=tags,
                 )
             return request_event_service.get_request_chart_data(
                 project_uuid=project_uuid,
@@ -396,6 +415,7 @@ class DashboardRoute:
                 _from=_from,
                 _to=_to,
                 granularity=granularity,
+                tags=tags,
             )
 
         @router.get(
@@ -411,6 +431,7 @@ class DashboardRoute:
             _from: Annotated[datetime | None, Query()] = None,
             _to: Annotated[datetime | None, Query()] = None,
             include_models: Annotated[bool, Query()] = False,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
@@ -430,6 +451,7 @@ class DashboardRoute:
                 _to=_to,
                 granularity=granularity,
                 include_models=include_models,
+                tags=tags,
             )
 
         @router.get(
@@ -496,6 +518,7 @@ class DashboardRoute:
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
             include_models: Annotated[bool, Query()] = False,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project_service.validate_exists(project_uuid)
@@ -509,6 +532,7 @@ class DashboardRoute:
                     _to=to_datetime,
                     granularity=granularity,
                     include_models=include_models,
+                    tags=tags,
                 )
                 yield result.model_dump(by_alias=True)
                 sleep(10)
@@ -529,6 +553,7 @@ class DashboardRoute:
             ] = None,
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project = project_service.get_by_uuid(project_uuid)
@@ -544,6 +569,7 @@ class DashboardRoute:
                     config=project_entry.config,
                     _from=from_datetime,
                     _to=to_datetime,
+                    tags=tags,
                 )
                 yield result if result is not None else {}
                 sleep(10)
@@ -564,6 +590,7 @@ class DashboardRoute:
             ] = None,
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project = project_service.get_by_uuid(project_uuid)
@@ -579,6 +606,7 @@ class DashboardRoute:
                     config=project_entry.config,
                     _from=from_datetime,
                     _to=to_datetime,
+                    tags=tags,
                 )
                 yield result if result is not None else {}
                 sleep(10)
@@ -600,6 +628,7 @@ class DashboardRoute:
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
             group_by: Literal['keys', 'groups', 'models'] = Query(),
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project_service.validate_exists(project_uuid)
@@ -611,6 +640,7 @@ class DashboardRoute:
                     _from=from_datetime,
                     _to=to_datetime,
                     group_by=group_by,
+                    tags=tags,
                 )
                 yield result.model_dump(by_alias=True)
                 sleep(10)
@@ -632,6 +662,7 @@ class DashboardRoute:
             ] = None,
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project_service.validate_exists(project_uuid)
@@ -644,6 +675,7 @@ class DashboardRoute:
                     route_names=routes,
                     _from=from_datetime,
                     _to=to_datetime,
+                    tags=tags,
                 )
                 yield result.model_dump(by_alias=True)
                 sleep(10)
@@ -665,6 +697,7 @@ class DashboardRoute:
             ] = None,
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project_service.validate_exists(project_uuid)
@@ -677,6 +710,7 @@ class DashboardRoute:
                     route_names=routes,
                     _from=from_datetime,
                     _to=to_datetime,
+                    tags=tags,
                 )
                 yield result.model_dump(by_alias=True)
                 sleep(10)
@@ -698,6 +732,7 @@ class DashboardRoute:
             ] = None,
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project_service.validate_exists(project_uuid)
@@ -710,6 +745,7 @@ class DashboardRoute:
                     route_names=routes,
                     _from=from_datetime,
                     _to=to_datetime,
+                    tags=tags,
                 )
                 yield result.model_dump(by_alias=True)
                 sleep(10)
@@ -725,6 +761,7 @@ class DashboardRoute:
             timestamp: int,
             granularity: Literal['hours', 'days', 'weeks', 'months'],
             routes: Annotated[list[str] | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ) -> list[ModelCostDTO]:
             project_service.validate_exists(project_uuid)
             return event_service.get_cost_breakdown(
@@ -734,6 +771,7 @@ class DashboardRoute:
                 timestamp=timestamp,
                 granularity=granularity,
                 routes=routes,
+                tags=tags,
             )
 
         @router.get(
@@ -747,6 +785,7 @@ class DashboardRoute:
             timestamp: int,
             granularity: Literal['hours', 'days', 'weeks', 'months'],
             routes: Annotated[list[str] | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ) -> list[ModelCostDTO]:
             project_service.validate_exists(project_uuid)
             return event_service.get_cost_breakdown(
@@ -756,6 +795,7 @@ class DashboardRoute:
                 timestamp=timestamp,
                 granularity=granularity,
                 routes=routes,
+                tags=tags,
             )
 
         @router.get(
@@ -769,6 +809,7 @@ class DashboardRoute:
             timestamp: int,
             granularity: Literal['hours', 'days', 'weeks', 'months'],
             routes: Annotated[list[str] | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ) -> list[ModelCostDTO]:
             project_service.validate_exists(project_uuid)
             return event_service.get_cost_breakdown(
@@ -778,6 +819,7 @@ class DashboardRoute:
                 timestamp=timestamp,
                 granularity=granularity,
                 routes=routes,
+                tags=tags,
             )
 
         @router.get(
@@ -798,6 +840,7 @@ class DashboardRoute:
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
             _with_saved_tokens: bool = Query(False),
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project = project_service.get_by_uuid(project_uuid)
@@ -815,6 +858,7 @@ class DashboardRoute:
                     _from=from_datetime,
                     _to=to_datetime,
                     _with_saved_tokens=_with_saved_tokens,
+                    tags=tags,
                 )
                 yield result.model_dump(exclude_none=True, by_alias=True)
                 sleep(10)
@@ -835,6 +879,7 @@ class DashboardRoute:
             ] = None,
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> StreamingResponse:
             project = project_service.get_by_uuid(project_uuid)
@@ -850,6 +895,7 @@ class DashboardRoute:
                     config=project_entry.config,
                     _from=from_datetime,
                     _to=to_datetime,
+                    tags=tags,
                 )
                 yield result if result is not None else {}
                 sleep(10)

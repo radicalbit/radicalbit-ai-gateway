@@ -84,6 +84,20 @@ class RequestEventServiceTest(unittest.TestCase):
         )
         assert res == expected
 
+    def test_get_request_chart_data_forwards_tags(self):
+        self.request_event_dao.get_request_chart_data = MagicMock(return_value=[])
+        tags = ['env=prod', 'cost_center=retail']
+
+        self.request_event_service.get_request_chart_data(
+            self.TEST_PROJECT_UUID, 'rb-gateway', None, None, 'hours', tags=tags
+        )
+
+        self.request_event_dao.get_request_chart_data.assert_called_once()
+        assert (
+            self.request_event_dao.get_request_chart_data.call_args.kwargs['tags']
+            == tags
+        )
+
     def test_get_request_grouped_chart_data(self):
         base_time = datetime.datetime(
             2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
