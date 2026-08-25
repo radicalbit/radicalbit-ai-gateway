@@ -42,11 +42,7 @@ def _dispatch_alert_if_matching(service: Any, event: EventPayload) -> None:
         where = str(getattr(event, 'where', '')).lower()
         name = str(getattr(event, 'name', '')).lower()
         event_name = f'guardrail-{where}-{name}'
-    elif event_type in (
-        EventType.CACHE_HIT,
-        EventType.CACHE_INPUT_TOKENS,
-        EventType.CACHE_OUTPUT_TOKENS,
-    ):
+    elif event_type == EventType.CACHE_HIT:
         cache_type = str(getattr(event, 'cache_type', '')).lower()
         event_name = f'cache-{cache_type}'
     elif event_type == EventType.FALLBACK:
