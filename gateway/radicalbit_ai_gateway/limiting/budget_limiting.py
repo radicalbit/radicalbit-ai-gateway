@@ -25,9 +25,13 @@ class BudgetLimiter:
         self,
         route_name: str,
         config: Limiting | None = None,
+        project_uuid: str = '',
     ):
         self.route_name = route_name
         self.config = config
+        # Key isolation only: route_name stays the bare route everywhere it is
+        # reported (metrics, limit events, logs).
+        self.project_uuid = project_uuid
 
         # Use Redis storage if Redis config are provided, otherwise fall back to MemoryStorage
         if app_config.redis_config.redis_url:
@@ -37,7 +41,7 @@ class BudgetLimiter:
 
         self.limiter = self._create_limiter(config) if config else None
         self.item = (
-            self._create_item(config, route_name, ScenarioType.BUDGET)
+            self._create_item(config, route_name, ScenarioType.BUDGET, project_uuid)
             if config
             else None
         )
@@ -52,7 +56,10 @@ class BudgetLimiter:
 
     @staticmethod
     def _create_item(
-        config: Limiting, route_name: str, scenario_type: ScenarioType
+        config: Limiting,
+        route_name: str,
+        scenario_type: ScenarioType,
+        project_uuid: str = '',
     ) -> WindowConfig:
         """Create the item for the window to store max_budget inside the window_size"""
         if config.max_budget_in_units is None:
@@ -62,6 +69,7 @@ class BudgetLimiter:
             window=config.window_size,
             route_name=route_name,
             scenario_type=scenario_type,
+            project_uuid=project_uuid,
         )
 
     async def count_input(self, token_count: int, input_cost_per_token: float) -> None:

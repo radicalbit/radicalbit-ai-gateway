@@ -37,10 +37,14 @@ class TokenLimiter:
         route_name: str,
         input_config: Limiting | None = None,
         output_config: Limiting | None = None,
+        project_uuid: str = '',
     ):
         self.route_name = route_name
         self.input_config = input_config
         self.output_config = output_config
+        # Key isolation only: route_name stays the bare route everywhere it is
+        # reported (metrics, limit events, logs).
+        self.project_uuid = project_uuid
 
         # Use Redis storage if Redis config are provided, otherwise fall back to MemoryStorage
         if app_config.redis_config.redis_url:
@@ -56,12 +60,16 @@ class TokenLimiter:
             self._create_limiter(output_config) if output_config else None
         )
         self.input_item = (
-            self._create_item(input_config, route_name, ScenarioType.TOKEN_INPUT)
+            self._create_item(
+                input_config, route_name, ScenarioType.TOKEN_INPUT, project_uuid
+            )
             if input_config
             else None
         )
         self.output_item = (
-            self._create_item(output_config, route_name, ScenarioType.TOKEN_OUTPUT)
+            self._create_item(
+                output_config, route_name, ScenarioType.TOKEN_OUTPUT, project_uuid
+            )
             if output_config
             else None
         )
@@ -76,7 +84,10 @@ class TokenLimiter:
 
     @staticmethod
     def _create_item(
-        config: Limiting, route_name: str, scenario_type: ScenarioType
+        config: Limiting,
+        route_name: str,
+        scenario_type: ScenarioType,
+        project_uuid: str = '',
     ) -> WindowConfig:
         """Create the item for the window to store max_tokens inside the window_size"""
         if not config.max_tokens:
@@ -86,6 +97,7 @@ class TokenLimiter:
             window=config.window_size,
             route_name=route_name,
             scenario_type=scenario_type,
+            project_uuid=project_uuid,
         )
 
     @task(name='check_token_input_limit')

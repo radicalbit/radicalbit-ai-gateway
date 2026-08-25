@@ -244,3 +244,65 @@ class TestRequestRateLimiter:
             route_name='rb-gateway', rate_limiting_config=config2
         )
         assert limiter2.limiter is not None
+
+
+class TestProjectScoping:
+    """Route names are unique only within a project, so keys must carry it."""
+
+    @staticmethod
+    def _limiter(project_uuid: str = '') -> RequestRateLimiter:
+        return RequestRateLimiter(
+            route_name='default',
+            rate_limiting_config=RateLimiting(max_requests=2, window_size='1 minute'),
+            project_uuid=project_uuid,
+        )
+
+    def test_project_uuid_scopes_the_key_but_not_the_route_name(self):
+        """Telemetry keeps reporting the bare route; only the key is scoped."""
+        project_uuid = '2f1c6d4e-0000-4000-8000-00000000000a'
+        limiter = self._limiter(project_uuid)
+
+        assert limiter.route_name == 'default'
+        assert limiter.item.route_name == 'default'
+        assert limiter.item.project_uuid == project_uuid
+        assert limiter.limiter._build_key(limiter.item).startswith(
+            f'limiter:{project_uuid}:default:request_rate:'
+        )
+
+    def test_omitted_project_uuid_keeps_the_unscoped_key(self):
+        limiter = self._limiter()
+
+        assert limiter.item.project_uuid == ''
+        assert limiter.limiter._build_key(limiter.item).startswith(
+            'limiter:default:request_rate:'
+        )
+
+    @pytest.mark.asyncio
+    async def test_two_projects_do_not_share_the_window(self):
+        """Regression for the cross-project window collision."""
+        project_a = self._limiter('2f1c6d4e-0000-4000-8000-00000000000a')
+        project_b = self._limiter('2f1c6d4e-0000-4000-8000-00000000000b')
+        # Both limiters must talk to the same storage for the test to mean
+        # anything — in production that is the shared Redis.
+        project_b.storage = project_a.storage
+        project_b.limiter._storage = project_a.limiter._storage
+
+        args = {
+            'request_uuid': str(REQUEST_UUID),
+            'api_key_uuid': str(API_KEY_UUID),
+            'group_uuid': str(GROUP_UUID),
+            'api_key_name': 'fake-name',
+            'group_name': 'test-group',
+        }
+
+        # Exhaust project A's allowance of 2.
+        await project_a.check_and_count_request(**args)
+        await project_a.check_and_count_request(**args)
+        with pytest.raises(RequestRateLimitExceeded):
+            await project_a.check_and_count_request(**args)
+
+        # Project B, same route name, is untouched.
+        await project_b.check_and_count_request(**args)
+        await project_b.check_and_count_request(**args)
+        with pytest.raises(RequestRateLimitExceeded):
+            await project_b.check_and_count_request(**args)

@@ -313,7 +313,7 @@ class TestKeyStructure:
     """Tests for the Redis key structure."""
 
     def test_build_key_format(self, limiter: FixedWindowLimiter) -> None:
-        """Verify key format: limiter:{route_name}:{scenario_type}:{window_type}:{window_seconds}"""
+        """A config with no project falls back to the unscoped key format."""
         config = WindowConfig(
             limit=10,
             window_seconds=60,
@@ -344,3 +344,87 @@ class TestKeyStructure:
         )
         key = limiter._build_key(config)
         assert key == 'limiter:my-model:token_output:fixed:120'
+
+    def test_build_key_includes_project_uuid(self, limiter: FixedWindowLimiter) -> None:
+        """A project-scoped config puts the project ahead of the route."""
+        config = WindowConfig(
+            limit=10,
+            window_seconds=60,
+            route_name='my-route',
+            scenario_type=ScenarioType.REQUEST_RATE,
+            project_uuid='2f1c6d4e-0000-4000-8000-000000000001',
+        )
+        key = limiter._build_key(config)
+        assert (
+            key
+            == 'limiter:2f1c6d4e-0000-4000-8000-000000000001:my-route:request_rate:fixed:60'
+        )
+
+    def test_same_route_name_in_two_projects_gets_distinct_keys(
+        self, limiter: FixedWindowLimiter
+    ) -> None:
+        """Regression: route names are unique only within a project."""
+        first, second = (
+            WindowConfig(
+                limit=10,
+                window_seconds=60,
+                route_name='default',
+                scenario_type=ScenarioType.REQUEST_RATE,
+                project_uuid=uuid,
+            )
+            for uuid in (
+                '2f1c6d4e-0000-4000-8000-000000000001',
+                '2f1c6d4e-0000-4000-8000-000000000002',
+            )
+        )
+        assert limiter._build_key(first) != limiter._build_key(second)
+
+
+class TestProjectIsolation:
+    """Two projects sharing a route name must not share a window."""
+
+    @staticmethod
+    def _config(project_uuid: str) -> WindowConfig:
+        return WindowConfig(
+            limit=2,
+            window_seconds=60,
+            route_name='default',
+            scenario_type=ScenarioType.REQUEST_RATE,
+            project_uuid=project_uuid,
+        )
+
+    @pytest.mark.asyncio
+    async def test_windows_are_independent(self, limiter: FixedWindowLimiter) -> None:
+        project_a = self._config('2f1c6d4e-0000-4000-8000-00000000000a')
+        project_b = self._config('2f1c6d4e-0000-4000-8000-00000000000b')
+
+        # Exhaust project A's window.
+        assert await limiter.hit(project_a) is True
+        assert await limiter.hit(project_a) is True
+        assert await limiter.hit(project_a) is False
+
+        # Project B is untouched and still has its full allowance.
+        stats_b = await limiter.get_window_stats(project_b)
+        assert stats_b.remaining == 2
+        assert await limiter.hit(project_b) is True
+
+    @pytest.mark.asyncio
+    async def test_unscoped_configs_still_share_a_window(
+        self, limiter: FixedWindowLimiter
+    ) -> None:
+        """Without a project the pre-fix behaviour is preserved deliberately."""
+        first = WindowConfig(
+            limit=2,
+            window_seconds=60,
+            route_name='default',
+            scenario_type=ScenarioType.REQUEST_RATE,
+        )
+        second = WindowConfig(
+            limit=2,
+            window_seconds=60,
+            route_name='default',
+            scenario_type=ScenarioType.REQUEST_RATE,
+        )
+        await limiter.hit(first)
+        stats = await limiter.get_window_stats(second)
+        assert stats.remaining == 1

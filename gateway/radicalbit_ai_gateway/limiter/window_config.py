@@ -93,6 +93,10 @@ class WindowConfig:
         window_seconds: Window duration in seconds.
         route_name: Name of the route for key isolation.
         scenario_type: Type of rate limiting scenario (request_rate, token_input, token_output).
+        project_uuid: UUID of the owning project, for key isolation only. Route
+            names are unique only within a project, so without this two projects
+            declaring the same route name share one window. Empty string keeps
+            the unscoped key format, for call sites with no project context.
 
     """
 
@@ -100,6 +104,7 @@ class WindowConfig:
     window_seconds: int
     route_name: str
     scenario_type: ScenarioType
+    project_uuid: str = ''
 
     @classmethod
     def from_parts(
@@ -108,6 +113,7 @@ class WindowConfig:
         window: str | int,
         route_name: str,
         scenario_type: ScenarioType,
+        project_uuid: str = '',
     ) -> WindowConfig:
         """Create WindowConfig from limit and window size.
 
@@ -116,6 +122,7 @@ class WindowConfig:
             window: Window size as string (e.g., '1 minute') or seconds (int).
             route_name: Name of the route for key isolation.
             scenario_type: Type of rate limiting scenario.
+            project_uuid: UUID of the owning project, for key isolation only.
 
         Returns:
             WindowConfig instance.
@@ -127,4 +134,5 @@ class WindowConfig:
             window_seconds=window_seconds,
             route_name=route_name,
             scenario_type=scenario_type,
+            project_uuid=project_uuid,
         )

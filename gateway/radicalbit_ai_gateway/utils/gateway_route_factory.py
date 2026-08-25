@@ -96,7 +96,14 @@ def build_gateway_routes_from_config(
     redis_client: redis.Redis | None,
     cost_service: CostService,
     httpx_client,
+    project_uuid: str = '',
 ) -> dict[str, GatewayRoute]:
+    """Build the live routes declared by ``gateway_config``.
+
+    ``project_uuid`` scopes the limiter storage keys. Route names are unique
+    only within a project, so omitting it makes two projects that declare the
+    same route name share one limit window.
+    """
     routes: dict[str, GatewayRoute] = {}
     chat_by_id = gateway_config.chat_models_by_id
     emb_by_id = gateway_config.embedding_models_by_id
@@ -124,13 +131,19 @@ def build_gateway_routes_from_config(
         cache_client = get_proper_cache(route_config, redis_client)
         gateway_cache = GatewayCache(cache_client) if cache_client is not None else None
         token_limiter = (
-            route_config.get_token_limiter() if route_config.token_limiting else None
+            route_config.get_token_limiter(project_uuid)
+            if route_config.token_limiting
+            else None
         )
         rate_limiter = (
-            route_config.get_rate_limiter() if route_config.rate_limiting else None
+            route_config.get_rate_limiter(project_uuid)
+            if route_config.rate_limiting
+            else None
         )
         budget_limiter = (
-            route_config.get_budget_limiter() if route_config.budget_limiting else None
+            route_config.get_budget_limiter(project_uuid)
+            if route_config.budget_limiting
+            else None
         )
         router = None
         if route_config.routing and gateway_config.routing:
@@ -226,14 +239,15 @@ def build_project_route_registrar(
                 port=project_gateway_config.cache.redis_port,
                 decode_responses=True,
             )
+        uuid_str = str(project_uuid)
         routes = build_gateway_routes_from_config(
             project_gateway_config,
             project_guardrail_engine,
             project_redis_client,
             project_cost_service,
             httpx_client,
+            project_uuid=uuid_str,
         )
-        uuid_str = str(project_uuid)
         await initialize_async_routers(routes)
         for route_name, route in routes.items():
             full_key = f'{project_name}/{route_name}'

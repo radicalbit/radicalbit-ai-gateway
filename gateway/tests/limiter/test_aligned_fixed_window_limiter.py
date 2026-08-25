@@ -432,7 +432,7 @@ class TestKeyStructure:
     """Tests for the Redis key structure."""
 
     def test_build_key_format(self, limiter: AlignedFixedWindowLimiter) -> None:
-        """Verify key format: limiter:{route_name}:{scenario_type}:{window_type}:{window_seconds}"""
+        """A config with no project falls back to the unscoped key format."""
         config = WindowConfig(
             limit=10,
             window_seconds=60,
@@ -453,3 +453,39 @@ class TestKeyStructure:
         )
         key = limiter._build_key(config)
         assert key == 'limiter:claude-3-sonnet:request_rate:aligned:3600'
+
+    def test_build_key_includes_project_uuid(
+        self, limiter: AlignedFixedWindowLimiter
+    ) -> None:
+        """A project-scoped config puts the project ahead of the route."""
+        config = WindowConfig(
+            limit=10,
+            window_seconds=3600,
+            route_name='my-route',
+            scenario_type=ScenarioType.BUDGET,
+            project_uuid='2f1c6d4e-0000-4000-8000-000000000001',
+        )
+        key = limiter._build_key(config)
+        assert (
+            key
+            == 'limiter:2f1c6d4e-0000-4000-8000-000000000001:my-route:budget:aligned:3600'
+        )
+
+    def test_same_route_name_in_two_projects_gets_distinct_keys(
+        self, limiter: AlignedFixedWindowLimiter
+    ) -> None:
+        """Regression: route names are unique only within a project."""
+        first, second = (
+            WindowConfig(
+                limit=10,
+                window_seconds=3600,
+                route_name='default',
+                scenario_type=ScenarioType.TOKEN_INPUT,
+                project_uuid=uuid,
+            )
+            for uuid in (
+                '2f1c6d4e-0000-4000-8000-000000000001',
+                '2f1c6d4e-0000-4000-8000-000000000002',
+            )
+        )
+        assert limiter._build_key(first) != limiter._build_key(second)
