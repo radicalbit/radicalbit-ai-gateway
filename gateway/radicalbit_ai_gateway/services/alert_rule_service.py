@@ -13,7 +13,10 @@ from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertRuleUpdateIn,
 )
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
-from radicalbit_ai_gateway.services.alert_email_formatter import AlertEmailFormatter
+from radicalbit_ai_gateway.services.alert_email_formatter import (
+    build_alert_email_body,
+    build_alert_email_subject,
+)
 from radicalbit_ai_gateway.services.email_service import EmailService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -32,13 +35,11 @@ class AlertRuleService:
         project_configs: dict[str, ProjectEntry] | None = None,
         project_dao: ProjectDAO | None = None,
         email_service: EmailService | None = None,
-        email_formatter: type[AlertEmailFormatter] | None = None,
     ):
         self.alert_rule_dao = alert_rule_dao
         self._project_configs = project_configs if project_configs is not None else {}
         self.project_dao = project_dao
         self.email_service = email_service or EmailService()
-        self.email_formatter = email_formatter or AlertEmailFormatter
 
     def _resolve_project_name(self, project_identifier: str) -> str | None:
         if not project_identifier:
@@ -309,8 +310,8 @@ class AlertRuleService:
         dispatched_count = 0
         for rule in matching_rules:
             rule_out = AlertRuleOut.from_alert_rule(rule)
-            subject = self.email_formatter.build_subject(rule.name, route_name)
-            body = self.email_formatter.build_html_body(
+            subject = build_alert_email_subject(rule.name, route_name)
+            body = build_alert_email_body(
                 rule_name=rule.name,
                 description=rule.description,
                 project_uuid=project_uuid,

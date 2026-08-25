@@ -1,15 +1,18 @@
-from radicalbit_ai_gateway.services.alert_email_formatter import AlertEmailFormatter
+from radicalbit_ai_gateway.services.alert_email_formatter import (
+    build_alert_email_body,
+    build_alert_email_subject,
+)
 
 
 def test_build_subject():
-    subject = AlertEmailFormatter.build_subject(
+    subject = build_alert_email_subject(
         rule_name='High Latency', route_name='chat-route'
     )
     assert subject == '[Alert Notification] High Latency triggered on chat-route'
 
 
 def test_build_html_body_minimal():
-    html = AlertEmailFormatter.build_html_body(
+    html = build_alert_email_body(
         rule_name='PII Detector',
         description=None,
         project_uuid='proj-123',
@@ -41,7 +44,7 @@ def test_build_html_body_full():
         'fallback': 'backup_model',
     }
 
-    html = AlertEmailFormatter.build_html_body(
+    html = build_alert_email_body(
         rule_name='PII and Fallback Alert',
         description='Triggers on PII in prompt',
         project_uuid='proj-123',

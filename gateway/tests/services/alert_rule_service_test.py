@@ -1,18 +1,20 @@
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
-from radicalbit_ai_gateway.services.alert_email_formatter import AlertEmailFormatter
 from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
 from radicalbit_ai_gateway.services.email_service import EmailService
 
 
-def test_dispatch_event_notification_custom_formatter():
+@patch('radicalbit_ai_gateway.services.alert_rule_service.build_alert_email_body')
+@patch('radicalbit_ai_gateway.services.alert_rule_service.build_alert_email_subject')
+def test_dispatch_event_notification_mocked_formatter(
+    mock_build_subject, mock_build_body
+):
     mock_dao = MagicMock(spec=AlertRuleDAO)
     mock_email = MagicMock(spec=EmailService)
-    mock_formatter = MagicMock(spec=AlertEmailFormatter)
 
     now = datetime.now(timezone.utc)
     rule = AlertRule(
@@ -33,13 +35,12 @@ def test_dispatch_event_notification_custom_formatter():
     )
     mock_dao.get_active_by_route.return_value = [rule]
     mock_email.send_email.return_value = True
-    mock_formatter.build_subject.return_value = 'Custom Subject'
-    mock_formatter.build_html_body.return_value = '<p>Custom Body</p>'
+    mock_build_subject.return_value = 'Custom Subject'
+    mock_build_body.return_value = '<p>Custom Body</p>'
 
     service = AlertRuleService(
         alert_rule_dao=mock_dao,
         email_service=mock_email,
-        email_formatter=mock_formatter,
     )
 
     dispatched = service.dispatch_event_notification(
@@ -50,8 +51,8 @@ def test_dispatch_event_notification_custom_formatter():
     )
 
     assert dispatched == 1
-    mock_formatter.build_subject.assert_called_once_with('Guardrail Rule', 'route1')
-    mock_formatter.build_html_body.assert_called_once_with(
+    mock_build_subject.assert_called_once_with('Guardrail Rule', 'route1')
+    mock_build_body.assert_called_once_with(
         rule_name='Guardrail Rule',
         description='Desc',
         project_uuid='p1',
@@ -66,7 +67,7 @@ def test_dispatch_event_notification_custom_formatter():
     )
 
 
-def test_dispatch_event_notification_default_formatter():
+def test_dispatch_event_notification_e2e_formatting():
     mock_dao = MagicMock(spec=AlertRuleDAO)
     mock_email = MagicMock(spec=EmailService)
 
