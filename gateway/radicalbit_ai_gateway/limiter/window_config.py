@@ -15,6 +15,7 @@ class ScenarioType(Enum):
     TOKEN_INPUT = 'token_input'
     TOKEN_OUTPUT = 'token_output'
     BUDGET = 'budget'
+    AUDIO_DURATION = 'audio_duration'
 
 
 # Time unit constants

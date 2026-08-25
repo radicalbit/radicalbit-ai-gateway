@@ -63,6 +63,12 @@ class Limiting(BaseModel):
         ge=0.0,
         examples=[1.5, 5.50, 10.0],
     )
+    max_duration_seconds: float | None = Field(
+        default=None,
+        description='Maximum seconds of audio allowed in the specified time window.',
+        ge=1,
+        examples=[60, 300, 3600],
+    )
 
     @property
     def max_budget_in_units(self) -> int | None:
@@ -91,11 +97,18 @@ class Limiting(BaseModel):
     @model_validator(mode='after')
     def only_one_max_field(self):
         set_fields_count = sum(
-            v is not None for v in [self.max_requests, self.max_tokens, self.max_budget]
+            v is not None
+            for v in [
+                self.max_requests,
+                self.max_tokens,
+                self.max_budget,
+                self.max_duration_seconds,
+            ]
         )
         if set_fields_count > 1:
             raise ValueError(
-                'Only one of max_requests, max_tokens, or max_budget can be set.'
+                'Only one of max_requests, max_tokens, max_budget, or '
+                'max_duration_seconds can be set.'
             )
         return self
 
@@ -147,4 +160,8 @@ class TokenLimiting(BaseModel):
 
 
 class BudgetLimiting(Limiting):
+    pass
+
+
+class AudioDurationLimiting(Limiting):
     pass

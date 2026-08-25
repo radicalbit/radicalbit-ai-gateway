@@ -118,6 +118,12 @@ token_output_limiting_counter = meter.create_counter(
     unit='1',
 )
 
+audio_duration_limiting_counter = meter.create_counter(
+    name='gateway.audio_duration_limiting',
+    description='The total number of audio duration limiting triggers.',
+    unit='1',
+)
+
 invocations_latency_histogram = meter.create_histogram(
     name='gateway.invocation.duration',
     description='The distribution of invocation latency.',

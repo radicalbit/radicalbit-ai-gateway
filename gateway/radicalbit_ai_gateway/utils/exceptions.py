@@ -401,6 +401,22 @@ class RequestRateLimitExceeded(RBRateLimitExceeded):
         )
 
 
+class AudioDurationLimitExceeded(RBRateLimitExceeded):
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_message: str | None = None,
+        route_name: str | None = None,
+    ):
+        super().__init__(
+            message,
+            'audio_duration_rate_limited',
+            log_message=log_message,
+            param=route_name,
+        )
+
+
 class InputTokenLimitExceeded(TokenLimitExceeded):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(message, 'token_limit_rate_limited', log_message=log_message)
@@ -756,6 +772,13 @@ def alert_rule_exception_handler(request: Request, err: AppError):
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: RequestRateLimitExceeded):
+    set_request_error_info(request, exc)
+    return _log_and_json_response(exc, 'rate_limit_error')
+
+
+async def audio_duration_limit_exceeded_handler(
+    request: Request, exc: AudioDurationLimitExceeded
+):
     set_request_error_info(request, exc)
     return _log_and_json_response(exc, 'rate_limit_error')
 

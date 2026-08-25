@@ -1,11 +1,13 @@
 from pydantic import BaseModel, ConfigDict, Field
 
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
+from radicalbit_ai_gateway.limiting.duration_limiter import DurationLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.limiting.token_limiter import TokenLimiter
 from radicalbit_ai_gateway.models.caching import Caching, SemanticCaching
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.limiting import (
+    AudioDurationLimiting,
     BudgetLimiting,
     RateLimiting,
     TokenLimiting,
@@ -57,6 +59,10 @@ class GatewayRouteConfig(BaseModel):
         default=None,
         description='Budget limiting configuration for the route, specifying input and output token limits.',
     )
+    duration_limiting: AudioDurationLimiting | None = Field(
+        default=None,
+        description='Audio duration limiting configuration for transcription routes.',
+    )
     routing: str | None = Field(
         default=None,
         description='Name of a top-level routing config.',
@@ -90,4 +96,10 @@ class GatewayRouteConfig(BaseModel):
             project_uuid=project_uuid,
             route_name=self.route_name,
             rate_limiting_config=self.rate_limiting,
+        )
+
+    def get_duration_limiter(self) -> DurationLimiter:
+        return DurationLimiter(
+            route_name=self.route_name,
+            config=self.duration_limiting,
         )

@@ -245,6 +245,26 @@ def test_transcription_models_reject_duplicate_ids_within_list():
         GatewayConfig.model_validate(raw)
 
 
+def test_transcription_route_with_duration_limiting_valid_config():
+    raw = {
+        'transcription_models': [{'model_id': 'w1', 'model': 'openai/whisper-1'}],
+        'routes': {
+            'r': {
+                'transcription_models': ['w1'],
+                'duration_limiting': {
+                    'max_duration_seconds': 300,
+                    'window_size': '1 minute',
+                },
+            },
+        },
+    }
+    gateway_config = GatewayConfig.model_validate(raw)
+    route = gateway_config.routes['r']
+    assert route.duration_limiting.max_duration_seconds == 300
+    duration_limiter = route.get_duration_limiter()
+    assert duration_limiter.limiter is not None
+
+
 def test_time_routing_model_id_not_in_route():
     raw = {
         'chat_models': [
