@@ -1,4 +1,5 @@
 import datetime
+from enum import Enum
 import json
 from uuid import UUID
 
@@ -8,15 +9,29 @@ from pydantic.alias_generators import to_camel
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 
 
+class AlertRuleScope(str, Enum):
+    ROUTE = 'route'
+
+
+class AlertRuleTimeAggregation(str, Enum):
+    INSTANT = 'instant'
+
+
+class AlertRuleChannel(str, Enum):
+    EMAIL = 'email'
+
+
 class AlertRuleIn(BaseModel):
     name: str
     description: str | None = None
     project: str
     route: str
-    scope: str = 'route'
+    scope: AlertRuleScope = AlertRuleScope.ROUTE
     event: str
-    time_aggregation: str = Field('instant', alias='timeAggregation')
-    channel: str = 'email'
+    time_aggregation: AlertRuleTimeAggregation = Field(
+        AlertRuleTimeAggregation.INSTANT, alias='timeAggregation'
+    )
+    channel: AlertRuleChannel = AlertRuleChannel.EMAIL
     recipients: list[str] = Field(default_factory=list)
     enabled: bool = False
 
@@ -32,10 +47,20 @@ class AlertRuleIn(BaseModel):
             description=self.description,
             project=self.project,
             route=self.route,
-            scope=self.scope or 'route',
+            scope=self.scope.value
+            if isinstance(self.scope, Enum)
+            else (self.scope or 'route'),
             event=self.event,
-            time_aggregation=self.time_aggregation or 'instant',
-            channel=self.channel or 'email',
+            time_aggregation=(
+                self.time_aggregation.value
+                if isinstance(self.time_aggregation, Enum)
+                else (self.time_aggregation or 'instant')
+            ),
+            channel=(
+                self.channel.value
+                if isinstance(self.channel, Enum)
+                else (self.channel or 'email')
+            ),
             recipients=json.dumps(self.recipients),
             enabled=self.enabled,
             disabled_reason=None,
@@ -50,10 +75,12 @@ class AlertRuleUpdateIn(BaseModel):
     description: str | None = None
     project: str | None = None
     route: str | None = None
-    scope: str | None = None
+    scope: AlertRuleScope | None = None
     event: str | None = None
-    time_aggregation: str | None = Field(None, alias='timeAggregation')
-    channel: str | None = None
+    time_aggregation: AlertRuleTimeAggregation | None = Field(
+        None, alias='timeAggregation'
+    )
+    channel: AlertRuleChannel | None = None
     recipients: list[str] | None = None
 
     model_config = ConfigDict(
@@ -76,10 +103,10 @@ class AlertRuleOut(BaseModel):
     project: str
     project_name: str | None = Field(None, alias='projectName')
     route: str
-    scope: str
+    scope: AlertRuleScope
     event: str
-    time_aggregation: str = Field(..., alias='timeAggregation')
-    channel: str
+    time_aggregation: AlertRuleTimeAggregation = Field(..., alias='timeAggregation')
+    channel: AlertRuleChannel
     recipients: list[str]
     enabled: bool
     disabled_reason: str | None = Field(None, alias='disabledReason')
@@ -112,10 +139,22 @@ class AlertRuleOut(BaseModel):
             project=alert_rule.project,
             project_name=project_name,
             route=alert_rule.route,
-            scope=alert_rule.scope,
+            scope=(
+                AlertRuleScope(alert_rule.scope)
+                if alert_rule.scope
+                else AlertRuleScope.ROUTE
+            ),
             event=alert_rule.event,
-            time_aggregation=alert_rule.time_aggregation,
-            channel=alert_rule.channel,
+            time_aggregation=(
+                AlertRuleTimeAggregation(alert_rule.time_aggregation)
+                if alert_rule.time_aggregation
+                else AlertRuleTimeAggregation.INSTANT
+            ),
+            channel=(
+                AlertRuleChannel(alert_rule.channel)
+                if alert_rule.channel
+                else AlertRuleChannel.EMAIL
+            ),
             recipients=parsed_recipients,
             enabled=alert_rule.enabled,
             disabled_reason=alert_rule.disabled_reason,

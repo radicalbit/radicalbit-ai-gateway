@@ -1,3 +1,4 @@
+from enum import Enum
 import json
 import logging
 from uuid import UUID
@@ -82,56 +83,84 @@ class AlertRuleService:
         self, project_name: str | None = None, route_name: str | None = None
     ) -> AlertableEventsOut:
         guardrails_items: list[AlertableEventItem] = []
-        caching_items: list[AlertableEventItem] = [
-            AlertableEventItem(event='cache-exact', label='Caching: exact match'),
-            AlertableEventItem(event='cache-semantic', label='Caching: semantic match'),
-        ]
-        fallback_items: list[AlertableEventItem] = [
-            AlertableEventItem(event='fallback-triggered', label='Fallback: triggered'),
-        ]
+        caching_items: list[AlertableEventItem] = []
+        fallback_items: list[AlertableEventItem] = []
+
+        resolved_project = (
+            self._resolve_project_name(project_name) if project_name else None
+        )
+        project_key = resolved_project or project_name
 
         # Inspect route config if available
-        if project_name and route_name and project_name in self._project_configs:
-            entry = self._project_configs[project_name]
-            route_cfg = (
-                entry.config.routes.get(route_name) if entry and entry.config else None
-            )
-            if route_cfg:
-                # Add input guardrails if any
-                if getattr(route_cfg, 'guardrails', None):
-                    for g in route_cfg.guardrails:
-                        g_name = getattr(g, 'name', 'pii')
-                        guardrails_items.append(
-                            AlertableEventItem(
-                                event=f'guardrail-input-{g_name}',
-                                label=f'Guardrail: {g_name.upper()} (input)',
+        if project_key and route_name and project_key in self._project_configs:
+            entry = self._project_configs[project_key]
+            if entry and entry.config and entry.config.routes:
+                route_cfg = entry.config.routes.get(route_name)
+                if route_cfg:
+                    # Resolve configured guardrails
+                    if getattr(route_cfg, 'guardrails', None):
+                        guardrails_by_name = {
+                            g.name: g
+                            for g in (getattr(entry.config, 'guardrails', None) or [])
+                            if hasattr(g, 'name')
+                        }
+                        for g in route_cfg.guardrails:
+                            g_name = (
+                                g if isinstance(g, str) else getattr(g, 'name', str(g))
                             )
-                        )
-                        guardrails_items.append(
-                            AlertableEventItem(
-                                event=f'guardrail-output-{g_name}',
-                                label=f'Guardrail: {g_name.upper()} (output)',
+                            g_def = guardrails_by_name.get(g_name)
+                            where_attr = (
+                                getattr(g_def, 'where', 'IO') if g_def else 'IO'
                             )
-                        )
+                            where_val = (
+                                where_attr.value.upper()
+                                if hasattr(where_attr, 'value')
+                                else str(where_attr).upper()
+                            )
 
-        # Default fallback items if no specific guardrails were derived
-        if not guardrails_items:
-            guardrails_items = [
-                AlertableEventItem(
-                    event='guardrail-input-pii', label='Guardrail: PII (input)'
-                ),
-                AlertableEventItem(
-                    event='guardrail-input-toxicity',
-                    label='Guardrail: Toxicity (input)',
-                ),
-                AlertableEventItem(
-                    event='guardrail-output-pii', label='Guardrail: PII (output)'
-                ),
-                AlertableEventItem(
-                    event='guardrail-output-toxicity',
-                    label='Guardrail: Toxicity (output)',
-                ),
-            ]
+                            if any(k in where_val for k in ('INPUT', 'IO', 'BOTH')):
+                                guardrails_items.append(
+                                    AlertableEventItem(
+                                        event=f'guardrail-input-{g_name}',
+                                        label=f'Guardrail: {g_name.upper()} (input)',
+                                    )
+                                )
+                            if any(k in where_val for k in ('OUTPUT', 'IO', 'BOTH')):
+                                guardrails_items.append(
+                                    AlertableEventItem(
+                                        event=f'guardrail-output-{g_name}',
+                                        label=f'Guardrail: {g_name.upper()} (output)',
+                                    )
+                                )
+
+                    # Resolve caching
+                    if getattr(route_cfg, 'caching', None):
+                        cache_type = str(
+                            getattr(route_cfg.caching, 'type', 'exact')
+                        ).lower()
+                        if cache_type == 'semantic':
+                            caching_items.append(
+                                AlertableEventItem(
+                                    event='cache-semantic',
+                                    label='Caching: semantic match',
+                                )
+                            )
+                        else:
+                            caching_items.append(
+                                AlertableEventItem(
+                                    event='cache-exact',
+                                    label='Caching: exact match',
+                                )
+                            )
+
+                    # Resolve fallback
+                    if getattr(route_cfg, 'fallback', None):
+                        fallback_items.append(
+                            AlertableEventItem(
+                                event='fallback-triggered',
+                                label='Fallback: triggered',
+                            )
+                        )
 
         return AlertableEventsOut(
             guardrail=guardrails_items,
@@ -182,6 +211,10 @@ class AlertRuleService:
         update_dict = alert_rule_in.model_dump(exclude_unset=True)
         if not update_dict:
             return self._to_out(existing)
+
+        for k, v in update_dict.items():
+            if isinstance(v, Enum):
+                update_dict[k] = v.value
 
         # Handle recipients serialization if provided
         if 'recipients' in update_dict and isinstance(update_dict['recipients'], list):
