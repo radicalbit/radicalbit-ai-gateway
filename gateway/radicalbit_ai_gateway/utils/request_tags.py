@@ -12,6 +12,7 @@ never affects the stored rows.
 import re
 from typing import Annotated
 
+from radicalbit_ai_gateway.utils.exceptions import TagsHeaderError
 from fastapi import Query
 
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest, TagsHeaderError
@@ -87,9 +88,26 @@ def parse_tags_header(raw: str | None) -> tuple[str, ...]:
 
         if reason := _invalid_key_reason(key):
             raise _reject(position, reason)
+        if len(key) > MAX_TAG_KEY_LENGTH or not _KEY_PATTERN.match(key):
+            raise _reject(
+                position,
+                f'key {key[:MAX_TAG_KEY_LENGTH]!r} must start with a letter or digit '
+                f'and contain only letters, digits and _ . : - '
+                f'(max {MAX_TAG_KEY_LENGTH} characters)',
+            )
 
         if reason := _invalid_value_reason(value):
             raise _reject(position, reason)
+        if (
+            len(value) > MAX_TAG_VALUE_LENGTH
+            or '=' in value
+            or not _VALUE_PATTERN.match(value)
+        ):
+            raise _reject(
+                position,
+                f'value {value[:MAX_TAG_VALUE_LENGTH]!r} must be printable ASCII '
+                f"without ',' or '=' (max {MAX_TAG_VALUE_LENGTH} characters)",
+            )
 
         tags.add(f'{key}={value}')
 
