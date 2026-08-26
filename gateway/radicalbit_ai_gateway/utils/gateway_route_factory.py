@@ -146,7 +146,7 @@ def build_gateway_routes_from_config(
             else None
         )
         duration_limiter = (
-            route_config.get_duration_limiter()
+            route_config.get_duration_limiter(project_uuid)
             if route_config.duration_limiting
             else None
         )

@@ -98,8 +98,9 @@ class GatewayRouteConfig(BaseModel):
             rate_limiting_config=self.rate_limiting,
         )
 
-    def get_duration_limiter(self) -> DurationLimiter:
+    def get_duration_limiter(self, project_uuid: str) -> DurationLimiter:
         return DurationLimiter(
+            project_uuid=project_uuid,
             route_name=self.route_name,
             config=self.duration_limiting,
         )

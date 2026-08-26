@@ -50,11 +50,15 @@ class DurationLimiter:
 
     def __init__(
         self,
+        project_uuid: str,
         route_name: str,
         config: Limiting | None = None,
     ):
         self.route_name = route_name
         self.config = config
+        # Key isolation only: route_name stays the bare route everywhere it is
+        # reported (metrics, limit events, logs).
+        self.project_uuid = project_uuid
 
         if app_config.redis_config.redis_url:
             self.storage = RedisStorage(uri=app_config.redis_config.redis_url)
@@ -63,7 +67,9 @@ class DurationLimiter:
 
         self.limiter = self._create_limiter(config) if config else None
         self.item = (
-            self._create_item(config, route_name, ScenarioType.AUDIO_DURATION)
+            self._create_item(
+                config, project_uuid, route_name, ScenarioType.AUDIO_DURATION
+            )
             if config
             else None
         )
@@ -77,13 +83,17 @@ class DurationLimiter:
 
     @staticmethod
     def _create_item(
-        config: Limiting, route_name: str, scenario_type: ScenarioType
+        config: Limiting,
+        project_uuid: str,
+        route_name: str,
+        scenario_type: ScenarioType,
     ) -> WindowConfig:
         if not config.max_duration_seconds:
             raise ValueError('max_duration_seconds must be set for duration limiting')
         return WindowConfig.from_parts(
             limit=round(config.max_duration_seconds),
             window=config.window_size,
+            project_uuid=project_uuid,
             route_name=route_name,
             scenario_type=scenario_type,
         )

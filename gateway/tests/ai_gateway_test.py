@@ -925,7 +925,9 @@ async def test_invoke_transcription_calls_duration_limiter():
             max_duration_seconds=300, window_size='1 minute'
         ),
     )
-    duration_limiter = route_cfg.get_duration_limiter()
+    duration_limiter = route_cfg.get_duration_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     duration_limiter.check_and_count_duration = AsyncMock()
 
     ai_gateway = GatewayRoute(
@@ -982,7 +984,9 @@ async def test_invoke_transcription_duration_limit_exceeded_blocks_before_invoca
             max_duration_seconds=300, window_size='1 minute'
         ),
     )
-    duration_limiter = route_cfg.get_duration_limiter()
+    duration_limiter = route_cfg.get_duration_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     duration_limiter.check_and_count_duration = AsyncMock(
         side_effect=AudioDurationLimitExceeded('limit exceeded')
     )

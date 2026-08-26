@@ -18,6 +18,8 @@ from radicalbit_ai_gateway.models.limiting import (
 )
 from radicalbit_ai_gateway.utils.exceptions import AudioDurationLimitExceeded
 
+_PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+
 
 def _make_wav_bytes(duration_seconds: float, sample_rate: int = 8000) -> bytes:
     n_frames = int(duration_seconds * sample_rate)
@@ -55,7 +57,7 @@ class TestEstimateAudioDurationSeconds:
 
 class TestDurationLimiter:
     def test_init_without_config(self):
-        limiter = DurationLimiter(route_name='rb-gateway')
+        limiter = DurationLimiter(project_uuid=_PROJECT_UUID, route_name='rb-gateway')
         assert limiter.limiter is None
 
     def test_init_with_config(self):
@@ -64,7 +66,9 @@ class TestDurationLimiter:
             max_duration_seconds=60,
             window_size='1 minute',
         )
-        limiter = DurationLimiter(route_name='rb-gateway', config=config)
+        limiter = DurationLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
         assert limiter.limiter is not None
 
     def test_init_without_max_duration_seconds_raises_error(self):
@@ -72,11 +76,13 @@ class TestDurationLimiter:
         with pytest.raises(
             ValueError, match='max_duration_seconds must be set for duration limiting'
         ):
-            DurationLimiter(route_name='rb-gateway', config=config)
+            DurationLimiter(
+                project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+            )
 
     @pytest.mark.asyncio
     async def test_check_and_count_duration_no_config_is_noop(self):
-        limiter = DurationLimiter(route_name='rb-gateway')
+        limiter = DurationLimiter(project_uuid=_PROJECT_UUID, route_name='rb-gateway')
         await limiter.check_and_count_duration(
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -89,7 +95,9 @@ class TestDurationLimiter:
     @pytest.mark.asyncio
     async def test_check_and_count_duration_within_limit_consumes(self):
         config = AudioDurationLimiting(max_duration_seconds=60, window_size='1 minute')
-        limiter = DurationLimiter(route_name='rb-gateway', config=config)
+        limiter = DurationLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
 
         with patch.object(limiter.limiter, 'hit', new=AsyncMock()) as mock_hit:
             await limiter.check_and_count_duration(
@@ -106,7 +114,9 @@ class TestDurationLimiter:
     @pytest.mark.asyncio
     async def test_check_and_count_duration_exceeds_limit_raises(self):
         config = AudioDurationLimiting(max_duration_seconds=15, window_size='1 minute')
-        limiter = DurationLimiter(route_name='rb-gateway', config=config)
+        limiter = DurationLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
 
         await limiter.check_and_count_duration(
             request_uuid=str(REQUEST_UUID),
@@ -137,7 +147,9 @@ class TestDurationLimiter:
     @pytest.mark.asyncio
     async def test_check_and_count_duration_unknown_duration_skips_uncounted(self):
         config = AudioDurationLimiting(max_duration_seconds=15, window_size='1 minute')
-        limiter = DurationLimiter(route_name='rb-gateway', config=config)
+        limiter = DurationLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
 
         with patch.object(limiter.limiter, 'hit', new=AsyncMock()) as mock_hit:
             await limiter.check_and_count_duration(
@@ -171,7 +183,9 @@ class TestDurationLimiter:
             config = AudioDurationLimiting(
                 max_duration_seconds=10, window_size='10 second'
             )
-            limiter = DurationLimiter(route_name='rb-gateway', config=config)
+            limiter = DurationLimiter(
+                project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+            )
 
             await limiter.check_and_count_duration(
                 request_uuid=str(REQUEST_UUID),
