@@ -14,7 +14,7 @@ env:
   APP_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway
   MIGRATIONS_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway-migrations
   CLICKHOUSE_MIGRATIONS_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway-clickhouse-migrations
-  WORKER_IMAGE: ${{ secrets.IMAGE_PREFIX }}/metrics-worker
+  WORKER_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway-metrics-worker
   # Dependency-Track project names (registry-independent, stable across builds)
   APP_PROJECT: radicalbit-ai-gateway
   MIGRATIONS_PROJECT: radicalbit-ai-gateway-migrations
