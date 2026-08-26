@@ -55,7 +55,7 @@ const columns = [
     title: 'Project',
     dataIndex: 'projectName',
     key: 'projectName',
-    render: (value, record) => value ?? record.project ?? '--',
+    render: (value) => value ?? '--',
   },
   {
     title: 'Route',
