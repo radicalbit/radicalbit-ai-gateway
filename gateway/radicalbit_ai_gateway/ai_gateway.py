@@ -606,6 +606,7 @@ class GatewayRoute:
         if use_cache:
             set_operation_category(OperationCategory.CACHE)
             cache_key = self.gateway_cache.generate_embedding_cache_key(
+                project_uuid=self.project_uuid,
                 route_name=route_name,
                 key_uuid=api_key_uuid,
                 input_texts=redacted_texts,
@@ -1283,6 +1284,7 @@ class GatewayRoute:
         if self.gateway_cache:
             if messages_for_cache:
                 cache_key = self.gateway_cache.generate_cache_key(
+                    project_uuid=self.project_uuid,
                     route_name=route_name,
                     key_uuid=api_key_uuid,
                     messages=messages_for_cache,
@@ -1344,6 +1346,8 @@ class GatewayRoute:
         kwargs = {
             'embeddings': embeddings,
             'user_content': user_content,
+            'project_uuid': self.project_uuid,
+            'route_name': route_name,
             'key_uuid': api_key_uuid,
             'k': 1,
         }
@@ -1391,6 +1395,8 @@ class GatewayRoute:
         """Cache the response if caching is enabled."""
         kwargs = {
             'embeddings': embeddings,
+            'project_uuid': self.project_uuid,
+            'route_name': self.gateway_route_config.route_name,
             'key_uuid': key_uuid,
         }
         await self.gateway_cache.set(

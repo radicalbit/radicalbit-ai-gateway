@@ -9,7 +9,12 @@ from openai.types.chat.chat_completion import ChatCompletion
 import pook
 import pytest
 
-from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.db_mock import (
+    API_KEY_UUID,
+    GROUP_UUID,
+    REQUEST_UUID,
+    TEST_PROJECT_UUID,
+)
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
@@ -76,6 +81,7 @@ async def test_gateway_invocation(mock_model_invoker_emit_event, fake_redis_clie
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
 
     mocked_response = to_mock_openai_chat_completion(content='Paris')
@@ -133,6 +139,7 @@ async def test_wrong_model_id(mock_model_invoker_emit_event, fake_redis_client):
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
     mocked_response = to_mock_openai_chat_completion(content='Paris')
 
@@ -193,6 +200,7 @@ async def test_model_invocation_with_redis_cache(
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
     mocked_response_1 = to_mock_openai_chat_completion(content='Paris')
     mocked_response_2 = to_mock_openai_chat_completion(
@@ -223,6 +231,7 @@ async def test_model_invocation_with_redis_cache(
         tool_choice = 'auto'
         kwargs = {}
         cache_key = gateway_cache.generate_cache_key(
+            project_uuid=str(TEST_PROJECT_UUID),
             route_name='rb-gateway',
             key_uuid=str(API_KEY_UUID),
             messages=messages,
@@ -346,6 +355,7 @@ async def test_model_invocation_with_cachetools_cache(
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
     mocked_response_1 = to_mock_openai_chat_completion(content='Paris')
     mocked_response_2 = to_mock_openai_chat_completion(
@@ -377,6 +387,7 @@ async def test_model_invocation_with_cachetools_cache(
         tool_choice = 'auto'
         kwargs = {}
         cache_key = gateway_cache.generate_cache_key(
+            project_uuid=str(TEST_PROJECT_UUID),
             route_name='rb-gateway',
             key_uuid=str(API_KEY_UUID),
             messages=messages,
@@ -674,6 +685,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
 
     mocked_embedding_response = {
@@ -699,6 +711,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
     input_texts = ['hello world']
 
     cache_key = gateway_cache.generate_embedding_cache_key(
+        project_uuid=str(TEST_PROJECT_UUID),
         route_name='rb-gateway',
         key_uuid=str(API_KEY_UUID),
         input_texts=input_texts,
@@ -1315,6 +1328,7 @@ async def test_cache_hit_flag_set_on_request_state(
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
     mocked_response = to_mock_openai_chat_completion(content='Paris')
 

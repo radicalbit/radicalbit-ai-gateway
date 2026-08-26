@@ -12,6 +12,9 @@ from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 
+PROJECT_UUID = 'a4c1e8f2-3b7d-4a19-9c5e-6f0d2b8a1c34'
+OTHER_PROJECT_UUID = 'b7f2d9a1-8c4e-4f63-a012-5d3b7e9c1f48'
+
 
 def test_hash_name_redis(fake_redis_client):
     redis_cache = RedisCache(fake_redis_client)
@@ -22,6 +25,7 @@ def test_hash_name_redis(fake_redis_client):
     tool_choice = 'auto'
     kwargs = {}
     cache_key = gateway_cache.generate_cache_key(
+        project_uuid=PROJECT_UUID,
         route_name='rb-gateway',
         key_uuid='fake-uuid',
         messages=messages,
@@ -31,7 +35,7 @@ def test_hash_name_redis(fake_redis_client):
     )
     assert (
         cache_key
-        == 'response:aigateway:cache:rb-gateway:fake-uuid:e7e0a0714addd9767787243b19d8204cb5b435258a641d93856932c2057766ec'
+        == f'response:aigateway:cache:{PROJECT_UUID}:rb-gateway:fake-uuid:e7e0a0714addd9767787243b19d8204cb5b435258a641d93856932c2057766ec'
     )
 
 
@@ -45,6 +49,7 @@ async def test_get_and_set_redis(fake_redis_client):
     tool_choice = 'auto'
     kwargs = {}
     cache_key = gateway_cache.generate_cache_key(
+        project_uuid=PROJECT_UUID,
         route_name='rb-gateway',
         key_uuid='fake-uuid',
         messages=messages,
@@ -101,6 +106,7 @@ async def test_get_and_set_with_ttl_redis(fake_redis_client):
     tool_choice = 'auto'
     kwargs = {}
     cache_key = gateway_cache.generate_cache_key(
+        project_uuid=PROJECT_UUID,
         route_name='rb-gateway',
         key_uuid='fake-uuid',
         messages=messages,
@@ -180,6 +186,7 @@ def test_hash_name_in_memory():
     tool_choice = 'auto'
     kwargs = {}
     cache_key = gateway_cache.generate_cache_key(
+        project_uuid=PROJECT_UUID,
         route_name='rb-gateway',
         key_uuid='fake-uuid',
         messages=messages,
@@ -189,7 +196,7 @@ def test_hash_name_in_memory():
     )
     assert (
         cache_key
-        == 'response:aigateway:cache:rb-gateway:fake-uuid:e7e0a0714addd9767787243b19d8204cb5b435258a641d93856932c2057766ec'
+        == f'response:aigateway:cache:{PROJECT_UUID}:rb-gateway:fake-uuid:e7e0a0714addd9767787243b19d8204cb5b435258a641d93856932c2057766ec'
     )
 
 
@@ -203,6 +210,7 @@ async def test_get_and_set_in_memory():
     tool_choice = 'auto'
     kwargs = {}
     cache_key = gateway_cache.generate_cache_key(
+        project_uuid=PROJECT_UUID,
         route_name='rb-gateway',
         key_uuid='fake-uuid',
         messages=messages,
@@ -262,6 +270,7 @@ async def test_get_and_set_with_ttl_in_memory(fake_redis_client):
     tool_choice = 'auto'
     kwargs = {}
     cache_key = gateway_cache.generate_cache_key(
+        project_uuid=PROJECT_UUID,
         route_name='rb-gateway',
         key_uuid='fake-uuid',
         messages=messages,
@@ -339,12 +348,15 @@ def test_embedding_hash_name_redis(fake_redis_client):
     input_texts = ['hello world']
     kwargs = {}
     cache_key = gateway_cache.generate_embedding_cache_key(
+        project_uuid=PROJECT_UUID,
         route_name='rb-gateway',
         key_uuid='fake-uuid',
         input_texts=input_texts,
         **kwargs,
     )
-    assert cache_key.startswith('response:aigateway:cache:rb-gateway:fake-uuid')
+    assert cache_key.startswith(
+        f'response:aigateway:cache:{PROJECT_UUID}:rb-gateway:fake-uuid:'
+    )
 
 
 def test_embedding_hash_name_in_memory():
@@ -354,9 +366,12 @@ def test_embedding_hash_name_in_memory():
     input_texts = ['hello world']
     kwargs = {}
     cache_key = gateway_cache.generate_embedding_cache_key(
+        project_uuid=PROJECT_UUID,
         route_name='rb-gateway',
         key_uuid='fake-uuid',
         input_texts=input_texts,
         **kwargs,
     )
-    assert cache_key.startswith('response:aigateway:cache:rb-gateway:fake-uuid:')
+    assert cache_key.startswith(
+        f'response:aigateway:cache:{PROJECT_UUID}:rb-gateway:fake-uuid:'
+    )
