@@ -41,11 +41,15 @@ jobs:
     runs-on: ubuntu-22.04
     needs: prep
     if: needs.prep.outputs.is_semver == 'true'
+    permissions:
+      id-token: write # needed for PyPI trusted publishing (OIDC)
     defaults:
       run:
         working-directory: ./gateway
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags, required by setuptools-scm
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -58,7 +62,7 @@ jobs:
           uv build
       - name: Publish to PyPI
         run: |
-          uv publish --token ${{ secrets.PYPI_TOKEN }}
+          uv publish --trusted-publishing always
 
   build:
     strategy:
