@@ -1621,6 +1621,226 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         trace_ids = {r.trace_id for r in res.items}
         assert trace_ids == {'t1', 't4'}
 
+    def test_get_root_traces_returns_tags(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        test_spans = [
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t1',
+                parent_span_id='',
+                span_attributes={
+                    'traceloop.association.properties.tags': 'env=prod,cost_center=retail'
+                },
+            ),
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t2',
+                parent_span_id='',
+                span_attributes={},
+            ),
+        ]
+        self.insert(test_spans)
+
+        res = self.otel_traces_dao.get_root_traces_paginated(
+            project_uuid=TEST_PROJECT_UUID,
+            route_names=None,
+            group_uuids=None,
+            key_uuids=None,
+            _from=None,
+            _to=None,
+            params=Params(page=1, size=10),
+        )
+
+        by_trace_id = {row.trace_id: row.tags for row in res.items}
+        assert by_trace_id['t1'] == ['env=prod', 'cost_center=retail']
+        assert by_trace_id['t2'] == []
+
+    def test_get_root_traces_filters_by_tags(self):
+        """Same key OR's, different keys AND (mirrors dashboard/usage semantics)."""
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        test_spans = [
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t1',
+                parent_span_id='',
+                span_attributes={
+                    'traceloop.association.properties.tags': 'env=prod,cost_center=retail'
+                },
+            ),
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t2',
+                parent_span_id='',
+                span_attributes={
+                    'traceloop.association.properties.tags': 'env=staging,cost_center=retail'
+                },
+            ),
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t3',
+                parent_span_id='',
+                span_attributes={
+                    'traceloop.association.properties.tags': 'env=prod,cost_center=marketing'
+                },
+            ),
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t4',
+                parent_span_id='',
+                span_attributes={},
+            ),
+        ]
+        self.insert(test_spans)
+
+        res = self.otel_traces_dao.get_root_traces_paginated(
+            project_uuid=TEST_PROJECT_UUID,
+            route_names=None,
+            group_uuids=None,
+            key_uuids=None,
+            _from=None,
+            _to=None,
+            params=Params(page=1, size=10),
+            tags=['env=prod', 'env=staging', 'cost_center=retail'],
+        )
+
+        # (env=prod OR env=staging) AND cost_center=retail -> t1, t2 only
+        trace_ids = {r.trace_id for r in res.items}
+        assert trace_ids == {'t1', 't2'}
+
+    def test_get_spans_by_trace_id_returns_tags(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        self.insert(
+            [
+                db_mock.get_sample_otel_span(
+                    timestamp=base_time,
+                    trace_id='trace-tags',
+                    span_id='span-root',
+                    parent_span_id='',
+                    span_attributes={
+                        'traceloop.association.properties.tags': 'env=prod'
+                    },
+                )
+            ]
+        )
+
+        res = self.otel_traces_dao.get_spans_by_trace_id(
+            project_uuid=TEST_PROJECT_UUID, trace_id='trace-tags'
+        )
+
+        assert len(res) == 1
+        assert res[0].tags == ['env=prod']
+
+    def test_get_latencies_filters_by_tags(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        test_spans = [
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t1',
+                parent_span_id='',
+                duration_ns=100 * 1_000_000,
+                span_attributes={'traceloop.association.properties.tags': 'env=prod'},
+            ),
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t2',
+                parent_span_id='',
+                duration_ns=999 * 1_000_000,
+                span_attributes={
+                    'traceloop.association.properties.tags': 'env=staging'
+                },
+            ),
+        ]
+        self.insert(test_spans)
+
+        res = self.otel_traces_dao.get_latencies(
+            project_uuid=TEST_PROJECT_UUID,
+            route_names=None,
+            _from=None,
+            _to=None,
+            tags=['env=prod'],
+        )
+
+        assert res.p50 == pytest.approx(100.0, abs=0.01)
+
+    def test_get_span_latencies_filters_by_tags(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        test_spans = [
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                span_name='invoke',
+                duration_ns=100 * 1_000_000,
+                span_attributes={'traceloop.association.properties.tags': 'env=prod'},
+            ),
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                span_name='other',
+                duration_ns=999 * 1_000_000,
+                span_attributes={
+                    'traceloop.association.properties.tags': 'env=staging'
+                },
+            ),
+        ]
+        self.insert(test_spans)
+
+        res = self.otel_traces_dao.get_span_latencies(
+            project_uuid=TEST_PROJECT_UUID,
+            route_names=None,
+            _from=None,
+            _to=None,
+            tags=['env=prod'],
+        )
+
+        assert [r.span_name for r in res] == ['invoke']
+
+    def test_get_traces_chart_data_filters_by_tags(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        test_spans = [
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t1',
+                parent_span_id='',
+                span_attributes={'traceloop.association.properties.tags': 'env=prod'},
+            ),
+            db_mock.get_sample_otel_span(
+                timestamp=base_time,
+                trace_id='t2',
+                parent_span_id='',
+                span_attributes={
+                    'traceloop.association.properties.tags': 'env=staging'
+                },
+            ),
+        ]
+        self.insert(test_spans)
+
+        res = self.otel_traces_dao.get_traces_chart_data(
+            project_uuid=TEST_PROJECT_UUID,
+            route_names=None,
+            _from=base_time,
+            _to=base_time + datetime.timedelta(hours=1),
+            granularity='hours',
+            tags=['env=prod'],
+        )
+
+        assert sum(point.total_requests for point in res) == 1
+
     # --- get_spans_stats_by_trace_ids ---
 
     def test_get_spans_stats_by_trace_ids_empty_input(self):

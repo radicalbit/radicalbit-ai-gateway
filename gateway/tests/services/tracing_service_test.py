@@ -438,6 +438,37 @@ class TracingServiceTest(unittest.TestCase):
         assert result.root_span_id == 'span-1'
         assert result.trace_status == TraceStatus.SUCCESS
 
+    def test_get_trace_by_id_includes_tags(self):
+        """TraceDTO.tags comes straight from the root span's parsed tags."""
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
+            return_value=[
+                SpanRecord(
+                    timestamp=base_time,
+                    trace_id='trace-tags',
+                    request_uuid='',
+                    span_id='span-1',
+                    span_name='invoke',
+                    service_name='ai-gateway',
+                    duration=100_000_000,
+                    status_code='Unset',
+                    parent_span_id='',
+                    route_name='test-route',
+                    api_key_uuid='',
+                    api_key_name='',
+                    group_uuid='',
+                    group_name='',
+                    tags=['env=prod', 'cost_center=retail'],
+                )
+            ]
+        )
+
+        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-tags')
+
+        assert result.tags == ['env=prod', 'cost_center=retail']
+
     def test_get_trace_by_id_single_span_no_request_uuid(self):
         """Test retrieving a trace without request_uuid."""
         base_time = datetime.datetime(
@@ -797,6 +828,52 @@ class TracingServiceTest(unittest.TestCase):
         assert item.latest_span_ts == int(
             (base_time + datetime.timedelta(seconds=1)).timestamp()
         )
+
+    def test_get_traces_includes_tags(self):
+        """TraceDTO.tags comes straight from the paginated row, no extra DAO call."""
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        trace_id = 'trace-tags'
+
+        mock_row = MagicMock()
+        mock_row.trace_id = trace_id
+        mock_row.request_uuid = ''
+        mock_row.route_name = 'my-route'
+        mock_row.group_name = None
+        mock_row.group_uuid = ''
+        mock_row.api_key_name = None
+        mock_row.api_key_uuid = ''
+        mock_row.duration_ms = 1500.0
+        mock_row.created_at = base_time
+        mock_row.tags = ['env=prod']
+
+        mock_page = MagicMock(spec=Page)
+        mock_page.items = [mock_row]
+        mock_page.total = 1
+
+        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
+            return_value=mock_page
+        )
+        self.otel_traces_dao.get_spans_stats_by_trace_ids = MagicMock(return_value={})
+        self.otel_traces_dao.get_root_span_error_by_trace_ids = MagicMock(
+            return_value=set()
+        )
+
+        res = self.tracing_service.get_traces(
+            project_uuid=PROJECT_UUID,
+            route_names=None,
+            group_uuids=None,
+            key_uuids=None,
+            _from=base_time,
+            _to=base_time + datetime.timedelta(hours=1),
+            params=Params(page=1, size=50),
+            tags=['env=prod'],
+        )
+
+        assert res.items[0].tags == ['env=prod']
+        call_args = self.otel_traces_dao.get_root_traces_paginated.call_args
+        assert call_args.kwargs['tags'] == ['env=prod']
 
     def test_get_traces_page_offset_conversion(self):
         """Test that params are passed correctly to the paginated DAO method."""

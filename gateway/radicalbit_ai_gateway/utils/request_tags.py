@@ -2,7 +2,7 @@
 
 Comma-separated ``key=value`` pairs, e.g.::
 
-    X-RB-Tags: cost_center=retail,env=prod,app=leonardo-clm
+    X-RB-Tags: cost_center=retail,env=prod,app=my-app
 
 The header is gateway-owned: consumed by the request event middleware and
 never forwarded upstream. Tags are deduplicated and sorted, so header order

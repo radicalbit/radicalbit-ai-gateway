@@ -476,7 +476,7 @@ class RequestEventServiceTest(unittest.TestCase):
     def test_get_tag_keys(self):
         self.request_event_dao.get_distinct_tags = MagicMock(
             return_value=[
-                'app=leonardo-clm',
+                'app=my-app',
                 'cost_center=retail',
                 'env=prod',
                 'env=staging',

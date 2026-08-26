@@ -10,8 +10,8 @@ from radicalbit_ai_gateway.utils.request_tags import (
 
 
 def test_parses_the_documented_example():
-    assert parse_tags_header('cost_center=retail,env=prod,app=leonardo-clm') == (
-        'app=leonardo-clm',
+    assert parse_tags_header('cost_center=retail,env=prod,app=my-app') == (
+        'app=my-app',
         'cost_center=retail',
         'env=prod',
     )

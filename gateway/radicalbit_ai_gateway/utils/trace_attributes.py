@@ -46,6 +46,7 @@ def set_trace_attributes(
     group_name: str | None = None,
     project_uuid: str | None = None,
     project_name: str | None = None,
+    tags: list[str] | None = None,
 ) -> None:
     properties = {
         'request_uuid': request_uuid,
@@ -56,6 +57,7 @@ def set_trace_attributes(
         'group_name': group_name,
         'project_uuid': project_uuid,
         'project_name': project_name,
+        'tags': ','.join(tags) if tags else None,
     }
     properties = {k: v for k, v in properties.items() if v is not None}
     if properties:
