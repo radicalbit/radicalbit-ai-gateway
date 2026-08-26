@@ -8,10 +8,10 @@ from radicalbit_ai_gateway.events.buffer import CeleryBuffer
 from radicalbit_ai_gateway.models.event_payload import EventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 
 logger = logging.getLogger('radicalbit-ai-gateway')
 app_config = get_app_config()
-from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 
 # Single buffer instance for metrics events
 _events_buffer = CeleryBuffer(task_name='emit_event', buffer_name='EventsBuffer')
