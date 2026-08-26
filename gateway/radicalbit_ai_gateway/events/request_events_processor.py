@@ -30,6 +30,7 @@ def _create_request_event_dict(
     error_type: str | None,
     error_code: str | None,
     is_streaming: bool,
+    tags: list[str],
 ) -> dict[str, Any]:
     """Create a REQUEST event dictionary for the request_event table."""
     return {
@@ -49,6 +50,7 @@ def _create_request_event_dict(
         'ERROR_TYPE': error_type or '',
         'ERROR_CODE': error_code or '',
         'IS_STREAMING': is_streaming,
+        'TAGS': tags,
     }
 
 
@@ -70,5 +72,6 @@ def emit_request_event(event: RequestEventPayload) -> None:
         error_type=event.error_type,
         error_code=event.error_code,
         is_streaming=event.is_streaming,
+        tags=event.tags,
     )
     _request_events_buffer.add(event_dict)

@@ -16,6 +16,10 @@ from radicalbit_ai_gateway.models.event_dto import (
 from radicalbit_ai_gateway.routes.usage_route import UsageRoute
 from radicalbit_ai_gateway.services.event_service import EventService
 from radicalbit_ai_gateway.services.project_service import ProjectService
+from radicalbit_ai_gateway.utils.exceptions import (
+    GatewayError,
+    gateway_exception_handler,
+)
 
 PROJECT_UUID = UUID('22222222-2222-2222-2222-222222222222')
 PROJECT_NAME = 'test-project'
@@ -44,6 +48,7 @@ class TestUsageRoute(unittest.TestCase):
             project_service=cls.project_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
+        app.add_exception_handler(GatewayError, gateway_exception_handler)
         app.state.project_configs = {PROJECT_NAME: project_entry_mock}
         app.include_router(router, prefix=cls.prefix)
         cls.client = TestClient(app)
@@ -157,6 +162,26 @@ class TestUsageRoute(unittest.TestCase):
         summary = response.json()['routes'][0]['summary']
         assert 'cache_triggered' not in summary
         assert 'saved_amount_input' not in summary
+
+    def test_usage_costs_with_tags(self):
+        expected = UsageCostsDTO(total=0.0, routes=[])
+        self.event_service.get_all_routes_costs = MagicMock(return_value=expected)
+        response = self.client.get(
+            f'{self.project_path}/usage/costs'
+            '?tags=env=prod&tags=env=staging&tags=cost_center=retail'
+        )
+        assert response.status_code == 200
+
+        call_kwargs = self.event_service.get_all_routes_costs.call_args.kwargs
+        assert call_kwargs['tags'] == [
+            'env=prod',
+            'env=staging',
+            'cost_center=retail',
+        ]
+
+    def test_usage_costs_with_malformed_tag_returns_400(self):
+        response = self.client.get(f'{self.project_path}/usage/costs?tags=not-a-tag')
+        assert response.status_code == 400
 
     def test_usage_costs_returns_empty_when_no_active_config(self):
         app = self.client.app

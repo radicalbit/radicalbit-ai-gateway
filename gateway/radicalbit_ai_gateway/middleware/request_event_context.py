@@ -30,6 +30,9 @@ class RequestEventContext:
     project_uuid: str = ''
     project_name: str = ''
 
+    # Client-supplied tags parsed from X-RB-Tags (set by the middleware)
+    tags: tuple[str, ...] = ()
+
     @classmethod
     def get(cls, request: Request) -> RequestEventContext | None:
         """Get context from request.scope, returns None if not set."""

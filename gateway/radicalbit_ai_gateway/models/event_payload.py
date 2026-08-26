@@ -94,6 +94,7 @@ class RequestEventPayload(BaseModel):
     group_name: str = ''
     project_uuid: str = ''
     project_name: str = ''
+    tags: list[str] = []
     request_type: Literal[
         RequestType.CHAT_COMPLETIONS,
         RequestType.EMBEDDINGS,

@@ -806,3 +806,25 @@ class TestServer(unittest.TestCase):
         assert len(pook.pending_mocks()) == 0
 
         pook.disable_network()
+
+    def test_tags_header_is_not_forwarded_to_the_provider(self):
+        api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
+        key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+        self.gateways_mock['rb-gateway'].invoke.return_value = InvokeResponse(
+            content=to_mock_openai_chat_completion(content='Hi'), headers={}
+        )
+
+        response = self.client.post(
+            '/v1/chat/completions',
+            json={
+                'model': 'rb-gateway',
+                'messages': [{'role': 'user', 'content': 'Hello!'}],
+            },
+            headers={**self.headers, 'X-RB-Tags': 'cost_center=retail,env=prod'},
+        )
+
+        assert response.status_code == 200
+        forwarded = repr(self.gateways_mock['rb-gateway'].invoke.call_args.kwargs)
+        assert 'X-RB-Tags' not in forwarded
+        assert 'cost_center' not in forwarded

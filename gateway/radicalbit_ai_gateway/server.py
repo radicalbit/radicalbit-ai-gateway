@@ -60,6 +60,7 @@ from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.routes.mcp_route import McpRoute
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
+from radicalbit_ai_gateway.routes.tag_route import TagRoute
 from radicalbit_ai_gateway.routes.tracing_route import TracingRoute
 from radicalbit_ai_gateway.routes.usage_route import UsageRoute
 from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
@@ -370,6 +371,13 @@ app.include_router(
 app.include_router(
     UsageRoute.get_usage_router(
         event_service=event_service,
+        project_service=project_service,
+    ),
+    prefix=prefix,
+)
+app.include_router(
+    TagRoute.get_tag_router(
+        request_event_service=request_event_service,
         project_service=project_service,
     ),
     prefix=prefix,

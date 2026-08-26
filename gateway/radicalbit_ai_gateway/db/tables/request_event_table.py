@@ -3,6 +3,7 @@ import uuid
 from clickhouse_sqlalchemy.engines import MergeTree
 from clickhouse_sqlalchemy.types import (
     UUID,
+    Array,
     DateTime64,
     Float,
     Int32,
@@ -33,6 +34,7 @@ class RequestEvent(ClickHouseBaseTable):
     error_type = Column('ERROR_TYPE', LowCardinality(String))
     error_code = Column('ERROR_CODE', LowCardinality(String))
     is_streaming = Column('IS_STREAMING', Boolean, default=False)
+    tags = Column('TAGS', Array(String), default=[])
     __table_args__ = (
         MergeTree(
             partition_by=func.toDate(

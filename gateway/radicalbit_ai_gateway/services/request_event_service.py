@@ -11,6 +11,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     RequestGroupedChartDataDTO,
 )
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
+from radicalbit_ai_gateway.models.tag_dto import TagKeysDTO, TagKeyValuesDTO
 from radicalbit_ai_gateway.utils.chart_utils import (
     calculate_increment_percentage,
     determine_granularity,
@@ -23,6 +24,17 @@ class RequestEventService:
     def __init__(self, request_event_dao: RequestEventDAO):
         self.request_event_dao = request_event_dao
 
+    def get_tag_keys(self, project_uuid: UUID) -> TagKeysDTO:
+        tags = self.request_event_dao.get_distinct_tags(project_uuid)
+        tag_keys = sorted({tag.split('=', 1)[0] for tag in tags})
+        return TagKeysDTO(tag_keys=tag_keys)
+
+    def get_tag_key_values(self, project_uuid: UUID, tag_key: str) -> TagKeyValuesDTO:
+        tag_values = self.request_event_dao.get_distinct_tag_values(
+            project_uuid, tag_key
+        )
+        return TagKeyValuesDTO(tag_values=tag_values)
+
     def get_request_chart_data(
         self,
         project_uuid: UUID,
@@ -30,18 +42,20 @@ class RequestEventService:
         _from: datetime | None,
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
+        tags: list[str] | None = None,
     ) -> RequestChartDataDTO:
         _from_utc, _to_utc, timezone_offset_seconds = prepare_chart_time_range(
             _from, _to
         )
 
         request_chart_data_points = self.request_event_dao.get_request_chart_data(
-            project_uuid,
-            route_name,
-            _from_utc,
-            _to_utc,
-            granularity,
-            timezone_offset_seconds,
+            project_uuid=project_uuid,
+            route_name=route_name,
+            _from=_from_utc,
+            _to=_to_utc,
+            granularity=granularity,
+            timezone_offset_seconds=timezone_offset_seconds,
+            tags=tags,
         )
         if not request_chart_data_points:
             return RequestChartDataDTO(
@@ -82,18 +96,20 @@ class RequestEventService:
         _from: datetime | None,
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
+        tags: list[str] | None = None,
     ) -> RequestGroupedChartDataDTO:
         _from_utc, _to_utc, timezone_offset_seconds = prepare_chart_time_range(
             _from, _to
         )
 
         data_points = self.request_event_dao.get_request_chart_data_grouped(
-            project_uuid,
-            route_name,
-            _from_utc,
-            _to_utc,
-            granularity,
-            timezone_offset_seconds,
+            project_uuid=project_uuid,
+            route_name=route_name,
+            _from=_from_utc,
+            _to=_to_utc,
+            granularity=granularity,
+            timezone_offset_seconds=timezone_offset_seconds,
+            tags=tags,
         )
         if not data_points:
             return RequestGroupedChartDataDTO(
@@ -139,18 +155,28 @@ class RequestEventService:
         config: GatewayConfig,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> MostRequestedRouteDTO | None:
         configured_routes = list(config.routes.keys())
 
         route_name = self.request_event_dao.get_most_requested_route(
-            project_uuid, configured_routes, _from, _to
+            project_uuid=project_uuid,
+            configured_routes=configured_routes,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         if route_name is None:
             return None
 
         granularity = determine_granularity(_from, _to)
         chart_data = self.get_request_chart_data(
-            project_uuid, route_name, _from, _to, granularity
+            project_uuid=project_uuid,
+            route_name=route_name,
+            _from=_from,
+            _to=_to,
+            granularity=granularity,
+            tags=tags,
         )
         increment_percentage = calculate_increment_percentage(chart_data.data)
 
@@ -166,11 +192,16 @@ class RequestEventService:
         config: GatewayConfig,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> MostRequestedErrorRouteDTO | None:
         configured_routes = list(config.routes.keys())
 
         error_route = self.request_event_dao.get_most_route_with_error(
-            project_uuid, configured_routes, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            configured_routes=configured_routes,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         if error_route is None:
             return None
@@ -181,12 +212,13 @@ class RequestEventService:
         granularity = determine_granularity(_from, _to)
 
         error_chart_data_points = self.request_event_dao.get_request_error_chart_data(
-            project_uuid,
-            error_route.route_name,
-            granularity,
-            _from_utc,
-            _to_utc,
-            timezone_offset_seconds,
+            project_uuid=project_uuid,
+            route_name=error_route.route_name,
+            granularity=granularity,
+            _from=_from_utc,
+            _to=_to_utc,
+            timezone_offset_seconds=timezone_offset_seconds,
+            tags=tags,
         )
 
         if not error_chart_data_points:
