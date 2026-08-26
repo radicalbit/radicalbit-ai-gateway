@@ -47,7 +47,7 @@ class ProjectRouteConfig:
 
 class ProjectRoute:
     @staticmethod
-    def get_project_router(
+    def get_project_router(  # noqa: C901
         project_service: ProjectService,
         group_service: GroupService,
         register_project_routes: Callable[[UUID, str, str], Awaitable[None]]
@@ -55,6 +55,7 @@ class ProjectRoute:
         deregister_project_routes: Callable[[UUID], Awaitable[None]] | None = None,
         config: ProjectRouteConfig | None = None,
         config_generator_service: ConfigGeneratorService | None = None,
+        alert_rule_service: Any | None = None,
     ) -> APIRouter:
         config = config or ProjectRouteConfig()
         get_projects_fn = config.get_projects_fn or (
@@ -155,6 +156,18 @@ class ProjectRoute:
             removed = group_service.cleanup_orphaned_associations(
                 project_uuid, project.name
             )
+            if alert_rule_service:
+                try:
+                    alert_rule_service.validate_rules_on_config_change(
+                        project_name=project.name,
+                        project_uuid=str(project_uuid),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        'Failed to validate alert rules on config change for project %s: %s',
+                        project.name,
+                        e,
+                    )
             logger.info(
                 'Served config %s for project %s (removed %d orphaned associations)',
                 config_uuid,

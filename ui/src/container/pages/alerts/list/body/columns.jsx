@@ -53,8 +53,8 @@ const columns = [
   },
   {
     title: 'Project',
-    dataIndex: 'project',
-    key: 'project',
+    dataIndex: 'projectName',
+    key: 'projectName',
     render: (value) => value ?? '--',
   },
   {

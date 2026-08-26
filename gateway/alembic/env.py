@@ -6,6 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from radicalbit_ai_gateway.db.database import Database, BaseTable
+from radicalbit_ai_gateway.db.tables.alert_rule_table import *
 from radicalbit_ai_gateway.db.tables.group_route_table import *
 from radicalbit_ai_gateway.db.tables.group_table import *
 from radicalbit_ai_gateway.db.tables.key_table import *
@@ -105,8 +106,9 @@ def run_migrations_online() -> None:
         target_schema = 'public' if target_metadata.schema is None else target_metadata.schema
 
         with context.begin_transaction():
-            context.execute(f'create schema if not exists "{target_schema}";')
-            context.execute(f'set search_path to "{target_schema}"')
+            if connection.dialect.name == 'postgresql':
+                context.execute(f'create schema if not exists "{target_schema}";')
+                context.execute(f'set search_path to "{target_schema}"')
             context.run_migrations()
 
 

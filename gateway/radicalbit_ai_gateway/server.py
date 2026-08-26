@@ -28,6 +28,7 @@ from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
+from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
@@ -37,6 +38,7 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
+from radicalbit_ai_gateway.events.events_processor import set_alert_rule_service
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.metrics.define_metrics import (
     request_latency_histogram,
@@ -51,6 +53,7 @@ from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
@@ -60,6 +63,7 @@ from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRout
 from radicalbit_ai_gateway.routes.tag_route import TagRoute
 from radicalbit_ai_gateway.routes.tracing_route import TracingRoute
 from radicalbit_ai_gateway.routes.usage_route import UsageRoute
+from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.services.config_generator_service import (
     ConfigGeneratorService,
@@ -73,6 +77,10 @@ from radicalbit_ai_gateway.services.request_event_service import RequestEventSer
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
+    AlertRuleInternalError,
+    AlertRuleInvalidEventError,
+    AlertRuleNotFoundError,
+    AlertRuleUnsupportedTimeAggregationError,
     ApiKeyError,
     AppError,
     AuthRegistryError,
@@ -86,6 +94,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerError,
     RequestRateLimitExceeded,
     TokenLimitExceeded,
+    alert_rule_exception_handler,
     api_key_exception_handler,
     auth_registry_exception_handler,
     budget_limiter_exception_handler,
@@ -208,6 +217,14 @@ mcp_service = McpService(
     upstream_client=McpUpstreamClient(),
     group_service=group_service,
 )
+
+alert_rule_dao = AlertRuleDAO(database)
+alert_rule_service = AlertRuleService(
+    alert_rule_dao=alert_rule_dao,
+    project_configs=project_configs,
+    project_dao=project_dao,
+)
+set_alert_rule_service(alert_rule_service)
 
 
 @asynccontextmanager
@@ -379,7 +396,16 @@ app.add_exception_handler(JudgeInternalError, judge_exception_handler)
 app.add_exception_handler(BudgetLimitExceeded, budget_limiter_exception_handler)
 app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
 app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
+app.add_exception_handler(AlertRuleNotFoundError, alert_rule_exception_handler)
+app.add_exception_handler(AlertRuleInvalidEventError, alert_rule_exception_handler)
+app.add_exception_handler(
+    AlertRuleUnsupportedTimeAggregationError, alert_rule_exception_handler
+)
+app.add_exception_handler(AlertRuleInternalError, alert_rule_exception_handler)
 app.include_router(KeyRoute.get_key_router(key_service), prefix=prefix)
+app.include_router(
+    AlertRuleRoute.get_alert_rule_router(alert_rule_service), prefix=prefix
+)
 # Root-level like /v1/... (NOT under /public/api/v1): inbound MCP proxy.
 app.include_router(McpRoute.get_mcp_router(mcp_service))
 app.include_router(
@@ -395,6 +421,7 @@ app.include_router(
         deregister_project_routes=_deregister,
         config=getattr(app.state, 'project_route_config', ProjectRouteConfig()),
         config_generator_service=config_generator_service,
+        alert_rule_service=alert_rule_service,
     ),
     prefix=prefix,
 )
