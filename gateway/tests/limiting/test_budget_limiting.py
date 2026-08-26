@@ -7,10 +7,12 @@ from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
 from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
 
+_PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+
 
 class TestBudgetLimiter:
     def test_init_without_config(self):
-        limiter = BudgetLimiter(route_name='rb-gateway')
+        limiter = BudgetLimiter(project_uuid=_PROJECT_UUID, route_name='rb-gateway')
         assert limiter.limiter is None
         assert limiter.item is None
 
@@ -20,7 +22,9 @@ class TestBudgetLimiter:
             window_size='1 minute',
             max_budget=10,
         )
-        limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+        limiter = BudgetLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
         assert limiter.limiter is not None
         assert limiter.item is not None
 
@@ -29,11 +33,13 @@ class TestBudgetLimiter:
         with pytest.raises(
             ValueError, match='max_budget must be set for budget limiting'
         ):
-            BudgetLimiter(route_name='rb-gateway', config=config)
+            BudgetLimiter(
+                project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+            )
 
     @pytest.mark.asyncio
     async def test_check_and_count_no_config(self):
-        limiter = BudgetLimiter(route_name='rb-gateway')
+        limiter = BudgetLimiter(project_uuid=_PROJECT_UUID, route_name='rb-gateway')
         await limiter.count_input(10, 2.5e-06)
         await limiter.count_output(10, 2.5e-06)
         await limiter.check_budget()
@@ -41,7 +47,9 @@ class TestBudgetLimiter:
     @pytest.mark.asyncio
     async def test_check_and_count_within_limit(self):
         config = Limiting(max_budget=1, window_size='1 minute')
-        limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+        limiter = BudgetLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
         await limiter.count_input(10, 2.5e-06)
         await limiter.count_output(10, 2.5e-06)
         await limiter.check_budget()
@@ -49,7 +57,9 @@ class TestBudgetLimiter:
     @pytest.mark.asyncio
     async def test_count_input_exceeds_limit(self):
         config = Limiting(max_budget=3.46, window_size='1 minute')
-        limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+        limiter = BudgetLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
 
         with pytest.raises(BudgetLimitExceededError) as exc:
             await limiter.count_input(10_000_000, 2.5e-06)
@@ -68,7 +78,9 @@ class TestBudgetLimiter:
     @pytest.mark.asyncio
     async def test_count_output_exceeds_limit(self):
         config = Limiting(max_budget=0.25, window_size='1 minute')
-        limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+        limiter = BudgetLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
 
         await limiter.count_output(100000, 2.51e-06)
 
@@ -92,7 +104,9 @@ class TestBudgetLimiter:
         int token counts.
         """
         config = Limiting(max_budget=0.0005, window_size='1 minute')
-        limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+        limiter = BudgetLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
 
         await limiter.count_duration(8.25, 0.0001)
 
@@ -108,7 +122,9 @@ class TestBudgetLimiter:
     async def test_combined_input_output_exhausts_budget(self):
         """Input + output costs together exhaust the shared budget."""
         config = Limiting(max_budget=1, window_size='1 minute')
-        limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+        limiter = BudgetLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
 
         # Each call spends ~0.25, three calls = 0.75 — still under 1.0
         await limiter.count_input(100000, 2.5e-06)
@@ -135,7 +151,9 @@ class TestBudgetLimiter:
     @pytest.mark.asyncio
     async def test_budget_accumulates(self):
         config = Limiting(max_budget=1, window_size='1 minute')
-        limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+        limiter = BudgetLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
 
         await limiter.count_input(100000, 2.5e-06)
         await limiter.check_budget()
@@ -158,7 +176,9 @@ class TestBudgetLimiter:
     @pytest.mark.asyncio
     async def test_budget_accumulates_with_reset_time(self):
         config = Limiting(max_budget=1, window_size='1 minute')
-        limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+        limiter = BudgetLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
 
         initial_datetime = datetime.datetime(
             year=2025, month=6, day=25, hour=15, minute=0, second=0
@@ -197,7 +217,9 @@ class TestBudgetLimiter:
                 max_budget=0.25,
                 window_size='10 second',
             )
-            limiter = BudgetLimiter(route_name='rb-gateway', config=config)
+            limiter = BudgetLimiter(
+                project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+            )
 
             await limiter.count_input(100000, 2.4e-06)
             await limiter.check_budget()

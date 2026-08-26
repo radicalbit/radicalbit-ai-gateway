@@ -763,7 +763,7 @@ async def test_invoke_embeddings_token_limit_exceeded(
         gateway_config, 'rb-gateway'
     )
 
-    token_limiter = route_cfg.get_token_limiter()
+    token_limiter = route_cfg.get_token_limiter('2f1c6d4e-0000-4000-8000-0000000000aa')
 
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -813,7 +813,9 @@ async def test_invoke_embeddings_budget_limit_exceeded(
     route_cfg, chat_models, embedding_models = resolve_route_models(
         gateway_config, 'rb-gateway'
     )
-    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter = route_cfg.get_budget_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
@@ -1024,7 +1026,9 @@ async def test_invoke_transcription_counts_budget_duration():
         input_cost_per_second=Decimal('0.0001'),
     )
     route_cfg = _make_transcription_route_config(max_budget=10.0, window_size=3600)
-    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter = route_cfg.get_budget_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     budget_limiter.check_budget = AsyncMock()
     budget_limiter.count_duration = AsyncMock()
     budget_limiter.count_input = AsyncMock()
@@ -1083,7 +1087,9 @@ async def test_invoke_transcription_counts_budget_tokens():
     route_cfg = _make_transcription_route_config(
         model_id='gpt4o-transcribe', max_budget=10.0, window_size=3600
     )
-    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter = route_cfg.get_budget_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     budget_limiter.check_budget = AsyncMock()
     budget_limiter.count_input = AsyncMock()
     budget_limiter.count_output = AsyncMock()
@@ -1179,7 +1185,9 @@ async def test_invoke_transcription_stream_relays_events_and_counts_usage_once()
     route_cfg = _make_transcription_route_config(
         model_id='gpt4o-transcribe', max_budget=10.0, window_size=3600
     )
-    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter = route_cfg.get_budget_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     budget_limiter.check_budget = AsyncMock()
     budget_limiter.count_input = AsyncMock()
     budget_limiter.count_output = AsyncMock()

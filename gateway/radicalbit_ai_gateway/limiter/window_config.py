@@ -91,6 +91,9 @@ class WindowConfig:
     Attributes:
         limit: Maximum allowed in the window.
         window_seconds: Window duration in seconds.
+        project_uuid: UUID of the owning project, for key isolation only. Route
+            names are unique only within a project, so without this two projects
+            declaring the same route name share one window.
         route_name: Name of the route for key isolation.
         scenario_type: Type of rate limiting scenario (request_rate, token_input, token_output).
 
@@ -98,6 +101,7 @@ class WindowConfig:
 
     limit: int
     window_seconds: int
+    project_uuid: str
     route_name: str
     scenario_type: ScenarioType
 
@@ -106,6 +110,7 @@ class WindowConfig:
         cls,
         limit: int,
         window: str | int,
+        project_uuid: str,
         route_name: str,
         scenario_type: ScenarioType,
     ) -> WindowConfig:
@@ -114,6 +119,7 @@ class WindowConfig:
         Args:
             limit: Maximum allowed in the window.
             window: Window size as string (e.g., '1 minute') or seconds (int).
+            project_uuid: UUID of the owning project, for key isolation only.
             route_name: Name of the route for key isolation.
             scenario_type: Type of rate limiting scenario.
 
@@ -125,6 +131,7 @@ class WindowConfig:
         return cls(
             limit=limit,
             window_seconds=window_seconds,
+            project_uuid=project_uuid,
             route_name=route_name,
             scenario_type=scenario_type,
         )

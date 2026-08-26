@@ -29,10 +29,16 @@ class BaseFixedWindowLimiter(ABC):
     def _build_key(self, config: WindowConfig) -> str:
         """Build the storage key from config.
 
-        Key format: limiter:{route_name}:{scenario_type}:{window_type}:{window_seconds}
-        Example: limiter:gpt-4:token_input:fixed:60
+        Key format: limiter:{project_uuid}:{route_name}:{scenario_type}:{window_type}:{window_seconds}
+        Example: limiter:0e6f...:my-route:token_input:fixed:60
+
+        Route names are unique only within a project, so the project segment
+        is what stops two projects sharing one window. It is always present:
+        ``project_uuid`` is a required field. Passing an empty string yields a
+        third, malformed keyspace (``limiter::route:...``) that matches neither
+        the scoped nor the pre-fix format — callers must supply a real uuid.
         """
-        return f'limiter:{config.route_name}:{config.scenario_type.value}:{self._window_type}:{config.window_seconds}'
+        return f'limiter:{config.project_uuid}:{config.route_name}:{config.scenario_type.value}:{self._window_type}:{config.window_seconds}'
 
     async def test(self, item: WindowConfig, cost: int = 1) -> bool:
         """Test if operation is allowed WITHOUT consuming capacity.
