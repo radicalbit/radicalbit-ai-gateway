@@ -376,3 +376,106 @@ def test_embedding_hash_name_in_memory():
     assert cache_key.startswith(
         f'response:aigateway:cache:{PROJECT_UUID}:rb-gateway:fake-uuid:'
     )
+
+
+def test_transcription_hash_name_redis(fake_redis_client):
+    redis_cache = RedisCache(fake_redis_client)
+    gateway_cache = GatewayCache(cache_client=redis_cache)
+
+    cache_key = gateway_cache.generate_transcription_cache_key(
+        project_uuid=PROJECT_UUID,
+        route_name='rb-gateway',
+        key_uuid='fake-uuid',
+        audio_bytes=b'fake-audio-bytes',
+        model_id='whisper-1',
+        response_format='json',
+        language=None,
+        prompt=None,
+        temperature=None,
+    )
+    assert cache_key.startswith(
+        f'response:aigateway:cache:{PROJECT_UUID}:rb-gateway:fake-uuid:'
+    )
+
+
+def test_transcription_hash_name_in_memory():
+    in_memory_cache = CacheToolsInMemory()
+    gateway_cache = GatewayCache(cache_client=in_memory_cache)
+
+    cache_key = gateway_cache.generate_transcription_cache_key(
+        project_uuid=PROJECT_UUID,
+        route_name='rb-gateway',
+        key_uuid='fake-uuid',
+        audio_bytes=b'fake-audio-bytes',
+        model_id='whisper-1',
+        response_format='json',
+        language=None,
+        prompt=None,
+        temperature=None,
+    )
+    assert cache_key.startswith(
+        f'response:aigateway:cache:{PROJECT_UUID}:rb-gateway:fake-uuid:'
+    )
+
+
+def test_transcription_hash_name_is_deterministic():
+    gateway_cache = GatewayCache(cache_client=CacheToolsInMemory())
+
+    kwargs = {
+        'project_uuid': PROJECT_UUID,
+        'route_name': 'rb-gateway',
+        'key_uuid': 'fake-uuid',
+        'audio_bytes': b'fake-audio-bytes',
+        'model_id': 'whisper-1',
+        'response_format': 'json',
+        'language': None,
+        'prompt': None,
+        'temperature': None,
+    }
+    assert gateway_cache.generate_transcription_cache_key(
+        **kwargs
+    ) == gateway_cache.generate_transcription_cache_key(**kwargs)
+
+
+def test_transcription_hash_name_differs_by_audio_bytes():
+    gateway_cache = GatewayCache(cache_client=CacheToolsInMemory())
+
+    common_kwargs = {
+        'project_uuid': PROJECT_UUID,
+        'route_name': 'rb-gateway',
+        'key_uuid': 'fake-uuid',
+        'model_id': 'whisper-1',
+        'response_format': 'json',
+        'language': None,
+        'prompt': None,
+        'temperature': None,
+    }
+    key_1 = gateway_cache.generate_transcription_cache_key(
+        audio_bytes=b'audio-one', **common_kwargs
+    )
+    key_2 = gateway_cache.generate_transcription_cache_key(
+        audio_bytes=b'audio-two', **common_kwargs
+    )
+    assert key_1 != key_2
+
+
+def test_transcription_hash_name_differs_by_params():
+    gateway_cache = GatewayCache(cache_client=CacheToolsInMemory())
+
+    common_kwargs = {
+        'project_uuid': PROJECT_UUID,
+        'route_name': 'rb-gateway',
+        'key_uuid': 'fake-uuid',
+        'audio_bytes': b'fake-audio-bytes',
+        'model_id': 'whisper-1',
+        'language': None,
+        'prompt': None,
+        'temperature': None,
+    }
+    key_json = gateway_cache.generate_transcription_cache_key(
+        response_format='json', **common_kwargs
+    )
+    key_verbose = gateway_cache.generate_transcription_cache_key(
+        response_format='verbose_json', **common_kwargs
+    )
+    assert key_json != key_verbose

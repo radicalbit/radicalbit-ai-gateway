@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from freezegun import freeze_time
 from langchain_core.messages import HumanMessage, SystemMessage
 from openai.types import CreateEmbeddingResponse
+from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.chat.chat_completion import ChatCompletion
 import pook
 import pytest
@@ -1089,6 +1091,165 @@ async def test_invoke_transcription_success():
         project_uuid='',
         project_name='',
     )
+
+
+@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@pytest.mark.asyncio
+async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
+    mock_emit_event,
+):
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = _make_transcription_route_config()
+    gateway_cache = GatewayCache(CacheToolsInMemory())
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=gateway_cache,
+        cost_service=cost_service,
+    )
+    ai_gateway.budget_limiter = MagicMock(
+        check_budget=AsyncMock(), count_duration=AsyncMock()
+    )
+
+    fake_result = Transcription(
+        text='Ciao, questo è un test.', usage={'type': 'duration', 'seconds': 9}
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    kwargs = {
+        'request_uuid': str(REQUEST_UUID),
+        'api_key_uuid': str(API_KEY_UUID),
+        'group_uuid': str(GROUP_UUID),
+        'api_key_name': 'rb-key',
+        'group_name': 'test-group',
+        'route_name': 'rb-gateway',
+        'audio_bytes': b'fake-audio',
+        'filename': 'test.wav',
+        'content_type': 'audio/wav',
+    }
+
+    first_result = await ai_gateway.invoke_transcription(**kwargs)
+    assert first_result == fake_result
+    ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
+    ai_gateway.budget_limiter.check_budget.assert_awaited_once()
+
+    second_result = await ai_gateway.invoke_transcription(**kwargs)
+    assert second_result == fake_result
+    # Still called once each — the second call must be served from cache,
+    # never reaching the invoker or the budget limiter.
+    ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
+    ai_gateway.budget_limiter.check_budget.assert_awaited_once()
+
+
+@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@pytest.mark.asyncio
+async def test_invoke_transcription_cache_hit_verbose_json_roundtrips(
+    mock_emit_event,
+):
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = _make_transcription_route_config()
+    gateway_cache = GatewayCache(CacheToolsInMemory())
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=gateway_cache,
+        cost_service=cost_service,
+    )
+
+    fake_result = TranscriptionVerbose(
+        task='transcribe',
+        language='italian',
+        duration=8.25,
+        text='Ciao, questo è un test.',
+        segments=[],
+        usage={'type': 'duration', 'seconds': 9},
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    kwargs = {
+        'request_uuid': str(REQUEST_UUID),
+        'api_key_uuid': str(API_KEY_UUID),
+        'group_uuid': str(GROUP_UUID),
+        'api_key_name': 'rb-key',
+        'group_name': 'test-group',
+        'route_name': 'rb-gateway',
+        'audio_bytes': b'fake-audio',
+        'filename': 'test.wav',
+        'content_type': 'audio/wav',
+        'requested_response_format': 'verbose_json',
+    }
+
+    await ai_gateway.invoke_transcription(**kwargs)
+    second_result = await ai_gateway.invoke_transcription(**kwargs)
+
+    ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
+    assert isinstance(second_result, TranscriptionVerbose)
+    assert second_result.language == 'italian'
+    assert second_result.segments == []
+
+
+@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@pytest.mark.asyncio
+async def test_invoke_transcription_cache_miss_when_audio_bytes_differ(
+    mock_emit_event,
+):
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = _make_transcription_route_config()
+    gateway_cache = GatewayCache(CacheToolsInMemory())
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=gateway_cache,
+        cost_service=cost_service,
+    )
+
+    fake_result = Transcription(
+        text='Ciao, questo è un test.', usage={'type': 'duration', 'seconds': 9}
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    common_kwargs = {
+        'request_uuid': str(REQUEST_UUID),
+        'api_key_uuid': str(API_KEY_UUID),
+        'group_uuid': str(GROUP_UUID),
+        'api_key_name': 'rb-key',
+        'group_name': 'test-group',
+        'route_name': 'rb-gateway',
+        'filename': 'test.wav',
+        'content_type': 'audio/wav',
+    }
+
+    await ai_gateway.invoke_transcription(audio_bytes=b'audio-one', **common_kwargs)
+    await ai_gateway.invoke_transcription(audio_bytes=b'audio-two', **common_kwargs)
+
+    assert ai_gateway.transcription_invoker.transcribe.await_count == 2
 
 
 @pytest.mark.asyncio

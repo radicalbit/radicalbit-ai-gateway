@@ -714,6 +714,49 @@ class GatewayRoute:
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._select_and_prepare_transcription_model()
 
+        use_cache = self.gateway_cache and self.gateway_cache.cache_type in (
+            CacheType.EXACT,
+            CacheType.IN_MEMORY,
+        )
+        cache_key = ''
+        if use_cache:
+            set_operation_category(OperationCategory.CACHE)
+            cache_key = self.gateway_cache.generate_transcription_cache_key(
+                project_uuid=self.project_uuid,
+                route_name=route_name,
+                key_uuid=api_key_uuid,
+                audio_bytes=audio_bytes,
+                model_id=model_selected.model_id,
+                response_format=requested_response_format,
+                language=language,
+                prompt=prompt,
+                temperature=temperature,
+            )
+            raw_cached_response = await self.gateway_cache.get(cache_key)
+            if raw_cached_response:
+                logger.debug('Transcription cache hit. Key: %s', cache_key)
+                cached_body: Transcription | TranscriptionVerbose
+                if requested_response_format == 'verbose_json':
+                    cached_body = TranscriptionVerbose.model_validate_json(
+                        raw_cached_response
+                    )
+                else:
+                    cached_body = Transcription.model_validate_json(raw_cached_response)
+
+                self._emit_cache_events_and_metrics(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    group_uuid=group_uuid,
+                    api_key_name=api_key_name,
+                    group_name=group_name,
+                    route_name=route_name,
+                    model_id=model_selected.model_id,
+                    usage=None,
+                    cache_type=self.gateway_cache.cache_type,
+                )
+
+                return cached_body
+
         if self.budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
             await self.budget_limiter.check_budget()
@@ -752,6 +795,13 @@ class GatewayRoute:
         )
 
         await self._count_transcription_usage(result.usage, model_selected)
+
+        if use_cache and cache_key:
+            await self.gateway_cache.set(
+                cache_key=cache_key,
+                response=result.model_dump_json(indent=None),
+                ttl=self.ttl,
+            )
 
         return result
 
