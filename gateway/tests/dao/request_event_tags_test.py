@@ -30,7 +30,7 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
                 db_mock.get_sample_request_event(
                     timestamp=TIMESTAMP,
                     project_uuid=PROJECT_A,
-                    tags=['app=leonardo-clm', 'cost_center=retail', 'env=prod'],
+                    tags=['app=my-app', 'cost_center=retail', 'env=prod'],
                 ),
                 db_mock.get_sample_request_event(
                     timestamp=TIMESTAMP,
@@ -69,13 +69,13 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
         stmt = (
             select(self.T.c['TAGS'])
             .select_from(RequestEvent)
-            .where(func.has(self.T.c['TAGS'], 'app=leonardo-clm'))
+            .where(func.has(self.T.c['TAGS'], 'app=my-app'))
         )
         with self.db.begin_session() as session:
             rows = session.execute(stmt).fetchall()
         assert len(rows) == 1
         assert list(rows[0][0]) == [
-            'app=leonardo-clm',
+            'app=my-app',
             'cost_center=retail',
             'env=prod',
         ]
@@ -91,7 +91,7 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
 
     def test_filter_by_any_of_several_tags(self):
         self._seed()
-        condition = func.hasAny(self.T.c['TAGS'], ['env=staging', 'app=leonardo-clm'])
+        condition = func.hasAny(self.T.c['TAGS'], ['env=staging', 'app=my-app'])
         assert self._count_where(condition) == 2
 
     def test_a_tag_matches_only_on_the_full_key_and_value(self):
@@ -110,7 +110,7 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
     def test_untagged_rows_never_match_a_filter(self):
         self._seed()
         condition = func.hasAny(
-            self.T.c['TAGS'], ['env=prod', 'env=staging', 'app=leonardo-clm']
+            self.T.c['TAGS'], ['env=prod', 'env=staging', 'app=my-app']
         )
         assert self._count_where(condition) == 3
 
@@ -126,7 +126,7 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
             tags = sorted(row[0] for row in session.execute(stmt).fetchall())
 
         assert tags == [
-            'app=leonardo-clm',
+            'app=my-app',
             'cost_center=retail',
             'env=prod',
             'env=staging',
@@ -148,7 +148,7 @@ class RequestEventTagsTest(DatabaseIntegrationClickhouse):
         self._seed()
         dao = RequestEventDAO(self.db)
         assert dao.get_distinct_tags(PROJECT_A) == [
-            'app=leonardo-clm',
+            'app=my-app',
             'cost_center=retail',
             'env=prod',
             'env=staging',

@@ -109,6 +109,7 @@ from radicalbit_ai_gateway.utils.open_ai_types import (
     TranscriptionCreateParamsCustom,
 )
 from radicalbit_ai_gateway.utils.request_context import (
+    get_current_request_tags,
     reset_route_context,
     set_current_route_config,
 )
@@ -446,7 +447,9 @@ def _set_early_project_trace_attributes(
     """
     if route is not None:
         set_trace_attributes(
-            project_uuid=route.project_uuid, project_name=route.project_name
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+            tags=list(get_current_request_tags()),
         )
         return
     project_name, _, route_name_part = (route_key or '').partition('/')
@@ -456,9 +459,13 @@ def _set_early_project_trace_attributes(
             project_uuid=str(entry.uuid),
             project_name=project_name,
             route_name=route_name_part or route_key,
+            tags=list(get_current_request_tags()),
         )
     else:
-        set_trace_attributes(route_name=route_name_part or route_key)
+        set_trace_attributes(
+            route_name=route_name_part or route_key,
+            tags=list(get_current_request_tags()),
+        )
 
 
 @app.get('/health')
@@ -552,7 +559,11 @@ async def chat_completions(
     set_operation_category(OperationCategory.ENDPOINT)
 
     # Set early trace attributes
-    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+    set_trace_attributes(
+        request_uuid=request_uuid,
+        route_name=route_name,
+        tags=list(get_current_request_tags()),
+    )
 
     ctx = RequestEventContext.get_or_create(request)
     ctx.route_name = route_name
@@ -570,6 +581,7 @@ async def chat_completions(
         group_name=key_details.group_name,
         project_uuid=route.project_uuid,
         project_name=route.project_name,
+        tags=list(get_current_request_tags()),
     )
 
     logger.debug('Chat completion request: %s', completion_create_params)
@@ -785,7 +797,11 @@ async def embeddings(
     set_operation_category(OperationCategory.ENDPOINT)
 
     # Set early trace attributes
-    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+    set_trace_attributes(
+        request_uuid=request_uuid,
+        route_name=route_name,
+        tags=list(get_current_request_tags()),
+    )
 
     # Populate request event context first (before auth, so route_name is always captured)
     ctx = RequestEventContext.get_or_create(request)
@@ -806,6 +822,7 @@ async def embeddings(
         group_name=key_details.group_name,
         project_uuid=route.project_uuid,
         project_name=route.project_name,
+        tags=list(get_current_request_tags()),
     )
 
     if isinstance(input_texts, str):
@@ -868,7 +885,11 @@ async def audio_transcriptions(
     set_operation_category(OperationCategory.ENDPOINT)
 
     # Set early trace attributes
-    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+    set_trace_attributes(
+        request_uuid=request_uuid,
+        route_name=route_name,
+        tags=list(get_current_request_tags()),
+    )
 
     # Populate request event context first (before auth, so route_name is always captured)
     ctx = RequestEventContext.get_or_create(request)
@@ -889,6 +910,7 @@ async def audio_transcriptions(
         group_name=key_details.group_name,
         project_uuid=route.project_uuid,
         project_name=route.project_name,
+        tags=list(get_current_request_tags()),
     )
 
     if not group_service.check_key_uuid_for_route(
@@ -1027,7 +1049,11 @@ async def responses(
     request.state.otel_route_name = route_name
 
     # Set early trace attributes
-    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+    set_trace_attributes(
+        request_uuid=request_uuid,
+        route_name=route_name,
+        tags=list(get_current_request_tags()),
+    )
 
     ctx = RequestEventContext.get_or_create(request)
     ctx.route_name = route_name
@@ -1046,6 +1072,7 @@ async def responses(
         group_name=key_details.group_name,
         project_uuid=route.project_uuid,
         project_name=route.project_name,
+        tags=list(get_current_request_tags()),
     )
 
     instructions = response_create_params.get('instructions')

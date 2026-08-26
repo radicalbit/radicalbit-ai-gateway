@@ -77,6 +77,7 @@ class TracingService:
         _from: datetime | None,
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
+        tags: list[str] | None = None,
     ) -> TracesChartDataDTO:
         _from_utc, _to_utc, timezone_offset_seconds = prepare_chart_time_range(
             _from, _to
@@ -89,6 +90,7 @@ class TracingService:
             _to_utc,
             granularity,
             timezone_offset_seconds,
+            tags=tags,
         )
         if not points:
             return TracesChartDataDTO(
@@ -138,9 +140,10 @@ class TracingService:
         route_names: list[str] | None,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> LatenciesDTO:
         result = self.otel_traces_dao.get_latencies(
-            project_uuid, route_names, _from, _to
+            project_uuid, route_names, _from, _to, tags=tags
         )
         return LatenciesDTO(
             p50=result.p50, p90=result.p90, p95=result.p95, p99=result.p99
@@ -152,9 +155,10 @@ class TracingService:
         route_names: list[str] | None,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> SpanLatenciesDTO:
         results = self.otel_traces_dao.get_span_latencies(
-            project_uuid, route_names, _from, _to
+            project_uuid, route_names, _from, _to, tags=tags
         )
         return SpanLatenciesDTO(
             data=[
@@ -176,12 +180,13 @@ class TracingService:
         _from: datetime | None,
         _to: datetime | None,
         include_others: bool = False,
+        tags: list[str] | None = None,
     ) -> GroupedSpanLatenciesDTO:
         category_results = self.otel_traces_dao.get_category_latencies(
-            project_uuid, route_names, _from, _to, include_others
+            project_uuid, route_names, _from, _to, include_others, tags=tags
         )
         span_results = self.otel_traces_dao.get_category_span_latencies(
-            project_uuid, route_names, _from, _to, include_others
+            project_uuid, route_names, _from, _to, include_others, tags=tags
         )
 
         spans_by_category: dict[str, list[SpanLatencyDTO]] = {}
@@ -306,6 +311,7 @@ class TracingService:
             api_key_name=key_name,
             group_uuid=resolved_group_uuid,
             group_name=group_name,
+            tags=root_span.tags,
             tree=tree,
         )
 
@@ -318,10 +324,18 @@ class TracingService:
         _from: datetime | None,
         _to: datetime | None,
         params: Params,
+        tags: list[str] | None = None,
     ) -> Page[TraceDTO]:
         # Get paginated traces - paginate() handles count query automatically
         traces_page = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid, route_names, group_uuids, key_uuids, _from, _to, params
+            project_uuid,
+            route_names,
+            group_uuids,
+            key_uuids,
+            _from,
+            _to,
+            params,
+            tags=tags,
         )
 
         if not traces_page.items:
@@ -377,6 +391,7 @@ class TracingService:
                     )
                     if resolved_group_uuid
                     else None,
+                    tags=row.tags,
                     duration_ms=row.duration_ms,
                     total_spans=stats.span_count if stats else 0,
                     error_count=error_count,
