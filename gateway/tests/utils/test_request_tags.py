@@ -107,6 +107,12 @@ def test_invalid_keys_are_rejected(raw):
         'k=v=w',  # '=' is the key/value delimiter
         'k=va\x01ue',  # control character
         'k=café',  # non-ASCII
+        'k=va lue',  # space
+        'k=va,lue',  # ',' is the pair separator
+        'k=va!lue',  # disallowed symbol
+        'k=va;lue',  # disallowed symbol
+        'k=va&lue',  # disallowed symbol
+        'k=va"lue',  # disallowed symbol
     ],
 )
 def test_invalid_values_are_rejected(raw):
@@ -123,6 +129,10 @@ def test_keys_and_values_at_their_length_limits_are_accepted():
 
 def test_allowed_key_punctuation_is_accepted():
     assert parse_tags_header('a_b.c:d-e=1') == ('a_b.c:d-e=1',)
+
+
+def test_allowed_value_punctuation_is_accepted():
+    assert parse_tags_header('k=a_b.c:d-e/f+h@i#j') == ('k=a_b.c:d-e/f+h@i#j',)
 
 
 def test_error_names_the_offending_segment_and_its_position():
