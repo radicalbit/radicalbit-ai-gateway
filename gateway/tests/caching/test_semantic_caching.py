@@ -13,12 +13,14 @@ import numpy as np
 import pytest
 from redis.exceptions import ResponseError
 
+from tests.common.db_mock import API_KEY_UUID, SAMPLE_PROJECT_UUID, TEST_PROJECT_UUID
+
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
 
-PROJECT_A = 'a4c1e8f2-3b7d-4a19-9c5e-6f0d2b8a1c34'
-PROJECT_B = 'b7f2d9a1-8c4e-4f63-a012-5d3b7e9c1f48'
+PROJECT_A = str(TEST_PROJECT_UUID)
+PROJECT_B = str(SAMPLE_PROJECT_UUID)
 ROUTE_NAME = 'default'
-KEY_UUID = 'f0f2f4f6-1111-4222-8333-444455556666'
+KEY_UUID = str(API_KEY_UUID)
 DIM = 4
 
 _TAG_FILTER = re.compile(r'@(\w+):\{([^}]*)\}')
@@ -275,8 +277,7 @@ def test_tag_values_are_not_escaped():
     value, so the filter matches nothing. Verified against valkey-search 8.1.4:
     the unescaped filter returns the document, the escaped one returns zero.
     """
-    cache = SemanticCache.__new__(SemanticCache)
-    conditions = cache._build_filter_conditions(
+    conditions = SemanticCache._build_filter_conditions(
         project_uuid=PROJECT_A, route_name='rb-gateway', key_uuid=KEY_UUID
     )
     assert '\\' not in conditions

@@ -295,6 +295,7 @@ class GatewayRoute:
             await self._cache_response(
                 output.response,
                 prepared.cache_key,
+                route_name,
                 api_key_uuid,
                 prepared.embeddings,
             )
@@ -531,6 +532,7 @@ class GatewayRoute:
                 final_usage=final_usage,
                 model_id_invoked=prepared.model_selected.model_id,
                 cache_key=prepared.cache_key,
+                route_name=route_name,
                 key_uuid=api_key_uuid,
                 embeddings=prepared.embeddings,
             )
@@ -1389,6 +1391,7 @@ class GatewayRoute:
         self,
         redacted_response: ChatCompletion,
         cache_key: str,
+        route_name: str,
         key_uuid: str | None,
         embeddings: np.ndarray | None,
     ) -> None:
@@ -1396,7 +1399,7 @@ class GatewayRoute:
         kwargs = {
             'embeddings': embeddings,
             'project_uuid': self.project_uuid,
-            'route_name': self.gateway_route_config.route_name,
+            'route_name': route_name,
             'key_uuid': key_uuid,
         }
         await self.gateway_cache.set(
@@ -1840,6 +1843,7 @@ class GatewayRoute:
                 final_usage=final_usage,
                 model_id_invoked=model_id_invoked,
                 cache_key=cache_key,
+                route_name=route_name,
                 key_uuid=api_key_uuid,
                 embeddings=embeddings,
                 request_id=request_uuid,
@@ -1879,6 +1883,7 @@ class GatewayRoute:
         final_usage: dict | None,
         model_id_invoked: str,
         cache_key: str,
+        route_name: str,
         key_uuid: str,
         embeddings: list[float] | None,
         request_id: str | None = None,
@@ -1895,6 +1900,7 @@ class GatewayRoute:
         await self._cache_response(
             full_response,
             cache_key,
+            route_name,
             key_uuid,
             embeddings,
         )

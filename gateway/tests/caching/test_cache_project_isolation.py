@@ -10,7 +10,12 @@ from unittest.mock import MagicMock, patch
 from langchain_core.messages import HumanMessage
 import pytest
 
-from tests.common.db_mock import GROUP_UUID, SAMPLE_PROJECT_UUID, TEST_PROJECT_UUID
+from tests.common.db_mock import (
+    API_KEY_UUID,
+    GROUP_UUID,
+    SAMPLE_PROJECT_UUID,
+    TEST_PROJECT_UUID,
+)
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
@@ -30,7 +35,6 @@ from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
 
-API_KEY_UUID = 'f0f2f4f6-1111-4222-8333-444455556666'
 ROUTE_NAME = 'default'
 
 
@@ -53,6 +57,8 @@ def _build_route(gateway_cache: GatewayCache, project_uuid: str) -> GatewayRoute
         chat_models=chat_registry,
         routes={ROUTE_NAME: route_config},
         guardrails=[],
+        # Required: GatewayConfig rejects a route with caching enabled and no
+        # gateway-level cache block.
         cache=CacheConfig(redis_host='localhost', redis_port=6379),
     )
     resolved_route_cfg, chat_models, _ = resolve_route_models(
@@ -77,7 +83,7 @@ def _build_route(gateway_cache: GatewayCache, project_uuid: str) -> GatewayRoute
 async def _invoke(route: GatewayRoute, request_uuid: str):
     return await route.invoke(
         request_uuid=request_uuid,
-        api_key_uuid=API_KEY_UUID,
+        api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',
         group_uuid=str(GROUP_UUID),
         group_name='test-group',
@@ -131,7 +137,7 @@ def test_cache_key_is_scoped_by_project(fake_redis_client):
         gateway_cache.generate_cache_key(
             project_uuid=project_uuid,
             route_name=ROUTE_NAME,
-            key_uuid=API_KEY_UUID,
+            key_uuid=str(API_KEY_UUID),
             messages=[HumanMessage(content='Hello')],
             tools=[],
             tool_choice='auto',
@@ -147,7 +153,7 @@ def test_embedding_cache_key_is_scoped_by_project(fake_redis_client):
         gateway_cache.generate_embedding_cache_key(
             project_uuid=project_uuid,
             route_name=ROUTE_NAME,
-            key_uuid=API_KEY_UUID,
+            key_uuid=str(API_KEY_UUID),
             input_texts=['hello world'],
         )
         for project_uuid in (str(TEST_PROJECT_UUID), str(SAMPLE_PROJECT_UUID))

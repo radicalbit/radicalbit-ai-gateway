@@ -259,7 +259,6 @@ def build_project_route_registrar(
         await initialize_async_routers(routes)
         for route_name, route in routes.items():
             full_key = f'{project_name}/{route_name}'
-            route.project_uuid = uuid_str
             route.project_name = project_name
             app.state.routes[full_key] = route
             logger.info('Registered project route: %s', full_key)

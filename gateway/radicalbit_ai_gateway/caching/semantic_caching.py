@@ -56,16 +56,17 @@ class SemanticCache(AbstractCache):
                 )
                 logger.info('Created Redis search index: %s', self.index_name)
             except Exception as error:
-                # An existing index keeps the schema it was created with, so one
-                # created before project scoping has no project_uuid field and
-                # every project filter matches nothing. Drop it by hand
-                # (FT.DROPINDEX ai_gateway_idx) to have this one take effect.
-                logger.warning(
-                    'Redis search index %s was not created, it may already exist '
-                    'with an older schema: %s',
-                    self.index_name,
-                    error,
-                )
+                if 'already exists' in str(error).lower():
+                    logger.info(
+                        'Redis search index %s already exists, leaving it as it is',
+                        self.index_name,
+                    )
+                else:
+                    logger.warning(
+                        'Redis search index %s was not created: %s',
+                        self.index_name,
+                        error,
+                    )
 
         try:
             index_task = asyncio.create_task(create_index())
@@ -80,7 +81,8 @@ class SemanticCache(AbstractCache):
             self._background_tasks.add(index_task)
             index_task.add_done_callback(self._background_tasks.discard)
 
-    def _build_filter_conditions(self, **kwargs) -> str:
+    @staticmethod
+    def _build_filter_conditions(**kwargs) -> str:
         """Build the tag filter that scopes a lookup to one project's route.
 
         The values come from ``kwargs``, never from parsing ``cache_key``: a
@@ -164,19 +166,22 @@ class SemanticCache(AbstractCache):
             raise ValueError('Embeddings param must be passed')
         project_uuid = kwargs.get('project_uuid')
         route_name = kwargs.get('route_name')
+        key_uuid = kwargs.get('key_uuid')
+        # All three are mandatory: get() always filters on the three tags, so a
+        # document written without one of them can never be matched again.
         if not project_uuid:
             raise ValueError('project_uuid param must be passed')
         if not route_name:
             raise ValueError('route_name param must be passed')
+        if not key_uuid:
+            raise ValueError('key_uuid param must be passed')
         mapping = {
             'response': response,
             'project_uuid': project_uuid,
             'route_name': route_name,
+            'key_uuid': key_uuid,
             'embedding': embeddings.astype(np.float32).tobytes(),
         }
-        key_uuid = kwargs.get('key_uuid')
-        if key_uuid is not None:
-            mapping['key_uuid'] = key_uuid
 
         await self.redis_client.hset(cache_key, mapping=mapping)
         if ttl:

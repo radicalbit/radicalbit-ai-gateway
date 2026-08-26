@@ -8,12 +8,13 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 import pytest
 
+from tests.common.db_mock import TEST_PROJECT_UUID
+
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 
-PROJECT_UUID = 'a4c1e8f2-3b7d-4a19-9c5e-6f0d2b8a1c34'
-OTHER_PROJECT_UUID = 'b7f2d9a1-8c4e-4f63-a012-5d3b7e9c1f48'
+PROJECT_UUID = str(TEST_PROJECT_UUID)
 
 
 def test_hash_name_redis(fake_redis_client):
