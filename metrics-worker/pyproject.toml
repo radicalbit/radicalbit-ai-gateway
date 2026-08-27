@@ -3,6 +3,7 @@ name = "metrics-worker"
 version = "0.1.0"
 description = "Celery worker for events"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.13"
 dependencies = [
     "celery[redis]>=5.5.3",

@@ -16,7 +16,7 @@ body:
           required: true
         - label: This only contains 1 issue (if you have multiple issues, open one issue for each item).
           required: true
-        - label: This issue is not a duplicate of [previous issues](https://github.com/radicalbit/radicalbit-ai-gateway-oss/issues).
+        - label: This issue is not a duplicate of [previous issues](https://github.com/radicalbit/radicalbit-ai-gateway/issues).
           required: true
 
   - type: textarea
