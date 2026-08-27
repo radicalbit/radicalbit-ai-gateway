@@ -14,7 +14,12 @@ from radicalbit_ai_gateway.models.guardrails import (
     JudgeParameter,
     RedactParameter,
 )
-from radicalbit_ai_gateway.models.limiting import Limiting, RateLimiting, TokenLimiting
+from radicalbit_ai_gateway.models.limiting import (
+    AudioDurationLimiting,
+    Limiting,
+    RateLimiting,
+    TokenLimiting,
+)
 from radicalbit_ai_gateway.models.mcp_server import McpHttpServer, McpStdioServer
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
@@ -66,6 +71,12 @@ class TokenLimitingOut(TokenLimiting):
     input: LimitingOut | None
     output: LimitingOut | None
 
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+
+class DurationLimitingOut(AudioDurationLimiting):
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
     )
@@ -223,6 +234,7 @@ class GatewayRouteConfigOut(GatewayRouteConfig):
     transcription_models: list[ModelOut] | None
     rate_limiting: RateLimitingOut | None
     token_limiting: TokenLimitingOut | None
+    duration_limiting: DurationLimitingOut | None
     fallback: list[FallbackOut] | None
     guardrails: list[GuardrailOut] | None
     caching: AnyCachingOut | None

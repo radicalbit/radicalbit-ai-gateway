@@ -225,6 +225,7 @@ class EventsDTO(BaseModel):
     rate_limit_triggered: int | None = None
     token_input_limit_triggered: int | None = None
     token_output_limit_triggered: int | None = None
+    duration_limit_triggered: int | None = None
     cache: Cache | None = None
     total_requests: int = 0
     request_error_percentage: Annotated[
@@ -264,6 +265,7 @@ class EventsDTO(BaseModel):
                 ),
                 'rate_limiting_enabled': bool(route_config.rate_limiting),
                 'token_limiting_enabled': bool(route_config.token_limiting),
+                'duration_limiting_enabled': bool(route_config.duration_limiting),
             }
         return {
             'fallback_enabled': any(r.fallback for r in config.routes.values()),
@@ -280,6 +282,9 @@ class EventsDTO(BaseModel):
             ),
             'token_limiting_enabled': any(
                 r.token_limiting for r in config.routes.values()
+            ),
+            'duration_limiting_enabled': any(
+                r.duration_limiting for r in config.routes.values()
             ),
         }
 
@@ -360,6 +365,9 @@ class EventsDTO(BaseModel):
             else None,
             token_output_limit_triggered=counters.token_output_limit_triggered
             if counters and flags['token_limiting_enabled']
+            else None,
+            duration_limit_triggered=counters.duration_limit_triggered
+            if counters and flags['duration_limiting_enabled']
             else None,
             total_input_token_processed=tokens_counter_dto.total_input_token_processed,
             total_output_token_processed=tokens_counter_dto.total_output_token_processed,
