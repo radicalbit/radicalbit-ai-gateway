@@ -155,6 +155,11 @@ jobs:
       contents: read
       packages: write
       id-token: write # needed for keyless signing with the GitHub OIDC token
+    outputs:
+      app_digest: ${{ steps.app-manifest.outputs.digest }}
+      migrations_digest: ${{ steps.migrations-manifest.outputs.digest }}
+      clickhouse_digest: ${{ steps.clickhouse-manifest.outputs.digest }}
+      worker_digest: ${{ steps.worker-manifest.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -296,38 +301,36 @@ jobs:
           cosign sign --yes "${{ env.MIGRATIONS_IMAGE }}@${MIGRATIONS_DIGEST}"
           cosign sign --yes "${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@${CLICKHOUSE_DIGEST}"
           cosign sign --yes "${{ env.WORKER_IMAGE }}@${WORKER_DIGEST}"
+
+  verify-signatures:
+    runs-on: ubuntu-22.04
+    needs: merge
+    permissions:
+      contents: read
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.0.0
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Verify signatures
         env:
-          APP_DIGEST: ${{ steps.app-manifest.outputs.digest }}
-          MIGRATIONS_DIGEST: ${{ steps.migrations-manifest.outputs.digest }}
-          CLICKHOUSE_DIGEST: ${{ steps.clickhouse-manifest.outputs.digest }}
-          WORKER_DIGEST: ${{ steps.worker-manifest.outputs.digest }}
+          APP_DIGEST: ${{ needs.merge.outputs.app_digest }}
+          MIGRATIONS_DIGEST: ${{ needs.merge.outputs.migrations_digest }}
+          CLICKHOUSE_DIGEST: ${{ needs.merge.outputs.clickhouse_digest }}
+          WORKER_DIGEST: ${{ needs.merge.outputs.worker_digest }}
         run: |
-          # Docker Hub can take a moment to make a just-pushed signature manifest
-          # readable to a fresh GET (read-after-write lag), so retry a few times
-          # before treating a "no signatures found" as a real failure.
-          verify_with_retry() {
-            local ref="$1"
-            local attempts=6
-            local delay=5
-            for ((i = 1; i <= attempts; i++)); do
-              if cosign verify "${ref}" \
-                --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/.+@refs/tags/.+" \
-                --certificate-oidc-issuer https://token.actions.githubusercontent.com; then
-                return 0
-              fi
-              echo "Verification attempt ${i}/${attempts} failed for ${ref}, retrying in ${delay}s..."
-              sleep "${delay}"
-            done
-            return 1
-          }
-
           for REF in \
             "${{ env.APP_IMAGE }}@${APP_DIGEST}" \
             "${{ env.MIGRATIONS_IMAGE }}@${MIGRATIONS_DIGEST}" \
             "${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@${CLICKHOUSE_DIGEST}" \
             "${{ env.WORKER_IMAGE }}@${WORKER_DIGEST}"; do
-            verify_with_retry "${REF}"
+            cosign verify "${REF}" \
+              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/.+@refs/tags/.+" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
           done
 
   source-sbom:

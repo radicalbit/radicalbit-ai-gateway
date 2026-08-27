@@ -123,6 +123,9 @@ jobs:
       contents: read
       packages: write
       id-token: write # needed for keyless signing with the GitHub OIDC token
+    outputs:
+      worker_digest: ${{ steps.worker-manifest.outputs.digest }}
+      clickhouse_digest: ${{ steps.clickhouse-manifest.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -196,34 +199,33 @@ jobs:
         run: |
           cosign sign --yes "${{ env.WORKER_IMAGE }}@${WORKER_DIGEST}"
           cosign sign --yes "${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@${CLICKHOUSE_DIGEST}"
+
+  verify-signatures:
+    runs-on: ubuntu-22.04
+    needs: merge
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.0.0
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Verify signatures
         env:
-          WORKER_DIGEST: ${{ steps.worker-manifest.outputs.digest }}
-          CLICKHOUSE_DIGEST: ${{ steps.clickhouse-manifest.outputs.digest }}
+          WORKER_DIGEST: ${{ needs.merge.outputs.worker_digest }}
+          CLICKHOUSE_DIGEST: ${{ needs.merge.outputs.clickhouse_digest }}
         run: |
-          # Docker Hub can take a moment to make a just-pushed signature manifest
-          # readable to a fresh GET (read-after-write lag), so retry a few times
-          # before treating a "no signatures found" as a real failure.
-          verify_with_retry() {
-            local ref="$1"
-            local attempts=6
-            local delay=5
-            for ((i = 1; i <= attempts; i++)); do
-              if cosign verify "${ref}" \
-                --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/.+@refs/heads/main$" \
-                --certificate-oidc-issuer https://token.actions.githubusercontent.com; then
-                return 0
-              fi
-              echo "Verification attempt ${i}/${attempts} failed for ${ref}, retrying in ${delay}s..."
-              sleep "${delay}"
-            done
-            return 1
-          }
-
           for REF in \
             "${{ env.WORKER_IMAGE }}@${WORKER_DIGEST}" \
             "${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@${CLICKHOUSE_DIGEST}"; do
-            verify_with_retry "${REF}"
+            cosign verify "${REF}" \
+              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/.+@refs/heads/main$" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
           done
 
   source-sbom:
