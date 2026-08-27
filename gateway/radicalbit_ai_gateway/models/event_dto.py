@@ -1182,6 +1182,7 @@ class RouteProgressBarsDTO(BaseModel):
     token_input: WindowProgressBarDTO | None = None
     token_output: WindowProgressBarDTO | None = None
     rate: WindowProgressBarDTO | None = None
+    duration: WindowProgressBarDTO | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
