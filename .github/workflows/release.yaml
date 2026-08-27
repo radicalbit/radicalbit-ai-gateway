@@ -48,6 +48,7 @@ jobs:
     needs: [prep, test-gateway]
     if: needs.prep.outputs.is_semver == 'true'
     permissions:
+      contents: read # needed by actions/checkout
       id-token: write # needed for PyPI trusted publishing (OIDC)
     defaults:
       run:
