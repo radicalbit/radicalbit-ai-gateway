@@ -123,7 +123,7 @@ jobs:
             TAGS="$TAGS -t ${WORKER_IMAGE}:latest"
           fi
           docker buildx imagetools create $TAGS \
-            $(printf '${WORKER_IMAGE}@sha256:%s ' $(ls /tmp/digests/worker/))
+            $(printf "${WORKER_IMAGE}@sha256:%s " $(ls /tmp/digests/worker/))
       - name: Create and push clickhouse-migrations manifest
         env:
           IMAGE_TAG: ${{ inputs.image-tag }}
@@ -134,7 +134,7 @@ jobs:
             TAGS="$TAGS -t ${CLICKHOUSE_MIGRATIONS_IMAGE}:latest"
           fi
           docker buildx imagetools create $TAGS \
-            $(printf '${CLICKHOUSE_MIGRATIONS_IMAGE}@sha256:%s ' $(ls /tmp/digests/clickhouse-migrations/))
+            $(printf "${CLICKHOUSE_MIGRATIONS_IMAGE}@sha256:%s " $(ls /tmp/digests/clickhouse-migrations/))
       - name: Inspect images
         env:
           IMAGE_TAG: ${{ inputs.image-tag }}
