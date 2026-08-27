@@ -201,12 +201,29 @@ jobs:
           WORKER_DIGEST: ${{ steps.worker-manifest.outputs.digest }}
           CLICKHOUSE_DIGEST: ${{ steps.clickhouse-manifest.outputs.digest }}
         run: |
+          # Docker Hub can take a moment to make a just-pushed signature manifest
+          # readable to a fresh GET (read-after-write lag), so retry a few times
+          # before treating a "no signatures found" as a real failure.
+          verify_with_retry() {
+            local ref="$1"
+            local attempts=6
+            local delay=5
+            for ((i = 1; i <= attempts; i++)); do
+              if cosign verify "${ref}" \
+                --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/.+@refs/heads/main$" \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com; then
+                return 0
+              fi
+              echo "Verification attempt ${i}/${attempts} failed for ${ref}, retrying in ${delay}s..."
+              sleep "${delay}"
+            done
+            return 1
+          }
+
           for REF in \
             "${{ env.WORKER_IMAGE }}@${WORKER_DIGEST}" \
             "${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@${CLICKHOUSE_DIGEST}"; do
-            cosign verify "${REF}" \
-              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/.+@refs/heads/main$" \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+            verify_with_retry "${REF}"
           done
 
   source-sbom:
