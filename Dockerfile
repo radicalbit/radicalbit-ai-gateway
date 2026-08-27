@@ -54,6 +54,11 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
+# setuptools-scm derives the package version from git, which isn't available
+# in this build context (only uv.lock/pyproject.toml are copied in) — pin a
+# pretend version so it doesn't need one. The real release version is set by
+# the PyPI publish job, which does a full git checkout.
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_RADICALBIT_AI_GATEWAY=0.0.0
 COPY ./gateway/uv.lock ./gateway/pyproject.toml ./
 RUN pip install --no-cache-dir --no-compile uv==0.9.27 && \
     uv export --no-hashes --format requirements-txt > requirements.txt && \

@@ -155,6 +155,11 @@ jobs:
       contents: read
       packages: write
       id-token: write # needed for keyless signing with the GitHub OIDC token
+    outputs:
+      app_digest: ${{ steps.app-manifest.outputs.digest }}
+      migrations_digest: ${{ steps.migrations-manifest.outputs.digest }}
+      clickhouse_digest: ${{ steps.clickhouse-manifest.outputs.digest }}
+      worker_digest: ${{ steps.worker-manifest.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -296,12 +301,27 @@ jobs:
           cosign sign --yes "${{ env.MIGRATIONS_IMAGE }}@${MIGRATIONS_DIGEST}"
           cosign sign --yes "${{ env.CLICKHOUSE_MIGRATIONS_IMAGE }}@${CLICKHOUSE_DIGEST}"
           cosign sign --yes "${{ env.WORKER_IMAGE }}@${WORKER_DIGEST}"
+
+  verify-signatures:
+    runs-on: ubuntu-22.04
+    needs: merge
+    permissions:
+      contents: read
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.0.0
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Verify signatures
         env:
-          APP_DIGEST: ${{ steps.app-manifest.outputs.digest }}
-          MIGRATIONS_DIGEST: ${{ steps.migrations-manifest.outputs.digest }}
-          CLICKHOUSE_DIGEST: ${{ steps.clickhouse-manifest.outputs.digest }}
-          WORKER_DIGEST: ${{ steps.worker-manifest.outputs.digest }}
+          APP_DIGEST: ${{ needs.merge.outputs.app_digest }}
+          MIGRATIONS_DIGEST: ${{ needs.merge.outputs.migrations_digest }}
+          CLICKHOUSE_DIGEST: ${{ needs.merge.outputs.clickhouse_digest }}
+          WORKER_DIGEST: ${{ needs.merge.outputs.worker_digest }}
         run: |
           for REF in \
             "${{ env.APP_IMAGE }}@${APP_DIGEST}" \
