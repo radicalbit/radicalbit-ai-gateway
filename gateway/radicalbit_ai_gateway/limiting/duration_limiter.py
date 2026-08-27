@@ -1,7 +1,7 @@
 import io
 import logging
+import wave
 
-from mutagen import File as MutagenFile
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
@@ -28,17 +28,19 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 def estimate_audio_duration_seconds(audio_bytes: bytes) -> float | None:
     """Header-only duration estimate, no upstream call and no full decode.
 
-    Returns None if the format isn't recognized (e.g. webm, which mutagen
-    doesn't support) or the file is malformed — callers must treat that as
+    WAV only (stdlib `wave` module — no external dependency). Returns None
+    for any other format, or a malformed WAV — callers must treat that as
     "unknown", not as zero.
     """
     try:
-        audio = MutagenFile(fileobj=io.BytesIO(audio_bytes))
+        with wave.open(io.BytesIO(audio_bytes), 'rb') as wav_file:
+            frames = wav_file.getnframes()
+            rate = wav_file.getframerate()
     except Exception:
         return None
-    if audio is None or audio.info is None:
+    if not rate:
         return None
-    return audio.info.length
+    return frames / rate
 
 
 class DurationLimiter:

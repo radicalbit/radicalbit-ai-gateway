@@ -48,7 +48,6 @@ dependencies = [
     "azure-identity>=1.21.0",
     "python-multipart>=0.0.20",
     "mcp>=1.13,<2",
-    "mutagen>=1.47.0",
 ]
 
 [project.scripts]

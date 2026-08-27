@@ -65,7 +65,7 @@ class Limiting(BaseModel):
     )
     max_duration_seconds: float | None = Field(
         default=None,
-        description='Maximum seconds of audio allowed in the specified time window.',
+        description='Maximum seconds of audio allowed in the specified time window (WAV only).',
         ge=1,
         examples=[60, 300, 3600],
     )

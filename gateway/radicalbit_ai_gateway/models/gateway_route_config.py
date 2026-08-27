@@ -61,7 +61,7 @@ class GatewayRouteConfig(BaseModel):
     )
     duration_limiting: AudioDurationLimiting | None = Field(
         default=None,
-        description='Audio duration limiting configuration for transcription routes.',
+        description='Audio duration limiting configuration for transcription routes (WAV only).',
     )
     routing: str | None = Field(
         default=None,
