@@ -31,14 +31,14 @@ Everything is managed through a UI — and an AI assistant that generates the co
 <!-- TODO: Replace with hero GIF — show: AI-generated config in the UI → Serve button → curl call in terminal -->
 ![Radicalbit AI Gateway demo](docs/assets/ai_configuration.gif)
 
+</div>
+
 ### Observability
 - **Prometheus metrics** — 20+ metrics (request rates, latency, token usage, cache hits, guardrail triggers, fallback activations) on a dedicated endpoint
 - **OpenTelemetry tracing** — end-to-end distributed tracing with ClickHouse storage and support for custom OTLP exporters (Jaeger, Grafana Tempo, etc.)
 - **Alert Rules** — real-time email notifications triggered by guardrails, caching, and route events
 - **UI dashboard** — manage routes, groups, API keys, alert rules, and monitor cost and events in real time
 *From your needs to a live API call, under 60 seconds.*
-
-</div>
 
 ---
 
