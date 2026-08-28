@@ -57,7 +57,7 @@ class GatewayRouteConfig(BaseModel):
     )
     budget_limiting: BudgetLimiting | None = Field(
         default=None,
-        description='Budget limiting configuration for the route, specifying input and output token limits.',
+        description='Shared budget limiting configuration for the route, covering input and output costs.',
     )
     duration_limiting: AudioDurationLimiting | None = Field(
         default=None,

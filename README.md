@@ -475,9 +475,14 @@ routes:
       window_size: 1 minute
       max_requests: 100
     token_limiting:
-      algorithm: fixed_window
-      window_size: 1 hour
-      max_tokens: 100000
+      input:
+        algorithm: fixed_window
+        window_size: 1 hour
+        max_token: 100000
+      output:
+        algorithm: fixed_window
+        window_size: 1 hour
+        max_token: 100000
     budget_limiting:
       window_size: 1 month
       max_budget: 50.0
