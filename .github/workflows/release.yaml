@@ -1,11 +1,10 @@
 name: release
 on:
-  push:
-    tags:
-      - '*'
+  release:
+    types: [published]
 
 concurrency:
-  group: docker-tag-${{ github.ref_name }}
+  group: docker-tag-${{ github.event.release.tag_name }}
   cancel-in-progress: true
 
 env:
@@ -26,10 +25,12 @@ jobs:
     steps:
       - name: Set version/tag
         id: check
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
         run: |
-          echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          echo "is_semver=$(if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then echo 'true'; else echo 'false'; fi)" >> $GITHUB_OUTPUT
-          echo "is_final=$(if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo 'true'; else echo 'false'; fi)" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "is_semver=$(if [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then echo 'true'; else echo 'false'; fi)" >> "$GITHUB_OUTPUT"
+          echo "is_final=$(if [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo 'true'; else echo 'false'; fi)" >> "$GITHUB_OUTPUT"
 
   test-gateway:
     uses: ./.github/workflows/tests.yaml
