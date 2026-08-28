@@ -245,6 +245,120 @@ def test_transcription_models_reject_duplicate_ids_within_list():
         GatewayConfig.model_validate(raw)
 
 
+def test_transcription_route_with_duration_limiting_valid_config():
+    raw = {
+        'transcription_models': [{'model_id': 'w1', 'model': 'openai/whisper-1'}],
+        'routes': {
+            'r': {
+                'transcription_models': ['w1'],
+                'duration_limiting': {
+                    'max_duration_seconds': 300,
+                    'window_size': '1 minute',
+                },
+            },
+        },
+    }
+    gateway_config = GatewayConfig.model_validate(raw)
+    route = gateway_config.routes['r']
+    assert route.duration_limiting.max_duration_seconds == 300
+    duration_limiter = route.get_duration_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
+    assert duration_limiter.limiter is not None
+
+
+def test_duration_limiting_rejected_without_transcription_models():
+    raw = {
+        'chat_models': [{'model_id': 'c1', 'model': 'openai/gpt-4o-mini'}],
+        'routes': {
+            'r': {
+                'chat_models': ['c1'],
+                'duration_limiting': {
+                    'max_duration_seconds': 300,
+                    'window_size': '1 minute',
+                },
+            },
+        },
+    }
+    with pytest.raises(
+        ValueError,
+        match='duration_limiting requires at least one transcription model',
+    ):
+        GatewayConfig.model_validate(raw)
+
+
+def test_duration_limiting_valid_on_mixed_chat_and_transcription_route():
+    raw = {
+        'chat_models': [{'model_id': 'c1', 'model': 'openai/gpt-4o-mini'}],
+        'transcription_models': [{'model_id': 'w1', 'model': 'openai/whisper-1'}],
+        'routes': {
+            'r': {
+                'chat_models': ['c1'],
+                'transcription_models': ['w1'],
+                'duration_limiting': {
+                    'max_duration_seconds': 300,
+                    'window_size': '1 minute',
+                },
+            },
+        },
+    }
+    gateway_config = GatewayConfig.model_validate(raw)
+    assert gateway_config.routes['r'].duration_limiting.max_duration_seconds == 300
+
+
+def test_token_limiting_rejected_on_transcription_only_route():
+    raw = {
+        'transcription_models': [{'model_id': 'w1', 'model': 'openai/whisper-1'}],
+        'routes': {
+            'r': {
+                'transcription_models': ['w1'],
+                'token_limiting': {
+                    'input': {'max_tokens': 1000, 'window_size': '1 minute'},
+                },
+            },
+        },
+    }
+    with pytest.raises(
+        ValueError,
+        match='token_limiting requires at least one chat or embedding model',
+    ):
+        GatewayConfig.model_validate(raw)
+
+
+def test_token_limiting_valid_on_chat_route():
+    raw = {
+        'chat_models': [{'model_id': 'c1', 'model': 'openai/gpt-4o-mini'}],
+        'routes': {
+            'r': {
+                'chat_models': ['c1'],
+                'token_limiting': {
+                    'input': {'max_tokens': 1000, 'window_size': '1 minute'},
+                },
+            },
+        },
+    }
+    gateway_config = GatewayConfig.model_validate(raw)
+    assert gateway_config.routes['r'].token_limiting.input.max_tokens == 1000
+
+
+def test_token_limiting_valid_on_embedding_route():
+    raw = {
+        'embedding_models': [
+            {'model_id': 'e1', 'model': 'openai/text-embedding-3-small'}
+        ],
+        'routes': {
+            'r': {
+                'embedding_models': ['e1'],
+                'token_limiting': {
+                    'input': {'max_tokens': 1000, 'window_size': '1 minute'},
+                },
+            },
+        },
+    }
+    gateway_config = GatewayConfig.model_validate(raw)
+    assert gateway_config.routes['r'].token_limiting.input.max_tokens == 1000
+
+
 def test_time_routing_model_id_not_in_route():
     raw = {
         'chat_models': [

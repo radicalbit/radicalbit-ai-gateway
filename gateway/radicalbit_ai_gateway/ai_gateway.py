@@ -31,6 +31,7 @@ from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
     TranscriptionModelInvoker,
 )
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
+from radicalbit_ai_gateway.limiting.duration_limiter import DurationLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.limiting.token_limiter import TokenLimiter
 from radicalbit_ai_gateway.metrics.define_metrics import (
@@ -105,6 +106,7 @@ class GatewayRoute:
         token_limiter: TokenLimiter | None = None,
         rate_limiter: RequestRateLimiter | None = None,
         budget_limiter: BudgetLimiter | None = None,
+        duration_limiter: DurationLimiter | None = None,
         transcription_models: list[Model] | None = None,
         project_uuid: str = '',
         project_name: str = '',
@@ -121,6 +123,7 @@ class GatewayRoute:
         self.token_limiter = token_limiter
         self.budget_limiter = budget_limiter
         self.request_rate_limiter = rate_limiter
+        self.duration_limiter = duration_limiter
         self.cost_service = cost_service
         fallback_models = self.gateway_route_config.fallback
 
@@ -715,6 +718,19 @@ class GatewayRoute:
             set_operation_category(OperationCategory.LIMITING)
             await self.budget_limiter.check_budget()
 
+        if self.duration_limiter:
+            set_operation_category(OperationCategory.LIMITING)
+            await self.duration_limiter.check_and_count_duration(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                audio_bytes=audio_bytes,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+
         set_operation_category(OperationCategory.INVOCATION)
         result = await self.transcription_invoker.transcribe(
             request_uuid=request_uuid,
@@ -768,6 +784,19 @@ class GatewayRoute:
         if self.budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
             await self.budget_limiter.check_budget()
+
+        if self.duration_limiter:
+            set_operation_category(OperationCategory.LIMITING)
+            await self.duration_limiter.check_and_count_duration(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                audio_bytes=audio_bytes,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
         set_operation_category(OperationCategory.INVOCATION)
         final_event: TranscriptionStreamEvent | None = None

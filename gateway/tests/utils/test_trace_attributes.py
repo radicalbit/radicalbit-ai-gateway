@@ -59,6 +59,40 @@ def test_set_trace_attributes_partial(mock_set_props):
 @patch(
     'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
 )
+def test_set_trace_attributes_comma_joins_tags(mock_set_props):
+    with patch(
+        'radicalbit_ai_gateway.utils.trace_attributes.get_value',
+        return_value=None,
+    ):
+        set_trace_attributes(
+            request_uuid='req-123',
+            tags=['env=prod', 'cost_center=retail'],
+        )
+
+    mock_set_props.assert_called_once_with(
+        {
+            'request_uuid': 'req-123',
+            'tags': 'env=prod,cost_center=retail',
+        }
+    )
+
+
+@patch(
+    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
+)
+def test_set_trace_attributes_omits_empty_tags(mock_set_props):
+    with patch(
+        'radicalbit_ai_gateway.utils.trace_attributes.get_value',
+        return_value=None,
+    ):
+        set_trace_attributes(request_uuid='req-123', tags=[])
+
+    mock_set_props.assert_called_once_with({'request_uuid': 'req-123'})
+
+
+@patch(
+    'radicalbit_ai_gateway.utils.trace_attributes.Traceloop.set_association_properties'
+)
 def test_set_mcp_attributes(mock_set_props):
     with patch(
         'radicalbit_ai_gateway.utils.trace_attributes.get_value',

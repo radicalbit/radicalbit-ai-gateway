@@ -1216,12 +1216,14 @@ class EventService:
             token_limiter = gateway_route.token_limiter
             budget_limiter = gateway_route.budget_limiter
             req_rate_limiter = gateway_route.request_rate_limiter
+            duration_limiter = gateway_route.duration_limiter
 
             (
                 budget_bar,
                 token_input_bar,
                 token_output_bar,
                 rate_bar,
+                duration_bar,
             ) = await asyncio.gather(
                 self._get_progress_bar(
                     getattr(budget_limiter, 'limiter', None),
@@ -1240,11 +1242,21 @@ class EventService:
                     getattr(req_rate_limiter, 'limiter', None),
                     getattr(req_rate_limiter, 'item', None),
                 ),
+                self._get_progress_bar(
+                    getattr(duration_limiter, 'limiter', None),
+                    getattr(duration_limiter, 'item', None),
+                ),
             )
 
             has_any = any(
                 v is not None
-                for v in [budget_bar, token_input_bar, token_output_bar, rate_bar]
+                for v in [
+                    budget_bar,
+                    token_input_bar,
+                    token_output_bar,
+                    rate_bar,
+                    duration_bar,
+                ]
             )
             return RouteProgressBarDTO(
                 route_name=route_name,
@@ -1253,6 +1265,7 @@ class EventService:
                     token_input=token_input_bar,
                     token_output=token_output_bar,
                     rate=rate_bar,
+                    duration=duration_bar,
                 )
                 if has_any
                 else None,
@@ -1279,7 +1292,13 @@ class EventService:
                     continue
                 windows = [
                     w
-                    for w in [pb.budget, pb.token_input, pb.token_output, pb.rate]
+                    for w in [
+                        pb.budget,
+                        pb.token_input,
+                        pb.token_output,
+                        pb.rate,
+                        pb.duration,
+                    ]
                     if w is not None
                 ]
                 if all(w.window_status == WindowStatus.OK for w in windows):
@@ -1288,7 +1307,13 @@ class EventService:
             if pb is not None:
                 windows = [
                     w
-                    for w in [pb.budget, pb.token_input, pb.token_output, pb.rate]
+                    for w in [
+                        pb.budget,
+                        pb.token_input,
+                        pb.token_output,
+                        pb.rate,
+                        pb.duration,
+                    ]
                     if w is not None
                 ]
                 if WindowStatus.WARNING in window_statuses and any(

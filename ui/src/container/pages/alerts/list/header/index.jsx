@@ -15,7 +15,7 @@ function AlertsListHeader() {
   return (
     <NewHeader
       details={{
-        one: count !== 0 && <CreateAlertRuleButton />,
+        one: <CreateAlertRuleButton />,
       }}
       title={(
         <SectionTitle

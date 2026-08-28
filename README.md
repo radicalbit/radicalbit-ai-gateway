@@ -13,8 +13,7 @@ Everything is managed through a UI — and an AI assistant that generates the co
 
 <img src="docs/assets/gw_flow.png" alt="Radicalbit AI Gateway" width="680" />
 
-<!-- VERIFY: License — current README and contributing page reference a commercial license, not MIT. Confirm the correct SPDX identifier before publishing. -->
-[![License](https://img.shields.io/badge/license-see--LICENSE-lightgrey)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/radicalbit/radicalbit-ai-gateway)](https://github.com/radicalbit/radicalbit-ai-gateway/releases)
 [![Docs](https://img.shields.io/badge/docs-ai--gateway.radicalbit.ai-blue)](https://docs.ai-gateway.radicalbit.ai/)
 
@@ -32,9 +31,14 @@ Everything is managed through a UI — and an AI assistant that generates the co
 <!-- TODO: Replace with hero GIF — show: AI-generated config in the UI → Serve button → curl call in terminal -->
 ![Radicalbit AI Gateway demo](docs/assets/ai_configuration.gif)
 
-*From your needs to a live API call, under 60 seconds.*
-
 </div>
+
+### Observability
+- **Prometheus metrics** — 20+ metrics (request rates, latency, token usage, cache hits, guardrail triggers, fallback activations) on a dedicated endpoint
+- **OpenTelemetry tracing** — end-to-end distributed tracing with ClickHouse storage and support for custom OTLP exporters (Jaeger, Grafana Tempo, etc.)
+- **Alert Rules** — real-time email notifications triggered by guardrails, caching, and route events
+- **UI dashboard** — manage routes, groups, API keys, alert rules, and monitor cost and events in real time
+*From your needs to a live API call, under 60 seconds.*
 
 ---
 
@@ -56,7 +60,7 @@ The gateway is provider-agnostic. The examples below use one provider for illust
 **Step 1 — Clone and add your credentials**
 
 ```bash
-git clone https://github.com/radicalbit/radicalbit-ai-gateway-oss
+git clone https://github.com/radicalbit/radicalbit-ai-gateway
 cd radicalbit-ai-gateway
 ```
 
@@ -579,7 +583,6 @@ GitHub. For substantial changes, open an issue first to align on approach.
 and is now open source. The commit history reflects the moment we made the transition,
 not the years of development behind it.
 
-<!-- VERIFY: Confirm the correct license name before publishing — existing README references a commercial license -->
-**License** — See [LICENSE](LICENSE) for terms.
+**License** — Apache License 2.0. See [LICENSE](LICENSE) for terms.
 
-**Sponsored by [Radicalbit](https://radicalbit.io)**
+**Sponsored by [Radicalbit](https://radicalbit.ai)**

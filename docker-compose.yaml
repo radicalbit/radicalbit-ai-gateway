@@ -51,6 +51,12 @@ services:
       # CORS configs
       CORS_ALLOW_ORIGINS: '["http://localhost:5173"]'
       CORS_ALLOW_CREDENTIALS: True
+      # SMTP Email Notifications
+      SMTP_HOST: "${SMTP_HOST:-host.docker.internal}"
+      SMTP_PORT: "${SMTP_PORT:-1025}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-alerts@radicalbit.ai}"
       # AI Config Generator
       CONFIG_GENERATOR_OPENAI_API_KEY: "OPENAI_API_KEY"
     healthcheck:

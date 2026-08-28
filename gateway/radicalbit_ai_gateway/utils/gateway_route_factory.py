@@ -146,6 +146,11 @@ def build_gateway_routes_from_config(
             if route_config.budget_limiting
             else None
         )
+        duration_limiter = (
+            route_config.get_duration_limiter(project_uuid)
+            if route_config.duration_limiting
+            else None
+        )
         router = None
         if route_config.routing and gateway_config.routing:
             routing_config = gateway_config.routing_by_name.get(route_config.routing)
@@ -188,6 +193,7 @@ def build_gateway_routes_from_config(
             rate_limiter=rate_limiter,
             budget_limiter=budget_limiter,
             project_uuid=project_uuid,
+            duration_limiter=duration_limiter,
         )
 
     return routes

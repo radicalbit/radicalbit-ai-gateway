@@ -1,8 +1,10 @@
 [project]
 name = "radicalbit-ai-gateway"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Add your description here"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 dependencies = [
     "en-core-web-lg",
@@ -73,6 +75,13 @@ migrations = [
     "pydantic-settings>=2.12.0",
     "clickhouse-sqlalchemy>=0.3.2",
 ]
+
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+root = ".."
 
 [tool.setuptools]
 py-modules = [ "radicalbit_ai_gateway" ]

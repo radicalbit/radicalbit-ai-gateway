@@ -37,7 +37,7 @@ from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback, FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
-from radicalbit_ai_gateway.models.limiting import BudgetLimiting
+from radicalbit_ai_gateway.models.limiting import AudioDurationLimiting, BudgetLimiting
 from radicalbit_ai_gateway.models.model import Model
 import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
@@ -48,6 +48,7 @@ from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils import config_hooks
 from radicalbit_ai_gateway.utils.exceptions import (
+    AudioDurationLimitExceeded,
     BudgetLimitExceededError,
     GatewayBadRequest,
 )
@@ -919,6 +920,116 @@ def test_transcription_invoker_only_receives_transcription_fallbacks():
         for m, _ in ai_gateway.transcription_invoker.model_map['gpt4o-transcribe'][2]
     }
     assert fallback_model_ids == {'gpt4o-mini-transcribe'}
+
+
+@pytest.mark.asyncio
+async def test_invoke_transcription_calls_duration_limiter():
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = GatewayRouteConfig(
+        route_name='rb-gateway',
+        chat_models=[],
+        transcription_models=['whisper-1'],
+        duration_limiting=AudioDurationLimiting(
+            max_duration_seconds=300, window_size='1 minute'
+        ),
+    )
+    duration_limiter = route_cfg.get_duration_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
+    duration_limiter.check_and_count_duration = AsyncMock()
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+        duration_limiter=duration_limiter,
+    )
+
+    fake_result = MagicMock(usage=MagicMock(type='duration', seconds=3))
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    await ai_gateway.invoke_transcription(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        route_name='rb-gateway',
+        audio_bytes=b'fake-audio',
+        filename='test.wav',
+        content_type='audio/wav',
+    )
+
+    duration_limiter.check_and_count_duration.assert_awaited_once_with(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        audio_bytes=b'fake-audio',
+        project_uuid='',
+        project_name='',
+    )
+
+
+@pytest.mark.asyncio
+async def test_invoke_transcription_duration_limit_exceeded_blocks_before_invocation():
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = GatewayRouteConfig(
+        route_name='rb-gateway',
+        chat_models=[],
+        transcription_models=['whisper-1'],
+        duration_limiting=AudioDurationLimiting(
+            max_duration_seconds=300, window_size='1 minute'
+        ),
+    )
+    duration_limiter = route_cfg.get_duration_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
+    duration_limiter.check_and_count_duration = AsyncMock(
+        side_effect=AudioDurationLimitExceeded('limit exceeded')
+    )
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+        duration_limiter=duration_limiter,
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock()
+
+    with pytest.raises(AudioDurationLimitExceeded):
+        await ai_gateway.invoke_transcription(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='rb-key',
+            group_name='test-group',
+            route_name='rb-gateway',
+            audio_bytes=b'fake-audio',
+            filename='test.wav',
+            content_type='audio/wav',
+        )
+
+    ai_gateway.transcription_invoker.transcribe.assert_not_awaited()
 
 
 @pytest.mark.asyncio

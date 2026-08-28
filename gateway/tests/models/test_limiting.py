@@ -34,9 +34,24 @@ def test_init_wrong_window_size(window_size_input, expected_window_size_attr):
 def test_init_max_request_or_max_token():
     with pytest.raises(
         ValueError,
-        match=r'Only one of max_requests, max_tokens, or max_budget can be set.',
+        match=r'Only one of max_requests, max_tokens, max_budget, or '
+        r'max_duration_seconds can be set.',
     ):
         _ = Limiting(max_tokens=1000, max_requests=50)
+
+
+def test_init_max_duration_seconds_with_max_tokens_rejected():
+    with pytest.raises(
+        ValueError,
+        match=r'Only one of max_requests, max_tokens, max_budget, or '
+        r'max_duration_seconds can be set.',
+    ):
+        _ = Limiting(max_tokens=1000, max_duration_seconds=60)
+
+
+def test_max_duration_seconds_alone_is_valid():
+    config = Limiting(max_duration_seconds=300)
+    assert config.max_duration_seconds == 300
 
 
 def test_max_budget_computed_field():

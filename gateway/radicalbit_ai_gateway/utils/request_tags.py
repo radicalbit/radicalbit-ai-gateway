@@ -2,7 +2,7 @@
 
 Comma-separated ``key=value`` pairs, e.g.::
 
-    X-RB-Tags: cost_center=retail,env=prod,app=leonardo-clm
+    X-RB-Tags: cost_center=retail,env=prod,app=my-app
 
 The header is gateway-owned: consumed by the request event middleware and
 never forwarded upstream. Tags are deduplicated and sorted, so header order
@@ -23,7 +23,7 @@ MAX_TAG_KEY_LENGTH = 64
 MAX_TAG_VALUE_LENGTH = 256
 
 _KEY_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:\-]*$')
-_VALUE_PATTERN = re.compile(r'^[\x20-\x7e]+$')
+_VALUE_PATTERN = re.compile(r'^[A-Za-z0-9_.:@/+\-#]+$')
 
 
 def _invalid_key_reason(key: str) -> str | None:
@@ -43,14 +43,11 @@ def _invalid_key_reason(key: str) -> str | None:
 
 def _invalid_value_reason(value: str) -> str | None:
     """Return why `value` is invalid, or None if it's fine. See `_invalid_key_reason`."""
-    if (
-        len(value) > MAX_TAG_VALUE_LENGTH
-        or '=' in value
-        or not _VALUE_PATTERN.match(value)
-    ):
+    if len(value) > MAX_TAG_VALUE_LENGTH or not _VALUE_PATTERN.match(value):
         return (
-            f'value {value[:MAX_TAG_VALUE_LENGTH]!r} must be printable ASCII '
-            f"without ',' or '=' (max {MAX_TAG_VALUE_LENGTH} characters)"
+            f'value {value[:MAX_TAG_VALUE_LENGTH]!r} must contain only letters, '
+            f'digits and _ . : @ / + # - '
+            f'(max {MAX_TAG_VALUE_LENGTH} characters)'
         )
     return None
 
@@ -87,26 +84,9 @@ def parse_tags_header(raw: str | None) -> tuple[str, ...]:
 
         if reason := _invalid_key_reason(key):
             raise _reject(position, reason)
-        if len(key) > MAX_TAG_KEY_LENGTH or not _KEY_PATTERN.match(key):
-            raise _reject(
-                position,
-                f'key {key[:MAX_TAG_KEY_LENGTH]!r} must start with a letter or digit '
-                f'and contain only letters, digits and _ . : - '
-                f'(max {MAX_TAG_KEY_LENGTH} characters)',
-            )
 
         if reason := _invalid_value_reason(value):
             raise _reject(position, reason)
-        if (
-            len(value) > MAX_TAG_VALUE_LENGTH
-            or '=' in value
-            or not _VALUE_PATTERN.match(value)
-        ):
-            raise _reject(
-                position,
-                f'value {value[:MAX_TAG_VALUE_LENGTH]!r} must be printable ASCII '
-                f"without ',' or '=' (max {MAX_TAG_VALUE_LENGTH} characters)",
-            )
 
         tags.add(f'{key}={value}')
 

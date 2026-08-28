@@ -6,6 +6,7 @@ from radicalbit_ai_gateway.middleware.request_event_context import RequestEventC
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.utils.exceptions import InvalidApiKey, MissingApiKey
+from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 from radicalbit_ai_gateway.utils.trace_attributes import set_trace_attributes
 
 
@@ -42,6 +43,7 @@ async def authenticate_bearer_request(
         group_name=key_details.group_name,
         project_uuid=project_uuid,
         project_name=project_name,
+        tags=list(get_current_request_tags()),
     )
     return key_details
 

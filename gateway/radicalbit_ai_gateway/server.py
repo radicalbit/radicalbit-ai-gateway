@@ -28,6 +28,7 @@ from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
+from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
@@ -37,6 +38,7 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
+from radicalbit_ai_gateway.events.events_processor import set_alert_rule_service
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.metrics.define_metrics import (
     request_latency_histogram,
@@ -51,6 +53,7 @@ from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
@@ -60,6 +63,7 @@ from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRout
 from radicalbit_ai_gateway.routes.tag_route import TagRoute
 from radicalbit_ai_gateway.routes.tracing_route import TracingRoute
 from radicalbit_ai_gateway.routes.usage_route import UsageRoute
+from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.services.config_generator_service import (
     ConfigGeneratorService,
@@ -73,8 +77,13 @@ from radicalbit_ai_gateway.services.request_event_service import RequestEventSer
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
+    AlertRuleInternalError,
+    AlertRuleInvalidEventError,
+    AlertRuleNotFoundError,
+    AlertRuleUnsupportedTimeAggregationError,
     ApiKeyError,
     AppError,
+    AudioDurationLimitExceeded,
     AuthRegistryError,
     BudgetLimitExceeded,
     GatewayBadRequest,
@@ -86,7 +95,9 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerError,
     RequestRateLimitExceeded,
     TokenLimitExceeded,
+    alert_rule_exception_handler,
     api_key_exception_handler,
+    audio_duration_limit_exceeded_handler,
     auth_registry_exception_handler,
     budget_limiter_exception_handler,
     gateway_exception_handler,
@@ -109,6 +120,7 @@ from radicalbit_ai_gateway.utils.open_ai_types import (
     TranscriptionCreateParamsCustom,
 )
 from radicalbit_ai_gateway.utils.request_context import (
+    get_current_request_tags,
     reset_route_context,
     set_current_route_config,
 )
@@ -207,6 +219,14 @@ mcp_service = McpService(
     upstream_client=McpUpstreamClient(),
     group_service=group_service,
 )
+
+alert_rule_dao = AlertRuleDAO(database)
+alert_rule_service = AlertRuleService(
+    alert_rule_dao=alert_rule_dao,
+    project_configs=project_configs,
+    project_dao=project_dao,
+)
+set_alert_rule_service(alert_rule_service)
 
 
 @asynccontextmanager
@@ -370,6 +390,9 @@ app.include_router(
 app.add_exception_handler(Exception, unhandled_exception_handler)
 app.add_exception_handler(RequestRateLimitExceeded, rate_limit_exceeded_handler)
 app.add_exception_handler(TokenLimitExceeded, token_limiter_exception_handler)
+app.add_exception_handler(
+    AudioDurationLimitExceeded, audio_duration_limit_exceeded_handler
+)
 app.add_exception_handler(GatewayError, gateway_exception_handler)
 app.add_exception_handler(ModelInvokerError, model_invoker_exception_handler)
 app.add_exception_handler(ApiKeyError, api_key_exception_handler)
@@ -378,7 +401,16 @@ app.add_exception_handler(JudgeInternalError, judge_exception_handler)
 app.add_exception_handler(BudgetLimitExceeded, budget_limiter_exception_handler)
 app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
 app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
+app.add_exception_handler(AlertRuleNotFoundError, alert_rule_exception_handler)
+app.add_exception_handler(AlertRuleInvalidEventError, alert_rule_exception_handler)
+app.add_exception_handler(
+    AlertRuleUnsupportedTimeAggregationError, alert_rule_exception_handler
+)
+app.add_exception_handler(AlertRuleInternalError, alert_rule_exception_handler)
 app.include_router(KeyRoute.get_key_router(key_service), prefix=prefix)
+app.include_router(
+    AlertRuleRoute.get_alert_rule_router(alert_rule_service), prefix=prefix
+)
 # Root-level like /v1/... (NOT under /public/api/v1): inbound MCP proxy.
 app.include_router(McpRoute.get_mcp_router(mcp_service))
 app.include_router(
@@ -394,6 +426,7 @@ app.include_router(
         deregister_project_routes=_deregister,
         config=getattr(app.state, 'project_route_config', ProjectRouteConfig()),
         config_generator_service=config_generator_service,
+        alert_rule_service=alert_rule_service,
     ),
     prefix=prefix,
 )
@@ -446,7 +479,9 @@ def _set_early_project_trace_attributes(
     """
     if route is not None:
         set_trace_attributes(
-            project_uuid=route.project_uuid, project_name=route.project_name
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+            tags=list(get_current_request_tags()),
         )
         return
     project_name, _, route_name_part = (route_key or '').partition('/')
@@ -456,9 +491,13 @@ def _set_early_project_trace_attributes(
             project_uuid=str(entry.uuid),
             project_name=project_name,
             route_name=route_name_part or route_key,
+            tags=list(get_current_request_tags()),
         )
     else:
-        set_trace_attributes(route_name=route_name_part or route_key)
+        set_trace_attributes(
+            route_name=route_name_part or route_key,
+            tags=list(get_current_request_tags()),
+        )
 
 
 @app.get('/health')
@@ -552,7 +591,11 @@ async def chat_completions(
     set_operation_category(OperationCategory.ENDPOINT)
 
     # Set early trace attributes
-    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+    set_trace_attributes(
+        request_uuid=request_uuid,
+        route_name=route_name,
+        tags=list(get_current_request_tags()),
+    )
 
     ctx = RequestEventContext.get_or_create(request)
     ctx.route_name = route_name
@@ -570,6 +613,7 @@ async def chat_completions(
         group_name=key_details.group_name,
         project_uuid=route.project_uuid,
         project_name=route.project_name,
+        tags=list(get_current_request_tags()),
     )
 
     logger.debug('Chat completion request: %s', completion_create_params)
@@ -785,7 +829,11 @@ async def embeddings(
     set_operation_category(OperationCategory.ENDPOINT)
 
     # Set early trace attributes
-    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+    set_trace_attributes(
+        request_uuid=request_uuid,
+        route_name=route_name,
+        tags=list(get_current_request_tags()),
+    )
 
     # Populate request event context first (before auth, so route_name is always captured)
     ctx = RequestEventContext.get_or_create(request)
@@ -806,6 +854,7 @@ async def embeddings(
         group_name=key_details.group_name,
         project_uuid=route.project_uuid,
         project_name=route.project_name,
+        tags=list(get_current_request_tags()),
     )
 
     if isinstance(input_texts, str):
@@ -868,7 +917,11 @@ async def audio_transcriptions(
     set_operation_category(OperationCategory.ENDPOINT)
 
     # Set early trace attributes
-    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+    set_trace_attributes(
+        request_uuid=request_uuid,
+        route_name=route_name,
+        tags=list(get_current_request_tags()),
+    )
 
     # Populate request event context first (before auth, so route_name is always captured)
     ctx = RequestEventContext.get_or_create(request)
@@ -889,6 +942,7 @@ async def audio_transcriptions(
         group_name=key_details.group_name,
         project_uuid=route.project_uuid,
         project_name=route.project_name,
+        tags=list(get_current_request_tags()),
     )
 
     if not group_service.check_key_uuid_for_route(
@@ -1027,7 +1081,11 @@ async def responses(
     request.state.otel_route_name = route_name
 
     # Set early trace attributes
-    set_trace_attributes(request_uuid=request_uuid, route_name=route_name)
+    set_trace_attributes(
+        request_uuid=request_uuid,
+        route_name=route_name,
+        tags=list(get_current_request_tags()),
+    )
 
     ctx = RequestEventContext.get_or_create(request)
     ctx.route_name = route_name
@@ -1046,6 +1104,7 @@ async def responses(
         group_name=key_details.group_name,
         project_uuid=route.project_uuid,
         project_name=route.project_name,
+        tags=list(get_current_request_tags()),
     )
 
     instructions = response_create_params.get('instructions')

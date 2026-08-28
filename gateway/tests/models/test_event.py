@@ -23,6 +23,7 @@ def test_flags_event_dto():
         'cache_enabled': False,
         'rate_limiting_enabled': True,
         'token_limiting_enabled': True,
+        'duration_limiting_enabled': False,
     }
 
 
@@ -37,6 +38,7 @@ def test_flags_event_dto_route():
         'cache_enabled': True,
         'rate_limiting_enabled': True,
         'token_limiting_enabled': True,
+        'duration_limiting_enabled': False,
     }
 
 
@@ -50,6 +52,7 @@ def test_flags_event_dto_routing_global():
         'cache_enabled': False,
         'rate_limiting_enabled': False,
         'token_limiting_enabled': False,
+        'duration_limiting_enabled': False,
     }
 
 
@@ -63,6 +66,7 @@ def test_flags_event_dto_routing_per_route():
         'cache_enabled': False,
         'rate_limiting_enabled': False,
         'token_limiting_enabled': False,
+        'duration_limiting_enabled': False,
     }
 
 

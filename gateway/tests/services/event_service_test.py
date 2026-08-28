@@ -2902,6 +2902,8 @@ class TestGetRouteLimitsProgress:
         token_output_remaining: int | None = None,
         rate_limit: int | None = None,
         rate_remaining: int | None = None,
+        duration_limit: int | None = None,
+        duration_remaining: int | None = None,
         window_seconds: int = 3600,
     ) -> MagicMock:
         route = MagicMock()
@@ -2943,6 +2945,15 @@ class TestGetRouteLimitsProgress:
             rl.item = None
         route.request_rate_limiter = rl
 
+        dl = MagicMock()
+        if duration_limit is not None:
+            dl.limiter = self._make_limiter_mock(duration_limit, duration_remaining)
+            dl.item = self._make_item_mock(duration_limit, window_seconds)
+        else:
+            dl.limiter = None
+            dl.item = None
+        route.duration_limiter = dl
+
         return route
 
     def _make_service(self):
@@ -2955,7 +2966,7 @@ class TestGetRouteLimitsProgress:
 
     @pytest.mark.asyncio
     async def test_all_limiters_configured(self):
-        """All four progress bars are returned when all limiters are set."""
+        """All five progress bars are returned when all limiters are set."""
         budget_limit = int(10.0 * BUDGET_MULTIPLIER)
         budget_remaining = int(3.0 * BUDGET_MULTIPLIER)
         routes = {
@@ -2968,6 +2979,8 @@ class TestGetRouteLimitsProgress:
                 token_output_remaining=200,
                 rate_limit=100,
                 rate_remaining=40,
+                duration_limit=300,
+                duration_remaining=150,
                 window_seconds=3600,
             )
         }
@@ -2996,6 +3009,9 @@ class TestGetRouteLimitsProgress:
         assert pb.rate.window_size == 100.0
         assert pb.rate.window_filled_size == 60.0
         assert pb.rate.window_filled_percentage == pytest.approx(60.0)
+        assert pb.duration.window_size == 300.0
+        assert pb.duration.window_filled_size == 150.0
+        assert pb.duration.window_filled_percentage == pytest.approx(50.0)
 
     @pytest.mark.asyncio
     async def test_only_rate_limiter(self):
@@ -3013,6 +3029,7 @@ class TestGetRouteLimitsProgress:
         assert pb.budget is None
         assert pb.token_input is None
         assert pb.token_output is None
+        assert pb.duration is None
 
     @pytest.mark.asyncio
     async def test_no_limiters_gives_none_progress_bar(self):
