@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 from langchain_core.messages import BaseMessage
@@ -87,3 +88,29 @@ class GatewayCache:
         **kwargs,
     ) -> str:
         return f'inputs:{json.dumps(input_texts, ensure_ascii=False)};extra_args:{json.dumps(kwargs)}'
+
+    def generate_transcription_cache_key(
+        self,
+        project_uuid: str,
+        route_name: str,
+        key_uuid: str,
+        audio_bytes: bytes,
+        **kwargs,
+    ) -> str:
+        request_signature = self._build_transcription_request_signature(
+            audio_bytes=audio_bytes,
+            **kwargs,
+        )
+        return self.cache_client.generate_cache_key(
+            project_uuid, route_name, request_signature, key_uuid
+        )
+
+    @staticmethod
+    def _build_transcription_request_signature(
+        audio_bytes: bytes,
+        **kwargs,
+    ) -> str:
+        # The audio itself is hashed separately (never embedded raw) — it's
+        # binary, not text, and would otherwise dominate the signature size.
+        audio_hash = hashlib.sha256(audio_bytes).hexdigest()
+        return f'audio_hash:{audio_hash};extra_args:{json.dumps(kwargs)}'
