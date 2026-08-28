@@ -71,6 +71,8 @@ Create a `secrets.yaml` file in the project root:
 OPENAI_API_KEY: sk-your-key-here
 ```
 
+To use the AI config generator (**Generate** button in the UI), you also need a real OpenAI API key in `CONFIG_GENERATOR_OPENAI_API_KEY` inside `docker-compose.yaml` — the default `sk-123` placeholder is invalid and must be replaced before starting the gateway.
+
 **Step 2 — Start the gateway**
 
 ```bash
@@ -157,11 +159,9 @@ The skill writes a valid, ready-to-serve `config.yaml` to your project.
 
 ### 2. AI assistant in the UI — from the browser
 
-Enable the AI config generator with one environment variable before starting the gateway:
+Enable the AI config generator by setting a real OpenAI API key in the `CONFIG_GENERATOR_OPENAI_API_KEY` environment variable before starting the gateway.
 
-```bash
-CONFIG_GENERATOR_OPENAI_API_KEY=sk-your-key-here
-```
+> **Docker Compose:** the variable is set directly in `docker-compose.yaml` with a placeholder value (`sk-123`). Replace it with your real OpenAI API key there — the AI config generator will not work without a valid key.
 
 A **Generate** button appears in the project configuration editor. Use the same
 prompt as above and the assistant produces this YAML inline:
