@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import Request
 from opentelemetry.trace import Status, StatusCode, get_current_span
-from traceloop.sdk.decorators import task, workflow
+from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.mcp_proxy import jsonrpc
@@ -18,6 +18,7 @@ from radicalbit_ai_gateway.mcp_proxy.errors import (
 )
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
+from radicalbit_ai_gateway.models.mcp_authorized_request import McpAuthorizedRequest
 from radicalbit_ai_gateway.models.mcp_dispatch_result import McpDispatchResult
 from radicalbit_ai_gateway.models.mcp_server import ALIAS_TOOL_SEPARATOR, AnyMcpServer
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
@@ -26,7 +27,6 @@ from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import McpTransportError
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
-    ensure_endpoint_category,
     set_mcp_attributes,
     set_operation_category,
     set_trace_attributes,
@@ -196,18 +196,22 @@ class McpService:
             else get_app_config().cors_config.cors_allow_origins
         )
 
-    @workflow(name='mcp_request')
-    @ensure_endpoint_category
-    async def handle_post(
-        self, request: Request, project_name: str, route_name: str
-    ) -> McpDispatchResult:
-        """Authenticate and authorize the POST, then dispatch its JSON-RPC message."""
-        # Stamped by RequestEventMiddleware before this handler runs, so it is
-        # present even when origin or auth checks reject the request. Absent
-        # only when McpService is driven without the middleware (unit tests),
-        # where set_trace_attributes drops the None.
-        request_uuid = getattr(request.state, 'request_uuid', None)
+    async def authorize(
+        self,
+        request: Request,
+        project_name: str,
+        route_name: str,
+        request_uuid: str,
+    ) -> McpAuthorizedRequest:
+        """Attribute the POST, then authenticate and authorize it.
 
+        Everything that can reject before the route's own features apply:
+        Origin, bearer auth, an unknown project or route, and a key not bound
+        to it. The caller applies the route-level features to the result and
+        then calls :meth:`dispatch` — the same division the /v1 endpoints use,
+        where the endpoint orchestrates features and the route object only
+        carries the instances.
+        """
         entry: ProjectEntry | None = request.app.state.project_configs.get(project_name)
         project_uuid = str(entry.uuid) if entry else ''
 
@@ -238,8 +242,9 @@ class McpService:
                 404,
                 code='mcp_route_not_found',
             )
+        route_key = f'{project_name}/{route_name}'
         if not self._group_service.check_key_uuid_for_route(
-            f'{project_name}/{route_name}', UUID(key_details.api_key_uuid)
+            route_key, UUID(key_details.api_key_uuid)
         ):
             raise McpTransportError(
                 f'API Key not associated with route {route_name}',
@@ -247,6 +252,20 @@ class McpService:
                 code='mcp_key_not_bound',
             )
 
+        return McpAuthorizedRequest(
+            request_uuid=request_uuid,
+            project_name=project_name,
+            project_uuid=project_uuid,
+            route_name=route_name,
+            route_key=route_key,
+            key_details=key_details,
+            servers=entry.config.get_route_mcp_servers(route_name),
+        )
+
+    async def dispatch(
+        self, request: Request, authorized: McpAuthorizedRequest
+    ) -> McpDispatchResult:
+        """Dispatch the JSON-RPC message on an already-authorized request."""
         self._validate_protocol_version(request)
 
         try:
@@ -262,9 +281,8 @@ class McpService:
                 ),
             )
 
-        servers = entry.config.get_route_mcp_servers(route_name)
         set_operation_category(OperationCategory.INVOCATION)
-        result = await self._dispatch(body, servers, request.headers)
+        result = await self._dispatch(body, authorized.servers, request.headers)
         self._record_degradation()
         return self._record_error_outcome(request, result)
 

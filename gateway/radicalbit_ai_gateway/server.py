@@ -71,6 +71,10 @@ from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.dependencies import (
+    get_gateway_routes,
+    get_request_uuid,
+)
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
     AppError,
@@ -414,17 +418,8 @@ async def set_api_key_uuid(
     return await authenticate_bearer_request(request, project_uuid, project_name)
 
 
-async def set_request_uuid(request: Request) -> str:
-    return request.state.request_uuid
-
-
-async def get_ai_gateway_dependency():
-    if app.state.routes is None:
-        raise HTTPException(
-            status_code=503,
-            detail='AI Gateway not initialized. Please check server configuration.',
-        )
-    return app.state.routes
+async def get_ai_gateway_dependency(request: Request):
+    return await get_gateway_routes(request)
 
 
 def _set_early_project_trace_attributes(
@@ -526,7 +521,7 @@ async def chat_completions(
     request: Request,
     completion_create_params: CompletionCreateParams,
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(set_request_uuid),
+    request_uuid: str = Depends(get_request_uuid),
 ):
     route_key = completion_create_params.get('model', 'unknown')
     route = gateway_routes.get(route_key)
@@ -759,7 +754,7 @@ async def embeddings(
     request: Request,
     embedding_create_params: EmbeddingCreateParams,
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(set_request_uuid),
+    request_uuid: str = Depends(get_request_uuid),
 ):
     route_key = embedding_create_params.get('model')
     route = gateway_routes.get(route_key)
@@ -843,7 +838,7 @@ async def audio_transcriptions(
     request: Request,
     transcription_params: Annotated[TranscriptionCreateParamsCustom, Form()],
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(set_request_uuid),
+    request_uuid: str = Depends(get_request_uuid),
 ):
     route_key = transcription_params.model
     route = gateway_routes.get(route_key)
@@ -992,7 +987,7 @@ async def responses(
     request: Request,
     response_create_params: ResponseCreateParamsCustom,
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(set_request_uuid),
+    request_uuid: str = Depends(get_request_uuid),
 ):
     # Mark the root workflow span with ENDPOINT category
     set_operation_category(OperationCategory.ENDPOINT)

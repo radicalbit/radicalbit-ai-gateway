@@ -14,12 +14,8 @@ from openai.types.chat.chat_completion_chunk import (
 from tests.common import db_mock
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
-from radicalbit_ai_gateway.server import (
-    app,
-    group_service,
-    key_service,
-    set_request_uuid,
-)
+from radicalbit_ai_gateway.server import app, group_service, key_service
+from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 
 
 def mock_request_uuid(request):
@@ -38,7 +34,7 @@ class TestClientCompatibility(unittest.TestCase):
         cls.mock_gateway.project_name = ''
 
         app.state.routes = {'rb-gateway': cls.mock_gateway}
-        app.dependency_overrides[set_request_uuid] = mock_request_uuid
+        app.dependency_overrides[get_request_uuid] = mock_request_uuid
 
         # Create a TestClient to act as the server
         cls.test_client = TestClient(app)
