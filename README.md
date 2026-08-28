@@ -534,19 +534,21 @@ The gateway ships with a built-in UI. It is the control plane for everything adm
 
 **Projects** — create isolated environments for each application or team, each with its own routes, models, and configuration lifecycle.
 
-![Projects landing page](docs/assets/screenshot-projects.png)
+<img src="docs/assets/screenshot-projects.png" alt="Radicalbit AI Gateway - Projects" width="900" />
 
 **Configuration editor** — write YAML by hand or describe what you need and let the AI assistant generate it. Load, approve, and serve without leaving the browser.
 
-![Configuration editor with AI assistant](docs/assets/screenshot-config-editor.png)
+<img src="docs/assets/screenshot-config-editor.png" alt="Radicalbit AI Gateway - Configurations" width="900" />
+
 
 **Usage dashboard** — track token consumption and cost by route and group. Understand where your LLM budget is going before it becomes a problem.
 
-![Usage dashboard](docs/assets/screenshot-dashboard.png)
+
+<img src="docs/assets/screenshot-usage.png" alt="Radicalbit AI Gateway - Usage" width="900" />
 
 **Tracing** — inspect any request end-to-end: which model answered, how the request was routed, whether the cache was hit, what guardrails evaluated, and the latency of every span.
 
-![Request tracing](docs/assets/screenshot-tracing.png)
+<img src="docs/assets/screenshot-tracing.png" alt="Radicalbit AI Gateway - Tracing" width="900" />
 
 ---
 
