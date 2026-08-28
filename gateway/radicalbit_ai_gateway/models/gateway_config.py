@@ -259,6 +259,20 @@ class GatewayConfig(BaseModel):
                         f'Route {route_name}: Embedding model {route.caching.embedding_model_id} is not defined in top-level embedding_models.'
                     )
 
+            # Limiting-type/model-type compatibility validation
+            if route.token_limiting is not None and not (
+                route_chat_ids or route_emb_ids
+            ):
+                raise ValueError(
+                    f'Route {route_name}: token_limiting requires at least one '
+                    'chat or embedding model to be referenced.'
+                )
+            if route.duration_limiting is not None and not route_transcription_ids:
+                raise ValueError(
+                    f'Route {route_name}: duration_limiting requires at least one '
+                    'transcription model to be referenced.'
+                )
+
         return self
 
     @model_validator(mode='after')

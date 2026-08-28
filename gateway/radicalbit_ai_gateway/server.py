@@ -83,6 +83,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleUnsupportedTimeAggregationError,
     ApiKeyError,
     AppError,
+    AudioDurationLimitExceeded,
     AuthRegistryError,
     BudgetLimitExceeded,
     GatewayBadRequest,
@@ -96,6 +97,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     TokenLimitExceeded,
     alert_rule_exception_handler,
     api_key_exception_handler,
+    audio_duration_limit_exceeded_handler,
     auth_registry_exception_handler,
     budget_limiter_exception_handler,
     gateway_exception_handler,
@@ -388,6 +390,9 @@ app.include_router(
 app.add_exception_handler(Exception, unhandled_exception_handler)
 app.add_exception_handler(RequestRateLimitExceeded, rate_limit_exceeded_handler)
 app.add_exception_handler(TokenLimitExceeded, token_limiter_exception_handler)
+app.add_exception_handler(
+    AudioDurationLimitExceeded, audio_duration_limit_exceeded_handler
+)
 app.add_exception_handler(GatewayError, gateway_exception_handler)
 app.add_exception_handler(ModelInvokerError, model_invoker_exception_handler)
 app.add_exception_handler(ApiKeyError, api_key_exception_handler)

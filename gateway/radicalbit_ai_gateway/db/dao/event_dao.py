@@ -59,6 +59,9 @@ class EventDAO:
             self._count_metric('TOKEN_OUTPUT_LIMIT').label(
                 'token_output_limit_triggered'
             ),
+            self._count_metric('AUDIO_DURATION_LIMIT').label(
+                'duration_limit_triggered'
+            ),
             self._count_metric('CACHE_HIT').label('cache_triggered'),
         ]
 
