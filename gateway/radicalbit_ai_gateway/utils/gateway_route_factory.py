@@ -100,9 +100,10 @@ def build_gateway_routes_from_config(
 ) -> dict[str, GatewayRoute]:
     """Build the live routes declared by ``gateway_config``.
 
-    ``project_uuid`` scopes the limiter storage keys. Route names are unique
-    only within a project, so omitting it makes two projects that declare the
-    same route name share one limit window.
+    ``project_uuid`` scopes the limiter storage keys and the cache keys. Route
+    names are unique only within a project, so omitting it makes two projects
+    that declare the same route name share one limit window and read each
+    other's cached responses.
     """
     routes: dict[str, GatewayRoute] = {}
     chat_by_id = gateway_config.chat_models_by_id
@@ -191,6 +192,7 @@ def build_gateway_routes_from_config(
             token_limiter=token_limiter,
             rate_limiter=rate_limiter,
             budget_limiter=budget_limiter,
+            project_uuid=project_uuid,
             duration_limiter=duration_limiter,
         )
 
@@ -244,6 +246,12 @@ def build_project_route_registrar(
                 host=project_gateway_config.cache.redis_host,
                 port=project_gateway_config.cache.redis_port,
                 decode_responses=True,
+                # RESP2 is required by the semantic cache: redis-py negotiates
+                # RESP3 by default and then parses FT.SEARCH replies as a map,
+                # while valkey-search answers with a flat array. The mismatch
+                # raises AttributeError inside the client, which the semantic
+                # cache swallows and reports as a miss, so every lookup fails.
+                protocol=2,
             )
         uuid_str = str(project_uuid)
         routes = build_gateway_routes_from_config(
@@ -257,7 +265,6 @@ def build_project_route_registrar(
         await initialize_async_routers(routes)
         for route_name, route in routes.items():
             full_key = f'{project_name}/{route_name}'
-            route.project_uuid = uuid_str
             route.project_name = project_name
             app.state.routes[full_key] = route
             logger.info('Registered project route: %s', full_key)

@@ -32,6 +32,7 @@ class SemanticCache(AbstractCache):
         self.index_name = 'ai_gateway_idx'
 
         self.schema = [
+            TagField('project_uuid'),
             TagField('route_name'),
             TagField('key_uuid'),
             VectorField(
@@ -45,31 +46,76 @@ class SemanticCache(AbstractCache):
             ),
         ]
 
-        async def create_index():
-            await self.redis_client.ft(self.index_name).create_index(
-                self.schema,
-                definition=IndexDefinition(index_type=IndexType.HASH),
-            )
+        self._background_tasks: set[asyncio.Task] = set()
+
+        async def create_index() -> None:
+            try:
+                await self.redis_client.ft(self.index_name).create_index(
+                    self.schema,
+                    definition=IndexDefinition(index_type=IndexType.HASH),
+                )
+                logger.info('Created Redis search index: %s', self.index_name)
+            except Exception as error:
+                if 'already exists' in str(error).lower():
+                    logger.info(
+                        'Redis search index %s already exists, leaving it as it is',
+                        self.index_name,
+                    )
+                else:
+                    logger.warning(
+                        'Redis search index %s was not created: %s',
+                        self.index_name,
+                        error,
+                    )
 
         try:
-            background_tasks = set()
             index_task = asyncio.create_task(create_index())
-            background_tasks.add(task)
-            index_task.add_done_callback(background_tasks.discard)
-            logger.info('Created new Redis search index: ai_gateway_idx')
-        except Exception:
-            logger.info("Redis index 'ai_gateway_idx' already exists or error occurred")
+        except RuntimeError:
+            logger.warning(
+                'No running event loop: Redis search index %s was not created',
+                self.index_name,
+            )
+        else:
+            # Keep a strong reference until the task completes, otherwise it can
+            # be garbage collected mid-flight.
+            self._background_tasks.add(index_task)
+            index_task.add_done_callback(self._background_tasks.discard)
+
+    @staticmethod
+    def _build_filter_conditions(**kwargs) -> str:
+        """Build the tag filter that scopes a lookup to one project's route.
+
+        The values come from ``kwargs``, never from parsing ``cache_key``: a
+        positional parse silently degrades to a permanent miss as soon as the
+        key format changes.
+        """
+        project_uuid = kwargs.get('project_uuid')
+        route_name = kwargs.get('route_name')
+        key_uuid = kwargs.get('key_uuid')
+        if not project_uuid:
+            raise ValueError('project_uuid param must be passed')
+        if not route_name:
+            raise ValueError('route_name param must be passed')
+        if not key_uuid:
+            raise ValueError('key_uuid param must be passed')
+        # Tag values go in verbatim: valkey-search matches them literally, so
+        # escaping the ``-`` in a route name or a UUID makes the backslash part
+        # of the value and the filter matches nothing.
+        return (
+            f'@project_uuid:{{{project_uuid}}} '
+            f'@route_name:{{{route_name}}} '
+            f'@key_uuid:{{{key_uuid}}}'
+        )
 
     @task(name='get_semantic_cache')
     async def get(self, cache_key: str, **kwargs) -> str | None:
-        route_name = cache_key.split(':')[3]
         embeddings = kwargs.get('embeddings')
         if embeddings is None:
             raise ValueError('Embeddings param must be passed')
-        key_uuid = kwargs.get('key_uuid')
+        route_name = kwargs.get('route_name')
         k = kwargs.get('k', 1)
         query_vector = embeddings.astype(np.float32).tobytes()
-        filter_conditions = f'@route_name:{{{route_name}}} @key_uuid:{{{key_uuid}}}'
+        filter_conditions = self._build_filter_conditions(**kwargs)
         vector_query = (
             f'({filter_conditions})=>[KNN {k} @embedding $query_vector AS score]'
         )
@@ -115,18 +161,27 @@ class SemanticCache(AbstractCache):
         ttl: int | None,
         **kwargs,
     ):
-        route_name = cache_key.split(':')[3]
         embeddings = kwargs.get('embeddings')
         if embeddings is None:
             raise ValueError('Embeddings param must be passed')
+        project_uuid = kwargs.get('project_uuid')
+        route_name = kwargs.get('route_name')
+        key_uuid = kwargs.get('key_uuid')
+        # All three are mandatory: get() always filters on the three tags, so a
+        # document written without one of them can never be matched again.
+        if not project_uuid:
+            raise ValueError('project_uuid param must be passed')
+        if not route_name:
+            raise ValueError('route_name param must be passed')
+        if not key_uuid:
+            raise ValueError('key_uuid param must be passed')
         mapping = {
             'response': response,
+            'project_uuid': project_uuid,
             'route_name': route_name,
+            'key_uuid': key_uuid,
             'embedding': embeddings.astype(np.float32).tobytes(),
         }
-        key_uuid = kwargs.get('key_uuid')
-        if key_uuid is not None:
-            mapping['key_uuid'] = key_uuid
 
         await self.redis_client.hset(cache_key, mapping=mapping)
         if ttl:
