@@ -9,12 +9,14 @@ Never embed literal secrets or placeholder strings.
 ## Top-Level Structure
 
 ```
-chat_models:       # required — list of language models
-embedding_models:  # optional — required for semantic caching
-guardrails:        # optional — defined globally, referenced by name in routes
-routing:           # optional — advanced routing rules, referenced by name in routes
-cache:             # optional — required when any route uses caching
-routes:            # required — named route definitions (use kebab-case names)
+chat_models:          # optional — list of language models
+embedding_models:     # optional — required for semantic caching
+transcription_models: # optional — required for audio transcription routes
+guardrails:           # optional — defined globally, referenced by name in routes
+routing:              # optional — advanced routing rules, referenced by name in routes
+mcp_servers:          # optional — defined globally, referenced by alias in routes
+cache:                # optional — required when any route uses caching
+routes:               # required — named route definitions (use kebab-case names)
 ```
 
 ---
@@ -32,6 +34,8 @@ routes:            # required — named route definitions (use kebab-case names)
 | `params.temperature` | No | Float 0.0–1.0 |
 | `params.max_tokens` | No | Integer |
 | `retry_attempts` | No | Integer, default 3 |
+| `input_cost_per_million_tokens` | No | Float — auto-filled from the built-in price catalog when omitted |
+| `output_cost_per_million_tokens` | No | Float — auto-filled from the built-in price catalog when omitted |
 
 ### Provider / Model Format
 
@@ -54,6 +58,28 @@ Same field structure as `chat_models`. Required when any route uses semantic cac
 |----------|---------|
 | OpenAI | `openai/text-embedding-3-small`, `openai/text-embedding-3-large`, `openai/text-embedding-ada-002` |
 | Google | `google-genai/models/gemini-embedding-001` |
+
+---
+
+## `transcription_models`
+
+Same field structure as `chat_models`. Required when a route handles audio transcription.
+
+```yaml
+transcription_models:
+  - model_id: whisper
+    model: openai/whisper-1
+    credentials:
+      api_key: !secret OPENAI_API_KEY
+
+routes:
+  audio-route:
+    transcription_models:
+      - whisper
+```
+
+`model_id` values must be unique across `chat_models`, `embedding_models`, and
+`transcription_models` — the three namespaces are disjoint.
 
 ---
 
@@ -337,6 +363,47 @@ The embedding model must also be listed in the route's `embedding_models`.
 
 ---
 
+## `mcp_servers`
+
+Defined globally; referenced by alias in a route's `mcp_servers` list. Tools are exposed
+on the route as `{alias}__{tool}`, so an alias must not be empty, contain whitespace, or
+contain `__`. Aliases must be unique case-insensitively.
+
+Streamable HTTP transport:
+
+```yaml
+mcp_servers:
+  - alias: github
+    transport: streamable_http
+    url: https://api.githubcopilot.com/mcp/
+    timeout: 30
+    headers:
+      x-api-key: !secret GITHUB_MCP_TOKEN
+    forward_headers:
+      - authorization
+```
+
+Stdio transport:
+
+```yaml
+mcp_servers:
+  - alias: local-tools
+    transport: stdio
+    command: python
+    args:
+      - -m
+      - my_mcp_server
+    env:
+      API_TOKEN: !secret MY_TOOL_TOKEN
+    cwd: /opt/tools
+```
+
+`forward_headers` must not list transport or framing headers — `host`, `content-length`,
+`content-type`, `accept`, `connection`, `transfer-encoding`, `te`, `upgrade`,
+`mcp-session-id`, `mcp-protocol-version`, `x-rb-tags` are all rejected.
+
+---
+
 ## `cache`
 
 Required at top level when any route uses caching.
@@ -357,18 +424,28 @@ Route names must be **kebab-case**. Every model_id referenced must be declared a
 |-------|-------|
 | `chat_models` | List of `model_id` strings |
 | `embedding_models` | List of embedding `model_id` strings |
+| `transcription_models` | List of transcription `model_id` strings |
 | `guardrails` | List of guardrail names (must be defined globally) |
 | `routing` | Name of a top-level `routing` entry |
-| `fallback` | Fallback chains |
+| `mcp_servers` | List of aliases of top-level `mcp_servers` entries |
+| `fallback` | Fallback chains (route level only — there is no top-level `fallback`) |
 | `caching` | Caching config |
 | `rate_limiting` | Rate limiting config |
 | `token_limiting` | Token limiting config |
 | `budget_limiting` | Required when using `budget` routing rule |
+| `duration_limiting` | Audio-duration limiting; requires `transcription_models` on the route |
+
+Every route must reference at least one of `chat_models`, `embedding_models`, or
+`transcription_models`.
 
 ### `fallback`
 
-Every model_id in `target` and `fallbacks` **must also be listed** in the route's `chat_models`
-(or `embedding_models` for embedding fallbacks). Missing this causes a runtime error.
+Defined **inside a route** — there is no top-level `fallback` key.
+
+`type` is one of `chat` (default), `embedding`, or `transcription`. Every model_id in
+`target` and `fallbacks` **must also be listed** in the route's model list matching that
+type — `chat_models`, `embedding_models`, or `transcription_models`. Missing this causes
+a validation error.
 
 ```yaml
 routes:
@@ -404,7 +481,7 @@ caching:
   ttl: 600
   embedding_model_id: text-embedding-3-small
   similarity_threshold: 0.85
-  distance_metric: cosine     # or euclidean
+  distance_metric: cosine
   dim: 1536
 ```
 
@@ -440,6 +517,24 @@ budget_limiting:
   max_budget: 10.0
 ```
 
+### `duration_limiting`
+
+Caps audio seconds (WAV only). Requires `transcription_models` on the same route.
+
+```yaml
+duration_limiting:
+  algorithm: fixed_window
+  window_size: "1 hour"
+  max_duration_seconds: 3600
+```
+
+Each limiting block sets exactly **one** of `max_requests`, `max_token`, `max_budget`,
+or `max_duration_seconds` — setting more than one is a validation error.
+
+`window_size` units: `second`, `minute`, `hour`, `day`, `week`, `month` (singular or
+plural). With `algorithm: aligned_fixed_window` the window must divide evenly into one
+day: 1/5/10/15/30 minutes, 1/2/3/4/6/8/12 hours, or 1 day.
+
 ---
 
 ## Rules
@@ -459,11 +554,16 @@ budget_limiting:
 - Caching requires `type: exact` or `type: semantic` — `type` is mandatory.
 - Semantic caching requires `embedding_models` on the route and `cache` at top level.
 - `token_length` and `context_length` routing conditions use `gte`, `lte`, or `between` — never a bare `threshold`.
-- Fallback can be defined at the top level or inside a route — both are valid.
+- Fallback is defined **inside a route only** — there is no top-level `fallback` key, and the top-level config rejects unknown keys.
 - Fallback `target` and all `fallbacks` must be listed in the route's `chat_models` (or `embedding_models` for embedding type).
 - `budget_limiting` at route level is required when using the `budget` routing rule.
+- Each limiting block sets exactly one of `max_requests`, `max_token`, `max_budget`, `max_duration_seconds`.
+- `duration_limiting` requires `transcription_models` on the route; `token_limiting` requires chat or embedding models.
+- Only these top-level keys exist: `chat_models`, `embedding_models`, `transcription_models`, `guardrails`, `routing`, `mcp_servers`, `cache`, `routes`. Any other top-level key is rejected.
+- Every route must reference at least one of `chat_models`, `embedding_models`, or `transcription_models`.
+- MCP servers are defined globally and referenced by alias in routes; aliases must not contain whitespace or `__`.
 - Route names should be kebab-case and descriptive (e.g., `customer-service`, `internal-qa`).
-- All `model_id` values must be globally unique across `chat_models` and `embedding_models`.
+- All `model_id` values must be globally unique across `chat_models`, `embedding_models`, and `transcription_models`.
 
 ---
 

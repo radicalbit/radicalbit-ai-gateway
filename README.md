@@ -442,7 +442,8 @@ guardrails:
     where: input
     behavior: warn
     parameters:
-      pattern: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+      values:
+        - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
 ```
 
 </details>
