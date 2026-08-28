@@ -440,9 +440,6 @@ budget_limiting:
   max_budget: 10.0
 ```
 
-`budget_limiting` is a single shared limit across input and output costs. Never
-nest it under `input` or `output`.
-
 ---
 
 ## Rules
