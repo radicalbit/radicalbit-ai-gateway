@@ -60,7 +60,7 @@ The gateway is provider-agnostic. The examples below use one provider for illust
 **Step 1 — Clone and add your credentials**
 
 ```bash
-git clone https://github.com/radicalbit/radicalbit-ai-gateway
+git clone git@github.com:radicalbit/radicalbit-ai-gateway.git
 cd radicalbit-ai-gateway
 ```
 
