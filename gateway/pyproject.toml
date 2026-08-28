@@ -1,7 +1,7 @@
 [project]
 name = "radicalbit-ai-gateway"
 dynamic = ["version"]
-description = "Add your description here"
+description = "Extensible LLM gateway with guardrails, rate limiting, routing, cost tracking and observability. This package is distributed for development and plugin development."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -51,6 +51,12 @@ dependencies = [
     "python-multipart>=0.0.20",
     "mcp>=1.13,<2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/radicalbit/radicalbit-ai-gateway"
+Repository = "https://github.com/radicalbit/radicalbit-ai-gateway"
+Documentation = "https://docs.ai-gateway.radicalbit.ai/"
+Changelog = "https://github.com/radicalbit/radicalbit-ai-gateway/releases"
 
 [project.scripts]
 radicalbit-ai-gateway = "radicalbit_ai_gateway.cli:app"
