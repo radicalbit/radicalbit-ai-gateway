@@ -481,7 +481,7 @@ caching:
   ttl: 600
   embedding_model_id: text-embedding-3-small
   similarity_threshold: 0.85
-  distance_metric: cosine
+  distance_metric: cosine     # or euclidean, inner_product
   dim: 1536
 ```
 
