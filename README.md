@@ -6,12 +6,9 @@
 
 **Describe it. Generate it. Serve it.**
 
+An LLM proxy with guardrails, rate limiting, multi-strategy routing, semantic caching, MCP proxy and end-to-end request tracing. Everything is configured through a UI, including an AI assistant that writes the YAML from a plain English description.
 
-A configurable LLM proxy with guardrails, rate limiting, multi-strategy routing, semantic caching, and end-to-end request tracing.
-Everything is managed through a UI — and an AI assistant that generates the configuration from plain English.
-
-
-<img src="docs/assets/gw_flow.png" alt="Radicalbit AI Gateway" width="680" />
+<img src="docs/assets/gw_flow.png" alt="Request flow through the Radicalbit AI Gateway" width="680" />
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/radicalbit/radicalbit-ai-gateway)](https://github.com/radicalbit/radicalbit-ai-gateway/releases)
@@ -19,6 +16,7 @@ Everything is managed through a UI — and an AI assistant that generates the co
 
 [**Docs**](https://docs.ai-gateway.radicalbit.ai/) ·
 [**Quickstart**](#quickstart) ·
+[**Features**](#features) ·
 [**Examples**](https://docs.ai-gateway.radicalbit.ai/getting-started/examples) ·
 [**Enterprise**](#enterprise)
 
@@ -28,83 +26,84 @@ Everything is managed through a UI — and an AI assistant that generates the co
 
 <div align="center">
 
-<!-- TODO: Replace with hero GIF — show: AI-generated config in the UI → Serve button → curl call in terminal -->
-![Radicalbit AI Gateway demo](docs/assets/ai_configuration.gif)
+<!-- TODO: Replace with hero GIF - show: AI-generated config in the UI, Serve button, curl call in terminal -->
+![Generating a configuration from a prompt, serving it, and calling the route](docs/assets/ai_configuration.gif)
+
+*Generating a configuration from a prompt, serving it, and calling the route.*
 
 </div>
-
-### Observability
-- **Prometheus metrics** — 20+ metrics (request rates, latency, token usage, cache hits, guardrail triggers, fallback activations) on a dedicated endpoint
-- **OpenTelemetry tracing** — end-to-end distributed tracing with ClickHouse storage and support for custom OTLP exporters (Jaeger, Grafana Tempo, etc.)
-- **Alert Rules** — real-time email notifications triggered by guardrails, caching, and route events
-- **UI dashboard** — manage routes, groups, API keys, alert rules, and monitor cost and events in real time
-*From your needs to a live API call, under 60 seconds.*
 
 ---
 
 ## Why this gateway
 
-- **Configure in plain English** — Describe a route, get valid YAML. No schema to learn, no docs to tab through.
-- **Cost control is a routing decision** — Route by token count, time of day, or budget ratio. Add semantic caching. The model spend problem is a configuration problem.
-- **Guardrails in the config, not in the code** — PII detection, prompt injection checks, LLM-as-a-Judge — enforced at the gateway layer before anything reaches the model.
-- **Full visibility per request** — Routing decision, cache hit/miss, guardrail results, upstream latency. Every call, no sampling.
+- **Configure in plain English.** Describe a route, get valid YAML. There is no schema to learn and no documentation to tab through.
+- **Cost control is part of the configuration.** Route by token count, time of day, or budget consumed, and add semantic caching on top. Your application code does not change.
+- **Guardrails at the gateway, not in your code.** PII detection, prompt injection checks, and LLM-as-a-judge run before the request reaches the model.
+- **Full visibility per request.** Routing decision, cache hit or miss, guardrail results, and upstream latency, on every call. No sampling.
 
 ---
 
 ## Quickstart
 
-For this example, you need Docker, Docker Compose, and an OpenAI API key.
+You need Docker, Docker Compose, and an API key for at least one model provider.
 
-The gateway is provider-agnostic. The examples below use one provider for illustration — swap in any supported provider without changing anything else.
+The gateway is provider-agnostic. The example below uses OpenAI for illustration. Swapping in another supported provider changes nothing else.
 
-**Step 1 — Clone and add your credentials**
+### 1. Clone the repository
 
 ```bash
 git clone git@github.com:radicalbit/radicalbit-ai-gateway.git
 cd radicalbit-ai-gateway
 ```
 
-Create a `secrets.yaml` file in the project root:
+### 2. Add your provider credentials
+
+Create a `secrets.yaml` file in the project root. These are the keys the gateway uses to call your models:
 
 ```yaml
-# secrets.yaml — add the API key for whichever provider you use
+# secrets.yaml
 OPENAI_API_KEY: sk-your-key-here
 ```
 
-To use the AI config generator (**Generate** button in the UI), you also need a real OpenAI API key in `CONFIG_GENERATOR_OPENAI_API_KEY` inside `docker-compose.yaml` — the default `sk-123` placeholder is invalid and must be replaced before starting the gateway.
+The AI config generator uses a **separate** key, set in `CONFIG_GENERATOR_OPENAI_API_KEY` inside `docker-compose.yaml`. It ships with an invalid placeholder (`sk-123`), so replace it before starting the gateway if you want the **Generate** button to work. This key never transits through your routes, and the generator call is billed to it rather than to your gateway traffic. If you leave the placeholder in place, everything else still works and you write the YAML yourself.
 
-**Step 2 — Start the gateway**
+### 3. Start the gateway
 
 ```bash
 GATEWAY_TAG=latest docker compose up -d
 ```
 
-Once services are healthy (20–30 seconds), the gateway is running at **http://localhost:9000**.
+Services take 20 to 30 seconds to become healthy. The gateway then runs at **http://localhost:9000**.
 
-**Step 3 — Configure in the UI**
+### 4. Configure it in the UI
 
 Open **[http://localhost:9000](http://localhost:9000)** and:
 
-1. **Create a project** — give it a name, e.g. `quickstart`
-2. **Add a configuration** — paste the snippet below in the editor, or click **Generate** and describe what you want in plain English:
+1. **Create a project** and name it `quickstart`.
+2. **Add a configuration.** Paste the snippet below into the editor, or click **Generate** and describe what you want in plain English.
 
-```yaml
-chat_models:
-  - model_id: gpt-4o-mini
-    model: openai/gpt-4o-mini
-    credentials:
-      api_key: !secret OPENAI_API_KEY
+   ```yaml
+   chat_models:
+     - model_id: gpt-4o-mini
+       model: openai/gpt-4o-mini
+       credentials:
+         api_key: !secret OPENAI_API_KEY
 
-routes:
-  my-assistant:
-    chat_models:
-      - gpt-4o-mini
-```
+   routes:
+     my-assistant:
+       chat_models:
+         - gpt-4o-mini
+   ```
 
-3. **Load → Approve → Serve** the configuration
-4. **Create a group and an API key**, then associate the key with the `my-assistant` route — this is required to authenticate requests
+3. **Save**, then **Approve**, then **Publish** the configuration. Routes only go live once a configuration is published.
+4. **Create an API key** on the **Credentials** page. Copy it and store it somewhere safe, because it is not shown again.
+5. **Create a group** on the **Groups** page, then open it and associate it with the `quickstart/my-assistant` route and with the API key you just created.
 
-**Step 4 — Call your route**
+You are all set up!
+
+### 5. Call your route
+Open a terminal and send this cURL:
 
 ```bash
 curl http://localhost:9000/v1/chat/completions \
@@ -116,34 +115,32 @@ curl http://localhost:9000/v1/chat/completions \
   }'
 ```
 
-The gateway returns a standard OpenAI-format response regardless of the underlying provider.
+The response comes back in standard OpenAI format whichever provider served it, so existing OpenAI SDK clients work by changing the base URL.
 
-**Step 5 — Inspect the call in the UI**
+### 6. Inspect the call
 
-Go back to **[http://localhost:9000](http://localhost:9000)** and explore what was recorded:
+Back in the UI:
 
-- **Usage dashboard** — token consumption and cost for the call, broken down by route and group
-- **Tracing** — the full request trace: routing decision, latency per span, and the exact content of the request and response
+- **Usage** shows token consumption and cost for the call, broken down by route and group.
+- **Tracing** shows the full request trace: routing decision, latency per span, and the exact request and response payloads.
 
-**Go further — add a guardrail in plain English**
+### Next: add a guardrail in plain English
 
-Back in the configuration editor, click **Generate** and try this prompt:
+In the configuration editor, click **Generate** and try:
 
-> *"Add a guardrail to the my-assistant route that blocks any input containing PII — email addresses, phone numbers, and credit card numbers."*
+> *"Add a guardrail to the my-assistant route that blocks any input containing PII: email addresses, phone numbers, and credit card numbers."*
 
-The AI assistant will update the YAML for you. Load → Approve → Serve, then retry the curl with a message containing an email address and watch it get blocked.
+The assistant updates the YAML. Save, approve, and serve it, then repeat the curl with an email address in the message and watch the request get blocked.
 
 ---
 
 ## Three ways to configure
 
-All three paths produce the same YAML — pick the one that fits your workflow.
+All three paths produce the same YAML. Pick whichever fits your workflow.
 
-### 1. Radicalbit Skills — from your IDE
+### 1. Radicalbit Skills, from your IDE
 
-The [Radicalbit Skills](https://github.com/radicalbit/radicalbit-skills) plugin for
-Claude Code generates a complete `config.yaml` from a natural language prompt,
-directly inside your editor. Install it from the Claude Code Marketplace, then invoke:
+The [Radicalbit Skills](https://github.com/radicalbit/radicalbit-skills) plugin for Claude Code generates a complete `config.yaml` from a prompt without leaving your editor. Install it from the Claude Code Marketplace, then run:
 
 ```
 /radicalbit-ai-gateway:ai-gateway-config
@@ -151,20 +148,13 @@ directly inside your editor. Install it from the Claude Code Marketplace, then i
 
 Describe what you need:
 
-> *"Create a route called `customer-support` that uses GPT-4o for complex queries
-> and GPT-4o mini for short ones, with a 500-token threshold. Block any input
-> containing PII."*
+> *"Create a route called `customer-support` that uses GPT-4o for complex queries and GPT-4o mini for short ones, with a 500-token threshold. Block any input containing PII."*
 
-The skill writes a valid, ready-to-serve `config.yaml` to your project.
+The skill writes a valid `config.yaml` into your project.
 
-### 2. AI assistant in the UI — from the browser
+### 2. AI assistant in the UI, from the browser
 
-Enable the AI config generator by setting a real OpenAI API key in the `CONFIG_GENERATOR_OPENAI_API_KEY` environment variable before starting the gateway.
-
-> **Docker Compose:** the variable is set directly in `docker-compose.yaml` with a placeholder value (`sk-123`). Replace it with your real OpenAI API key there — the AI config generator will not work without a valid key.
-
-A **Generate** button appears in the project configuration editor. Use the same
-prompt as above and the assistant produces this YAML inline:
+Set a real OpenAI key in `CONFIG_GENERATOR_OPENAI_API_KEY` (see [step 2](#2-add-your-provider-credentials)) and a **Generate** button appears in the configuration editor. The same prompt as above produces something like this:
 
 ```yaml
 chat_models:
@@ -210,14 +200,13 @@ routes:
       - block_pii
 ```
 
-Review before serving — AI output should be validated before going to production.
+The output lands in the editor for review. Read it before serving.
 
 ### 3. Hand-written YAML
 
-Prefer full control? Write the configuration directly. The schema is the same
-regardless of which path generated it.
+Write the configuration directly. The schema is identical whichever path produced it.
 
-Full configuration reference: [docs.ai-gateway.radicalbit.ai/configuration/basic-setup](https://docs.ai-gateway.radicalbit.ai/configuration/basic-setup)
+Full reference: [docs.ai-gateway.radicalbit.ai/configuration/basic-setup](https://docs.ai-gateway.radicalbit.ai/configuration/basic-setup)
 
 ---
 
@@ -225,32 +214,36 @@ Full configuration reference: [docs.ai-gateway.radicalbit.ai/configuration/basic
 
 | Category | Feature | Description |
 |---|---|---|
-| 🔀 **Routing** | Keyword | Route by keyword match in the message |
+| **Routing** | Keyword | Route by keyword match in the message |
 | | Token length | Route by token count of the last message |
 | | Context length | Route by total conversation token count |
 | | Time | Route by time of day using cron expressions |
 | | Budget | Switch to cheaper models as spend increases |
-| | Text classification | Delegate routing to an external ML model via HTTP |
+| | Text classification | Delegate routing to an external ML model over HTTP |
 | | LLM-based | Use an LLM to classify request intent and select the target model |
 | | Semantic | Embedding similarity against intent examples |
-| 🛡️ **Guardrails** | Pattern matching | `contains`, `starts_with`, `ends_with`, `regex` |
+| **Guardrails** | Pattern matching | `contains`, `starts_with`, `ends_with`, `regex` |
 | | PII detection | Detect PII in requests via Microsoft Presidio |
-| | PII redaction | Mask PII in responses before returning to the client |
-| | LLM judge | Use an LLM to evaluate requests or responses against any custom logic — define your own criteria via prompt templates |
-| ⚡ **Caching** | Exact cache | Return stored responses for identical requests |
+| | PII redaction | Mask PII in responses before they reach the client |
+| | LLM judge | Evaluate requests or responses against your own criteria, defined as prompt templates |
+| **Caching** | Exact cache | Return stored responses for identical requests |
 | | Semantic cache | Match similar requests by embedding similarity |
-| 🚦 **Limits** | Rate limiting | Cap requests per time window per route (HTTP 429 on breach) |
+| **Limits** | Rate limiting | Cap requests per time window per route (HTTP 429 on breach) |
 | | Token limiting | Cap token usage per time window per route |
 | | Budget limiting | Cap spend per time window per route |
-| 🔄 **Reliability** | Model fallback | Automatic failover across models and providers |
-| 📊 **Observability** | Usage dashboard | Costs and token volume by route and group |
-| | Request tracing | Routing decision, cache hit/miss, guardrail results, latency per span |
-| | Telemetry | OpenTelemetry export to Jaeger or any OTLP collector |
-| 🔌 **Providers** | Native | OpenAI, Anthropic, Google Gemini, DeepSeek, Mistral, Azure OpenAI |
+| **Reliability** | Model fallback | Automatic failover across models and providers |
+| **Observability** | Usage dashboard | Cost and token volume by route and group |
+| | Request tracing | Routing decision, cache hit or miss, guardrail results, latency per span |
+| | Prometheus metrics | 20+ metrics on a dedicated endpoint: request rates, latency, token usage, cache hits, guardrail triggers, fallback activations |
+| | OpenTelemetry | Distributed tracing stored in ClickHouse, with OTLP export to Jaeger, Grafana Tempo, or any collector |
+| | Alert rules | Email notifications on guardrail, caching, and route events |
+| **Providers** | Native | OpenAI, Anthropic, Google Gemini, DeepSeek, Mistral, Azure OpenAI |
 | | Compatible | Any OpenAI-format endpoint: Ollama, vLLM, OpenRouter, on-premises |
 
+### Configuration examples
+
 <details>
-<summary>Routing example — semantic routing</summary>
+<summary><b>Routing:</b> semantic</summary>
 
 ```yaml
 routing:
@@ -275,7 +268,91 @@ Full routing reference: [docs.ai-gateway.radicalbit.ai/features/advanced-routing
 </details>
 
 <details>
-<summary>Guardrails example — PII detection + LLM judge</summary>
+<summary><b>Routing:</b> deterministic (keyword, token length, time, budget)</summary>
+
+**Keyword.** Route by topic word in the message.
+
+```yaml
+routing:
+  - name: complexity-split
+    type: deterministic
+    rule: keyword
+    default_model_id: gpt-4o-mini
+    output_mapping:
+      - model_id: gpt-4o
+        conditions:
+          - "urgent"
+          - "complex"
+          - "analysis"
+```
+
+**Token length.** Cheap model for short queries.
+
+```yaml
+routing:
+  - name: token-split
+    type: deterministic
+    rule: token_length
+    default_model_id: gpt-4o
+    output_mapping:
+      - model_id: gpt-4o-mini
+        conditions:
+          lte: 500
+```
+
+**Time.** Switch models by time of day.
+
+```yaml
+routing:
+  - name: business-hours
+    type: deterministic
+    rule: time
+    default_model_id: gpt-4o-mini
+    output_mapping:
+      - model_id: gpt-4o
+        conditions:
+          - "0 9-17 * * 1-5"    # Mon-Fri, 09:00-17:00 UTC
+```
+
+**Budget.** Degrade gracefully as spend approaches the limit.
+
+```yaml
+routing:
+  - name: budget-aware
+    type: deterministic
+    rule: budget
+    default_model_id: gpt-4o
+    output_mapping:
+      - model_id: gpt-4o-mini
+        conditions:
+          threshold: 0.8        # switch when 80% of budget is consumed
+```
+
+</details>
+
+<details>
+<summary><b>Routing:</b> text classification with an external ML model</summary>
+
+```yaml
+routing:
+  - name: sentiment-router
+    type: text_classification
+    url: http://your-classifier:8888
+    timeout: 3.0
+    default_model_id: fallback-model
+    output_mapping:
+      - model_id: positive-handler
+        conditions:
+          - "POSITIVE"
+      - model_id: escalation-handler
+        conditions:
+          - "NEGATIVE"
+```
+
+</details>
+
+<details>
+<summary><b>Guardrails:</b> PII detection and LLM judge</summary>
 
 ```yaml
 guardrails:
@@ -308,114 +385,7 @@ Full guardrail reference: [docs.ai-gateway.radicalbit.ai/features/guardrails](ht
 </details>
 
 <details>
-<summary>Caching example — semantic cache</summary>
-
-```yaml
-routes:
-  my-assistant:
-    chat_models:
-      - gpt-4o-mini
-    embedding_models:
-      - text-embedding-3-small
-    caching:
-      type: semantic
-      ttl: 3600
-      embedding_model_id: text-embedding-3-small
-      similarity_threshold: 0.85
-      distance_metric: cosine
-      dim: 1536
-```
-
-Full caching reference: [docs.ai-gateway.radicalbit.ai/features/caching](https://docs.ai-gateway.radicalbit.ai/features/caching)
-
-</details>
-
-<details>
-<summary>Routing example — deterministic strategies (keyword, token length, time, budget)</summary>
-
-**Keyword — route by topic word in the message**
-
-```yaml
-routing:
-  - name: complexity-split
-    type: deterministic
-    rule: keyword
-    default_model_id: gpt-4o-mini
-    output_mapping:
-      - model_id: gpt-4o
-        conditions:
-          - "urgent"
-          - "complex"
-          - "analysis"
-```
-
-**Token length — cheap model for short queries**
-
-```yaml
-routing:
-  - name: token-split
-    type: deterministic
-    rule: token_length
-    default_model_id: gpt-4o
-    output_mapping:
-      - model_id: gpt-4o-mini
-        conditions:
-          lte: 500
-```
-
-**Time — switch models by time of day**
-
-```yaml
-routing:
-  - name: business-hours
-    type: deterministic
-    rule: time
-    default_model_id: gpt-4o-mini
-    output_mapping:
-      - model_id: gpt-4o
-        conditions:
-          - "0 9-17 * * 1-5"    # Mon–Fri, 09:00–17:00 UTC
-```
-
-**Budget — degrade gracefully as spend approaches limit**
-
-```yaml
-routing:
-  - name: budget-aware
-    type: deterministic
-    rule: budget
-    default_model_id: gpt-4o
-    output_mapping:
-      - model_id: gpt-4o-mini
-        conditions:
-          threshold: 0.8        # switch when 80% of budget is consumed
-```
-
-</details>
-
-<details>
-<summary>Routing example — text classification (external ML model)</summary>
-
-```yaml
-routing:
-  - name: sentiment-router
-    type: text_classification
-    url: http://your-classifier:8888
-    timeout: 3.0
-    default_model_id: fallback-model
-    output_mapping:
-      - model_id: positive-handler
-        conditions:
-          - "POSITIVE"
-      - model_id: escalation-handler
-        conditions:
-          - "NEGATIVE"
-```
-
-</details>
-
-<details>
-<summary>Guardrails example — pattern matching (contains, regex)</summary>
+<summary><b>Guardrails:</b> pattern matching (contains, starts_with, regex)</summary>
 
 ```yaml
 guardrails:
@@ -449,7 +419,27 @@ guardrails:
 </details>
 
 <details>
-<summary>Caching example — exact cache</summary>
+<summary><b>Caching:</b> semantic and exact</summary>
+
+**Semantic cache.** Matches requests that mean the same thing.
+
+```yaml
+routes:
+  my-assistant:
+    chat_models:
+      - gpt-4o-mini
+    embedding_models:
+      - text-embedding-3-small
+    caching:
+      type: semantic
+      ttl: 3600
+      embedding_model_id: text-embedding-3-small
+      similarity_threshold: 0.85
+      distance_metric: cosine
+      dim: 1536
+```
+
+**Exact cache.** Matches identical requests only.
 
 ```yaml
 routes:
@@ -461,10 +451,12 @@ routes:
       ttl: 3600
 ```
 
+Full caching reference: [docs.ai-gateway.radicalbit.ai/features/caching](https://docs.ai-gateway.radicalbit.ai/features/caching)
+
 </details>
 
 <details>
-<summary>Limits example — rate limiting, token limiting, budget limiting</summary>
+<summary><b>Limits:</b> rate, token, and budget limiting</summary>
 
 ```yaml
 routes:
@@ -489,12 +481,12 @@ routes:
       max_budget: 50.0
 ```
 
-All three limits are independent and can be combined freely on the same route.
+The three limits are independent and can be combined on the same route.
 
 </details>
 
 <details>
-<summary>Reliability example — model fallback</summary>
+<summary><b>Reliability:</b> model fallback across providers</summary>
 
 ```yaml
 chat_models:
@@ -526,54 +518,54 @@ routes:
           - claude-3-sonnet
 ```
 
-Fallbacks work across providers — mixing models from different vendors in the same chain is valid.
+Fallback chains can mix providers, so a vendor outage does not take the route down.
 
 </details>
 
 ---
 
-## UI tour
+## The UI
 
-The gateway ships with a built-in UI. It is the control plane for everything administrative — managing projects, configuring routes, creating groups and API keys — and the observability layer for understanding what is happening at runtime.
+The gateway ships with a built-in UI. It is the control plane for projects, routes, groups, and API keys, and the observability layer for what happens at runtime.
 
 <!-- TODO: Replace placeholders with dark-mode screenshots from Federico -->
 
-**Projects** — create isolated environments for each application or team, each with its own routes, models, and configuration lifecycle.
+**Projects.** Isolated environments for each application or team, each with its own routes, models, and configuration lifecycle.
 
 <div align="center">
-<img src="docs/assets/screenshot-projects.png" alt="Radicalbit AI Gateway - Projects" width="900" />
+<img src="docs/assets/screenshot-projects.png" alt="Projects list in the Radicalbit AI Gateway UI" width="900" />
 </div>
 
-**Configuration editor** — write YAML by hand or describe what you need and let the AI assistant generate it. Load, approve, and serve without leaving the browser.
+**Configuration editor.** Write YAML by hand or describe what you need and let the assistant generate it. Save, approve, and serve without leaving the browser.
 
 <div align="center">
-<img src="docs/assets/screenshot-config-editor.png" alt="Radicalbit AI Gateway - Configurations" width="900" />
+<img src="docs/assets/screenshot-config-editor.png" alt="Configuration editor in the Radicalbit AI Gateway UI" width="900" />
 </div>
 
-**Usage dashboard** — track token consumption and cost by route and group. Understand where your LLM budget is going before it becomes a problem.
+**Usage.** Token consumption and cost by route and group, so you can see where the budget goes before the invoice arrives.
 
 <div align="center">
-<img src="docs/assets/screenshot-usage.png" alt="Radicalbit AI Gateway - Usage" width="900" />
+<img src="docs/assets/screenshot-usage.png" alt="Usage dashboard in the Radicalbit AI Gateway UI" width="900" />
 </div>
 
-**Tracing** — inspect any request end-to-end: which model answered, how the request was routed, whether the cache was hit, what guardrails evaluated, and the latency of every span.
+**Tracing.** Any request end to end: which model answered, how it was routed, whether the cache was hit, what the guardrails decided, and the latency of every span.
 
 <div align="center">
-<img src="docs/assets/screenshot-tracing.png" alt="Radicalbit AI Gateway - Tracing" width="900" />
+<img src="docs/assets/screenshot-tracing.png" alt="Request tracing in the Radicalbit AI Gateway UI" width="900" />
 </div>
 
 ---
 
 ## Enterprise
 
-The open-source edition contains everything you need to run the gateway in production. Enterprise adds the governance layer:
+The open-source edition has everything needed to run the gateway in production. Enterprise adds the governance layer for regulated environments:
 
-- **RBAC** — three built-in roles (Admin, Builder, Auditor)
-- **SSO** — OIDC and Keycloak / IDP integration
-- **Audit logging** — SOC 2 / ISO 27001 / DORA compliance
-- **Cloud secret management** — HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault
+- **RBAC** with three built-in roles: Admin, Builder, and Auditor
+- **SSO** through OIDC and Keycloak or your existing IDP
+- **Audit logging** for SOC 2, ISO 27001, and DORA evidence
+- **Cloud secret management** with HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, and Azure Key Vault
 
-[Learn more about Enterprise →](https://docs.ai-gateway.radicalbit.ai/reference/enterprise)
+[Learn more about Enterprise](https://docs.ai-gateway.radicalbit.ai/reference/enterprise)
 
 <div align="center">
   <a href="https://radicalbit.ai/book-a-demo-radicalbit/">
@@ -585,18 +577,14 @@ The open-source edition contains everything you need to run the gateway in produ
 
 ## Community and contributing
 
-**Documentation** — [docs.ai-gateway.radicalbit.ai](https://docs.ai-gateway.radicalbit.ai/)
+**Documentation.** [docs.ai-gateway.radicalbit.ai](https://docs.ai-gateway.radicalbit.ai/)
+
+**Contributing.** Bug reports, feature requests, and pull requests are welcome. For substantial changes, open an issue first so we can agree on the approach before you write code.
 
 <!-- VERIFY: Add a Discord or community Slack link here if a public server exists -->
 
-**Contributing** — Bug reports, feature requests, and pull requests are welcome on
-GitHub. For substantial changes, open an issue first to align on approach.
+**Repository history.** The gateway started as an internal project at Radicalbit. The commit history begins at the point we opened it up, not at the start of development.
 
+**License.** Apache 2.0. See [LICENSE](LICENSE).
 
-**Repository history** — This gateway started as an internal project at Radicalbit
-and is now open source. The commit history reflects the moment we made the transition,
-not the years of development behind it.
-
-**License** — Apache License 2.0. See [LICENSE](LICENSE) for terms.
-
-**Sponsored by [Radicalbit](https://radicalbit.ai)**
+Sponsored by [Radicalbit](https://radicalbit.ai).
