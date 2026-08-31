@@ -39,6 +39,7 @@ from radicalbit_ai_gateway.db.models.event import (
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
 from radicalbit_ai_gateway.models.auth_dto import KeyOut
 from radicalbit_ai_gateway.models.caching import SemanticCaching
+from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.event_dto import (
     Cache,
     CacheHitEventDetailDTO,
@@ -50,6 +51,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     CostChartDataDTO,
     CostChartDataSeriesDTO,
     CostDataDTO,
+    DurationLimitEventDetailDTO,
     EmbeddingInputBreakdownDTO,
     EmbeddingModelsCostDTO,
     Errors,
@@ -71,7 +73,10 @@ from radicalbit_ai_gateway.models.event_dto import (
 )
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.gateway_route_out import GatewayRouteOut
+from radicalbit_ai_gateway.models.limiting import AudioDurationLimiting
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.services.event_service import EventService
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
@@ -514,6 +519,7 @@ class EventServiceTest(unittest.TestCase):
             ],
             token_input_limit=[],
             token_output_limit=[],
+            duration_limit=None,
             cache_triggered=[
                 CacheHitEventDetailDTO(
                     timestamp=datetime.datetime(
@@ -528,6 +534,65 @@ class EventServiceTest(unittest.TestCase):
             ],
         )
         assert res == expected
+
+    def test_get_latest_n_per_event_type_duration_limit(self):
+        """AUDIO_DURATION_LIMIT events populate duration_limit when the route
+        has duration_limiting configured.
+        """
+        transcription_model = Model(
+            model_id='whisper',
+            model='openai/whisper-1',
+            credentials=Credentials(api_key='sk-123'),
+        )
+        route = GatewayRouteConfig(
+            route_name='route-duration',
+            transcription_models=['whisper'],
+            duration_limiting=AudioDurationLimiting(
+                max_duration_seconds=10, window_size='1 minute'
+            ),
+        )
+        config = GatewayConfig(
+            transcription_models=[transcription_model],
+            routes={'route-duration': route},
+        )
+
+        api_key_uuid = uuid.UUID('00000000-0000-0000-0000-000000000000')
+        mocked_events = [
+            db_mock.get_event_detail(
+                timestamp=datetime.datetime(
+                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                ),
+                route_name='route-duration',
+                event_type='AUDIO_DURATION_LIMIT',
+            ),
+        ]
+        self.event_dao.get_latest_n_per_event_type = MagicMock(
+            return_value=mocked_events
+        )
+        self.key_service.get_names_by_uuids = MagicMock(
+            return_value={api_key_uuid: 'fake-name'}
+        )
+
+        res = self.event_service.get_latest_n_per_event_type(
+            self.TEST_PROJECT_UUID,
+            config,
+            'route-duration',
+            10,
+            None,
+            None,
+        )
+
+        assert res.duration_limit == [
+            DurationLimitEventDetailDTO(
+                timestamp=datetime.datetime(
+                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                ),
+                api_key_uuid=api_key_uuid,
+                route_name='route-duration',
+                api_key_name='fake-name',
+                event_type='AUDIO_DURATION_LIMIT',
+            )
+        ]
 
     def test_get_chart_data_multiple_groups(self):
         base_time = datetime.datetime(

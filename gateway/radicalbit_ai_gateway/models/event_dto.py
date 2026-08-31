@@ -72,6 +72,12 @@ class TokenOutputLimitEventDetailDTO(BaseEventDetailDTO):
     event_type: Literal['TOKEN_OUTPUT_LIMIT']
 
 
+class DurationLimitEventDetailDTO(BaseEventDetailDTO):
+    """DTO for AUDIO_DURATION_LIMIT event type."""
+
+    event_type: Literal['AUDIO_DURATION_LIMIT']
+
+
 class CacheHitEventDetailDTO(BaseEventDetailDTO):
     """DTO for CACHE_HIT event type."""
 
@@ -437,6 +443,9 @@ class LastNEvents(BaseModel):
     token_output_limit: list[TokenOutputLimitEventDetailDTO] | None = Field(
         default_factory=list
     )
+    duration_limit: list[DurationLimitEventDetailDTO] | None = Field(
+        default_factory=list
+    )
     cache_triggered: list[CacheHitEventDetailDTO] | None = Field(default_factory=list)
 
     @staticmethod
@@ -446,6 +455,7 @@ class LastNEvents(BaseModel):
         rate_limit: list[RateLimitEventDetailDTO],
         token_input_limit: list[TokenInputLimitEventDetailDTO],
         token_output_limit: list[TokenOutputLimitEventDetailDTO],
+        duration_limit: list[DurationLimitEventDetailDTO],
         cache_triggered: list[CacheHitEventDetailDTO],
         route_config: GatewayRouteConfig,
     ) -> 'LastNEvents':
@@ -458,6 +468,9 @@ class LastNEvents(BaseModel):
             else None,
             token_output_limit=token_output_limit
             if route_config.token_limiting is not None
+            else None,
+            duration_limit=duration_limit
+            if route_config.duration_limiting is not None
             else None,
             cache_triggered=cache_triggered
             if route_config.caching is not None

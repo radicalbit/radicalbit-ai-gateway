@@ -21,6 +21,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     CostChartDataDTO,
     CostChartDataSeriesDTO,
     CostDataDTO,
+    DurationLimitEventDetailDTO,
     EventsDTO,
     FallbackEventDetailDTO,
     GuardrailEventDetailDTO,
@@ -377,6 +378,7 @@ class EventService:
         rate_limit: list[RateLimitEventDetailDTO] = []
         token_input_limit: list[TokenInputLimitEventDetailDTO] = []
         token_output_limit: list[TokenOutputLimitEventDetailDTO] = []
+        duration_limit: list[DurationLimitEventDetailDTO] = []
         cache_triggered: list[CacheHitEventDetailDTO] = []
 
         route_config = config.routes[route_name]
@@ -467,6 +469,17 @@ class EventService:
                             event_type='TOKEN_OUTPUT_LIMIT',
                         )
                     )
+                case 'AUDIO_DURATION_LIMIT':
+                    duration_limit.append(
+                        DurationLimitEventDetailDTO(
+                            timestamp=event.timestamp,
+                            api_key_uuid=event.api_key_uuid,
+                            route_name=event.route_name,
+                            api_key_name=resolved_name,
+                            api_key_active=event.api_key_active,
+                            event_type='AUDIO_DURATION_LIMIT',
+                        )
+                    )
                 case 'CACHE_HIT':
                     cache_triggered.append(
                         CacheHitEventDetailDTO(
@@ -488,6 +501,7 @@ class EventService:
             rate_limit=rate_limit,
             token_input_limit=token_input_limit,
             token_output_limit=token_output_limit,
+            duration_limit=duration_limit,
             cache_triggered=cache_triggered,
             route_config=route_config,
         )

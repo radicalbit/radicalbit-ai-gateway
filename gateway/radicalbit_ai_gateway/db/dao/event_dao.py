@@ -494,6 +494,7 @@ class EventDAO:
             'RATE_LIMIT',
             'TOKEN_INPUT_LIMIT',
             'TOKEN_OUTPUT_LIMIT',
+            'AUDIO_DURATION_LIMIT',
             'CACHE_HIT',
         ]
         row_number_col = (
