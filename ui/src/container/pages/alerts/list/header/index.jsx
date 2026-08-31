@@ -9,8 +9,7 @@ import {
 import { Plus, SlidersHorizontal } from 'lucide-react';
 
 function AlertsListHeader() {
-  const { data = [] } = useGetAlertsQuery();
-  const count = data.length;
+  useGetAlertsQuery();
 
   return (
     <NewHeader

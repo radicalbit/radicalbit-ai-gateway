@@ -11,6 +11,7 @@ import {
 import { Button, Tooltip } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import TagsCell from './tags-cell';
 
 function AssociatedGroup({ groupName, groupUuid }) {
   const navigate = useNavigate();
@@ -41,6 +42,12 @@ const columns = [
         </div>
       </StatusTooltip>
     ),
+  },
+  {
+    title: 'Tags',
+    dataIndex: 'tags',
+    align: 'left',
+    render: (tags) => <TagsCell tags={tags} />,
   },
   {
     title: 'Group',

@@ -9,8 +9,9 @@ function Limits({ metrics, configuration }) {
   const rateLimitTriggered = metrics?.rateLimitTriggered;
   const tokenInputLimitTriggered = metrics?.tokenInputLimitTriggered;
   const tokenOutputLimitTriggered = metrics?.tokenOutputLimitTriggered;
+  const durationLimitTriggered = metrics?.durationLimitTriggered;
 
-  if (rateLimitTriggered === undefined && tokenInputLimitTriggered === undefined && tokenOutputLimitTriggered === undefined) {
+  if (rateLimitTriggered === undefined && tokenInputLimitTriggered === undefined && tokenOutputLimitTriggered === undefined && durationLimitTriggered === undefined) {
     return (
       <Button disabled shape="circle">
         <Lucide icon={SlidersHorizontal} />
@@ -18,7 +19,7 @@ function Limits({ metrics, configuration }) {
     );
   }
 
-  const hasTriggered = rateLimitTriggered > 0 || tokenInputLimitTriggered > 0 || tokenOutputLimitTriggered > 0;
+  const hasTriggered = rateLimitTriggered > 0 || tokenInputLimitTriggered > 0 || tokenOutputLimitTriggered > 0 || durationLimitTriggered > 0;
   const btnType = hasTriggered ? { type: 'primary' } : { type: 'primary-light' };
 
   return (
@@ -34,10 +35,12 @@ function PopoverContent({ configuration, metrics }) {
   const rateLimiting = configuration?.rateLimiting;
   const tokenLimitingInput = configuration?.tokenLimiting?.input;
   const tokenLimitingOutput = configuration?.tokenLimiting?.output;
+  const durationLimiting = configuration?.durationLimiting;
 
   const rate = numberFormatterInt(metrics.rateLimitTriggered) ?? '--';
   const tokenIn = numberFormatterInt(metrics.tokenInputLimitTriggered) ?? '--';
   const tokenOut = numberFormatterInt(metrics.tokenOutputLimitTriggered) ?? '--';
+  const duration = numberFormatterInt(metrics.durationLimitTriggered) ?? '--';
 
   const rateLimitingalgorithm = rateLimiting?.algorithm ?? '--';
   const rateLimitingwindowSize = rateLimiting?.windowSize ?? '--';
@@ -51,6 +54,10 @@ function PopoverContent({ configuration, metrics }) {
   const tokenLimitingOutputWindowSize = tokenLimitingOutput?.windowSize ?? '--';
   const tokenLimitingOutputMaxTokens = numberFormatterInt(tokenLimitingOutput?.maxTokens) ?? '--';
 
+  const durationLimitingAlgorithm = durationLimiting?.algorithm ?? '--';
+  const durationLimitingWindowSize = durationLimiting?.windowSize ?? '--';
+  const durationLimitingMaxDurationSeconds = numberFormatterInt(durationLimiting?.maxDurationSeconds) ?? '--';
+
   return (
     <div className="flex flex-col">
       <PopoverRow label="Rate:" value={rate} />
@@ -58,6 +65,8 @@ function PopoverContent({ configuration, metrics }) {
       <PopoverRow label="Token in:" value={tokenIn} />
 
       <PopoverRow label="Token out:" value={tokenOut} />
+
+      <PopoverRow label="Duration:" value={duration} />
 
       <Divider style={{ margin: '.5rem' }} />
 
@@ -88,6 +97,16 @@ function PopoverContent({ configuration, metrics }) {
       <PopoverRow label="Window size:" value={tokenLimitingOutputWindowSize} />
 
       <PopoverRow label="Max tokens:" value={tokenLimitingOutputMaxTokens} />
+
+      <Divider style={{ margin: '.5rem' }} />
+
+      <strong>Duration Limiting</strong>
+
+      <PopoverRow label="Algorithm:" value={durationLimitingAlgorithm} />
+
+      <PopoverRow label="Window size:" value={durationLimitingWindowSize} />
+
+      <PopoverRow label="Max duration (s):" value={durationLimitingMaxDurationSeconds} />
     </div>
   );
 }

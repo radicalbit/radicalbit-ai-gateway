@@ -39,7 +39,7 @@ function SpanLatencies() {
 
 function IsSuccess() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { data } = useGetSpanLatenciesWithRange({ grouped: true });
+  const { data, isFetching } = useGetSpanLatenciesWithRange({ grouped: true });
 
   const expandedCategories = useMemo(() => {
     const param = searchParams.get(EXPANDED_PARAM);
@@ -56,7 +56,8 @@ function IsSuccess() {
 
     return items.flatMap(({ category, spans = [], ...percentiles }) => {
       const spanCount = spans.length;
-      const headerRow = { name: category, spanCount, ...percentiles, header: true, key: `header:${category}` };
+      const headerPercentiles = isFetching ? {} : percentiles;
+      const headerRow = { name: category, spanCount, ...headerPercentiles, header: true, key: `header:${category}` };
 
       if (!expandedCategories.has(category)) {
         return [headerRow];
@@ -64,14 +65,14 @@ function IsSuccess() {
 
       const spanRows = (spans || []).map(({ spanName, ...spanPercentiles }) => ({
         name: spanName,
-        ...spanPercentiles,
+        ...(isFetching ? {} : spanPercentiles),
         header: false,
         key: `${category}:${spanName}`,
       }));
 
       return [headerRow, ...spanRows];
     });
-  }, [data?.data, expandedCategories]);
+  }, [data?.data, expandedCategories, isFetching]);
 
   const handleOnRow = (record) => {
     if (!record.header) {

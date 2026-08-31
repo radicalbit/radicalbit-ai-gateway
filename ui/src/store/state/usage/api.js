@@ -1,5 +1,6 @@
 import { API_BASE_URL } from '@Api/config';
 import { apiService } from '@Src/store/apis';
+import { appendTagsToParams } from '@State/tags-query-params-factory';
 import timeFiltersQueryParamFactory from '@State/time-filter-query-params-factory';
 
 export const usageApiSlice = apiService.injectEndpoints({
@@ -9,7 +10,7 @@ export const usageApiSlice = apiService.injectEndpoints({
       queryFn: () => ({ data: null }),
       async onCacheEntryAdded(
         {
-          projectUuid, routes, withSavedTokens, from, to, gte,
+          projectUuid, routes, tags, withSavedTokens, from, to, gte,
         },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
       ) {
@@ -27,6 +28,8 @@ export const usageApiSlice = apiService.injectEndpoints({
           if (routes && routes.length > 0) {
             routes.forEach((route) => { params.append('routes', route); });
           }
+
+          appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/summary/stream?${params.toString()}`;
           const eventSource = new EventSource(url, { withCredentials: true });
@@ -89,7 +92,9 @@ export const usageApiSlice = apiService.injectEndpoints({
       keepUnusedDataFor: 0,
       queryFn: () => ({ data: null }),
       async onCacheEntryAdded(
-        { projectUuid, routes, from, to, gte },
+        {
+          projectUuid, routes, tags, from, to, gte,
+        },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
       ) {
         try {
@@ -102,6 +107,8 @@ export const usageApiSlice = apiService.injectEndpoints({
           if (routes && routes.length > 0) {
             routes.forEach((route) => { params.append('routes', route); });
           }
+
+          appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/tokens/stream?${params.toString()}`;
           const eventSource = new EventSource(url, { withCredentials: true });
@@ -125,7 +132,9 @@ export const usageApiSlice = apiService.injectEndpoints({
       keepUnusedDataFor: 0,
       queryFn: () => ({ data: null }),
       async onCacheEntryAdded(
-        { projectUuid, routes, from, to, gte },
+        {
+          projectUuid, routes, tags, from, to, gte,
+        },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
       ) {
         try {
@@ -138,6 +147,8 @@ export const usageApiSlice = apiService.injectEndpoints({
           if (routes && routes.length > 0) {
             routes.forEach((route) => { params.append('routes', route); });
           }
+
+          appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/invocations/stream?${params.toString()}`;
           const eventSource = new EventSource(url, { withCredentials: true });
@@ -162,7 +173,7 @@ export const usageApiSlice = apiService.injectEndpoints({
       queryFn: () => ({ data: { loading: true, error: false, chart: null } }),
       async onCacheEntryAdded(
         {
-          projectUuid, routes, groupBy, from, to, gte,
+          projectUuid, routes, tags, groupBy, from, to, gte,
         },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
       ) {
@@ -176,6 +187,8 @@ export const usageApiSlice = apiService.injectEndpoints({
           if (routes && routes.length > 0) {
             routes.forEach((route) => { params.append('routes', route); });
           }
+
+          appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/stream?${params.toString()}`;
           const eventSource = new EventSource(url, { withCredentials: true });
@@ -207,7 +220,7 @@ export const usageApiSlice = apiService.injectEndpoints({
       queryFn: () => ({ data: null }),
       async onCacheEntryAdded(
         {
-          projectUuid, modelId, routes, from, to, gte,
+          projectUuid, modelId, routes, tags, from, to, gte,
         },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
       ) {
@@ -219,6 +232,8 @@ export const usageApiSlice = apiService.injectEndpoints({
           if (routes && routes.length > 0) {
             routes.forEach((route) => { params.append('routes', route); });
           }
+
+          appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/model/${encodeURIComponent(modelId)}/stream?${params.toString()}`;
           const eventSource = new EventSource(url, { withCredentials: true });
@@ -243,7 +258,7 @@ export const usageApiSlice = apiService.injectEndpoints({
       queryFn: () => ({ data: null }),
       async onCacheEntryAdded(
         {
-          projectUuid, groupUuid, routes, from, to, gte,
+          projectUuid, groupUuid, routes, tags, from, to, gte,
         },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
       ) {
@@ -255,6 +270,8 @@ export const usageApiSlice = apiService.injectEndpoints({
           if (routes && routes.length > 0) {
             routes.forEach((route) => { params.append('routes', route); });
           }
+
+          appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/group/${encodeURIComponent(groupUuid)}/stream?${params.toString()}`;
           const eventSource = new EventSource(url, { withCredentials: true });
@@ -279,7 +296,7 @@ export const usageApiSlice = apiService.injectEndpoints({
       queryFn: () => ({ data: null }),
       async onCacheEntryAdded(
         {
-          projectUuid, keyUuid, routes, from, to, gte,
+          projectUuid, keyUuid, routes, tags, from, to, gte,
         },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
       ) {
@@ -291,6 +308,8 @@ export const usageApiSlice = apiService.injectEndpoints({
           if (routes && routes.length > 0) {
             routes.forEach((route) => { params.append('routes', route); });
           }
+
+          appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/key/${encodeURIComponent(keyUuid)}/stream?${params.toString()}`;
           const eventSource = new EventSource(url, { withCredentials: true });
@@ -311,36 +330,48 @@ export const usageApiSlice = apiService.injectEndpoints({
     }),
 
     getCostsModelBreakdown: builder.query({
-      query: ({ projectUuid, entityId, timestamp, granularity, routes }) => {
+      query: ({
+        projectUuid, entityId, timestamp, granularity, routes, tags,
+      }) => {
         const params = new URLSearchParams({ timestamp, granularity });
 
         if (routes && routes.length > 0) {
           routes.forEach((route) => { params.append('routes', route); });
         }
+
+        appendTagsToParams(params, tags);
 
         return { url: `/projects/${projectUuid}/routes/costs/model/${encodeURIComponent(entityId)}/breakdown?${params.toString()}` };
       },
     }),
 
     getCostsGroupBreakdown: builder.query({
-      query: ({ projectUuid, entityId, timestamp, granularity, routes }) => {
+      query: ({
+        projectUuid, entityId, timestamp, granularity, routes, tags,
+      }) => {
         const params = new URLSearchParams({ timestamp, granularity });
 
         if (routes && routes.length > 0) {
           routes.forEach((route) => { params.append('routes', route); });
         }
+
+        appendTagsToParams(params, tags);
 
         return { url: `/projects/${projectUuid}/routes/costs/group/${encodeURIComponent(entityId)}/breakdown?${params.toString()}` };
       },
     }),
 
     getCostsKeyBreakdown: builder.query({
-      query: ({ projectUuid, entityId, timestamp, granularity, routes }) => {
+      query: ({
+        projectUuid, entityId, timestamp, granularity, routes, tags,
+      }) => {
         const params = new URLSearchParams({ timestamp, granularity });
 
         if (routes && routes.length > 0) {
           routes.forEach((route) => { params.append('routes', route); });
         }
+
+        appendTagsToParams(params, tags);
 
         return { url: `/projects/${projectUuid}/routes/costs/key/${encodeURIComponent(entityId)}/breakdown?${params.toString()}` };
       },

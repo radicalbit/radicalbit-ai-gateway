@@ -4,7 +4,7 @@ import { Board, DataTable, SectionTitle, Skeleton, Void } from '@radicalbit/radi
 import columns from './columns';
 
 function TraceLatencies() {
-  const { data, isError, isLoading, isSuccess } = useGetTraceLatenciesWithRange();
+  const { data, isError, isFetching, isLoading, isSuccess } = useGetTraceLatenciesWithRange();
 
   if (isLoading) {
     return (
@@ -29,13 +29,15 @@ function TraceLatencies() {
     return null;
   }
 
+  const dataSource = isFetching ? [{}] : [data];
+
   return (
     <Board
       header={<SectionTitle title="Trace latencies" />}
       main={(
         <DataTable
           columns={columns}
-          dataSource={[data]}
+          dataSource={dataSource}
           pagination={false}
           rowKey="trace-latencies"
         />

@@ -57,6 +57,11 @@ const columns = [
     render: (progressBar, record) => <RateLimit progressBar={progressBar} routeName={record.routeName} />,
   },
   {
+    title: 'Duration limit',
+    dataIndex: 'progressBar',
+    render: (progressBar, record) => <DurationLimit progressBar={progressBar} routeName={record.routeName} />,
+  },
+  {
     title: '',
     dataIndex: 'margin-right',
     key: 'margin-right',
@@ -266,6 +271,60 @@ function RateLimit({ progressBar, routeName }) {
 function RateLimitPopoverContent({ rate, routeName }) {
   const window = formatWindowLength(rate.windowLength);
   const current = `${numberFormatterInt(rate.windowFilledSize)}/${numberFormatterInt(rate.windowSize)}`;
+
+  return (
+    <div className="flex flex-col">
+      <PopoverRow label="Route:" value={routeName} />
+
+      <PopoverRow label="Window:" value={window} />
+
+      <PopoverRow label="Current:" value={current} />
+    </div>
+  );
+}
+
+function DurationLimit({ progressBar, routeName }) {
+  const duration = progressBar?.duration;
+  const value = numberFormatterInt(duration?.windowFilledPercentage ?? DEFAULT_VALUE);
+  const status = duration?.windowStatus ?? DEFAULT_STATUS;
+  const type = STATUS_TO_TYPE[status];
+
+  if (!duration) {
+    return (
+      <div className="flex flex-row gap-2 items-center">
+        <BarChart
+          className="w-full"
+          type={type}
+          value={value}
+        />
+
+        <small className="min-w-20">--</small>
+      </div>
+    );
+  }
+
+  return (
+    <Popover
+      content={<DurationLimitPopoverContent duration={duration} routeName={routeName} />}
+      minWidth="250"
+      title={<strong>Duration limit</strong>}
+    >
+      <div className="flex flex-row gap-2 items-center">
+        <BarChart
+          className="w-full"
+          type={type}
+          value={value}
+        />
+
+        <small className="min-w-20">{`${value}%`}</small>
+      </div>
+    </Popover>
+  );
+}
+
+function DurationLimitPopoverContent({ duration, routeName }) {
+  const window = formatWindowLength(duration.windowLength);
+  const current = `${numberFormatterInt(duration.windowFilledSize)}/${numberFormatterInt(duration.windowSize)}`;
 
   return (
     <div className="flex flex-col">
