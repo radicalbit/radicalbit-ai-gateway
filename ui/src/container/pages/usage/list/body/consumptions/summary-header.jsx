@@ -14,6 +14,7 @@ function SummaryHeader() {
   const saved = costFormatter({ cent: data?.totals?.saved || 0 });
   const chatModelsTotal = data?.chatModels ? costFormatter({ cent: data?.chatModels?.total }) : '--';
   const embeddingModelsTotal = data?.embeddingModels ? costFormatter({ cent: data?.embeddingModels?.total }) : '--';
+  const transcriptionModelsTotal = data?.transcriptionModels ? costFormatter({ cent: data?.transcriptionModels?.total }) : '--';
 
   return (
     <div className="flex gap-16 items-start">
@@ -33,6 +34,8 @@ function SummaryHeader() {
       <SectionTitle reverse size="large" subtitle="Chat models" title={chatModelsTotal} />
 
       <SectionTitle reverse size="large" subtitle="Embedding models" title={embeddingModelsTotal} />
+
+      <SectionTitle reverse size="large" subtitle="Transcription models" title={transcriptionModelsTotal} />
     </div>
   );
 }

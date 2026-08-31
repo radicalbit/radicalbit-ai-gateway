@@ -19,6 +19,7 @@ function ProjectFilter() {
       setSearchParams((prev) => {
         prev.delete('projectUuid');
         prev.delete('routes');
+        prev.delete('tags');
         return prev;
       }, { replace: true });
     }
@@ -33,6 +34,7 @@ function ProjectFilter() {
       }
 
       prev.delete('routes');
+      prev.delete('tags');
 
       return prev;
     });
@@ -47,8 +49,10 @@ function ProjectFilter() {
       allowClear
       disabled={isError}
       onChange={handleOnChange}
+      optionFilterProp="label"
       options={options}
       placeholder="Please select"
+      showSearch
       style={{ width: 400 }}
       value={projectUuid}
     />

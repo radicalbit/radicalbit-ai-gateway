@@ -5,7 +5,7 @@ import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import Lucide from '@Components/lucide';
 import { useGetProjectQuery } from '@State/projects/api';
 import { useGetRouteByNameWithRange } from '@State/routes/vertical-hooks';
-import { Input, Skeleton } from '@radicalbit/radicalbit-design-system';
+import { Board, Input, SectionTitle, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
 import { Key } from 'lucide-react';
 import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -32,9 +32,12 @@ function Curl() {
   const projectUuid = searchParams.get('projectUuid');
 
   const { isLoading, isError, isSuccess } = useGetProjectQuery(projectUuid, { skip: !projectUuid });
-  const { isLoading: isRouteLoading,
+  const { data: route,
+    isLoading: isRouteLoading,
     isError: isRouteError,
     isSuccess: isRouteSuccess } = useGetRouteByNameWithRange(name);
+  const chatModels = route?.configuration?.chatModels;
+  const transcriptionModels = route?.configuration?.transcriptionModels;
 
   if (isLoading || isRouteLoading) {
     return <Skeleton.Input active block />;
@@ -42,6 +45,10 @@ function Curl() {
 
   if (isError || isRouteError) {
     return <SomethingWentWrong />;
+  }
+
+  if (!chatModels?.length && !transcriptionModels?.length) {
+    return <IsEmpty />;
   }
 
   if (!isSuccess || !isRouteSuccess) {
@@ -57,6 +64,21 @@ function Curl() {
   );
 }
 
+function IsEmpty() {
+  return (
+    <Board
+      main={(
+        <Void
+          description="This route has no models configured yet. cURL examples appear once you add a chat or transcription model."
+          size="small"
+          title="No cURL available"
+        />
+      )}
+      size="small"
+    />
+  );
+}
+
 function ChatCurl() {
   const { name } = useParams();
   const [apiKey, setApiKey] = useState('');
@@ -67,23 +89,37 @@ function ChatCurl() {
   const { data } = useGetProjectQuery(projectUuid, { skip: !projectUuid });
   const projectName = data?.name;
 
+  const { data: route } = useGetRouteByNameWithRange(name);
+  const chatModels = route?.configuration?.chatModels;
+
   const handleOnChangeApiKey = ({ target: { value } }) => { setApiKey(value); };
 
+  if (!chatModels?.length) {
+    return false;
+  }
+
   return (
-    <CodeBlock
-      actions={(
-        <Input
-          onChange={handleOnChangeApiKey}
-          placeholder="Paste your credential"
-          prefix={<Lucide icon={Key} />}
-          value={apiKey}
-        />
+    <Board
+      borderType="none"
+      header={<SectionTitle title="Chat model cURL" />}
+      main={(
+        <CodeBlock
+          actions={(
+            <Input
+              onChange={handleOnChangeApiKey}
+              placeholder="Paste your credential"
+              prefix={<Lucide icon={Key} />}
+              value={apiKey}
+            />
+          )}
+          code={CURL_COMMAND(projectName, name, apiKey)}
+          hasCopyToClipboard
+        >
+          <CodeBlockRawText text={CURL_COMMAND(projectName, name, apiKey)} />
+        </CodeBlock>
       )}
-      code={CURL_COMMAND(projectName, name, apiKey)}
-      hasCopyToClipboard
-    >
-      <CodeBlockRawText text={CURL_COMMAND(projectName, name, apiKey)} />
-    </CodeBlock>
+      size="small"
+    />
   );
 }
 
@@ -98,28 +134,36 @@ function TranscriptionCurl() {
   const projectName = data?.name;
 
   const { data: route } = useGetRouteByNameWithRange(name);
+  const transcriptionModels = route?.configuration?.transcriptionModels;
 
   const handleOnChangeApiKey = ({ target: { value } }) => { setApiKey(value); };
 
-  if (!route?.configuration?.transcriptionModels?.length) {
+  if (!transcriptionModels?.length) {
     return false;
   }
 
   return (
-    <CodeBlock
-      actions={(
-        <Input
-          onChange={handleOnChangeApiKey}
-          placeholder="Paste your credential"
-          prefix={<Lucide icon={Key} />}
-          value={apiKey}
-        />
+    <Board
+      borderType="none"
+      header={<SectionTitle title="Transcription model cURL" />}
+      main={(
+        <CodeBlock
+          actions={(
+            <Input
+              onChange={handleOnChangeApiKey}
+              placeholder="Paste your credential"
+              prefix={<Lucide icon={Key} />}
+              value={apiKey}
+            />
+          )}
+          code={CURL_COMMAND_TRANSCRIPTION(projectName, name, apiKey)}
+          hasCopyToClipboard
+        >
+          <CodeBlockRawText text={CURL_COMMAND_TRANSCRIPTION(projectName, name, apiKey)} />
+        </CodeBlock>
       )}
-      code={CURL_COMMAND_TRANSCRIPTION(projectName, name, apiKey)}
-      hasCopyToClipboard
-    >
-      <CodeBlockRawText text={CURL_COMMAND_TRANSCRIPTION(projectName, name, apiKey)} />
-    </CodeBlock>
+      size="small"
+    />
   );
 }
 

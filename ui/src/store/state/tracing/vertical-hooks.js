@@ -1,4 +1,5 @@
 import { tracesPageSize } from '@Src/constants';
+import { parseTagsFromTagsKey } from '@State/tags-query-params-factory';
 import {
   useGetSpanByIdQuery,
   useGetSpanLatenciesQuery,
@@ -7,6 +8,7 @@ import {
   useGetTracesChartQuery,
   useGetTracesQuery,
 } from '@State/tracing/api';
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 const useQueryRangeParams = () => {
@@ -19,41 +21,44 @@ const useQueryRangeParams = () => {
   const routesParam = searchParams.get('routes');
   const routes = routesParam ? routesParam.split(',') : [];
 
+  const tagsKey = searchParams.getAll('tags').join('&');
+  const tags = useMemo(() => parseTagsFromTagsKey(tagsKey), [tagsKey]);
+
   return {
-    from, to, routes, projectUuid,
+    from, to, routes, tags, projectUuid,
   };
 };
 
 const useGetTracesChartWithRange = (options) => {
-  const { from, to, routes, projectUuid } = useQueryRangeParams();
+  const { from, to, routes, tags, projectUuid } = useQueryRangeParams();
 
   return useGetTracesChartQuery({
-    projectUuid, from, to, routes,
+    projectUuid, from, to, routes, tags,
   }, { skip: !projectUuid, ...options });
 };
 
 const useGetTraceLatenciesWithRange = (options) => {
-  const { from, to, routes, projectUuid } = useQueryRangeParams();
+  const { from, to, routes, tags, projectUuid } = useQueryRangeParams();
 
   return useGetTraceLatenciesQuery({
-    projectUuid, from, to, routes,
+    projectUuid, from, to, routes, tags,
   }, { skip: !projectUuid, ...options });
 };
 
 const useGetSpanLatenciesWithRange = ({ includeOthers, grouped }, options) => {
-  const { from, to, routes, projectUuid } = useQueryRangeParams();
+  const { from, to, routes, tags, projectUuid } = useQueryRangeParams();
 
   return useGetSpanLatenciesQuery({
-    projectUuid, from, to, routes, includeOthers, grouped,
+    projectUuid, from, to, routes, tags, includeOthers, grouped,
   }, { skip: !projectUuid, ...options });
 };
 
 const useGetTracesWithRange = (args, options) => {
-  const { from, to, routes, projectUuid } = useQueryRangeParams();
+  const { from, to, routes, tags, projectUuid } = useQueryRangeParams();
   const page = args?.page;
 
   return useGetTracesQuery({
-    projectUuid, from, to, routes, page, limit: tracesPageSize,
+    projectUuid, from, to, routes, tags, page, limit: tracesPageSize,
   }, { skip: !projectUuid, ...options });
 };
 

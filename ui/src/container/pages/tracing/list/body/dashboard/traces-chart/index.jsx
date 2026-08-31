@@ -1,7 +1,7 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetTracesChartWithRange } from '@Src/store/state/tracing/vertical-hooks';
-import { Board, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
+import { Board, Skeleton, Spinner, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import { useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -13,7 +13,7 @@ const chartWidthAndHeight = {
 };
 
 function TracesChart() {
-  const { data, isError, isLoading, isSuccess } = useGetTracesChartWithRange();
+  const { data, isError, isFetching, isLoading, isSuccess } = useGetTracesChartWithRange();
   const chartData = data?.data || [];
 
   if (isLoading) {
@@ -22,6 +22,10 @@ function TracesChart() {
 
   if (isError) {
     return <IsError />;
+  }
+
+  if (isFetching) {
+    return <IsFetching />;
   }
 
   if (!chartData.length) {
@@ -40,6 +44,21 @@ function IsError() {
     <Board
       main={<SomethingWentWrong size="small" style={chartWidthAndHeight} />}
       size="xsmall"
+    />
+  );
+}
+
+function IsFetching() {
+  return (
+    <Board
+      main={(
+        <Void
+          actions={<Spinner spinning />}
+          description="Fetching the latest trace data. The chart will appear as soon as it is ready."
+          style={chartWidthAndHeight}
+          title="Loading traces by time"
+        />
+      )}
     />
   );
 }
@@ -104,10 +123,11 @@ const useGetChartKeyRef = () => {
   const from = searchParams.get('from') || null;
   const to = searchParams.get('to') || null;
   const routes = searchParams.get('routes') || null;
+  const tags = searchParams.getAll('tags').join('&') || null;
 
   useEffect(() => {
-    ref.current = [from, to, routes].filter(Boolean).join('-');
-  }, [from, routes, to]);
+    ref.current = [from, to, routes, tags].filter(Boolean).join('-');
+  }, [from, routes, tags, to]);
 
   return ref;
 };

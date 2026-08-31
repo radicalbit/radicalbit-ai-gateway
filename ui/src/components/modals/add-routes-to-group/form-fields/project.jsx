@@ -29,8 +29,10 @@ function Project() {
         allowClear
         disabled={isError}
         onChange={handleOnChange}
+        optionFilterProp="label"
         options={options}
         placeholder="Please select"
+        showSearch
         value={projectUuid}
       />
     </FormField>
