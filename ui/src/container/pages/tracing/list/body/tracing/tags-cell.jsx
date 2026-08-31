@@ -15,8 +15,8 @@ function TagsCell({ tags }) {
   return (
     <div className="flex flex-col gap-2">
       {visibleTags.map((tag) => (
-        <i>
-          <Tag key={tag} size="large" type="primary-outlined">
+        <i key={tag}>
+          <Tag size="large" type="primary-outlined">
             <Truncate style={{ maxWidth: CELL_WIDTH }} tooltip={{ title: tag, placement: 'top' }}>{tag}</Truncate>
           </Tag>
         </i>
@@ -42,8 +42,8 @@ function HiddenTags({ count, tags }) {
       content={(
         <div className="flex flex-col gap-2">
           {tags.map((tag) => (
-            <i>
-              <Tag key={tag} size="large" type="primary-outlined">
+            <i key={tag}>
+              <Tag size="large" type="primary-outlined">
                 <Truncate style={{ maxWidth: CELL_WIDTH }} tooltip={{ title: tag, placement: 'top' }}>{tag}</Truncate>
               </Tag>
             </i>
