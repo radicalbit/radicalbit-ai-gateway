@@ -1,4 +1,11 @@
+import logging
+
 from fastapi import HTTPException, Request
+
+from radicalbit_ai_gateway.utils.app_config import get_app_config
+
+app_config = get_app_config()
+logger = logging.getLogger(app_config.log_config.logger_name)
 
 
 async def get_gateway_routes(request: Request) -> dict:
@@ -13,4 +20,14 @@ async def get_gateway_routes(request: Request) -> dict:
 
 
 async def get_request_uuid(request: Request) -> str:
-    return request.state.request_uuid
+
+    request_uuid = getattr(request.state, 'request_uuid', None)
+    if request_uuid is None:
+        logger.warning(
+            'No request_uuid stamped for %s %s; RequestEventMiddleware did not '
+            'match this path. Serving the request unattributed.',
+            request.method,
+            request.url.path,
+        )
+        return ''
+    return request_uuid
