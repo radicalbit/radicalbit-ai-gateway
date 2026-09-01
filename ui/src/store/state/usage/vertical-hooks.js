@@ -1,4 +1,5 @@
 import { useGetRoutesQuery } from '@State/routes/api';
+import { parseTagsFromTagsKey } from '@State/tags-query-params-factory';
 import {
   useGetCostsByGroupStreamQuery,
   useGetCostsByKeyStreamQuery,
@@ -9,6 +10,7 @@ import {
   useGetLimitsStreamQuery,
   useGetTokensChartStreamQuery,
 } from '@State/usage/api';
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 const useQueryRangeParams = () => {
@@ -18,7 +20,10 @@ const useQueryRangeParams = () => {
   const to = searchParams.get('to') || null;
   const projectUuid = searchParams.get('projectUuid') || null;
 
-  return { gte, from, to, projectUuid };
+  const tagsKey = searchParams.getAll('tags').join('&');
+  const tags = useMemo(() => parseTagsFromTagsKey(tagsKey), [tagsKey]);
+
+  return { gte, from, to, tags, projectUuid };
 };
 
 const useGetProjectRoutesWithRange = (options) => {
@@ -28,58 +33,58 @@ const useGetProjectRoutesWithRange = (options) => {
 };
 
 const useGetCostsSummaryStreamWithRange = ({ routes, withSavedTokens }, options) => {
-  const { gte, from, to, projectUuid } = useQueryRangeParams();
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
   return useGetCostsSummaryStreamQuery({
-    projectUuid, routes, withSavedTokens, gte, from, to,
+    projectUuid, routes, tags, withSavedTokens, gte, from, to,
   }, options);
 };
 
 const useGetTokensChartStreamWithRange = ({ routes }, options) => {
-  const { gte, from, to, projectUuid } = useQueryRangeParams();
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
   return useGetTokensChartStreamQuery({
-    projectUuid, routes, gte, from, to,
+    projectUuid, routes, tags, gte, from, to,
   }, options);
 };
 
 const useGetInvocationsChartStreamWithRange = ({ routes }, options) => {
-  const { gte, from, to, projectUuid } = useQueryRangeParams();
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
   return useGetInvocationsChartStreamQuery({
-    projectUuid, routes, gte, from, to,
+    projectUuid, routes, tags, gte, from, to,
   }, options);
 };
 
 const useGetCostsChartStreamWithRange = ({ routes, groupBy }, options) => {
-  const { gte, from, to, projectUuid } = useQueryRangeParams();
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
   return useGetCostsChartStreamQuery({
-    projectUuid, routes, groupBy, gte, from, to,
+    projectUuid, routes, tags, groupBy, gte, from, to,
   }, options);
 };
 
 const useGetCostsByModelStreamWithRange = ({ modelId, routes }, options) => {
-  const { gte, from, to, projectUuid } = useQueryRangeParams();
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
   return useGetCostsByModelStreamQuery({
-    projectUuid, modelId, routes, gte, from, to,
+    projectUuid, modelId, routes, tags, gte, from, to,
   }, options);
 };
 
 const useGetCostsByGroupStreamWithRange = ({ groupUuid, routes }, options) => {
-  const { gte, from, to, projectUuid } = useQueryRangeParams();
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
   return useGetCostsByGroupStreamQuery({
-    projectUuid, groupUuid, routes, gte, from, to,
+    projectUuid, groupUuid, routes, tags, gte, from, to,
   }, options);
 };
 
 const useGetCostsByKeyStreamWithRange = ({ keyUuid, routes }, options) => {
-  const { gte, from, to, projectUuid } = useQueryRangeParams();
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
   return useGetCostsByKeyStreamQuery({
-    projectUuid, keyUuid, routes, gte, from, to,
+    projectUuid, keyUuid, routes, tags, gte, from, to,
   }, options);
 };
 

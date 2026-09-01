@@ -72,6 +72,12 @@ class TokenOutputLimitEventDetailDTO(BaseEventDetailDTO):
     event_type: Literal['TOKEN_OUTPUT_LIMIT']
 
 
+class DurationLimitEventDetailDTO(BaseEventDetailDTO):
+    """DTO for AUDIO_DURATION_LIMIT event type."""
+
+    event_type: Literal['AUDIO_DURATION_LIMIT']
+
+
 class CacheHitEventDetailDTO(BaseEventDetailDTO):
     """DTO for CACHE_HIT event type."""
 
@@ -225,6 +231,7 @@ class EventsDTO(BaseModel):
     rate_limit_triggered: int | None = None
     token_input_limit_triggered: int | None = None
     token_output_limit_triggered: int | None = None
+    duration_limit_triggered: int | None = None
     cache: Cache | None = None
     total_requests: int = 0
     request_error_percentage: Annotated[
@@ -264,6 +271,7 @@ class EventsDTO(BaseModel):
                 ),
                 'rate_limiting_enabled': bool(route_config.rate_limiting),
                 'token_limiting_enabled': bool(route_config.token_limiting),
+                'duration_limiting_enabled': bool(route_config.duration_limiting),
             }
         return {
             'fallback_enabled': any(r.fallback for r in config.routes.values()),
@@ -280,6 +288,9 @@ class EventsDTO(BaseModel):
             ),
             'token_limiting_enabled': any(
                 r.token_limiting for r in config.routes.values()
+            ),
+            'duration_limiting_enabled': any(
+                r.duration_limiting for r in config.routes.values()
             ),
         }
 
@@ -361,6 +372,9 @@ class EventsDTO(BaseModel):
             token_output_limit_triggered=counters.token_output_limit_triggered
             if counters and flags['token_limiting_enabled']
             else None,
+            duration_limit_triggered=counters.duration_limit_triggered
+            if counters and flags['duration_limiting_enabled']
+            else None,
             total_input_token_processed=tokens_counter_dto.total_input_token_processed,
             total_output_token_processed=tokens_counter_dto.total_output_token_processed,
             cache=cache,
@@ -429,6 +443,9 @@ class LastNEvents(BaseModel):
     token_output_limit: list[TokenOutputLimitEventDetailDTO] | None = Field(
         default_factory=list
     )
+    duration_limit: list[DurationLimitEventDetailDTO] | None = Field(
+        default_factory=list
+    )
     cache_triggered: list[CacheHitEventDetailDTO] | None = Field(default_factory=list)
 
     @staticmethod
@@ -438,6 +455,7 @@ class LastNEvents(BaseModel):
         rate_limit: list[RateLimitEventDetailDTO],
         token_input_limit: list[TokenInputLimitEventDetailDTO],
         token_output_limit: list[TokenOutputLimitEventDetailDTO],
+        duration_limit: list[DurationLimitEventDetailDTO],
         cache_triggered: list[CacheHitEventDetailDTO],
         route_config: GatewayRouteConfig,
     ) -> 'LastNEvents':
@@ -450,6 +468,9 @@ class LastNEvents(BaseModel):
             else None,
             token_output_limit=token_output_limit
             if route_config.token_limiting is not None
+            else None,
+            duration_limit=duration_limit
+            if route_config.duration_limiting is not None
             else None,
             cache_triggered=cache_triggered
             if route_config.caching is not None
@@ -1174,6 +1195,7 @@ class RouteProgressBarsDTO(BaseModel):
     token_input: WindowProgressBarDTO | None = None
     token_output: WindowProgressBarDTO | None = None
     rate: WindowProgressBarDTO | None = None
+    duration: WindowProgressBarDTO | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()

@@ -2,6 +2,7 @@
   "name": "radicalbit-ai-gateway-ui",
   "private": true,
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "start:local": "vite --mode development --host 0.0.0.0",
@@ -16,7 +17,7 @@
   "dependencies": {
     "@fortawesome/free-solid-svg-icons": "^6.5.2",
     "@radicalbit/formbit": "2.1.0",
-    "@radicalbit/radicalbit-design-system": "2.19.5",
+    "@radicalbit/radicalbit-design-system": "2.19.6",
     "@reduxjs/toolkit": "^2.8.2",
     "@vitejs/plugin-react": "^4.2.1",
     "ace-builds": "^1.33.2",

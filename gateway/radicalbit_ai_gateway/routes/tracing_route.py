@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Union
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi_pagination import Page, Params
 
 from radicalbit_ai_gateway.models.trace_dto import (
@@ -16,6 +16,7 @@ from radicalbit_ai_gateway.models.trace_dto import (
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.chart_utils import determine_granularity
+from radicalbit_ai_gateway.utils.request_tags import parse_tags_query
 
 
 class TracingRoute:
@@ -37,6 +38,7 @@ class TracingRoute:
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
             routes: Annotated[list[str] | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project_service.validate_exists(project_uuid)
             from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
@@ -48,6 +50,7 @@ class TracingRoute:
                 _from=from_dt,
                 _to=to_dt,
                 granularity=granularity,
+                tags=tags,
             )
 
         @router.get(
@@ -61,6 +64,7 @@ class TracingRoute:
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
             routes: Annotated[list[str] | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project_service.validate_exists(project_uuid)
             from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
@@ -70,6 +74,7 @@ class TracingRoute:
                 route_names=routes,
                 _from=from_dt,
                 _to=to_dt,
+                tags=tags,
             )
 
         @router.get(
@@ -85,6 +90,7 @@ class TracingRoute:
             routes: Annotated[list[str] | None, Query()] = None,
             grouped: Annotated[bool, Query()] = False,
             include_others: Annotated[bool, Query()] = False,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project_service.validate_exists(project_uuid)
             from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
@@ -96,12 +102,14 @@ class TracingRoute:
                     _from=from_dt,
                     _to=to_dt,
                     include_others=include_others,
+                    tags=tags,
                 )
             return tracing_service.get_span_latencies(
                 project_uuid=project_uuid,
                 route_names=routes,
                 _from=from_dt,
                 _to=to_dt,
+                tags=tags,
             )
 
         @router.get(
@@ -119,6 +127,7 @@ class TracingRoute:
             keys: Annotated[list[UUID] | None, Query()] = None,
             _page: Annotated[int, Query(ge=1)] = 1,
             _limit: Annotated[int, Query(ge=1, le=100)] = 50,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project_service.validate_exists(project_uuid)
             from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
@@ -132,6 +141,7 @@ class TracingRoute:
                 _from=from_dt,
                 _to=to_dt,
                 params=params,
+                tags=tags,
             )
 
         @router.get(

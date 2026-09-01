@@ -1,11 +1,12 @@
 import { API_TAGS, apiService } from '@Src/store/apis';
+import { appendTagsToParams } from '@State/tags-query-params-factory';
 import timeFiltersQueryParamFactory from '@State/time-filter-query-params-factory';
 
 export const tracingApiSlice = apiService.injectEndpoints({
   endpoints: (builder) => ({
     getTracesChart: builder.query({
       providesTags: () => [API_TAGS.TRACING],
-      query: ({ projectUuid, from, to, routes }) => {
+      query: ({ projectUuid, from, to, routes, tags }) => {
         const init = {};
 
         const params = timeFiltersQueryParamFactory({ from, to, init });
@@ -15,6 +16,8 @@ export const tracingApiSlice = apiService.injectEndpoints({
             params.append('routes', route);
           });
         }
+
+        appendTagsToParams(params, tags);
 
         return ({
           url: `/projects/${projectUuid}/traces/chart?${params.toString()}`,
@@ -25,7 +28,7 @@ export const tracingApiSlice = apiService.injectEndpoints({
 
     getTraceLatencies: builder.query({
       providesTags: () => [API_TAGS.TRACING],
-      query: ({ projectUuid, from, to, routes }) => {
+      query: ({ projectUuid, from, to, routes, tags }) => {
         const init = {};
 
         const params = timeFiltersQueryParamFactory({ from, to, init });
@@ -35,6 +38,8 @@ export const tracingApiSlice = apiService.injectEndpoints({
             params.append('routes', route);
           });
         }
+
+        appendTagsToParams(params, tags);
 
         return ({
           url: `/projects/${projectUuid}/traces/latencies?${params.toString()}`,
@@ -46,7 +51,7 @@ export const tracingApiSlice = apiService.injectEndpoints({
     getSpanLatencies: builder.query({
       providesTags: () => [API_TAGS.TRACING],
       query: ({
-        projectUuid, from, to, routes, includeOthers = false, grouped = false,
+        projectUuid, from, to, routes, tags, includeOthers = false, grouped = false,
       }) => {
         const init = {
           grouped,
@@ -60,6 +65,8 @@ export const tracingApiSlice = apiService.injectEndpoints({
             params.append('routes', route);
           });
         }
+
+        appendTagsToParams(params, tags);
 
         return ({
           url: `/projects/${projectUuid}/traces/spans/latencies?${params.toString()}`,
@@ -87,7 +94,7 @@ export const tracingApiSlice = apiService.injectEndpoints({
     getTraces: builder.query({
       providesTags: () => [API_TAGS.TRACING],
       query: ({
-        projectUuid, from, to, routes, page, limit,
+        projectUuid, from, to, routes, tags, page, limit,
       }) => {
         const init = {};
 
@@ -98,6 +105,8 @@ export const tracingApiSlice = apiService.injectEndpoints({
             params.append('routes', route);
           });
         }
+
+        appendTagsToParams(params, tags);
 
         if (page !== undefined) {
           params.append('_page', page);

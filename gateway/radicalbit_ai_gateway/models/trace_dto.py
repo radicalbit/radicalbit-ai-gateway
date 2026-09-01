@@ -50,6 +50,7 @@ class TraceDTO(BaseModel):
     api_key_name: str | None = None
     group_uuid: UUID | None = None
     group_name: str | None = None
+    tags: list[str] = Field(default_factory=list)
     tree: TreeNodeDTO | None = None  # Optional - only for detail view
 
     model_config = ConfigDict(

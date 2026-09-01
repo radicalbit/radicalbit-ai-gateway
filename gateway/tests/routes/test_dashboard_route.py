@@ -155,6 +155,23 @@ class TestDashboardRoute(unittest.TestCase):
         assert response.status_code == 200
         assert response.json() == jsonable_encoder(mock_metric_dto, exclude_none=True)
 
+    def test_metrics_endpoint_with_tags(self):
+        self.event_service.get_total_counter = MagicMock(
+            return_value=EventsDTO(request_error_percentage=0.0)
+        )
+        response = self.client.get(
+            f'{self.project_path}/metrics'
+            '?tags=env=prod&tags=env=staging&tags=cost_center=retail'
+        )
+        assert response.status_code == 200
+
+        call_kwargs = self.event_service.get_total_counter.call_args.kwargs
+        assert call_kwargs['tags'] == ['env=prod', 'env=staging', 'cost_center=retail']
+
+    def test_metrics_endpoint_with_malformed_tag_returns_400(self):
+        response = self.client.get(f'{self.project_path}/metrics?tags=not-a-tag')
+        assert response.status_code == 400
+
     def test_routes_endpoint(self):
         metrics = EventsDTO(
             fallbacks=None,
@@ -1342,6 +1359,7 @@ class TestDashboardRoute(unittest.TestCase):
             timestamp=timestamp,
             granularity='days',
             routes=None,
+            tags=None,
         )
 
     def test_get_cost_breakdown_by_model_with_routes_filter(self):
@@ -1362,6 +1380,7 @@ class TestDashboardRoute(unittest.TestCase):
             timestamp=timestamp,
             granularity='hours',
             routes=['route-a'],
+            tags=None,
         )
 
     def test_get_cost_breakdown_by_key(self):
@@ -1383,6 +1402,7 @@ class TestDashboardRoute(unittest.TestCase):
             timestamp=timestamp,
             granularity='weeks',
             routes=None,
+            tags=None,
         )
 
     def test_get_cost_breakdown_by_group(self):
@@ -1404,6 +1424,7 @@ class TestDashboardRoute(unittest.TestCase):
             timestamp=timestamp,
             granularity='months',
             routes=None,
+            tags=None,
         )
 
 

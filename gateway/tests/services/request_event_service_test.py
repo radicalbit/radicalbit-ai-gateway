@@ -15,6 +15,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     RequestChartDataDTO,
     RequestGroupedChartDataDTO,
 )
+from radicalbit_ai_gateway.models.tag_dto import TagKeysDTO, TagKeyValuesDTO
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.utils.chart_utils import calculate_increment_percentage
 
@@ -82,6 +83,20 @@ class RequestEventServiceTest(unittest.TestCase):
             total=0, granularity='hours', timestamp=[], data=[]
         )
         assert res == expected
+
+    def test_get_request_chart_data_forwards_tags(self):
+        self.request_event_dao.get_request_chart_data = MagicMock(return_value=[])
+        tags = ['env=prod', 'cost_center=retail']
+
+        self.request_event_service.get_request_chart_data(
+            self.TEST_PROJECT_UUID, 'rb-gateway', None, None, 'hours', tags=tags
+        )
+
+        self.request_event_dao.get_request_chart_data.assert_called_once()
+        assert (
+            self.request_event_dao.get_request_chart_data.call_args.kwargs['tags']
+            == tags
+        )
 
     def test_get_request_grouped_chart_data(self):
         base_time = datetime.datetime(
@@ -457,3 +472,51 @@ class RequestEventServiceTest(unittest.TestCase):
         assert res.increment_percentage == 0.0
         assert res.chart.total == 0
         assert res.chart.data == []
+
+    def test_get_tag_keys(self):
+        self.request_event_dao.get_distinct_tags = MagicMock(
+            return_value=[
+                'app=my-app',
+                'cost_center=retail',
+                'env=prod',
+                'env=staging',
+            ]
+        )
+
+        res = self.request_event_service.get_tag_keys(self.TEST_PROJECT_UUID)
+
+        expected = TagKeysDTO(tag_keys=['app', 'cost_center', 'env'])
+        assert res == expected
+        self.request_event_dao.get_distinct_tags.assert_called_once_with(
+            self.TEST_PROJECT_UUID
+        )
+
+    def test_get_tag_keys_empty(self):
+        self.request_event_dao.get_distinct_tags = MagicMock(return_value=[])
+
+        res = self.request_event_service.get_tag_keys(self.TEST_PROJECT_UUID)
+
+        assert res == TagKeysDTO(tag_keys=[])
+
+    def test_get_tag_key_values(self):
+        self.request_event_dao.get_distinct_tag_values = MagicMock(
+            return_value=['prod', 'staging']
+        )
+
+        res = self.request_event_service.get_tag_key_values(
+            self.TEST_PROJECT_UUID, 'env'
+        )
+
+        assert res == TagKeyValuesDTO(tag_values=['prod', 'staging'])
+        self.request_event_dao.get_distinct_tag_values.assert_called_once_with(
+            self.TEST_PROJECT_UUID, 'env'
+        )
+
+    def test_get_tag_key_values_empty(self):
+        self.request_event_dao.get_distinct_tag_values = MagicMock(return_value=[])
+
+        res = self.request_event_service.get_tag_key_values(
+            self.TEST_PROJECT_UUID, 'unknown'
+        )
+
+        assert res == TagKeyValuesDTO(tag_values=[])

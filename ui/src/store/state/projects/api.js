@@ -40,6 +40,22 @@ export const projectsApiSlice = apiService.injectEndpoints({
       }),
     }),
 
+    getTagKeysByProject: builder.query({
+      providesTags: (result, error, { projectUuid }) => [{ type: API_TAGS.PROJECTS, id: `tag-keys-${projectUuid}` }],
+      query: ({ projectUuid }) => ({
+        url: `/projects/${projectUuid}/tags/keys`,
+        method: 'get',
+      }),
+    }),
+
+    getTagValuesByProject: builder.query({
+      providesTags: (result, error, { projectUuid, tagKey }) => [{ type: API_TAGS.PROJECTS, id: `tag-values-${projectUuid}-${tagKey}` }],
+      query: ({ projectUuid, tagKey }) => ({
+        url: `/projects/${projectUuid}/tags/keys/${encodeURIComponent(tagKey)}/values`,
+        method: 'get',
+      }),
+    }),
+
     createProject: builder.mutation({
       query: ({ data }) => ({
         url: '/projects',
@@ -230,6 +246,8 @@ export const {
   useGetProjectsQuery,
   useGetProjectQuery,
   useVerifyProjectQuery,
+  useGetTagKeysByProjectQuery,
+  useGetTagValuesByProjectQuery,
   useCreateProjectMutation,
   useDeleteProjectMutation,
   useGetConfigQuery,

@@ -14,6 +14,7 @@ invoked end-to-end.
 import contextlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+import uuid
 
 from langchain_core.messages import HumanMessage
 from openai.types.chat.chat_completion import ChatCompletion
@@ -37,6 +38,8 @@ from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_project_route_registrar,
 )
 from radicalbit_ai_gateway.utils.secrets import resolve_secrets_from_string
+
+_PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
 
 # Minimal config with a literal api_key (no !secret refs needed here —
 # secret resolution is already covered in test_secrets.py).
@@ -95,10 +98,92 @@ def test_build_gateway_routes_from_config_keys():
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     assert set(routes.keys()) == {'my-route'}
     assert isinstance(routes['my-route'], GatewayRoute)
+
+
+_PROJECT_CONFIG_WITH_LIMITS_YAML = """\
+chat_models:
+  - model_id: openai-gpt4o
+    model: openai/gpt-4o-mini
+    credentials:
+      api_key: sk-test-key
+routes:
+  my-route:
+    chat_models:
+      - openai-gpt4o
+    rate_limiting:
+      max_requests: 10
+      window_size: 1 minute
+    token_limiting:
+      input:
+        max_token: 1000
+      output:
+        max_token: 500
+    budget_limiting:
+      max_budget: 5.0
+"""
+
+
+def _build_limited_routes(project_uuid: str):
+    resolved = resolve_secrets_from_string(_PROJECT_CONFIG_WITH_LIMITS_YAML)
+    config = GatewayConfig.model_validate(resolved)
+    return build_gateway_routes_from_config(
+        config,
+        guardrail_engine=_make_guardrail_engine(),
+        redis_client=None,
+        cost_service=MagicMock(spec_set=CostService),
+        httpx_client=None,
+        project_uuid=project_uuid,
+    )
+
+
+def test_build_gateway_routes_scopes_every_limiter_by_project():
+    """Step 3: the project reaches all four limiter windows.
+
+    Route names are unique only within a project, so an unscoped key makes two
+    projects declaring 'my-route' share one window.
+    """
+    project_uuid = '2f1c6d4e-0000-4000-8000-00000000000a'
+    route = _build_limited_routes(project_uuid)['my-route']
+
+    items = [
+        route.request_rate_limiter.item,
+        route.token_limiter.input_item,
+        route.token_limiter.output_item,
+        route.budget_limiter.item,
+    ]
+    assert all(item is not None for item in items)
+    for item in items:
+        assert item.project_uuid == project_uuid
+        # The bare route name is what metrics, limit events and logs report.
+        assert item.route_name == 'my-route'
+
+
+def test_build_gateway_routes_gives_each_project_its_own_keys():
+    """Two projects declaring the same route must not collide in storage."""
+    routes_a = _build_limited_routes('2f1c6d4e-0000-4000-8000-00000000000a')
+    routes_b = _build_limited_routes('2f1c6d4e-0000-4000-8000-00000000000b')
+
+    def keys(routes):
+        route = routes['my-route']
+        limiter = route.request_rate_limiter.limiter
+        return {
+            limiter._build_key(item)
+            for item in (
+                route.request_rate_limiter.item,
+                route.token_limiter.input_item,
+                route.token_limiter.output_item,
+                route.budget_limiter.item,
+            )
+        }
+
+    keys_a, keys_b = keys(routes_a), keys(routes_b)
+    assert len(keys_a) == 4
+    assert keys_a.isdisjoint(keys_b)
 
 
 _PROJECT_CONFIG_WITH_TRANSCRIPTION_YAML = """\
@@ -136,6 +221,7 @@ def test_build_gateway_routes_from_config_resolves_transcription_models():
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     route = routes['my-route']
@@ -158,6 +244,7 @@ def test_build_gateway_routes_from_config_wires_transcription_invoker():
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     route = routes['my-route']
@@ -199,6 +286,7 @@ def test_build_gateway_routes_from_config_transcription_only_route():
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     route = routes['transcription-only-route']
@@ -216,6 +304,7 @@ def test_build_gateway_routes_empty_config():
         redis_client=None,
         cost_service=MagicMock(spec_set=CostService),
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
     assert routes == {}
 
@@ -246,6 +335,7 @@ async def test_project_route_full_pipeline(mock_emit_event, fake_redis_client):
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
+        project_uuid=_PROJECT_UUID,
     )
 
     project_name = 'my-project'
@@ -426,3 +516,51 @@ async def test_startup_skips_failed_project():
 
     assert 'bad-project' not in app.state.project_configs
     assert 'project-a/route-a' in app.state.routes
+
+
+_CACHED_PROJECT_YAML = """\
+cache:
+  redis_host: localhost
+  redis_port: 6379
+chat_models:
+  - model_id: openai-gpt4o
+    model: openai/gpt-4o-mini
+    credentials:
+      api_key: sk-test-key
+routes:
+  my-route:
+    chat_models:
+      - openai-gpt4o
+    caching:
+      type: exact
+      ttl: 60
+"""
+
+
+@pytest.mark.asyncio
+async def test_cache_client_asks_for_resp2():
+    """The cache client must negotiate RESP2.
+
+    redis-py defaults to RESP3 and then parses FT.SEARCH replies as a map,
+    while valkey-search answers with a flat array. The mismatch raises
+    AttributeError inside the client, which SemanticCache.get swallows and
+    reports as a miss, so every semantic lookup fails.
+    """
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            presidio_engine=PresidioEngine(),
+            judge_engine=MagicMock(spec_set=JudgeEngine),
+            redis_client=None,
+            routes={},
+            project_configs={},
+        )
+    )
+    registrar, _deregistrar = build_project_route_registrar(app, httpx_client=None)
+
+    with patch(
+        'radicalbit_ai_gateway.utils.gateway_route_factory.redis.asyncio.Redis',
+        autospec=True,
+    ) as mock_redis:
+        await registrar(uuid.uuid4(), 'cached-project', _CACHED_PROJECT_YAML)
+
+    assert mock_redis.call_args.kwargs['protocol'] == 2

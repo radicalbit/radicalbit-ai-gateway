@@ -7,6 +7,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy import Row, func as F, literal_column, select, text
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
+from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
 from radicalbit_ai_gateway.db.models.trace import (
     CategoryLatencies,
     CategorySpanLatencies,
@@ -36,6 +37,11 @@ _TOTAL_TOKENS_ATTR = "SpanAttributes['llm.usage.total_tokens']"
 _OPERATION_CATEGORY_ATTR = (
     "SpanAttributes['traceloop.association.properties.rb.gateway.operation_category']"
 )
+_TAGS_ATTR = "SpanAttributes['traceloop.association.properties.tags']"
+# Tags are stamped as one comma-joined "key=value,..." string (see
+# set_trace_attributes) since SpanAttributes values are scalar - splitByChar
+# turns it back into the Array(String) shape `add_tags_filter` expects.
+_TAGS_EXPR = f"if({_TAGS_ATTR} = '', [], splitByChar(',', {_TAGS_ATTR}))"
 
 _FIELD_NAMES = ['span_name', 'p50', 'p90', 'p95', 'p99']
 _SPAN_FIELD_NAMES = [
@@ -56,6 +62,7 @@ _SPAN_FIELD_NAMES = [
     'output_tokens',
     'input_tokens',
     'total_tokens',
+    'tags',
 ]
 _SPAN_DETAIL_FIELD_NAMES = [
     'timestamp',
@@ -116,12 +123,18 @@ class OtelTracesDAO:
         self.db = database
         self.T = OtelTraces.__table__
 
+    def _add_tags_filter(self, conditions: list, tags: list[str] | None) -> None:
+        add_tags_filter(
+            conditions, F.splitByChar(',', literal_column(_TAGS_ATTR)), tags=tags
+        )
+
     def get_span_latencies(
         self,
         project_uuid: UUID,
         route_names: list[str] | None,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> list[SpanLatencies]:
         T = self.T
         conditions = [literal_column(_PROJECT_UUID_ATTR) == str(project_uuid)]
@@ -132,6 +145,7 @@ class OtelTracesDAO:
             conditions.append(T.c['Timestamp'] <= _to)
         if route_names:
             conditions.append(literal_column(_ROUTE_NAME_ATTR).in_(route_names))
+        self._add_tags_filter(conditions, tags=tags)
 
         stmt = (
             select(
@@ -160,6 +174,7 @@ class OtelTracesDAO:
         route_names: list[str] | None,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> list:
         T = self.T
         conditions = [literal_column(_PROJECT_UUID_ATTR) == str(project_uuid)]
@@ -169,6 +184,7 @@ class OtelTracesDAO:
             conditions.append(T.c['Timestamp'] <= _to)
         if route_names:
             conditions.append(literal_column(_ROUTE_NAME_ATTR).in_(route_names))
+        self._add_tags_filter(conditions, tags=tags)
         return conditions
 
     def _build_category_expr(self, include_others: bool, conditions: list) -> tuple:
@@ -187,9 +203,10 @@ class OtelTracesDAO:
         _from: datetime | None,
         _to: datetime | None,
         include_others: bool = False,
+        tags: list[str] | None = None,
     ) -> list[CategoryLatencies]:
         conditions = self._build_time_route_conditions(
-            project_uuid, route_names, _from, _to
+            project_uuid, route_names, _from, _to, tags=tags
         )
         cat_col, group_expr, order_expr = self._build_category_expr(
             include_others, conditions
@@ -217,9 +234,10 @@ class OtelTracesDAO:
         _from: datetime | None,
         _to: datetime | None,
         include_others: bool = False,
+        tags: list[str] | None = None,
     ) -> list[CategorySpanLatencies]:
         conditions = self._build_time_route_conditions(
-            project_uuid, route_names, _from, _to
+            project_uuid, route_names, _from, _to, tags=tags
         )
         cat_col, group_expr, order_expr = self._build_category_expr(
             include_others, conditions
@@ -267,6 +285,7 @@ class OtelTracesDAO:
                 literal_column(_OUTPUT_TOKENS_ATTR).label('output_tokens'),
                 literal_column(_INPUT_TOKENS_ATTR).label('input_tokens'),
                 literal_column(_TOTAL_TOKENS_ATTR).label('total_tokens'),
+                literal_column(_TAGS_EXPR).label('tags'),
             )
             .select_from(OtelTraces)
             .where(
@@ -381,6 +400,7 @@ class OtelTracesDAO:
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
     ) -> list[TracesChartDataPoint]:
         """Get trace count data aggregated by time buckets from root spans.
 
@@ -422,6 +442,9 @@ class OtelTracesDAO:
                 F.anyIf(
                     literal_column(_ROUTE_NAME_ATTR), T.c['ParentSpanId'] == ''
                 ).label('route_name'),
+                F.anyIf(literal_column(_TAGS_ATTR), T.c['ParentSpanId'] == '').label(
+                    'tags_str'
+                ),
             )
             .select_from(OtelTraces)
             .where(*conditions)
@@ -433,6 +456,9 @@ class OtelTracesDAO:
         outer_conditions = [trace_agg.c.root_timestamp.isnot(None)]
         if route_names:
             outer_conditions.append(trace_agg.c.route_name.in_(route_names))
+        add_tags_filter(
+            outer_conditions, F.splitByChar(',', trace_agg.c.tags_str), tags=tags
+        )
 
         # Build bucket expression
         bucket_expr = with_timezone_offset(
@@ -494,6 +520,7 @@ class OtelTracesDAO:
         route_names: list[str] | None,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> TraceLatencies:
         """Get trace latencies (in ms) from root spans."""
         T = self.T
@@ -510,6 +537,7 @@ class OtelTracesDAO:
             conditions.append(T.c['Timestamp'] >= _from)
         if _to is not None:
             conditions.append(T.c['Timestamp'] <= _to)
+        self._add_tags_filter(conditions, tags=tags)
 
         stmt = select(
             F.quantile(0.50, literal_column('Duration / 1000000')).label('p50'),
@@ -536,6 +564,7 @@ class OtelTracesDAO:
         _from: datetime | None,
         _to: datetime | None,
         params: Params,
+        tags: list[str] | None = None,
     ) -> Page[Row]:
         """Get paginated root spans with metadata."""
         T = self.T
@@ -557,6 +586,7 @@ class OtelTracesDAO:
                 api_key_uuid_attr.label('api_key_uuid'),
                 literal_column('Duration / 1000000').label('duration_ms'),
                 T.c['Timestamp'].label('created_at'),
+                literal_column(_TAGS_EXPR).label('tags'),
             )
             .select_from(OtelTraces)
             .where(
@@ -576,9 +606,16 @@ class OtelTracesDAO:
             stmt = stmt.where(T.c['Timestamp'] >= _from)
         if _to is not None:
             stmt = stmt.where(T.c['Timestamp'] <= _to)
+        tags_conditions: list = []
+        self._add_tags_filter(tags_conditions, tags=tags)
+        if tags_conditions:
+            stmt = stmt.where(*tags_conditions)
 
         with self.db.begin_session() as session:
-            return paginate(session, stmt, params)
+            # unique=False: rows now include the `tags` array column, which
+            # isn't hashable, so paginate()'s default row-dedup can't run.
+            # Every row is already unique (TraceId is unique per root span).
+            return paginate(session, stmt, params, unique=False)
 
     def get_spans_stats_by_trace_ids(
         self,

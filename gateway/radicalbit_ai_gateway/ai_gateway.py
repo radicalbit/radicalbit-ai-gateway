@@ -31,6 +31,7 @@ from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
     TranscriptionModelInvoker,
 )
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
+from radicalbit_ai_gateway.limiting.duration_limiter import DurationLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.limiting.token_limiter import TokenLimiter
 from radicalbit_ai_gateway.metrics.define_metrics import (
@@ -105,6 +106,7 @@ class GatewayRoute:
         token_limiter: TokenLimiter | None = None,
         rate_limiter: RequestRateLimiter | None = None,
         budget_limiter: BudgetLimiter | None = None,
+        duration_limiter: DurationLimiter | None = None,
         transcription_models: list[Model] | None = None,
         project_uuid: str = '',
         project_name: str = '',
@@ -121,6 +123,7 @@ class GatewayRoute:
         self.token_limiter = token_limiter
         self.budget_limiter = budget_limiter
         self.request_rate_limiter = rate_limiter
+        self.duration_limiter = duration_limiter
         self.cost_service = cost_service
         fallback_models = self.gateway_route_config.fallback
 
@@ -295,6 +298,7 @@ class GatewayRoute:
             await self._cache_response(
                 output.response,
                 prepared.cache_key,
+                route_name,
                 api_key_uuid,
                 prepared.embeddings,
             )
@@ -531,6 +535,7 @@ class GatewayRoute:
                 final_usage=final_usage,
                 model_id_invoked=prepared.model_selected.model_id,
                 cache_key=prepared.cache_key,
+                route_name=route_name,
                 key_uuid=api_key_uuid,
                 embeddings=prepared.embeddings,
             )
@@ -606,6 +611,7 @@ class GatewayRoute:
         if use_cache:
             set_operation_category(OperationCategory.CACHE)
             cache_key = self.gateway_cache.generate_embedding_cache_key(
+                project_uuid=self.project_uuid,
                 route_name=route_name,
                 key_uuid=api_key_uuid,
                 input_texts=redacted_texts,
@@ -708,9 +714,65 @@ class GatewayRoute:
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._select_and_prepare_transcription_model()
 
+        use_cache = self.gateway_cache and self.gateway_cache.cache_type in (
+            CacheType.EXACT,
+            CacheType.IN_MEMORY,
+        )
+        cache_key = ''
+        if use_cache:
+            set_operation_category(OperationCategory.CACHE)
+            cache_key = self.gateway_cache.generate_transcription_cache_key(
+                project_uuid=self.project_uuid,
+                route_name=route_name,
+                key_uuid=api_key_uuid,
+                audio_bytes=audio_bytes,
+                model_id=model_selected.model_id,
+                response_format=requested_response_format,
+                language=language,
+                prompt=prompt,
+                temperature=temperature,
+            )
+            raw_cached_response = await self.gateway_cache.get(cache_key)
+            if raw_cached_response:
+                logger.debug('Transcription cache hit. Key: %s', cache_key)
+                cached_body: Transcription | TranscriptionVerbose
+                if requested_response_format == 'verbose_json':
+                    cached_body = TranscriptionVerbose.model_validate_json(
+                        raw_cached_response
+                    )
+                else:
+                    cached_body = Transcription.model_validate_json(raw_cached_response)
+
+                self._emit_cache_events_and_metrics(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    group_uuid=group_uuid,
+                    api_key_name=api_key_name,
+                    group_name=group_name,
+                    route_name=route_name,
+                    model_id=model_selected.model_id,
+                    usage=None,
+                    cache_type=self.gateway_cache.cache_type,
+                )
+
+                return cached_body
+
         if self.budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
             await self.budget_limiter.check_budget()
+
+        if self.duration_limiter:
+            set_operation_category(OperationCategory.LIMITING)
+            await self.duration_limiter.check_and_count_duration(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                audio_bytes=audio_bytes,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
         set_operation_category(OperationCategory.INVOCATION)
         result = await self.transcription_invoker.transcribe(
@@ -733,6 +795,13 @@ class GatewayRoute:
         )
 
         await self._count_transcription_usage(result.usage, model_selected)
+
+        if use_cache and cache_key:
+            await self.gateway_cache.set(
+                cache_key=cache_key,
+                response=result.model_dump_json(indent=None),
+                ttl=self.ttl,
+            )
 
         return result
 
@@ -765,6 +834,19 @@ class GatewayRoute:
         if self.budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
             await self.budget_limiter.check_budget()
+
+        if self.duration_limiter:
+            set_operation_category(OperationCategory.LIMITING)
+            await self.duration_limiter.check_and_count_duration(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                audio_bytes=audio_bytes,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
         set_operation_category(OperationCategory.INVOCATION)
         final_event: TranscriptionStreamEvent | None = None
@@ -1283,6 +1365,7 @@ class GatewayRoute:
         if self.gateway_cache:
             if messages_for_cache:
                 cache_key = self.gateway_cache.generate_cache_key(
+                    project_uuid=self.project_uuid,
                     route_name=route_name,
                     key_uuid=api_key_uuid,
                     messages=messages_for_cache,
@@ -1344,6 +1427,8 @@ class GatewayRoute:
         kwargs = {
             'embeddings': embeddings,
             'user_content': user_content,
+            'project_uuid': self.project_uuid,
+            'route_name': route_name,
             'key_uuid': api_key_uuid,
             'k': 1,
         }
@@ -1385,12 +1470,15 @@ class GatewayRoute:
         self,
         redacted_response: ChatCompletion,
         cache_key: str,
+        route_name: str,
         key_uuid: str | None,
         embeddings: np.ndarray | None,
     ) -> None:
         """Cache the response if caching is enabled."""
         kwargs = {
             'embeddings': embeddings,
+            'project_uuid': self.project_uuid,
+            'route_name': route_name,
             'key_uuid': key_uuid,
         }
         await self.gateway_cache.set(
@@ -1834,6 +1922,7 @@ class GatewayRoute:
                 final_usage=final_usage,
                 model_id_invoked=model_id_invoked,
                 cache_key=cache_key,
+                route_name=route_name,
                 key_uuid=api_key_uuid,
                 embeddings=embeddings,
                 request_id=request_uuid,
@@ -1873,6 +1962,7 @@ class GatewayRoute:
         final_usage: dict | None,
         model_id_invoked: str,
         cache_key: str,
+        route_name: str,
         key_uuid: str,
         embeddings: list[float] | None,
         request_id: str | None = None,
@@ -1889,6 +1979,7 @@ class GatewayRoute:
         await self._cache_response(
             full_response,
             cache_key,
+            route_name,
             key_uuid,
             embeddings,
         )

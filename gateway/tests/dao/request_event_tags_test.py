@@ -1,0 +1,229 @@
+"""The TAGS storage format, exercised against a real ClickHouse.
+
+Tags are stored as canonical ``key=value`` entries in a flat ``Array(String)``.
+These tests pin the two queries that format exists to serve: filtering events by
+one or more tags, and listing the tags available in a project.
+"""
+
+import datetime
+import uuid
+
+from sqlalchemy import distinct, func, select
+
+from tests.common import db_mock
+from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
+
+from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
+from radicalbit_ai_gateway.db.tables.request_event_table import RequestEvent
+
+PROJECT_A = uuid.UUID('11111111-1111-1111-1111-111111111111')
+PROJECT_B = uuid.UUID('22222222-2222-2222-2222-222222222222')
+TIMESTAMP = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
+
+
+class RequestEventTagsTest(DatabaseIntegrationClickhouse):
+    T = RequestEvent.__table__
+
+    def _seed(self):
+        self.insert(
+            [
+                db_mock.get_sample_request_event(
+                    timestamp=TIMESTAMP,
+                    project_uuid=PROJECT_A,
+                    tags=['app=my-app', 'cost_center=retail', 'env=prod'],
+                ),
+                db_mock.get_sample_request_event(
+                    timestamp=TIMESTAMP,
+                    project_uuid=PROJECT_A,
+                    tags=['cost_center=retail', 'env=staging'],
+                ),
+                db_mock.get_sample_request_event(
+                    timestamp=TIMESTAMP,
+                    project_uuid=PROJECT_A,
+                    tags=['env=prod'],
+                ),
+                db_mock.get_sample_request_event(
+                    timestamp=TIMESTAMP,
+                    project_uuid=PROJECT_A,
+                    tags=[],
+                ),
+                db_mock.get_sample_request_event(
+                    timestamp=TIMESTAMP,
+                    project_uuid=PROJECT_B,
+                    tags=['env=prod', 'team=platform'],
+                ),
+            ]
+        )
+
+    def _count_where(self, condition):
+        stmt = (
+            select(func.count())
+            .select_from(RequestEvent)
+            .where(self.T.c['PROJECT_UUID'] == str(PROJECT_A), condition)
+        )
+        with self.db.begin_session() as session:
+            return session.execute(stmt).scalar()
+
+    def test_tags_round_trip(self):
+        self._seed()
+        stmt = (
+            select(self.T.c['TAGS'])
+            .select_from(RequestEvent)
+            .where(func.has(self.T.c['TAGS'], 'app=my-app'))
+        )
+        with self.db.begin_session() as session:
+            rows = session.execute(stmt).fetchall()
+        assert len(rows) == 1
+        assert list(rows[0][0]) == [
+            'app=my-app',
+            'cost_center=retail',
+            'env=prod',
+        ]
+
+    def test_filter_by_a_single_tag(self):
+        self._seed()
+        assert self._count_where(func.has(self.T.c['TAGS'], 'env=prod')) == 2
+
+    def test_filter_by_multiple_tags_is_an_intersection(self):
+        self._seed()
+        condition = func.hasAll(self.T.c['TAGS'], ['cost_center=retail', 'env=prod'])
+        assert self._count_where(condition) == 1
+
+    def test_filter_by_any_of_several_tags(self):
+        self._seed()
+        condition = func.hasAny(self.T.c['TAGS'], ['env=staging', 'app=my-app'])
+        assert self._count_where(condition) == 2
+
+    def test_a_tag_matches_only_on_the_full_key_and_value(self):
+        """'env=prod' must not match 'env=production'."""
+        self.insert(
+            [
+                db_mock.get_sample_request_event(
+                    timestamp=TIMESTAMP,
+                    project_uuid=PROJECT_A,
+                    tags=['env=production'],
+                )
+            ]
+        )
+        assert self._count_where(func.has(self.T.c['TAGS'], 'env=prod')) == 0
+
+    def test_untagged_rows_never_match_a_filter(self):
+        self._seed()
+        condition = func.hasAny(
+            self.T.c['TAGS'], ['env=prod', 'env=staging', 'app=my-app']
+        )
+        assert self._count_where(condition) == 3
+
+    def test_list_all_tags_available_in_a_project(self):
+        self._seed()
+        tag = func.arrayJoin(self.T.c['TAGS'])
+        stmt = (
+            select(distinct(tag))
+            .select_from(RequestEvent)
+            .where(self.T.c['PROJECT_UUID'] == str(PROJECT_A))
+        )
+        with self.db.begin_session() as session:
+            tags = sorted(row[0] for row in session.execute(stmt).fetchall())
+
+        assert tags == [
+            'app=my-app',
+            'cost_center=retail',
+            'env=prod',
+            'env=staging',
+        ]
+
+    def test_listing_tags_is_scoped_to_one_project(self):
+        self._seed()
+        tag = func.arrayJoin(self.T.c['TAGS'])
+        stmt = (
+            select(distinct(tag))
+            .select_from(RequestEvent)
+            .where(self.T.c['PROJECT_UUID'] == str(PROJECT_B))
+        )
+        with self.db.begin_session() as session:
+            tags = sorted(row[0] for row in session.execute(stmt).fetchall())
+        assert tags == ['env=prod', 'team=platform']
+
+    def test_dao_get_distinct_tags_returns_sorted_tags(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tags(PROJECT_A) == [
+            'app=my-app',
+            'cost_center=retail',
+            'env=prod',
+            'env=staging',
+        ]
+
+    def test_dao_get_distinct_tags_is_scoped_to_one_project(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tags(PROJECT_B) == ['env=prod', 'team=platform']
+
+    def test_dao_get_distinct_tags_empty(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert (
+            dao.get_distinct_tags(uuid.UUID('33333333-3333-3333-3333-333333333333'))
+            == []
+        )
+
+    def test_dao_get_distinct_tag_values_returns_sorted_values(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_A, 'env') == ['prod', 'staging']
+
+    def test_dao_get_distinct_tag_values_is_scoped_to_one_project(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_B, 'env') == ['prod']
+
+    def test_dao_get_distinct_tag_values_matches_only_the_full_key(self):
+        """A tag 'environment=prod' must not be a value of key 'env'."""
+        self.insert(
+            [
+                db_mock.get_sample_request_event(
+                    timestamp=TIMESTAMP,
+                    project_uuid=PROJECT_A,
+                    tags=['environment=prod'],
+                )
+            ]
+        )
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_A, 'env') == []
+
+    def test_dao_get_distinct_tag_values_unknown_key(self):
+        self._seed()
+        dao = RequestEventDAO(self.db)
+        assert dao.get_distinct_tag_values(PROJECT_A, 'unknown') == []
+
+    def test_dao_filters_by_tags_with_or_within_key_and_and_across_keys(self):
+        """The `tags` param reaches the real query through a public DAO method."""
+        self._seed()
+        dao = RequestEventDAO(self.db)
+
+        # env=prod OR env=staging -> 3 rows (matches _seed's PROJECT_A data).
+        assert (
+            dao.get_request_stats_global(
+                PROJECT_A, _from=None, _to=None, tags=['env=prod', 'env=staging']
+            ).total_requests
+            == 3
+        )
+
+        # env=prod AND cost_center=retail -> only the first seeded row.
+        assert (
+            dao.get_request_stats_global(
+                PROJECT_A,
+                _from=None,
+                _to=None,
+                tags=['env=prod', 'cost_center=retail'],
+            ).total_requests
+            == 1
+        )
+
+        # A tag that matches nothing -> zero rows.
+        assert (
+            dao.get_request_stats_global(
+                PROJECT_A, _from=None, _to=None, tags=['env=unknown']
+            ).total_requests
+            == 0
+        )

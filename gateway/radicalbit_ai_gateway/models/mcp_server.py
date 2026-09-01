@@ -17,6 +17,7 @@ FORBIDDEN_FORWARD_HEADERS = frozenset(
         'upgrade',
         'mcp-session-id',
         'mcp-protocol-version',
+        'x-rb-tags',
     }
 )
 

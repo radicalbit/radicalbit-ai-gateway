@@ -9,7 +9,7 @@
 
 services:
   gateway:
-    image: ${GATEWAY_IMAGE:-tools.radicalbit.io/radicalbit-ai-gateway:${GATEWAY_TAG:-local}}
+    image: ${GATEWAY_IMAGE:-radicalbit/radicalbit-ai-gateway:${GATEWAY_TAG:-local}}
     build: .
     container_name: gateway
     ports:
@@ -51,8 +51,14 @@ services:
       # CORS configs
       CORS_ALLOW_ORIGINS: '["http://localhost:5173"]'
       CORS_ALLOW_CREDENTIALS: True
+      # SMTP Email Notifications
+      SMTP_HOST: "${SMTP_HOST:-host.docker.internal}"
+      SMTP_PORT: "${SMTP_PORT:-1025}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-alerts@radicalbit.ai}"
       # AI Config Generator
-      CONFIG_GENERATOR_OPENAI_API_KEY: "OPENAI_API_KEY"
+      CONFIG_GENERATOR_OPENAI_API_KEY: "sk-123"
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9000/health"]
       interval: 5s
@@ -85,7 +91,7 @@ services:
       retries: 5
 
   migrations:
-    image: ${MIGRATIONS_IMAGE:-tools.radicalbit.io/radicalbit-ai-gateway-migrations:${GATEWAY_TAG:-local}}
+    image: ${MIGRATIONS_IMAGE:-radicalbit/radicalbit-ai-gateway-migrations:${GATEWAY_TAG:-local}}
     container_name: migrations
     build:
       context: ./gateway
@@ -190,7 +196,7 @@ services:
         condition: service_healthy
 
   clickhouse-migrations:
-    image: ${CLICKHOUSE_MIGRATIONS_IMAGE:-tools.radicalbit.io/radicalbit-ai-gateway-metrics-worker-migrations:${GATEWAY_TAG:-local}}
+    image: ${CLICKHOUSE_MIGRATIONS_IMAGE:-radicalbit/radicalbit-ai-gateway-clickhouse-migrations:${GATEWAY_TAG:-local}}
     container_name: clickhouse-migrations
     build:
       context: ./clickhouse-migrations
@@ -202,7 +208,7 @@ services:
         condition: service_healthy
 
   metrics-worker:
-    image: ${METRICS_WORKER_IMAGE:-tools.radicalbit.io/radicalbit-ai-gateway-metrics-worker:${GATEWAY_TAG:-local}}
+    image: ${METRICS_WORKER_IMAGE:-radicalbit/radicalbit-ai-gateway-metrics-worker:${GATEWAY_TAG:-local}}
     container_name: metrics-worker
     build:
       context: ./metrics-worker

@@ -5,11 +5,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from freezegun import freeze_time
 from langchain_core.messages import HumanMessage, SystemMessage
 from openai.types import CreateEmbeddingResponse
+from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.chat.chat_completion import ChatCompletion
 import pook
 import pytest
 
-from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.db_mock import (
+    API_KEY_UUID,
+    GROUP_UUID,
+    REQUEST_UUID,
+    TEST_PROJECT_UUID,
+)
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
@@ -32,7 +39,7 @@ from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback, FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
-from radicalbit_ai_gateway.models.limiting import BudgetLimiting
+from radicalbit_ai_gateway.models.limiting import AudioDurationLimiting, BudgetLimiting
 from radicalbit_ai_gateway.models.model import Model
 import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
@@ -43,6 +50,7 @@ from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils import config_hooks
 from radicalbit_ai_gateway.utils.exceptions import (
+    AudioDurationLimitExceeded,
     BudgetLimitExceededError,
     GatewayBadRequest,
 )
@@ -76,6 +84,7 @@ async def test_gateway_invocation(mock_model_invoker_emit_event, fake_redis_clie
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
 
     mocked_response = to_mock_openai_chat_completion(content='Paris')
@@ -133,6 +142,7 @@ async def test_wrong_model_id(mock_model_invoker_emit_event, fake_redis_client):
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
     mocked_response = to_mock_openai_chat_completion(content='Paris')
 
@@ -193,6 +203,7 @@ async def test_model_invocation_with_redis_cache(
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
     mocked_response_1 = to_mock_openai_chat_completion(content='Paris')
     mocked_response_2 = to_mock_openai_chat_completion(
@@ -223,6 +234,7 @@ async def test_model_invocation_with_redis_cache(
         tool_choice = 'auto'
         kwargs = {}
         cache_key = gateway_cache.generate_cache_key(
+            project_uuid=str(TEST_PROJECT_UUID),
             route_name='rb-gateway',
             key_uuid=str(API_KEY_UUID),
             messages=messages,
@@ -346,6 +358,7 @@ async def test_model_invocation_with_cachetools_cache(
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
     mocked_response_1 = to_mock_openai_chat_completion(content='Paris')
     mocked_response_2 = to_mock_openai_chat_completion(
@@ -377,6 +390,7 @@ async def test_model_invocation_with_cachetools_cache(
         tool_choice = 'auto'
         kwargs = {}
         cache_key = gateway_cache.generate_cache_key(
+            project_uuid=str(TEST_PROJECT_UUID),
             route_name='rb-gateway',
             key_uuid=str(API_KEY_UUID),
             messages=messages,
@@ -674,6 +688,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
 
     mocked_embedding_response = {
@@ -699,6 +714,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
     input_texts = ['hello world']
 
     cache_key = gateway_cache.generate_embedding_cache_key(
+        project_uuid=str(TEST_PROJECT_UUID),
         route_name='rb-gateway',
         key_uuid=str(API_KEY_UUID),
         input_texts=input_texts,
@@ -763,7 +779,7 @@ async def test_invoke_embeddings_token_limit_exceeded(
         gateway_config, 'rb-gateway'
     )
 
-    token_limiter = route_cfg.get_token_limiter()
+    token_limiter = route_cfg.get_token_limiter('2f1c6d4e-0000-4000-8000-0000000000aa')
 
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -813,7 +829,9 @@ async def test_invoke_embeddings_budget_limit_exceeded(
     route_cfg, chat_models, embedding_models = resolve_route_models(
         gateway_config, 'rb-gateway'
     )
-    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter = route_cfg.get_budget_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
@@ -907,6 +925,116 @@ def test_transcription_invoker_only_receives_transcription_fallbacks():
 
 
 @pytest.mark.asyncio
+async def test_invoke_transcription_calls_duration_limiter():
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = GatewayRouteConfig(
+        route_name='rb-gateway',
+        chat_models=[],
+        transcription_models=['whisper-1'],
+        duration_limiting=AudioDurationLimiting(
+            max_duration_seconds=300, window_size='1 minute'
+        ),
+    )
+    duration_limiter = route_cfg.get_duration_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
+    duration_limiter.check_and_count_duration = AsyncMock()
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+        duration_limiter=duration_limiter,
+    )
+
+    fake_result = MagicMock(usage=MagicMock(type='duration', seconds=3))
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    await ai_gateway.invoke_transcription(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        route_name='rb-gateway',
+        audio_bytes=b'fake-audio',
+        filename='test.wav',
+        content_type='audio/wav',
+    )
+
+    duration_limiter.check_and_count_duration.assert_awaited_once_with(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        audio_bytes=b'fake-audio',
+        project_uuid='',
+        project_name='',
+    )
+
+
+@pytest.mark.asyncio
+async def test_invoke_transcription_duration_limit_exceeded_blocks_before_invocation():
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = GatewayRouteConfig(
+        route_name='rb-gateway',
+        chat_models=[],
+        transcription_models=['whisper-1'],
+        duration_limiting=AudioDurationLimiting(
+            max_duration_seconds=300, window_size='1 minute'
+        ),
+    )
+    duration_limiter = route_cfg.get_duration_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
+    duration_limiter.check_and_count_duration = AsyncMock(
+        side_effect=AudioDurationLimitExceeded('limit exceeded')
+    )
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=None,
+        cost_service=cost_service,
+        duration_limiter=duration_limiter,
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock()
+
+    with pytest.raises(AudioDurationLimitExceeded):
+        await ai_gateway.invoke_transcription(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='rb-key',
+            group_name='test-group',
+            route_name='rb-gateway',
+            audio_bytes=b'fake-audio',
+            filename='test.wav',
+            content_type='audio/wav',
+        )
+
+    ai_gateway.transcription_invoker.transcribe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_invoke_transcription_success():
     cost_service = MagicMock(spec_set=CostService)
     whisper_model = Model(
@@ -963,6 +1091,165 @@ async def test_invoke_transcription_success():
         project_uuid='',
         project_name='',
     )
+
+
+@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@pytest.mark.asyncio
+async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
+    mock_emit_event,
+):
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = _make_transcription_route_config()
+    gateway_cache = GatewayCache(CacheToolsInMemory())
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=gateway_cache,
+        cost_service=cost_service,
+    )
+    ai_gateway.budget_limiter = MagicMock(
+        check_budget=AsyncMock(), count_duration=AsyncMock()
+    )
+
+    fake_result = Transcription(
+        text='Ciao, questo è un test.', usage={'type': 'duration', 'seconds': 9}
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    kwargs = {
+        'request_uuid': str(REQUEST_UUID),
+        'api_key_uuid': str(API_KEY_UUID),
+        'group_uuid': str(GROUP_UUID),
+        'api_key_name': 'rb-key',
+        'group_name': 'test-group',
+        'route_name': 'rb-gateway',
+        'audio_bytes': b'fake-audio',
+        'filename': 'test.wav',
+        'content_type': 'audio/wav',
+    }
+
+    first_result = await ai_gateway.invoke_transcription(**kwargs)
+    assert first_result == fake_result
+    ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
+    ai_gateway.budget_limiter.check_budget.assert_awaited_once()
+
+    second_result = await ai_gateway.invoke_transcription(**kwargs)
+    assert second_result == fake_result
+    # Still called once each — the second call must be served from cache,
+    # never reaching the invoker or the budget limiter.
+    ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
+    ai_gateway.budget_limiter.check_budget.assert_awaited_once()
+
+
+@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@pytest.mark.asyncio
+async def test_invoke_transcription_cache_hit_verbose_json_roundtrips(
+    mock_emit_event,
+):
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = _make_transcription_route_config()
+    gateway_cache = GatewayCache(CacheToolsInMemory())
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=gateway_cache,
+        cost_service=cost_service,
+    )
+
+    fake_result = TranscriptionVerbose(
+        task='transcribe',
+        language='italian',
+        duration=8.25,
+        text='Ciao, questo è un test.',
+        segments=[],
+        usage={'type': 'duration', 'seconds': 9},
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    kwargs = {
+        'request_uuid': str(REQUEST_UUID),
+        'api_key_uuid': str(API_KEY_UUID),
+        'group_uuid': str(GROUP_UUID),
+        'api_key_name': 'rb-key',
+        'group_name': 'test-group',
+        'route_name': 'rb-gateway',
+        'audio_bytes': b'fake-audio',
+        'filename': 'test.wav',
+        'content_type': 'audio/wav',
+        'requested_response_format': 'verbose_json',
+    }
+
+    await ai_gateway.invoke_transcription(**kwargs)
+    second_result = await ai_gateway.invoke_transcription(**kwargs)
+
+    ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
+    assert isinstance(second_result, TranscriptionVerbose)
+    assert second_result.language == 'italian'
+    assert second_result.segments == []
+
+
+@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@pytest.mark.asyncio
+async def test_invoke_transcription_cache_miss_when_audio_bytes_differ(
+    mock_emit_event,
+):
+    cost_service = MagicMock(spec_set=CostService)
+    whisper_model = Model(
+        model_id='whisper-1',
+        model='openai/whisper-1',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route_cfg = _make_transcription_route_config()
+    gateway_cache = GatewayCache(CacheToolsInMemory())
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[],
+        embedding_models=None,
+        transcription_models=[whisper_model],
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        gateway_cache=gateway_cache,
+        cost_service=cost_service,
+    )
+
+    fake_result = Transcription(
+        text='Ciao, questo è un test.', usage={'type': 'duration', 'seconds': 9}
+    )
+    ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
+
+    common_kwargs = {
+        'request_uuid': str(REQUEST_UUID),
+        'api_key_uuid': str(API_KEY_UUID),
+        'group_uuid': str(GROUP_UUID),
+        'api_key_name': 'rb-key',
+        'group_name': 'test-group',
+        'route_name': 'rb-gateway',
+        'filename': 'test.wav',
+        'content_type': 'audio/wav',
+    }
+
+    await ai_gateway.invoke_transcription(audio_bytes=b'audio-one', **common_kwargs)
+    await ai_gateway.invoke_transcription(audio_bytes=b'audio-two', **common_kwargs)
+
+    assert ai_gateway.transcription_invoker.transcribe.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -1024,7 +1311,9 @@ async def test_invoke_transcription_counts_budget_duration():
         input_cost_per_second=Decimal('0.0001'),
     )
     route_cfg = _make_transcription_route_config(max_budget=10.0, window_size=3600)
-    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter = route_cfg.get_budget_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     budget_limiter.check_budget = AsyncMock()
     budget_limiter.count_duration = AsyncMock()
     budget_limiter.count_input = AsyncMock()
@@ -1083,7 +1372,9 @@ async def test_invoke_transcription_counts_budget_tokens():
     route_cfg = _make_transcription_route_config(
         model_id='gpt4o-transcribe', max_budget=10.0, window_size=3600
     )
-    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter = route_cfg.get_budget_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     budget_limiter.check_budget = AsyncMock()
     budget_limiter.count_input = AsyncMock()
     budget_limiter.count_output = AsyncMock()
@@ -1179,7 +1470,9 @@ async def test_invoke_transcription_stream_relays_events_and_counts_usage_once()
     route_cfg = _make_transcription_route_config(
         model_id='gpt4o-transcribe', max_budget=10.0, window_size=3600
     )
-    budget_limiter = route_cfg.get_budget_limiter()
+    budget_limiter = route_cfg.get_budget_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
     budget_limiter.check_budget = AsyncMock()
     budget_limiter.count_input = AsyncMock()
     budget_limiter.count_output = AsyncMock()
@@ -1307,6 +1600,7 @@ async def test_cache_hit_flag_set_on_request_state(
         guardrail_engine=guardrail_engine,
         gateway_cache=gateway_cache,
         cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
     )
     mocked_response = to_mock_openai_chat_completion(content='Paris')
 

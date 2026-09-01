@@ -1,4 +1,5 @@
 import Lucide from '@Components/lucide';
+import TagsFilter from '@Components/tags-filter';
 import TimeFilter from '@Components/time-filter';
 import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetCostsSummaryStreamWithRange } from '@State/usage/vertical-hooks';
@@ -42,6 +43,10 @@ function Consumptions() {
       <div className="flex flex-row items-center gap-4">
         <FormField label="Project">
           <ProjectFilter />
+        </FormField>
+
+        <FormField label="Tags">
+          <TagsFilter />
         </FormField>
 
         <FormField label="Routes">

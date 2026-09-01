@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import Float, String, and_, desc, func as F, literal, select, text
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
+from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
 from radicalbit_ai_gateway.db.models.event import (
     CostChartDataPoint,
     CostData,
@@ -57,6 +58,9 @@ class EventDAO:
             ),
             self._count_metric('TOKEN_OUTPUT_LIMIT').label(
                 'token_output_limit_triggered'
+            ),
+            self._count_metric('AUDIO_DURATION_LIMIT').label(
+                'duration_limit_triggered'
             ),
             self._count_metric('CACHE_HIT').label('cache_triggered'),
         ]
@@ -221,15 +225,20 @@ class EventDAO:
         if project_uuid is not None:
             conditions.append(self.T.c['PROJECT_UUID'] == str(project_uuid))
 
+    def _add_tags_filter(self, conditions: list, tags: list[str] | None) -> None:
+        add_tags_filter(conditions, self.T.c['TAGS'], tags=tags)
+
     def get_all_counters(
         self,
         project_uuid: UUID,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> Counters:
         T = self.T
         conditions = []
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to:
@@ -247,10 +256,12 @@ class EventDAO:
         route_name: str,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> Counters:
         T = self.T
         conditions = [T.c['ROUTE_NAME'] == route_name]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         columns_to_select = [
             T.c['ROUTE_NAME'].label('route_name'),
             *self._get_metric_columns(),
@@ -278,6 +289,7 @@ class EventDAO:
         event_type: str,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> LastEventFallback | LastEventGuardrail | None:
         T = self.T
         base_cols = [
@@ -288,6 +300,7 @@ class EventDAO:
         ]
         conditions = [T.c['EVENT_TYPE'] == event_type]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to:
@@ -310,6 +323,7 @@ class EventDAO:
         route_name: str,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> LastEventFallback | LastEventGuardrail | None:
         T = self.T
         base_cols = [
@@ -320,6 +334,7 @@ class EventDAO:
         ]
         conditions = [T.c['EVENT_TYPE'] == event_type, T.c['ROUTE_NAME'] == route_name]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to:
@@ -347,12 +362,14 @@ class EventDAO:
         _from: datetime | None,
         _to: datetime | None,
         route_name: str | None = None,
+        tags: list[str] | None = None,
     ) -> list[ModelInvocationCounter]:
         T = self.T
         conditions = [T.c['EVENT_TYPE'] == 'ROUTING']
         if route_name:
             conditions.append(T.c['ROUTE_NAME'] == route_name)
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to:
@@ -380,11 +397,13 @@ class EventDAO:
         project_uuid: UUID,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> list[TokensCounter]:
         FIELD_NAMES = ['event_type', 'route_name', 'model_id', 'value']
         T = self.T
         conditions = [T.c['EVENT_TYPE'].in_(self._token_metric_types)]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to:
@@ -413,6 +432,7 @@ class EventDAO:
         route_name: str,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> list[TokensCounter]:
         T = self.T
         FIELD_NAMES = ['event_type', 'route_name', 'model_id', 'value']
@@ -421,6 +441,7 @@ class EventDAO:
             T.c['ROUTE_NAME'] == route_name,
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to:
@@ -450,6 +471,7 @@ class EventDAO:
         n: int,
         _from: datetime | None = None,
         _to: datetime | None = None,
+        tags: list[str] | None = None,
     ) -> list[EventDetails] | None:
         T = self.T
         field_names = [
@@ -472,6 +494,7 @@ class EventDAO:
             'RATE_LIMIT',
             'TOKEN_INPUT_LIMIT',
             'TOKEN_OUTPUT_LIMIT',
+            'AUDIO_DURATION_LIMIT',
             'CACHE_HIT',
         ]
         row_number_col = (
@@ -500,6 +523,7 @@ class EventDAO:
             T.c['ROUTE_NAME'] == route_name,
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to:
@@ -545,6 +569,7 @@ class EventDAO:
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         group_by: Literal['keys', 'groups', 'models'],
         timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
     ) -> list[CostChartDataPoint]:
         T = self.T
 
@@ -567,6 +592,7 @@ class EventDAO:
             T.c['EVENT_TYPE'].in_(['INPUT_TOKEN_PROCESSED', 'OUTPUT_TOKEN_PROCESSED']),
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if route_names is not None:
             conditions.append(T.c['ROUTE_NAME'].in_(route_names))
         if _from is not None:
@@ -602,6 +628,7 @@ class EventDAO:
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
     ) -> list[CostChartDataPoint]:
         T = self.T
         bucket_expr = with_timezone_offset(
@@ -612,6 +639,7 @@ class EventDAO:
             T.c['EVENT_TYPE'].in_(['INPUT_TOKEN_PROCESSED', 'OUTPUT_TOKEN_PROCESSED']),
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if route_names is not None:
             conditions.append(T.c['ROUTE_NAME'].in_(route_names))
         if entity_column in ('API_KEY_UUID', 'GROUP_UUID'):
@@ -649,6 +677,7 @@ class EventDAO:
         _from: datetime,
         _to: datetime,
         route_names: list[str] | None,
+        tags: list[str] | None = None,
     ) -> list[RouteCostBreakdown]:
         T = self.T
         FIELD_NAMES = ['route_name', 'total_cost']
@@ -658,6 +687,7 @@ class EventDAO:
             T.c['TIMESTAMP'] <= _to,
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if entity_column in ('API_KEY_UUID', 'GROUP_UUID'):
             conditions.append(F.cast(T.c[entity_column], String) == entity_value)
         else:
@@ -691,6 +721,7 @@ class EventDAO:
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         include_models: bool,
         timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
     ) -> list[InvocationChartDataPoint]:
         T = self.T
         FIELD_NAMES = ['bucket', 'group_by_value', 'value']
@@ -703,6 +734,7 @@ class EventDAO:
 
         conditions = [T.c['EVENT_TYPE'] == 'MODEL_INVOCATION']
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if route_names is not None:
             conditions.append(T.c['ROUTE_NAME'].in_(route_names))
         if _from is not None:
@@ -753,6 +785,7 @@ class EventDAO:
         _to: datetime | None,
         cache_enabled: bool,
         _with_saved_tokens: bool,
+        tags: list[str] | None = None,
     ) -> CostData:
         T = self.T
         conditions = [
@@ -763,6 +796,7 @@ class EventDAO:
             ),
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if route_names is not None:
             conditions.append(T.c['ROUTE_NAME'].in_(route_names))
         if _from is not None:
@@ -837,6 +871,7 @@ class EventDAO:
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
     ) -> list[TokenChartDataPoint]:
         T = self.T
         FIELD_NAMES = ['bucket', 'event_type', 'total_tokens']
@@ -851,6 +886,7 @@ class EventDAO:
             T.c['EVENT_TYPE'].in_(['INPUT_TOKEN_PROCESSED', 'OUTPUT_TOKEN_PROCESSED']),
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if route_names is not None:
             conditions.append(T.c['ROUTE_NAME'].in_(route_names))
         if _from is not None:
@@ -884,6 +920,7 @@ class EventDAO:
         _from: datetime | None,
         _to: datetime | None,
         _with_saved_tokens: bool,
+        tags: list[str] | None = None,
     ) -> SemanticCacheCostData:
         T = self.T
         cache_triggered = F.countIf(T.c['EVENT_TYPE'] == 'CACHE_HIT')
@@ -931,6 +968,7 @@ class EventDAO:
             self.T.c['CACHE_TYPE'] == 'semantic',
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if route_names is not None:
             conditions.append(T.c['ROUTE_NAME'].in_(route_names))
         if _from is not None:
@@ -952,10 +990,12 @@ class EventDAO:
         route_names: list[str] | None,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> DetailedCostBreakdown:
         T = self.T
         conditions = []
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if route_names is not None:
             conditions.append(T.c['ROUTE_NAME'].in_(route_names))
         if _from is not None:
@@ -977,10 +1017,12 @@ class EventDAO:
         project_uuid: UUID,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> list[RouteDetailedCostBreakdown]:
         T = self.T
         conditions = []
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from is not None:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to is not None:
@@ -1027,6 +1069,7 @@ class EventDAO:
         _from: datetime | None,
         _to: datetime | None,
         _with_saved_tokens: bool,
+        tags: list[str] | None = None,
     ) -> list[RouteCostData]:
         T = self.T
         route_name = T.c['ROUTE_NAME']
@@ -1142,6 +1185,7 @@ class EventDAO:
             )
         conditions = [T.c['EVENT_TYPE'].in_([*self._token_metric_types, 'CACHE_HIT'])]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from is not None:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to is not None:
@@ -1189,6 +1233,7 @@ class EventDAO:
         configured_routes: list[str],
         _from: datetime | None = None,
         _to: datetime | None = None,
+        tags: list[str] | None = None,
     ) -> MostExpensiveRoute | None:
         if not configured_routes:
             return None
@@ -1199,6 +1244,7 @@ class EventDAO:
             T.c['ROUTE_NAME'].in_(configured_routes),
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from is not None:
             conditions.append(self.T.c['TIMESTAMP'] >= _from)
         if _to is not None:
@@ -1230,6 +1276,7 @@ class EventDAO:
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
     ) -> list[MostExpensiveChartData]:
         T = self.T
         FIELD_NAMES = ['bucket', 'cost']
@@ -1245,6 +1292,7 @@ class EventDAO:
             T.c['EVENT_TYPE'].in_(['INPUT_TOKEN_PROCESSED', 'OUTPUT_TOKEN_PROCESSED']),
         ]
         self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
         if _from is not None:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to is not None:

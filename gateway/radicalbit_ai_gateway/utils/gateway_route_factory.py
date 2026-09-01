@@ -74,7 +74,7 @@ async def initialize_async_routers(routes: dict[str, GatewayRoute]) -> None:
 
 
 def get_proper_cache(
-    route_config: GatewayRouteConfig, redis_client: redis.Redis | None
+    route_config: GatewayRouteConfig, redis_client: redis.asyncio.Redis | None
 ) -> AbstractCache | None:
     if not route_config.caching:
         return None
@@ -93,10 +93,18 @@ def get_proper_cache(
 def build_gateway_routes_from_config(
     gateway_config: GatewayConfig,
     guardrail_engine: GuardrailEngine,
-    redis_client: redis.Redis | None,
+    redis_client: redis.asyncio.Redis | None,
     cost_service: CostService,
     httpx_client,
+    project_uuid: str,
 ) -> dict[str, GatewayRoute]:
+    """Build the live routes declared by ``gateway_config``.
+
+    ``project_uuid`` scopes the limiter storage keys and the cache keys. Route
+    names are unique only within a project, so omitting it makes two projects
+    that declare the same route name share one limit window and read each
+    other's cached responses.
+    """
     routes: dict[str, GatewayRoute] = {}
     chat_by_id = gateway_config.chat_models_by_id
     emb_by_id = gateway_config.embedding_models_by_id
@@ -124,13 +132,24 @@ def build_gateway_routes_from_config(
         cache_client = get_proper_cache(route_config, redis_client)
         gateway_cache = GatewayCache(cache_client) if cache_client is not None else None
         token_limiter = (
-            route_config.get_token_limiter() if route_config.token_limiting else None
+            route_config.get_token_limiter(project_uuid)
+            if route_config.token_limiting
+            else None
         )
         rate_limiter = (
-            route_config.get_rate_limiter() if route_config.rate_limiting else None
+            route_config.get_rate_limiter(project_uuid)
+            if route_config.rate_limiting
+            else None
         )
         budget_limiter = (
-            route_config.get_budget_limiter() if route_config.budget_limiting else None
+            route_config.get_budget_limiter(project_uuid)
+            if route_config.budget_limiting
+            else None
+        )
+        duration_limiter = (
+            route_config.get_duration_limiter(project_uuid)
+            if route_config.duration_limiting
+            else None
         )
         router = None
         if route_config.routing and gateway_config.routing:
@@ -173,6 +192,8 @@ def build_gateway_routes_from_config(
             token_limiter=token_limiter,
             rate_limiter=rate_limiter,
             budget_limiter=budget_limiter,
+            project_uuid=project_uuid,
+            duration_limiter=duration_limiter,
         )
 
     return routes
@@ -225,19 +246,25 @@ def build_project_route_registrar(
                 host=project_gateway_config.cache.redis_host,
                 port=project_gateway_config.cache.redis_port,
                 decode_responses=True,
+                # RESP2 is required by the semantic cache: redis-py negotiates
+                # RESP3 by default and then parses FT.SEARCH replies as a map,
+                # while valkey-search answers with a flat array. The mismatch
+                # raises AttributeError inside the client, which the semantic
+                # cache swallows and reports as a miss, so every lookup fails.
+                protocol=2,
             )
+        uuid_str = str(project_uuid)
         routes = build_gateway_routes_from_config(
             project_gateway_config,
             project_guardrail_engine,
             project_redis_client,
             project_cost_service,
             httpx_client,
+            project_uuid=uuid_str,
         )
-        uuid_str = str(project_uuid)
         await initialize_async_routers(routes)
         for route_name, route in routes.items():
             full_key = f'{project_name}/{route_name}'
-            route.project_uuid = uuid_str
             route.project_name = project_name
             app.state.routes[full_key] = route
             logger.info('Registered project route: %s', full_key)

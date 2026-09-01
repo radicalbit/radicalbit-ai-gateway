@@ -2,11 +2,12 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from radicalbit_ai_gateway.models.event_dto import UsageCostsDTO
 from radicalbit_ai_gateway.services.event_service import EventService
 from radicalbit_ai_gateway.services.project_service import ProjectService
+from radicalbit_ai_gateway.utils.request_tags import parse_tags_query
 
 
 class UsageRoute:
@@ -29,6 +30,7 @@ class UsageRoute:
             _from: Annotated[int | None, Query()] = None,
             _to: Annotated[int | None, Query()] = None,
             _with_saved_tokens: bool = Query(False),
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project = project_service.get_by_uuid(project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
@@ -40,6 +42,7 @@ class UsageRoute:
                 _from=datetime.fromtimestamp(_from, timezone.utc) if _from else None,
                 _to=datetime.fromtimestamp(_to, timezone.utc) if _to else None,
                 _with_saved_tokens=_with_saved_tokens,
+                tags=tags,
             )
 
         return router

@@ -21,6 +21,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     CostChartDataDTO,
     CostChartDataSeriesDTO,
     CostDataDTO,
+    DurationLimitEventDetailDTO,
     EventsDTO,
     FallbackEventDetailDTO,
     GuardrailEventDetailDTO,
@@ -151,27 +152,58 @@ class EventService:
         route_name: str,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ):
         counters = self.event_dao.get_all_counters_by_route(
-            project_uuid, route_name, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            route_name=route_name,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         tokens_counter = self.event_dao.get_tokens_by_model_per_route(
-            project_uuid, route_name, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            route_name=route_name,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         last_event_guardrail = self.event_dao.get_last_event_route(
-            project_uuid, EventType.GUARDRAIL, route_name, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            event_type=EventType.GUARDRAIL,
+            route_name=route_name,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         last_event_fallback = self.event_dao.get_last_event_route(
-            project_uuid, EventType.FALLBACK, route_name, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            event_type=EventType.FALLBACK,
+            route_name=route_name,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         routing_model_counters = self.event_dao.get_routing_model_counters(
-            project_uuid, _from=_from, _to=_to, route_name=route_name
+            project_uuid=project_uuid,
+            _from=_from,
+            _to=_to,
+            route_name=route_name,
+            tags=tags,
         )
         request_stats = self.request_event_dao.get_request_stats_by_route(
-            project_uuid, route_name, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            route_name=route_name,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         error_details = self.request_event_dao.get_error_breakdown(
-            project_uuid, route_name, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            route_name=route_name,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
 
         tokens_counter_dto = self._calculate_token_metrics(
@@ -205,25 +237,36 @@ class EventService:
         config: GatewayConfig,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> EventsDTO:
         tokens_counter = self.event_dao.get_tokens_by_model(
-            project_uuid, _from=_from, _to=_to
+            project_uuid=project_uuid, _from=_from, _to=_to, tags=tags
         )
-        counters = self.event_dao.get_all_counters(project_uuid, _from=_from, _to=_to)
+        counters = self.event_dao.get_all_counters(
+            project_uuid=project_uuid, _from=_from, _to=_to, tags=tags
+        )
         last_event_guardrail = self.event_dao.get_last_event(
-            project_uuid, EventType.GUARDRAIL, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            event_type=EventType.GUARDRAIL,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         last_event_fallback = self.event_dao.get_last_event(
-            project_uuid, EventType.FALLBACK, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            event_type=EventType.FALLBACK,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         routing_model_counters = self.event_dao.get_routing_model_counters(
-            project_uuid, _from=_from, _to=_to
+            project_uuid=project_uuid, _from=_from, _to=_to, tags=tags
         )
         request_stats = self.request_event_dao.get_request_stats_global(
-            project_uuid, _from=_from, _to=_to
+            project_uuid=project_uuid, _from=_from, _to=_to, tags=tags
         )
         error_details = self.request_event_dao.get_error_breakdown(
-            project_uuid, None, _from=_from, _to=_to
+            project_uuid=project_uuid, route_name=None, _from=_from, _to=_to, tags=tags
         )
 
         tokens_counter_dto = self._calculate_token_metrics(
@@ -261,6 +304,7 @@ class EventService:
         include_groups: bool,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> list[GatewayRouteOut]:
         routes_out = []
         for route_name, route_config in config.routes.items():
@@ -280,6 +324,7 @@ class EventService:
                         route_name=route_name,
                         _from=_from,
                         _to=_to,
+                        tags=tags,
                     ),
                     groups=groups,
                 )
@@ -295,6 +340,7 @@ class EventService:
         include_groups: bool,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> GatewayRouteOut:
         route_config = config.routes[route_name]
         configuration = self._build_route_config_out(route_config, config)
@@ -312,6 +358,7 @@ class EventService:
                 route_name=route_name,
                 _from=_from,
                 _to=_to,
+                tags=tags,
             ),
             groups=groups,
         )
@@ -324,17 +371,24 @@ class EventService:
         n: int,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> LastNEvents:
         fallbacks: list[FallbackEventDetailDTO] = []
         guardrails: list[GuardrailEventDetailDTO] = []
         rate_limit: list[RateLimitEventDetailDTO] = []
         token_input_limit: list[TokenInputLimitEventDetailDTO] = []
         token_output_limit: list[TokenOutputLimitEventDetailDTO] = []
+        duration_limit: list[DurationLimitEventDetailDTO] = []
         cache_triggered: list[CacheHitEventDetailDTO] = []
 
         route_config = config.routes[route_name]
         events = self.event_dao.get_latest_n_per_event_type(
-            project_uuid, route_name, n, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            route_name=route_name,
+            n=n,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         if events is None:
             return LastNEvents()
@@ -415,6 +469,17 @@ class EventService:
                             event_type='TOKEN_OUTPUT_LIMIT',
                         )
                     )
+                case 'AUDIO_DURATION_LIMIT':
+                    duration_limit.append(
+                        DurationLimitEventDetailDTO(
+                            timestamp=event.timestamp,
+                            api_key_uuid=event.api_key_uuid,
+                            route_name=event.route_name,
+                            api_key_name=resolved_name,
+                            api_key_active=event.api_key_active,
+                            event_type='AUDIO_DURATION_LIMIT',
+                        )
+                    )
                 case 'CACHE_HIT':
                     cache_triggered.append(
                         CacheHitEventDetailDTO(
@@ -436,6 +501,7 @@ class EventService:
             rate_limit=rate_limit,
             token_input_limit=token_input_limit,
             token_output_limit=token_output_limit,
+            duration_limit=duration_limit,
             cache_triggered=cache_triggered,
             route_config=route_config,
         )
@@ -549,19 +615,21 @@ class EventService:
         _from: datetime | None,
         _to: datetime | None,
         group_by: Literal['keys', 'groups', 'models'],
+        tags: list[str] | None = None,
     ) -> CostChartDataDTO:
         _from_utc, _to_utc, timezone_offset_seconds = prepare_chart_time_range(
             _from, _to
         )
         granularity = determine_granularity(_from, _to)
         chart_data_points = self.event_dao.get_costs_chart_data(
-            project_uuid,
-            route_names,
-            _from_utc,
-            _to_utc,
-            granularity,
-            group_by,
-            timezone_offset_seconds,
+            project_uuid=project_uuid,
+            route_names=route_names,
+            _from=_from_utc,
+            _to=_to_utc,
+            granularity=granularity,
+            group_by=group_by,
+            timezone_offset_seconds=timezone_offset_seconds,
+            tags=tags,
         )
         if not chart_data_points:
             return CostChartDataDTO(
@@ -640,20 +708,22 @@ class EventService:
         route_names: list[str] | None,
         _from: datetime | None,
         _to: datetime | None,
+        tags: list[str] | None = None,
     ) -> CostChartDataDTO:
         _from_utc, _to_utc, timezone_offset_seconds = prepare_chart_time_range(
             _from, _to
         )
         granularity = determine_granularity(_from, _to)
         chart_data_points = self.event_dao.get_costs_chart_data_by_route(
-            project_uuid,
-            entity_column,
-            entity_value,
-            route_names,
-            _from_utc,
-            _to_utc,
-            granularity,
-            timezone_offset_seconds,
+            project_uuid=project_uuid,
+            entity_column=entity_column,
+            entity_value=entity_value,
+            route_names=route_names,
+            _from=_from_utc,
+            _to=_to_utc,
+            granularity=granularity,
+            timezone_offset_seconds=timezone_offset_seconds,
+            tags=tags,
         )
         if not chart_data_points:
             return CostChartDataDTO(
@@ -696,16 +766,18 @@ class EventService:
         timestamp: int,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         routes: list[str] | None,
+        tags: list[str] | None = None,
     ) -> list[ModelCostDTO]:
         _from = datetime.fromtimestamp(timestamp, timezone.utc)
         _to = get_bucket_end_timestamp(_from, granularity)
         results = self.event_dao.get_cost_breakdown_by_entity(
-            project_uuid,
-            entity_column,
-            entity_value,
-            _from,
-            _to,
-            routes,
+            project_uuid=project_uuid,
+            entity_column=entity_column,
+            entity_value=entity_value,
+            _from=_from,
+            _to=_to,
+            route_names=routes,
+            tags=tags,
         )
         return [
             ModelCostDTO(route_name=r.route_name, cost=float(r.total_cost))
@@ -720,18 +792,20 @@ class EventService:
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         include_models: bool,
+        tags: list[str] | None = None,
     ) -> InvocationChartDataDTO:
         _from_utc, _to_utc, timezone_offset_seconds = prepare_chart_time_range(
             _from, _to
         )
         chart_data_points = self.event_dao.get_invocation_chart_data(
-            project_uuid,
-            route_names,
-            _from_utc,
-            _to_utc,
-            granularity,
-            include_models,
-            timezone_offset_seconds,
+            project_uuid=project_uuid,
+            route_names=route_names,
+            _from=_from_utc,
+            _to=_to_utc,
+            granularity=granularity,
+            include_models=include_models,
+            timezone_offset_seconds=timezone_offset_seconds,
+            tags=tags,
         )
         if not chart_data_points:
             return InvocationChartDataDTO(
@@ -791,6 +865,7 @@ class EventService:
         _from: datetime | None = None,
         _to: datetime | None = None,
         _with_saved_tokens: bool = False,
+        tags: list[str] | None = None,
     ) -> CostDataDTO:
         all_route_names = list(config.routes.keys())
         routes_to_query = route_names if route_names is not None else all_route_names
@@ -825,26 +900,32 @@ class EventService:
         dao_route_names = None if route_names is None else routes_to_query
 
         costs_data = self.event_dao.get_summary_costs(
-            project_uuid,
-            dao_route_names,
-            _from,
-            _to,
-            cache_enabled,
-            _with_saved_tokens,
+            project_uuid=project_uuid,
+            route_names=dao_route_names,
+            _from=_from,
+            _to=_to,
+            cache_enabled=cache_enabled,
+            _with_saved_tokens=_with_saved_tokens,
+            tags=tags,
         )
         if has_semantic_cache:
             semantic_cache_costs = self.event_dao.get_semantic_cache_details(
-                project_uuid,
-                dao_route_names,
-                _from,
-                _to,
-                _with_saved_tokens,
+                project_uuid=project_uuid,
+                route_names=dao_route_names,
+                _from=_from,
+                _to=_to,
+                _with_saved_tokens=_with_saved_tokens,
+                tags=tags,
             )
         else:
             semantic_cache_costs = None
 
         detailed_breakdown = self.event_dao.get_detailed_cost_breakdown(
-            project_uuid, dao_route_names, _from, _to
+            project_uuid=project_uuid,
+            route_names=dao_route_names,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
 
         return CostDataDTO.from_dao(
@@ -865,17 +946,19 @@ class EventService:
         _from: datetime | None,
         _to: datetime | None,
         granularity: Literal['hours', 'days', 'weeks', 'months'],
+        tags: list[str] | None = None,
     ) -> TokenChartDataDTO:
         _from_utc, _to_utc, timezone_offset_seconds = prepare_chart_time_range(
             _from, _to
         )
         token_chart_data_points = self.event_dao.get_token_chart_data(
-            project_uuid,
-            route_names,
-            _from_utc,
-            _to_utc,
-            granularity,
-            timezone_offset_seconds,
+            project_uuid=project_uuid,
+            route_names=route_names,
+            _from=_from_utc,
+            _to=_to_utc,
+            granularity=granularity,
+            timezone_offset_seconds=timezone_offset_seconds,
+            tags=tags,
         )
         if not token_chart_data_points:
             return TokenChartDataDTO(
@@ -930,15 +1013,20 @@ class EventService:
         _from: datetime | None = None,
         _to: datetime | None = None,
         _with_saved_tokens: bool = False,
+        tags: list[str] | None = None,
     ) -> UsageCostsDTO:
 
         route_cost_data_list = self.event_dao.get_all_routes_summary_costs(
-            project_uuid, _from, _to, _with_saved_tokens
+            project_uuid=project_uuid,
+            _from=_from,
+            _to=_to,
+            _with_saved_tokens=_with_saved_tokens,
+            tags=tags,
         )
         cost_by_route = {data.route_name: data for data in route_cost_data_list}
 
         detailed_breakdowns = self.event_dao.get_all_routes_detailed_cost_breakdown(
-            project_uuid, _from, _to
+            project_uuid=project_uuid, _from=_from, _to=_to, tags=tags
         )
         breakdown_by_route = {b.route_name: b for b in detailed_breakdowns}
 
@@ -1026,10 +1114,15 @@ class EventService:
         config: GatewayConfig,
         _from: datetime | None = None,
         _to: datetime | None = None,
+        tags: list[str] | None = None,
     ) -> MostExpensiveRouteDTO | None:
         configured_routes = list(config.routes.keys())
         route = self.event_dao.get_most_expensive_route(
-            project_uuid, configured_routes, _from=_from, _to=_to
+            project_uuid=project_uuid,
+            configured_routes=configured_routes,
+            _from=_from,
+            _to=_to,
+            tags=tags,
         )
         if route is None:
             return None
@@ -1039,12 +1132,13 @@ class EventService:
         )
         granularity = determine_granularity(_from, _to)
         chart_data_points = self.event_dao.get_cost_chart_data(
-            project_uuid,
-            route.route_name,
-            _from_utc,
-            _to_utc,
-            granularity,
-            timezone_offset_seconds,
+            project_uuid=project_uuid,
+            route_name=route.route_name,
+            _from=_from_utc,
+            _to=_to_utc,
+            granularity=granularity,
+            timezone_offset_seconds=timezone_offset_seconds,
+            tags=tags,
         )
 
         if not chart_data_points:
@@ -1136,12 +1230,14 @@ class EventService:
             token_limiter = gateway_route.token_limiter
             budget_limiter = gateway_route.budget_limiter
             req_rate_limiter = gateway_route.request_rate_limiter
+            duration_limiter = gateway_route.duration_limiter
 
             (
                 budget_bar,
                 token_input_bar,
                 token_output_bar,
                 rate_bar,
+                duration_bar,
             ) = await asyncio.gather(
                 self._get_progress_bar(
                     getattr(budget_limiter, 'limiter', None),
@@ -1160,11 +1256,21 @@ class EventService:
                     getattr(req_rate_limiter, 'limiter', None),
                     getattr(req_rate_limiter, 'item', None),
                 ),
+                self._get_progress_bar(
+                    getattr(duration_limiter, 'limiter', None),
+                    getattr(duration_limiter, 'item', None),
+                ),
             )
 
             has_any = any(
                 v is not None
-                for v in [budget_bar, token_input_bar, token_output_bar, rate_bar]
+                for v in [
+                    budget_bar,
+                    token_input_bar,
+                    token_output_bar,
+                    rate_bar,
+                    duration_bar,
+                ]
             )
             return RouteProgressBarDTO(
                 route_name=route_name,
@@ -1173,6 +1279,7 @@ class EventService:
                     token_input=token_input_bar,
                     token_output=token_output_bar,
                     rate=rate_bar,
+                    duration=duration_bar,
                 )
                 if has_any
                 else None,
@@ -1199,7 +1306,13 @@ class EventService:
                     continue
                 windows = [
                     w
-                    for w in [pb.budget, pb.token_input, pb.token_output, pb.rate]
+                    for w in [
+                        pb.budget,
+                        pb.token_input,
+                        pb.token_output,
+                        pb.rate,
+                        pb.duration,
+                    ]
                     if w is not None
                 ]
                 if all(w.window_status == WindowStatus.OK for w in windows):
@@ -1208,7 +1321,13 @@ class EventService:
             if pb is not None:
                 windows = [
                     w
-                    for w in [pb.budget, pb.token_input, pb.token_output, pb.rate]
+                    for w in [
+                        pb.budget,
+                        pb.token_input,
+                        pb.token_output,
+                        pb.rate,
+                        pb.duration,
+                    ]
                     if w is not None
                 ]
                 if WindowStatus.WARNING in window_statuses and any(

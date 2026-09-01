@@ -15,6 +15,12 @@ from radicalbit_ai_gateway.models.event_payload import RequestEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.exceptions import (
+    TagsHeaderError,
+    gateway_exception_handler,
+)
+from radicalbit_ai_gateway.utils.request_context import set_current_request_tags
+from radicalbit_ai_gateway.utils.request_tags import TAGS_HEADER, parse_tags_header
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
@@ -69,7 +75,7 @@ class RequestEventMiddleware:
 
         # Create context early so exception handlers can populate it
         request = Request(scope, receive, send)
-        RequestEventContext.get_or_create(request)
+        ctx = RequestEventContext.get_or_create(request)
 
         # Generate request_uuid early so it's available even if auth fails
         request_uuid = str(uuid.uuid4())
@@ -91,6 +97,24 @@ class RequestEventMiddleware:
                     self._emit_event(request, status_code, start_time)
             await send(message)
 
+        # Validate X-RB-Tags for every proxied endpoint. This middleware sits
+        # outside ExceptionMiddleware, so call the registered handler and send
+        # its response instead of raising. Reset first: the reject path returns
+        # early and skips the ``finally`` cleanup below.
+        set_current_request_tags(())
+        try:
+            # getlist: a client may repeat X-RB-Tags; headers.get() would
+            # silently drop every line but the first.
+            tags = parse_tags_header(','.join(request.headers.getlist(TAGS_HEADER)))
+        except TagsHeaderError as err:
+            response = gateway_exception_handler(request, err)
+            await response(scope, receive, send_wrapper)
+            if not event_emitted:
+                self._emit_event(request, status_code, start_time)
+            return
+        ctx.tags = tags
+        set_current_request_tags(tags)
+
         # Event emission must happen at multiple ASGI lifecycle points:
         # - http.response.body (more_body=False): normal completion after exception handlers
         # - After app() returns: streaming responses that don't set more_body=False
@@ -110,6 +134,8 @@ class RequestEventMiddleware:
                 event_emitted = True
                 self._emit_event(request, status_code, start_time)
             raise
+        finally:
+            set_current_request_tags(())
 
     def _emit_event(
         self, request: Request, status_code: int, start_time: float
@@ -149,6 +175,7 @@ class RequestEventMiddleware:
                     group_name=ctx.group_name,
                     project_uuid=ctx.project_uuid,
                     project_name=ctx.project_name,
+                    tags=list(ctx.tags),
                     request_type=request_type,
                     is_streaming=ctx.is_streaming,
                     status=status,

@@ -39,6 +39,7 @@ from radicalbit_ai_gateway.db.models.event import (
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
 from radicalbit_ai_gateway.models.auth_dto import KeyOut
 from radicalbit_ai_gateway.models.caching import SemanticCaching
+from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.event_dto import (
     Cache,
     CacheHitEventDetailDTO,
@@ -50,6 +51,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     CostChartDataDTO,
     CostChartDataSeriesDTO,
     CostDataDTO,
+    DurationLimitEventDetailDTO,
     EmbeddingInputBreakdownDTO,
     EmbeddingModelsCostDTO,
     Errors,
@@ -71,7 +73,10 @@ from radicalbit_ai_gateway.models.event_dto import (
 )
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.gateway_route_out import GatewayRouteOut
+from radicalbit_ai_gateway.models.limiting import AudioDurationLimiting
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.services.event_service import EventService
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
@@ -514,6 +519,7 @@ class EventServiceTest(unittest.TestCase):
             ],
             token_input_limit=[],
             token_output_limit=[],
+            duration_limit=None,
             cache_triggered=[
                 CacheHitEventDetailDTO(
                     timestamp=datetime.datetime(
@@ -528,6 +534,65 @@ class EventServiceTest(unittest.TestCase):
             ],
         )
         assert res == expected
+
+    def test_get_latest_n_per_event_type_duration_limit(self):
+        """AUDIO_DURATION_LIMIT events populate duration_limit when the route
+        has duration_limiting configured.
+        """
+        transcription_model = Model(
+            model_id='whisper',
+            model='openai/whisper-1',
+            credentials=Credentials(api_key='sk-123'),
+        )
+        route = GatewayRouteConfig(
+            route_name='route-duration',
+            transcription_models=['whisper'],
+            duration_limiting=AudioDurationLimiting(
+                max_duration_seconds=10, window_size='1 minute'
+            ),
+        )
+        config = GatewayConfig(
+            transcription_models=[transcription_model],
+            routes={'route-duration': route},
+        )
+
+        api_key_uuid = uuid.UUID('00000000-0000-0000-0000-000000000000')
+        mocked_events = [
+            db_mock.get_event_detail(
+                timestamp=datetime.datetime(
+                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                ),
+                route_name='route-duration',
+                event_type='AUDIO_DURATION_LIMIT',
+            ),
+        ]
+        self.event_dao.get_latest_n_per_event_type = MagicMock(
+            return_value=mocked_events
+        )
+        self.key_service.get_names_by_uuids = MagicMock(
+            return_value={api_key_uuid: 'fake-name'}
+        )
+
+        res = self.event_service.get_latest_n_per_event_type(
+            self.TEST_PROJECT_UUID,
+            config,
+            'route-duration',
+            10,
+            None,
+            None,
+        )
+
+        assert res.duration_limit == [
+            DurationLimitEventDetailDTO(
+                timestamp=datetime.datetime(
+                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                ),
+                api_key_uuid=api_key_uuid,
+                route_name='route-duration',
+                api_key_name='fake-name',
+                event_type='AUDIO_DURATION_LIMIT',
+            )
+        ]
 
     def test_get_chart_data_multiple_groups(self):
         base_time = datetime.datetime(
@@ -848,10 +913,10 @@ class EventServiceTest(unittest.TestCase):
         )
 
         self.event_dao.get_costs_chart_data_by_route.assert_called_once()
-        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args
-        assert call_kwargs[0][0] == self.TEST_PROJECT_UUID
-        assert call_kwargs[0][1] == 'API_KEY_UUID'
-        assert call_kwargs[0][2] == key_uuid
+        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args.kwargs
+        assert call_kwargs['project_uuid'] == self.TEST_PROJECT_UUID
+        assert call_kwargs['entity_column'] == 'API_KEY_UUID'
+        assert call_kwargs['entity_value'] == key_uuid
 
         assert res.granularity == 'hours'
         assert len(res.data) == 2
@@ -901,10 +966,10 @@ class EventServiceTest(unittest.TestCase):
             project_uuid=self.TEST_PROJECT_UUID,
         )
 
-        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args
-        assert call_kwargs[0][0] == self.TEST_PROJECT_UUID
-        assert call_kwargs[0][1] == 'MODEL_ID'
-        assert call_kwargs[0][2] == 'gpt-4o'
+        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args.kwargs
+        assert call_kwargs['project_uuid'] == self.TEST_PROJECT_UUID
+        assert call_kwargs['entity_column'] == 'MODEL_ID'
+        assert call_kwargs['entity_value'] == 'gpt-4o'
         assert len(res.data) == 1
         assert res.data[0].name == 'route-A'
         assert res.total == 42.0
@@ -932,8 +997,8 @@ class EventServiceTest(unittest.TestCase):
             project_uuid=self.TEST_PROJECT_UUID,
         )
 
-        call_args = self.event_dao.get_costs_chart_data_by_route.call_args
-        assert call_args[0][3] == ['route-A', 'route-B']
+        call_args = self.event_dao.get_costs_chart_data_by_route.call_args.kwargs
+        assert call_args['route_names'] == ['route-A', 'route-B']
 
     def test_get_summary_costs(self):
         base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
@@ -1822,6 +1887,72 @@ class EventServiceTest(unittest.TestCase):
             ],
         )
         assert res == expected
+
+    def test_get_all_routes_costs_forwards_tags_to_event_dao(self):
+        self.event_dao.get_all_routes_summary_costs = MagicMock(return_value=[])
+        self.event_dao.get_all_routes_detailed_cost_breakdown = MagicMock(
+            return_value=[]
+        )
+
+        tags = ['env=prod', 'cost_center=retail']
+        self.event_service.get_all_routes_costs(
+            _from=None,
+            _to=None,
+            _with_saved_tokens=False,
+            project_uuid=self.TEST_PROJECT_UUID,
+            config=self.gateway_config,
+            tags=tags,
+        )
+
+        self.event_dao.get_all_routes_summary_costs.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID,
+            _from=None,
+            _to=None,
+            _with_saved_tokens=False,
+            tags=tags,
+        )
+        self.event_dao.get_all_routes_detailed_cost_breakdown.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
+        )
+
+    def test_get_total_counter_forwards_tags_to_both_daos(self):
+        """get_total_counter blends EventDAO and RequestEventDAO calls; both
+        must receive the same tags filter.
+        """
+        self.event_dao.get_all_counters = MagicMock(return_value=Counters())
+        self.event_dao.get_tokens_by_model = MagicMock(return_value=[])
+        self.event_dao.get_last_event = MagicMock(return_value=None)
+        self.event_dao.get_routing_model_counters = MagicMock(return_value=[])
+        self.request_event_dao.get_request_stats_global = MagicMock(
+            return_value=RequestStats()
+        )
+        self.request_event_dao.get_error_breakdown = MagicMock(return_value=[])
+
+        tags = ['env=prod', 'cost_center=retail']
+        self.event_service.get_total_counter(
+            project_uuid=self.TEST_PROJECT_UUID,
+            config=self.gateway_config,
+            _from=None,
+            _to=None,
+            tags=tags,
+        )
+
+        self.event_dao.get_all_counters.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
+        )
+        self.event_dao.get_tokens_by_model.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
+        )
+        self.request_event_dao.get_request_stats_global.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
+        )
+        self.request_event_dao.get_error_breakdown.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID,
+            route_name=None,
+            _from=None,
+            _to=None,
+            tags=tags,
+        )
 
     def test_get_all_routes_costs_empty(self):
         # Mock batch DAO methods - return empty lists (no routes with events)
@@ -2836,6 +2967,8 @@ class TestGetRouteLimitsProgress:
         token_output_remaining: int | None = None,
         rate_limit: int | None = None,
         rate_remaining: int | None = None,
+        duration_limit: int | None = None,
+        duration_remaining: int | None = None,
         window_seconds: int = 3600,
     ) -> MagicMock:
         route = MagicMock()
@@ -2877,6 +3010,15 @@ class TestGetRouteLimitsProgress:
             rl.item = None
         route.request_rate_limiter = rl
 
+        dl = MagicMock()
+        if duration_limit is not None:
+            dl.limiter = self._make_limiter_mock(duration_limit, duration_remaining)
+            dl.item = self._make_item_mock(duration_limit, window_seconds)
+        else:
+            dl.limiter = None
+            dl.item = None
+        route.duration_limiter = dl
+
         return route
 
     def _make_service(self):
@@ -2889,7 +3031,7 @@ class TestGetRouteLimitsProgress:
 
     @pytest.mark.asyncio
     async def test_all_limiters_configured(self):
-        """All four progress bars are returned when all limiters are set."""
+        """All five progress bars are returned when all limiters are set."""
         budget_limit = int(10.0 * BUDGET_MULTIPLIER)
         budget_remaining = int(3.0 * BUDGET_MULTIPLIER)
         routes = {
@@ -2902,6 +3044,8 @@ class TestGetRouteLimitsProgress:
                 token_output_remaining=200,
                 rate_limit=100,
                 rate_remaining=40,
+                duration_limit=300,
+                duration_remaining=150,
                 window_seconds=3600,
             )
         }
@@ -2930,6 +3074,9 @@ class TestGetRouteLimitsProgress:
         assert pb.rate.window_size == 100.0
         assert pb.rate.window_filled_size == 60.0
         assert pb.rate.window_filled_percentage == pytest.approx(60.0)
+        assert pb.duration.window_size == 300.0
+        assert pb.duration.window_filled_size == 150.0
+        assert pb.duration.window_filled_percentage == pytest.approx(50.0)
 
     @pytest.mark.asyncio
     async def test_only_rate_limiter(self):
@@ -2947,6 +3094,7 @@ class TestGetRouteLimitsProgress:
         assert pb.budget is None
         assert pb.token_input is None
         assert pb.token_output is None
+        assert pb.duration is None
 
     @pytest.mark.asyncio
     async def test_no_limiters_gives_none_progress_bar(self):

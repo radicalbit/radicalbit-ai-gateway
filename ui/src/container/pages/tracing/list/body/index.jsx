@@ -62,7 +62,7 @@ function ProjectSelected() {
   };
 
   return (
-    <div className="flex flex-col gap-4 py-4">
+    <>
       <Tabs
         activeKey={activeKey}
         items={items}
@@ -73,7 +73,7 @@ function ProjectSelected() {
       {activeKey === 'dashboard' && <Dashboard />}
 
       {activeKey === 'tracing' && <Tracing />}
-    </div>
+    </>
   );
 }
 

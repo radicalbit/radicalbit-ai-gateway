@@ -1,4 +1,5 @@
 import Lucide from '@Components/lucide';
+import TagsFilter from '@Components/tags-filter';
 import { TimeFilterCustomOnly } from '@Components/time-filter';
 import { FormField, NewHeader, SectionTitle, Select } from '@radicalbit/radicalbit-design-system';
 import { useGetRoutesWithRange } from '@Src/store/state/routes/vertical-hooks';
@@ -17,6 +18,10 @@ function TracingListHeader() {
           <div className="flex flex-row items-center gap-4">
             <FormField label="Project">
               <ProjectFilter />
+            </FormField>
+
+            <FormField label="Tags">
+              <TagsFilter />
             </FormField>
 
             <FormField label="Routes">
@@ -80,6 +85,7 @@ function RouteSelector() {
       onChange={handleChange}
       options={routeNames.map((name) => ({ label: name, value: name }))}
       placeholder="All routes"
+      showSearch
       style={{ width: 250 }}
       value={selectedRoutes}
     />

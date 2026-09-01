@@ -37,6 +37,7 @@ function RoutesFilter() {
       onChange={handleOnChange}
       options={options}
       placeholder="Please select"
+      showSearch
       style={{ width: 400 }}
       value={selectedRoutes}
     />

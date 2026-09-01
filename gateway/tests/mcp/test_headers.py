@@ -1,3 +1,6 @@
+from pydantic import ValidationError
+import pytest
+
 from radicalbit_ai_gateway.mcp_proxy.headers import build_upstream_headers
 from radicalbit_ai_gateway.models.mcp_server import McpHttpServer
 
@@ -118,3 +121,24 @@ def test_empty_inputs():
     assert build_upstream_headers(server, {}) == {}
     static = _server(headers={'X-Api-Key': 'static'})
     assert build_upstream_headers(static, None) == {'X-Api-Key': 'static'}
+
+
+def test_tags_header_is_never_forwarded_upstream():
+    """X-RB-Tags is gateway-owned: consumed by the middleware, not proxied."""
+    server = _server(forward_headers=['x-user-jwt'])
+    result = build_upstream_headers(
+        server, {'X-RB-Tags': 'env=prod', 'X-User-Jwt': 'jwt'}
+    )
+    assert result == {'x-user-jwt': 'jwt'}
+
+
+def test_tags_header_cannot_be_forwarded_via_the_server_scoped_form():
+    server = _server(forward_headers=['x-user-jwt'])
+    result = build_upstream_headers(server, {'x-mcp-github-x-rb-tags': 'env=prod'})
+    assert result == {}
+
+
+def test_a_config_cannot_allowlist_the_tags_header():
+    with pytest.raises(ValidationError) as err:
+        _server(forward_headers=['X-RB-Tags'])
+    assert 'x-rb-tags' in str(err.value)

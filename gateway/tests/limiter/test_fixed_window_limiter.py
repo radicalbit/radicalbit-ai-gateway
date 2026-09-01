@@ -13,6 +13,8 @@ from radicalbit_ai_gateway.limiter import (
 )
 from radicalbit_ai_gateway.limiter.window_config import WindowConfig
 
+_PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+
 
 @pytest.fixture
 def storage() -> InMemoryStorage:
@@ -29,6 +31,7 @@ def config() -> WindowConfig:
     return WindowConfig(
         limit=10,
         window_seconds=60,
+        project_uuid=_PROJECT_UUID,
         route_name='test-route',
         scenario_type=ScenarioType.REQUEST_RATE,
     )
@@ -256,12 +259,14 @@ class TestKeyIsolation:
         config1 = WindowConfig(
             limit=10,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='route-a',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
         config2 = WindowConfig(
             limit=10,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='route-b',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
@@ -281,18 +286,21 @@ class TestKeyIsolation:
         config_request = WindowConfig(
             limit=10,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='gpt-4',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
         config_input = WindowConfig(
             limit=1000,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='gpt-4',
             scenario_type=ScenarioType.TOKEN_INPUT,
         )
         config_output = WindowConfig(
             limit=500,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='gpt-4',
             scenario_type=ScenarioType.TOKEN_OUTPUT,
         )
@@ -313,15 +321,16 @@ class TestKeyStructure:
     """Tests for the Redis key structure."""
 
     def test_build_key_format(self, limiter: FixedWindowLimiter) -> None:
-        """Verify key format: limiter:{route_name}:{scenario_type}:{window_type}:{window_seconds}"""
+        """Key format: limiter:{project}:{route}:{scenario}:fixed:{seconds}."""
         config = WindowConfig(
             limit=10,
             window_seconds=60,
+            project_uuid=_PROJECT_UUID,
             route_name='gpt-4',
             scenario_type=ScenarioType.TOKEN_INPUT,
         )
         key = limiter._build_key(config)
-        assert key == 'limiter:gpt-4:token_input:fixed:60'
+        assert key == f'limiter:{_PROJECT_UUID}:gpt-4:token_input:fixed:60'
 
     def test_build_key_with_different_scenario(
         self, limiter: FixedWindowLimiter
@@ -329,18 +338,110 @@ class TestKeyStructure:
         config = WindowConfig(
             limit=10,
             window_seconds=3600,
+            project_uuid=_PROJECT_UUID,
             route_name='claude-3-sonnet',
             scenario_type=ScenarioType.REQUEST_RATE,
         )
         key = limiter._build_key(config)
-        assert key == 'limiter:claude-3-sonnet:request_rate:fixed:3600'
+        assert key == f'limiter:{_PROJECT_UUID}:claude-3-sonnet:request_rate:fixed:3600'
 
     def test_build_key_with_token_output(self, limiter: FixedWindowLimiter) -> None:
         config = WindowConfig(
             limit=500,
             window_seconds=120,
+            project_uuid=_PROJECT_UUID,
             route_name='my-model',
             scenario_type=ScenarioType.TOKEN_OUTPUT,
         )
         key = limiter._build_key(config)
-        assert key == 'limiter:my-model:token_output:fixed:120'
+        assert key == f'limiter:{_PROJECT_UUID}:my-model:token_output:fixed:120'
+
+    def test_build_key_includes_project_uuid(self, limiter: FixedWindowLimiter) -> None:
+        """A project-scoped config puts the project ahead of the route."""
+        config = WindowConfig(
+            limit=10,
+            window_seconds=60,
+            route_name='my-route',
+            scenario_type=ScenarioType.REQUEST_RATE,
+            project_uuid='2f1c6d4e-0000-4000-8000-000000000001',
+        )
+        key = limiter._build_key(config)
+        assert (
+            key
+            == 'limiter:2f1c6d4e-0000-4000-8000-000000000001:my-route:request_rate:fixed:60'
+        )
+
+    def test_same_route_name_in_two_projects_gets_distinct_keys(
+        self, limiter: FixedWindowLimiter
+    ) -> None:
+        """Regression: route names are unique only within a project."""
+        first, second = (
+            WindowConfig(
+                limit=10,
+                window_seconds=60,
+                route_name='default',
+                scenario_type=ScenarioType.REQUEST_RATE,
+                project_uuid=uuid,
+            )
+            for uuid in (
+                '2f1c6d4e-0000-4000-8000-000000000001',
+                '2f1c6d4e-0000-4000-8000-000000000002',
+            )
+        )
+        assert limiter._build_key(first) != limiter._build_key(second)
+
+
+class TestProjectIsolation:
+    """Two projects sharing a route name must not share a window."""
+
+    @staticmethod
+    def _config(project_uuid: str) -> WindowConfig:
+        return WindowConfig(
+            limit=2,
+            window_seconds=60,
+            route_name='default',
+            scenario_type=ScenarioType.REQUEST_RATE,
+            project_uuid=project_uuid,
+        )
+
+    @pytest.mark.asyncio
+    async def test_windows_are_independent(self, limiter: FixedWindowLimiter) -> None:
+        project_a = self._config('2f1c6d4e-0000-4000-8000-00000000000a')
+        project_b = self._config('2f1c6d4e-0000-4000-8000-00000000000b')
+
+        # Exhaust project A's window.
+        assert await limiter.hit(project_a) is True
+        assert await limiter.hit(project_a) is True
+        assert await limiter.hit(project_a) is False
+
+        # Project B is untouched and still has its full allowance.
+        stats_b = await limiter.get_window_stats(project_b)
+        assert stats_b.remaining == 2
+        assert await limiter.hit(project_b) is True
+
+    @pytest.mark.asyncio
+    async def test_same_project_and_route_share_a_window(
+        self, limiter: FixedWindowLimiter
+    ) -> None:
+        """The counterpart to isolation: scoping must not over-isolate.
+
+        Two configs naming the same project and route are the same window, so a
+        route's budget is shared across the requests that target it.
+        """
+        first = WindowConfig(
+            limit=2,
+            window_seconds=60,
+            project_uuid=_PROJECT_UUID,
+            route_name='default',
+            scenario_type=ScenarioType.REQUEST_RATE,
+        )
+        second = WindowConfig(
+            limit=2,
+            window_seconds=60,
+            project_uuid=_PROJECT_UUID,
+            route_name='default',
+            scenario_type=ScenarioType.REQUEST_RATE,
+        )
+        await limiter.hit(first)
+        stats = await limiter.get_window_stats(second)
+        assert stats.remaining == 1

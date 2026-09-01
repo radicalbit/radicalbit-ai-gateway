@@ -62,10 +62,31 @@ COLLECTOR_BASE_URL=http://localhost:4318/v1/traces
 # Plugins
 ENABLED_PLUGINS=
 
+# SMTP Email Notifications (Alert Rules)
+SMTP_HOST=localhost
+SMTP_PORT=25
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=alerts@radicalbit.ai
+
 # CORS
 CORS_ALLOW_ORIGINS='["http://localhost:5173"]'
 CORS_ALLOW_CREDENTIALS=True
 ```
+
+### Local Email Testing with Mailpit
+
+To test alert email notifications locally without sending real emails over the internet, start [Mailpit](https://github.com/axllent/mailpit):
+
+```bash
+docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit
+```
+
+Configure your gateway SMTP settings:
+- **Docker Compose**: set `SMTP_HOST=host.docker.internal` and `SMTP_PORT=1025`
+- **Local Gateway (`radicalbit-ai-gateway serve`)**: set `SMTP_HOST=localhost` and `SMTP_PORT=1025`
+
+Open **[http://localhost:8025](http://localhost:8025)** in your browser to view all captured emails and HTML notifications.
 
 Add your LLM provider keys to `gateway/secrets.yaml`:
 

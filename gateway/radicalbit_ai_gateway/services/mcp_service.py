@@ -25,6 +25,7 @@ from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import McpTransportError
+from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     set_mcp_attributes,
@@ -223,6 +224,7 @@ class McpService:
             project_uuid=project_uuid,
             project_name=project_name,
             route_name=route_name,
+            tags=list(get_current_request_tags()),
         )
         ctx = RequestEventContext.get_or_create(request)
         ctx.route_name = route_name

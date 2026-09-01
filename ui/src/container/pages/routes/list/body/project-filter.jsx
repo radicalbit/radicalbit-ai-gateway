@@ -48,8 +48,10 @@ function ProjectFilter() {
       allowClear
       disabled={isError}
       onChange={handleOnChange}
+      optionFilterProp="label"
       options={options}
       placeholder="Please select"
+      showSearch
       style={{ width: 400 }}
       value={projectUuid}
     />

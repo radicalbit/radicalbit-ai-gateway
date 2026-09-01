@@ -15,6 +15,8 @@ from radicalbit_ai_gateway.limiting.token_limiter import (
 )
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
 
+_PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+
 TEST_MODEL = 'openai/gpt-4o'
 
 
@@ -48,7 +50,7 @@ def emit_notification_mock(mock_emit_functions):
 class TestTokenLimiter:
     def test_init_without_config(self):
         """Test TokenLimiter initialization without any configuration."""
-        limiter = TokenLimiter(route_name='rb-gateway')
+        limiter = TokenLimiter(project_uuid=_PROJECT_UUID, route_name='rb-gateway')
         assert limiter.input_limiter is None
         assert limiter.output_limiter is None
 
@@ -59,7 +61,11 @@ class TestTokenLimiter:
             window_size='1 minute',
             max_tokens=1000,
         )
-        limiter = TokenLimiter(route_name='rb-gateway', input_config=input_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            input_config=input_config,
+        )
         assert limiter.input_limiter is not None
         assert limiter.output_limiter is None
 
@@ -70,7 +76,11 @@ class TestTokenLimiter:
             window_size='30 seconds',
             max_tokens=500,
         )
-        limiter = TokenLimiter(route_name='rb-gateway', output_config=output_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            output_config=output_config,
+        )
         assert limiter.input_limiter is None
         assert limiter.output_limiter is not None
 
@@ -79,6 +89,7 @@ class TestTokenLimiter:
         input_config = Limiting(max_tokens=1000, window_size='1 minute')
         output_config = Limiting(max_tokens=500, window_size='30 seconds')
         limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
             route_name='rb-gateway',
             input_config=input_config,
             output_config=output_config,
@@ -92,12 +103,14 @@ class TestTokenLimiter:
         with pytest.raises(
             ValueError, match='max_tokens must be set for token limiting'
         ):
-            TokenLimiter(route_name='rb-gateway', input_config=config)
+            TokenLimiter(
+                project_uuid=_PROJECT_UUID, route_name='rb-gateway', input_config=config
+            )
 
     @pytest.mark.asyncio
     async def test_check_input_no_config(self):
         """Test input checking without configuration does nothing."""
-        limiter = TokenLimiter(route_name='rb-gateway')
+        limiter = TokenLimiter(project_uuid=_PROJECT_UUID, route_name='rb-gateway')
         # Should not raise any exception
         await limiter.check_input(
             request_uuid=str(REQUEST_UUID),
@@ -115,7 +128,11 @@ class TestTokenLimiter:
     async def test_check_input_within_limit_and_count_consumes(self):
         """Test input checking within limit, and then count_input consumes window."""
         input_config = Limiting(max_tokens=100, window_size='1 minute')
-        limiter = TokenLimiter(route_name='rb-gateway', input_config=input_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            input_config=input_config,
+        )
 
         # Make token estimation deterministic
         with patch(
@@ -148,7 +165,11 @@ class TestTokenLimiter:
     async def test_check_input_exceeds_limit(self):
         """Test input checking that exceeds the token limit (check-only, no hit)."""
         input_config = Limiting(max_tokens=10, window_size='1 minute')
-        limiter = TokenLimiter(route_name='rb-gateway', input_config=input_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            input_config=input_config,
+        )
 
         # Deterministic token count so we can assert attempted
         with (
@@ -185,7 +206,11 @@ class TestTokenLimiter:
     async def test_input_accumulates_over_multiple_calls(self):
         """Test that consumption accumulates over multiple provider invocations."""
         input_config = Limiting(max_tokens=20, window_size='1 minute')
-        limiter = TokenLimiter(route_name='rb-gateway', input_config=input_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            input_config=input_config,
+        )
 
         # token estimate sequence for check_input calls
         # 6 + 6 + 6 = 18 (consumed), next attempted 8 => test should fail (> 20)
@@ -252,7 +277,7 @@ class TestTokenLimiter:
     @pytest.mark.asyncio
     async def test_count_output_no_config(self):
         """Test output counting without configuration does nothing."""
-        limiter = TokenLimiter(route_name='rb-gateway')
+        limiter = TokenLimiter(project_uuid=_PROJECT_UUID, route_name='rb-gateway')
         # Should not raise any exception
         await limiter.count_output(
             token_count=100,
@@ -269,7 +294,11 @@ class TestTokenLimiter:
     async def test_count_output_within_limit(self):
         """Test output counting within the token limit."""
         output_config = Limiting(max_tokens=100, window_size='1 minute')
-        limiter = TokenLimiter(route_name='rb-gateway', output_config=output_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            output_config=output_config,
+        )
 
         # Should be within limit
         await limiter.count_output(
@@ -287,7 +316,11 @@ class TestTokenLimiter:
     async def test_count_output_exceeds_limit(self):
         """Test output counting that exceeds the token limit."""
         output_config = Limiting(max_tokens=50, window_size='1 minute')
-        limiter = TokenLimiter(route_name='rb-gateway', output_config=output_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            output_config=output_config,
+        )
 
         await limiter.count_output(
             token_count=100,
@@ -317,7 +350,11 @@ class TestTokenLimiter:
     async def test_count_output_accumulates(self):
         """Test that output token counting accumulates over multiple calls."""
         output_config = Limiting(max_tokens=100, window_size='1 minute')
-        limiter = TokenLimiter(route_name='rb-gateway', output_config=output_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            output_config=output_config,
+        )
 
         initial_datetime = datetime.datetime(
             year=2025, month=6, day=25, hour=15, minute=0, second=0
@@ -373,7 +410,11 @@ class TestTokenLimiter:
                 max_tokens=5,
                 window_size='10 second',
             )
-            limiter = TokenLimiter(route_name='rb-gateway', input_config=input_config)
+            limiter = TokenLimiter(
+                project_uuid=_PROJECT_UUID,
+                route_name='rb-gateway',
+                input_config=input_config,
+            )
 
             # Deterministic token estimation for the 4 check_input calls:
             # 1) first allowed and consumed = 4 -> remaining becomes 1
@@ -462,12 +503,16 @@ class TestTokenLimiter:
         """Test different window size formats."""
         # Test with string format
         config2 = Limiting(max_tokens=100, window_size='1 minute')
-        limiter2 = TokenLimiter(route_name='rb-gateway', input_config=config2)
+        limiter2 = TokenLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', input_config=config2
+        )
         assert limiter2.input_limiter is not None
 
         # Test with per-second format
         config3 = Limiting(max_tokens=100, window_size='100 seconds')
-        limiter3 = TokenLimiter(route_name='rb-gateway', input_config=config3)
+        limiter3 = TokenLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', input_config=config3
+        )
         assert limiter3.input_limiter is not None
 
     def test_init_with_aligned_fixed_window(self):
@@ -477,7 +522,11 @@ class TestTokenLimiter:
             window_size='1 minute',
             max_tokens=1000,
         )
-        limiter = TokenLimiter(route_name='rb-gateway', input_config=input_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            input_config=input_config,
+        )
         assert limiter.input_limiter is not None
         assert isinstance(limiter.input_limiter, AlignedFixedWindowLimiter)
 
@@ -488,7 +537,11 @@ class TestTokenLimiter:
             window_size='1 minute',
             max_tokens=1000,
         )
-        limiter = TokenLimiter(route_name='rb-gateway', input_config=input_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            input_config=input_config,
+        )
         assert limiter.input_limiter is not None
         assert isinstance(limiter.input_limiter, FixedWindowLimiter)
 
@@ -496,7 +549,11 @@ class TestTokenLimiter:
     async def test_count_input_sends_notification(self, emit_notification_mock):
         """Test that count_input sends notification with correct parameters after deduction."""
         input_config = Limiting(max_tokens=100, window_size='1 minute')
-        limiter = TokenLimiter(route_name='rb-gateway', input_config=input_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            input_config=input_config,
+        )
 
         await limiter.count_input(prompt_tokens=42)
 
@@ -515,7 +572,11 @@ class TestTokenLimiter:
     async def test_count_output_sends_notification(self, emit_notification_mock):
         """Test that count_output sends notification with correct parameters after deduction."""
         output_config = Limiting(max_tokens=50, window_size='1 minute')
-        limiter = TokenLimiter(route_name='rb-gateway', output_config=output_config)
+        limiter = TokenLimiter(
+            project_uuid=_PROJECT_UUID,
+            route_name='rb-gateway',
+            output_config=output_config,
+        )
 
         await limiter.count_output(token_count=17)
 

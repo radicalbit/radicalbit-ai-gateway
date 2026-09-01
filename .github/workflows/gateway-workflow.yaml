@@ -1,215 +1,42 @@
 name: gateway-wf
 on:
   push:
-    tags:
-      - 'v*.*.*'
     branches:
       - "main"
     paths:
       - "gateway/**"
       - ".github/workflows/gateway-**"
+      - ".github/workflows/tests.yaml"
   pull_request:
     branches:
       - "*"
     paths:
       - "gateway/**"
       - ".github/workflows/gateway-**"
+      - ".github/workflows/tests.yaml"
 
 env:
   PYTHON_VERSION: "3.11"
   UV_VERSION: "0.7.13"
-  APP_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway
-  MIGRATIONS_IMAGE: ${{ secrets.IMAGE_PREFIX }}/radicalbit-ai-gateway-migrations
   IMAGES_TAG: main
   # Dependency-Track project names (registry-independent, stable across builds)
-  APP_PROJECT: radicalbit-ai-gateway
-  MIGRATIONS_PROJECT: radicalbit-ai-gateway-migrations
   GATEWAY_PYTHON_PROJECT: radicalbit-ai-gateway-python
   UI_PROJECT: radicalbit-ai-gateway-ui
 
 jobs:
   test:
-    runs-on: ubuntu-22.04
-    defaults:
-      run:
-        working-directory: ./gateway
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Setup uv
-        run: |
-          curl -LsSf https://astral.sh/uv/${{ env.UV_VERSION }}/install.sh | sh
-      - name: Run formatting validation
-        run: |
-          uv run ruff check
-      - name: Run format check
-        run: |
-          uv run ruff format --check
-      - name: Run tests
-        run: |
-          uv run pytest -v
+    uses: ./.github/workflows/tests.yaml
+    with:
+      working-directory: ./gateway
+      run-pytest: true
 
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-22.04
-            platform_short: amd64
-          - platform: linux/arm64
-            runner: ubuntu-22.04-arm
-            platform_short: arm64
-    runs-on: ${{ matrix.runner }}
+  pipeline:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: |
-            network=host
-            env.BUILDKIT_STEP_LOG_MAX_SIZE=50000000
-            env.BUILDKIT_STEP_LOG_MAX_SPEED=100000000
-      - name: Log in to container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ secrets.REGISTRY_HOST }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
-      - name: Build and push app image by digest
-        id: build-app
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.APP_IMAGE }},push-by-digest=true,name-canonical=true,push=true
-      - name: Build and push migrations image by digest
-        id: build-migrations
-        uses: docker/build-push-action@v6
-        with:
-          context: ./gateway
-          file: ./gateway/migrations.Dockerfile
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.MIGRATIONS_IMAGE }},push-by-digest=true,name-canonical=true,push=true
-      - name: Export digests
-        run: |
-          mkdir -p /tmp/digests/app /tmp/digests/migrations
-          touch "/tmp/digests/app/${APP_DIGEST#sha256:}"
-          touch "/tmp/digests/migrations/${MIGRATIONS_DIGEST#sha256:}"
-        env:
-          APP_DIGEST: ${{ steps.build-app.outputs.digest }}
-          MIGRATIONS_DIGEST: ${{ steps.build-migrations.outputs.digest }}
-      - name: Upload digests
-        uses: actions/upload-artifact@v4
-        with:
-          name: digests-gateway-${{ matrix.platform_short }}
-          path: /tmp/digests/**
-          if-no-files-found: error
-          retention-days: 1
-
-  merge:
-    runs-on: ubuntu-22.04
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      packages: write
-      id-token: write # needed for keyless signing with the GitHub OIDC token
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Download digests
-        uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digests-gateway-*
-          merge-multiple: true
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v4.0.0
-      - name: Log in to container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ secrets.REGISTRY_HOST }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
-      - name: Create app manifest and push
-        run: |
-          docker buildx imagetools create \
-            -t ${{ env.APP_IMAGE }}:${{ env.IMAGES_TAG }} \
-            $(printf '${{ env.APP_IMAGE }}@sha256:%s ' $(ls /tmp/digests/app/))
-      - name: Create migrations manifest and push
-        run: |
-          docker buildx imagetools create \
-            -t ${{ env.MIGRATIONS_IMAGE }}:${{ env.IMAGES_TAG }} \
-            $(printf '${{ env.MIGRATIONS_IMAGE }}@sha256:%s ' $(ls /tmp/digests/migrations/))
-      - name: Inspect images
-        run: |
-          docker buildx imagetools inspect ${{ env.APP_IMAGE }}:${{ env.IMAGES_TAG }}
-          docker buildx imagetools inspect ${{ env.MIGRATIONS_IMAGE }}:${{ env.IMAGES_TAG }}
-
-      - name: Get app manifest digest
-        id: app-manifest
-        run: |
-          DIGEST=$(docker buildx imagetools inspect ${{ env.APP_IMAGE }}:${{ env.IMAGES_TAG }} --format '{{json .Manifest}}' | jq -r .digest)
-          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
-      - name: Get migrations manifest digest
-        id: migrations-manifest
-        run: |
-          DIGEST=$(docker buildx imagetools inspect ${{ env.MIGRATIONS_IMAGE }}:${{ env.IMAGES_TAG }} --format '{{json .Manifest}}' | jq -r .digest)
-          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
-
-      - name: SBOM → Dependency-Track (app)
-        uses: ./.github/actions/sbom-dependency-track
-        with:
-          image-ref: ${{ env.APP_IMAGE }}@${{ steps.app-manifest.outputs.digest }}
-          project-name: ${{ env.APP_PROJECT }}
-          project-version: ${{ env.IMAGES_TAG }}
-          is-latest: "false"
-          project-tags: oss,container,docker
-          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
-          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
-      - name: SBOM → Dependency-Track (migrations)
-        uses: ./.github/actions/sbom-dependency-track
-        with:
-          image-ref: ${{ env.MIGRATIONS_IMAGE }}@${{ steps.migrations-manifest.outputs.digest }}
-          project-name: ${{ env.MIGRATIONS_PROJECT }}
-          project-version: ${{ env.IMAGES_TAG }}
-          is-latest: "false"
-          project-tags: oss,container,docker
-          dt-url: ${{ secrets.DEPENDENCYTRACK_URL }}
-          dt-api-key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
-
-      - name: Sign images with Cosign (keyless)
-        env:
-          APP_DIGEST: ${{ steps.app-manifest.outputs.digest }}
-          MIGRATIONS_DIGEST: ${{ steps.migrations-manifest.outputs.digest }}
-        run: |
-          cosign sign --yes "${{ env.APP_IMAGE }}@${APP_DIGEST}"
-          cosign sign --yes "${{ env.MIGRATIONS_IMAGE }}@${MIGRATIONS_DIGEST}"
-      - name: Verify signatures
-        env:
-          APP_DIGEST: ${{ steps.app-manifest.outputs.digest }}
-          MIGRATIONS_DIGEST: ${{ steps.migrations-manifest.outputs.digest }}
-        run: |
-          for REF in \
-            "${{ env.APP_IMAGE }}@${APP_DIGEST}" \
-            "${{ env.MIGRATIONS_IMAGE }}@${MIGRATIONS_DIGEST}"; do
-            cosign verify "${REF}" \
-              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/.+@refs/heads/main$" \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com
-          done
+    uses: ./.github/workflows/gateway-pipeline.yaml
+    with:
+      image-tag: main
+    secrets: inherit
 
   source-sbom:
     runs-on: ubuntu-22.04

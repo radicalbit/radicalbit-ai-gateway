@@ -78,7 +78,10 @@ class RoutingEventPayload(EventBase):
 
 class LimitEventPayload(EventBase):
     event_type: Literal[
-        EventType.RATE_LIMIT, EventType.TOKEN_INPUT_LIMIT, EventType.TOKEN_OUTPUT_LIMIT
+        EventType.RATE_LIMIT,
+        EventType.TOKEN_INPUT_LIMIT,
+        EventType.TOKEN_OUTPUT_LIMIT,
+        EventType.AUDIO_DURATION_LIMIT,
     ]
 
 
@@ -94,6 +97,7 @@ class RequestEventPayload(BaseModel):
     group_name: str = ''
     project_uuid: str = ''
     project_name: str = ''
+    tags: list[str] = []
     request_type: Literal[
         RequestType.CHAT_COMPLETIONS,
         RequestType.EMBEDDINGS,

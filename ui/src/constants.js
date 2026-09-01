@@ -13,7 +13,7 @@ const ModalsEnum = {
 
 // Hardcoded feature flags. Toggle to enable/disable a feature app-wide.
 const FEATURE_FLAGS = {
-  ALERTS: false, // TODO: enable when the alerts backend is ready (currently mocked)
+  ALERTS: true,
 };
 
 const PathsEnum = {

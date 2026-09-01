@@ -18,6 +18,7 @@ class Counters(Base):
     rate_limit_triggered: int = 0
     token_input_limit_triggered: int = 0
     token_output_limit_triggered: int = 0
+    duration_limit_triggered: int = 0
     cache_triggered: int = 0
 
 

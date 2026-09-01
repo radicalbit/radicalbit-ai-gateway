@@ -27,10 +27,16 @@ class RequestRateLimiter:
     """Rate limiter for request counting using limits library."""
 
     def __init__(
-        self, route_name: str, rate_limiting_config: RateLimiting | None = None
+        self,
+        project_uuid: str,
+        route_name: str,
+        rate_limiting_config: RateLimiting | None = None,
     ):
         self.route_name = route_name
         self.rate_limiting_config = rate_limiting_config
+        # Key isolation only: route_name stays the bare route everywhere it is
+        # reported (metrics, limit events, logs).
+        self.project_uuid = project_uuid
 
         # Use Redis storage if available, else MemoryStorage
         if app_config.redis_config.redis_url:
@@ -41,7 +47,7 @@ class RequestRateLimiter:
         # Create rate limiter and item if config provided
         self.limiter = self._create_limiter() if rate_limiting_config else None
         self.item = (
-            self._create_item(rate_limiting_config, route_name)
+            self._create_item(rate_limiting_config, project_uuid, route_name)
             if rate_limiting_config
             else None
         )
@@ -55,7 +61,9 @@ class RequestRateLimiter:
         return FixedWindowLimiter(self.storage)
 
     @staticmethod
-    def _create_item(config: RateLimiting, route_name: str) -> WindowConfig:
+    def _create_item(
+        config: RateLimiting, project_uuid: str, route_name: str
+    ) -> WindowConfig:
         if not config.max_requests:
             raise ValueError('max_requests must be set for rate limiting')
         return WindowConfig.from_parts(
@@ -63,6 +71,7 @@ class RequestRateLimiter:
             window=config.window_size,
             route_name=route_name,
             scenario_type=ScenarioType.REQUEST_RATE,
+            project_uuid=project_uuid,
         )
 
     async def _check_request(
