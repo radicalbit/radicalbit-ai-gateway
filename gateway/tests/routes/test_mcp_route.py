@@ -37,6 +37,7 @@ KEY_DETAILS = KeyDetails(
 
 AUTH = {'Authorization': 'Bearer sk-rb-abc'}
 REQUEST_UUID = str(uuid.uuid4())
+PROJECT_UUID = uuid.uuid4()
 
 ALLOWED_ORIGIN = 'http://localhost:5173'
 
@@ -101,7 +102,7 @@ def _make_client(
     app.add_exception_handler(ApiKeyError, api_key_exception_handler)
     app.add_exception_handler(RequestRateLimitExceeded, rate_limit_exceeded_handler)
     app.state.project_configs = (
-        {'proj': ProjectEntry(uuid=uuid.uuid4(), config=_gateway_config())}
+        {'proj': ProjectEntry(uuid=PROJECT_UUID, config=_gateway_config())}
         if with_project
         else {}
     )
@@ -487,7 +488,8 @@ def test_a_rejected_origin_still_reports_the_route_it_targeted():
 def _rate_limited_client(max_requests: int) -> TestClient:
     client, _ = _make_client(
         rate_limiter=RequestRateLimiter(
-            route_name='proj/my-route',
+            project_uuid=str(PROJECT_UUID),
+            route_name='my-route',
             rate_limiting_config=RateLimiting(
                 max_requests=max_requests, window_size='1 minute'
             ),
