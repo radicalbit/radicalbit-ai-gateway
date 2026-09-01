@@ -37,6 +37,7 @@ KEY_DETAILS = KeyDetails(
 
 AUTH = {'Authorization': 'Bearer sk-rb-abc'}
 REQUEST_UUID = str(uuid.uuid4())
+
 ALLOWED_ORIGIN = 'http://localhost:5173'
 
 PATH = '/proj/my-route/mcp'
