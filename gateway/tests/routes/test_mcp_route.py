@@ -7,7 +7,6 @@ import httpx
 from mcp import types
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-import pytest
 from starlette.testclient import TestClient
 
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
@@ -114,8 +113,8 @@ def _make_client(
         validate_token=AsyncMock(return_value=KEY_DETAILS)
     )
     # RequestEventMiddleware stamps request_uuid for this path in production
-    # (is_mcp_request), and get_request_uuid reads it unguarded, so the test app
-    # needs it too. Pass request_uuid=None to exercise its absence.
+    # (is_mcp_request), so the test app stamps it too. Pass request_uuid=None to
+    # exercise its absence.
     if request_uuid is not None:
         app.add_middleware(_StampRequestUuid, value=request_uuid)
     return TestClient(app), group_service
@@ -423,6 +422,7 @@ async def test_end_to_end_against_real_upstream():
 # ---------------------------------------------------------------------------
 
 MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
+DEPENDENCIES = 'radicalbit_ai_gateway.utils.dependencies'
 
 
 def test_the_service_reports_the_request_uuid_the_middleware_stamped():
@@ -436,16 +436,24 @@ def test_the_service_reports_the_request_uuid_the_middleware_stamped():
 
 
 def test_no_request_uuid_is_invented_without_the_middleware():
-    """The request fails rather than being served with a fabricated id.
+    """An unstamped request is served unattributed, never with a made-up id.
 
     is_mcp_request matches every path this router serves, so an absent stamp is
-    a misconfigured middleware chain, not a servable request — the same failure
-    the /v1 endpoints give through the dependency they share.
+    a misconfigured middleware chain; get_request_uuid - shared with the /v1
+    endpoints - warns and falls back to the empty string rather than inventing
+    one, so telemetry shows the gap instead of a plausible-looking uuid.
     """
     client, _ = _make_client(request_uuid=None)
 
-    with pytest.raises(AttributeError):
-        client.post(PATH, json=_ping(), headers=AUTH)
+    with (
+        patch(f'{DEPENDENCIES}.logger') as mock_logger,
+        patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs,
+    ):
+        res = client.post(PATH, json=_ping(), headers=AUTH)
+
+    assert res.status_code == 200
+    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] == ''
+    assert 'No request_uuid stamped' in mock_logger.warning.call_args.args[0]
 
 
 def test_a_rejected_origin_still_reports_the_route_it_targeted():
