@@ -88,9 +88,14 @@ Configure your gateway SMTP settings:
 
 Open **[http://localhost:8025](http://localhost:8025)** in your browser to view all captured emails and HTML notifications.
 
-Add your LLM provider keys to `gateway/secrets.yaml`:
+Create your `secrets.yaml` by copying the template and adding your LLM provider keys:
+
+```bash
+cp secrets-dummy.yaml secrets.yaml
+```
 
 ```yaml
+# secrets.yaml
 OPENAI_API_KEY: sk-your-key-here
 ```
 

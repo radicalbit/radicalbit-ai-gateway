@@ -66,6 +66,8 @@
 # Environments
 **/.env
 **/.secrets
+secrets.yaml
+**/secrets.yaml
 **/.venv
 **/env/
 **/venv/

@@ -59,7 +59,11 @@ cd radicalbit-ai-gateway
 
 ### 2. Add your provider credentials
 
-Create a `secrets.yaml` file in the project root. These are the keys the gateway uses to call your models:
+Create `secrets.yaml` in the project root by copying `secrets-dummy.yaml`, then add your provider keys:
+
+```bash
+cp secrets-dummy.yaml secrets.yaml
+```
 
 ```yaml
 # secrets.yaml
