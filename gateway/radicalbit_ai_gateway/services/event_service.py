@@ -1015,7 +1015,6 @@ class EventService:
         _with_saved_tokens: bool = False,
         tags: list[str] | None = None,
     ) -> UsageCostsDTO:
-
         route_cost_data_list = self.event_dao.get_all_routes_summary_costs(
             project_uuid=project_uuid,
             _from=_from,

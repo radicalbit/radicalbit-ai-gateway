@@ -133,6 +133,10 @@ def client(exporter, upstream) -> TestClient:
     app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
     app.add_exception_handler(ApiKeyError, api_key_exception_handler)
     app.state.project_configs = {'proj': ProjectEntry(uuid=uuid.uuid4(), config=config)}
+    # The endpoint resolves the route registry through get_gateway_routes,
+    # which 503s when it is absent. This route declares no rate_limiting, so
+    # an empty registry leaves every assertion below unchanged.
+    app.state.routes = {}
     app.state.token_validator = SimpleNamespace(
         validate_token=AsyncMock(
             return_value=KeyDetails(

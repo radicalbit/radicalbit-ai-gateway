@@ -11,13 +11,9 @@ from tests.common import db_mock
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.models.guardrails import GuardrailWhereType
-from radicalbit_ai_gateway.server import (
-    app,
-    group_service,
-    key_service,
-    set_request_uuid,
-)
+from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.utils.ai_gateway_types import PrepareAndValidateResult
+from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
 
 GROUP_NAME = 'group'
@@ -45,7 +41,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         cls.mock_gateway.gateway_route_config = mock_config
 
         app.state.routes = {'rb-gateway': cls.mock_gateway}
-        app.dependency_overrides[set_request_uuid] = mock_request_uuid
+        app.dependency_overrides[get_request_uuid] = mock_request_uuid
         cls.client = TestClient(app)
         cls.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
 

@@ -20,16 +20,12 @@ from tests.common.mocked_build_openai_chat_completion import (
 )
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
-from radicalbit_ai_gateway.server import (
-    app,
-    group_service,
-    key_service,
-    set_request_uuid,
-)
+from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.utils.ai_gateway_types import (
     InvokeResponse,
     PrepareAndValidateResult,
 )
+from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 
 
 def mock_request_uuid(request: Request):
@@ -71,7 +67,7 @@ class TestResponsesEndpoint(unittest.TestCase):
     def setUpClass(cls):
         cls.gateways_mock = {'rb-gateway': _make_mock_gateway()}
         app.state.routes = cls.gateways_mock
-        app.dependency_overrides[set_request_uuid] = mock_request_uuid
+        app.dependency_overrides[get_request_uuid] = mock_request_uuid
         cls.client = TestClient(app)
         cls.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
         cls.emit_event_patcher = patch(

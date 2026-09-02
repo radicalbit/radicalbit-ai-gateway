@@ -9,9 +9,11 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.testclient import TestClient
 
+from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
+from radicalbit_ai_gateway.models.limiting import RateLimiting
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.routes.mcp_route import McpRoute
 from radicalbit_ai_gateway.services.mcp_service import McpService
@@ -19,8 +21,10 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
     InvalidApiKey,
     McpTransportError,
+    RequestRateLimitExceeded,
     api_key_exception_handler,
     mcp_transport_exception_handler,
+    rate_limit_exceeded_handler,
 )
 
 KEY_DETAILS = KeyDetails(
@@ -32,6 +36,9 @@ KEY_DETAILS = KeyDetails(
 )
 
 AUTH = {'Authorization': 'Bearer sk-rb-abc'}
+REQUEST_UUID = str(uuid.uuid4())
+PROJECT_UUID = uuid.uuid4()
+
 ALLOWED_ORIGIN = 'http://localhost:5173'
 
 PATH = '/proj/my-route/mcp'
@@ -62,11 +69,25 @@ def _gateway_config() -> GatewayConfig:
     )
 
 
+class _StampRequestUuid:
+    """Pure-ASGI stand-in for RequestEventMiddleware's request_uuid stamping."""
+
+    def __init__(self, app, value: str):
+        self.app = app
+        self.value = value
+
+    async def __call__(self, scope, receive, send):
+        scope.setdefault('state', {})['request_uuid'] = self.value
+        await self.app(scope, receive, send)
+
+
 def _make_client(
     upstream_client=None,
     *,
     key_bound: bool = True,
     with_project: bool = True,
+    rate_limiter=None,
+    request_uuid: str | None = REQUEST_UUID,
 ) -> tuple[TestClient, MagicMock]:
     app = FastAPI(title='AI Gateway', debug=True)
     group_service = MagicMock()
@@ -79,14 +100,25 @@ def _make_client(
     app.include_router(McpRoute.get_mcp_router(service))
     app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
     app.add_exception_handler(ApiKeyError, api_key_exception_handler)
+    app.add_exception_handler(RequestRateLimitExceeded, rate_limit_exceeded_handler)
     app.state.project_configs = (
-        {'proj': ProjectEntry(uuid=uuid.uuid4(), config=_gateway_config())}
+        {'proj': ProjectEntry(uuid=PROJECT_UUID, config=_gateway_config())}
         if with_project
         else {}
     )
+    # Mirrors what the route factory registers: the built GatewayRoute carrying
+    # the route's live feature instances, keyed '{project}/{route}'.
+    app.state.routes = {
+        'proj/my-route': SimpleNamespace(request_rate_limiter=rate_limiter)
+    }
     app.state.token_validator = SimpleNamespace(
         validate_token=AsyncMock(return_value=KEY_DETAILS)
     )
+    # RequestEventMiddleware stamps request_uuid for this path in production
+    # (is_mcp_request), so the test app stamps it too. Pass request_uuid=None to
+    # exercise its absence.
+    if request_uuid is not None:
+        app.add_middleware(_StampRequestUuid, value=request_uuid)
     return TestClient(app), group_service
 
 
@@ -392,40 +424,38 @@ async def test_end_to_end_against_real_upstream():
 # ---------------------------------------------------------------------------
 
 MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
-
-
-class _StampRequestUuid:
-    """Pure-ASGI stand-in for RequestEventMiddleware's request_uuid stamping."""
-
-    def __init__(self, app, value: str):
-        self.app = app
-        self.value = value
-
-    async def __call__(self, scope, receive, send):
-        scope.setdefault('state', {})['request_uuid'] = self.value
-        await self.app(scope, receive, send)
+DEPENDENCIES = 'radicalbit_ai_gateway.utils.dependencies'
 
 
 def test_the_service_reports_the_request_uuid_the_middleware_stamped():
     """RequestEventMiddleware owns generation; the service only reads it."""
     client, _ = _make_client()
-    stamped = str(uuid.uuid4())
-    client.app.add_middleware(_StampRequestUuid, value=stamped)
 
     with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
         assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
 
-    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] == stamped
+    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] == REQUEST_UUID
 
 
 def test_no_request_uuid_is_invented_without_the_middleware():
-    """None is dropped by set_trace_attributes rather than becoming a fake id."""
-    client, _ = _make_client()
+    """An unstamped request is served unattributed, never with a made-up id.
 
-    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
-        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+    is_mcp_request matches every path this router serves, so an absent stamp is
+    a misconfigured middleware chain; get_request_uuid - shared with the /v1
+    endpoints - warns and falls back to the empty string rather than inventing
+    one, so telemetry shows the gap instead of a plausible-looking uuid.
+    """
+    client, _ = _make_client(request_uuid=None)
 
-    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] is None
+    with (
+        patch(f'{DEPENDENCIES}.logger') as mock_logger,
+        patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs,
+    ):
+        res = client.post(PATH, json=_ping(), headers=AUTH)
+
+    assert res.status_code == 200
+    assert mock_set_attrs.call_args_list[0].kwargs['request_uuid'] == ''
+    assert 'No request_uuid stamped' in mock_logger.warning.call_args.args[0]
 
 
 def test_a_rejected_origin_still_reports_the_route_it_targeted():
@@ -448,3 +478,114 @@ def test_a_rejected_origin_still_reports_the_route_it_targeted():
 # attribute lands on, which is the property that matters. Middleware path
 # matching and uuid stamping live in
 # tests/middlewares/test_request_event_middleware.py.
+
+
+# ---------------------------------------------------------------------------
+# Route-level features: request rate limiting
+# ---------------------------------------------------------------------------
+
+
+def _rate_limited_client(max_requests: int) -> TestClient:
+    client, _ = _make_client(
+        rate_limiter=RequestRateLimiter(
+            project_uuid=str(PROJECT_UUID),
+            route_name='my-route',
+            rate_limiting_config=RateLimiting(
+                max_requests=max_requests, window_size='1 minute'
+            ),
+        )
+    )
+    return client
+
+
+@patch('radicalbit_ai_gateway.limiting.rate_limiter.emit_event', autospec=True)
+def test_rate_limit_is_enforced_on_mcp_calls(mock_emit_event):
+    client = _rate_limited_client(max_requests=2)
+
+    assert client.post(PATH, json=_ping(1), headers=AUTH).status_code == 200
+    assert client.post(PATH, json=_ping(2), headers=AUTH).status_code == 200
+
+    res = client.post(PATH, json=_ping(3), headers=AUTH)
+    assert res.status_code == 429
+    assert res.json()['error']['type'] == 'rate_limit_error'
+
+
+@patch('radicalbit_ai_gateway.limiting.rate_limiter.emit_event', autospec=True)
+def test_notifications_and_unparseable_bodies_consume_budget(mock_emit_event):
+    """The check sits before the body parse, so one POST is one request."""
+    client = _rate_limited_client(max_requests=2)
+
+    assert (
+        client.post(
+            PATH,
+            json={'jsonrpc': '2.0', 'method': 'notifications/initialized'},
+            headers=AUTH,
+        ).status_code
+        == 202
+    )
+    assert (
+        client.post(
+            PATH,
+            content=b'{not json',
+            headers={**AUTH, 'Content-Type': 'application/json'},
+        ).status_code
+        == 400
+    )
+
+    assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 429
+
+
+def test_rate_limiter_receives_the_authenticated_identity():
+    limiter = MagicMock()
+    limiter.check_and_count_request = AsyncMock()
+    client, _ = _make_client(rate_limiter=limiter)
+
+    res = client.post(PATH, json=_ping(), headers=AUTH)
+
+    assert res.status_code == 200
+    kwargs = limiter.check_and_count_request.await_args.kwargs
+    assert kwargs['api_key_uuid'] == KEY_DETAILS.api_key_uuid
+    assert kwargs['api_key_name'] == KEY_DETAILS.api_key_name
+    assert kwargs['group_uuid'] == KEY_DETAILS.group_uuid
+    assert kwargs['group_name'] == KEY_DETAILS.group_name
+    assert kwargs['project_name'] == 'proj'
+    assert kwargs['project_uuid'] == str(client.app.state.project_configs['proj'].uuid)
+
+
+def test_a_fanout_call_counts_once_regardless_of_upstream_sessions():
+    upstream = MagicMock(spec_set=McpUpstreamClient)
+    upstream.list_tools = AsyncMock(return_value=[])
+    limiter = MagicMock()
+    limiter.check_and_count_request = AsyncMock()
+    client, _ = _make_client(upstream, rate_limiter=limiter)
+
+    assert (
+        client.post(
+            PATH,
+            json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+            headers=AUTH,
+        ).status_code
+        == 200
+    )
+    limiter.check_and_count_request.assert_awaited_once()
+
+
+def test_an_unbound_key_is_rejected_before_the_limit_is_counted():
+    limiter = MagicMock()
+    limiter.check_and_count_request = AsyncMock()
+    client, _ = _make_client(rate_limiter=limiter, key_bound=False)
+
+    assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 403
+    limiter.check_and_count_request.assert_not_awaited()
+
+
+def test_a_route_without_rate_limiting_is_unaffected():
+    client, _ = _make_client()
+    assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+
+def test_a_missing_route_registry_is_a_503_like_the_v1_endpoints():
+    """Shared with /v1 via get_gateway_routes: uninitialized is not 'unlimited'."""
+    client, _ = _make_client()
+    del client.app.state.routes
+    assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 503

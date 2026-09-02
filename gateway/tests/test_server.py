@@ -33,13 +33,9 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.event_dto import WindowStatus
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import (
-    app,
-    group_service,
-    key_service,
-    set_request_uuid,
-)
+from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
     GatewayInternalError,
@@ -65,7 +61,7 @@ class TestServer(unittest.TestCase):
         cls.cost_service: CostService = MagicMock(spec_set=CostService)
         cls.prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
         app.state.routes = cls.gateways_mock
-        app.dependency_overrides[set_request_uuid] = mock_request_uuid
+        app.dependency_overrides[get_request_uuid] = mock_request_uuid
         cls.client = TestClient(app)
         cls.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
         cls.hashed_api_key = db_mock.HASHED_KEY
