@@ -130,7 +130,6 @@ def _openai_route_guardrail_names() -> list[str]:
 
 
 def get_gateway_openai_with_guardrails() -> GatewayConfig:
-
     chat_models = [
         make_chat_model(
             'openai-o4-mini', 'openai/gpt-4o-mini', temperature=0.9, max_tokens=150
@@ -158,7 +157,6 @@ def get_gateway_openai_with_guardrails() -> GatewayConfig:
 
 
 def get_gateway_openai_cached() -> GatewayConfig:
-
     chat_models = [
         make_chat_model(
             'openai-o4-mini', 'openai/gpt-4o-mini', temperature=0.9, max_tokens=150
@@ -183,7 +181,6 @@ def get_gateway_openai_cached() -> GatewayConfig:
 
 
 def get_gateway_embedded_cached() -> GatewayConfig:
-
     chat_models = [
         make_chat_model(
             'openai-o4-mini', 'openai/gpt-4o-mini', temperature=0.9, max_tokens=150
@@ -207,7 +204,6 @@ def get_gateway_embedded_cached() -> GatewayConfig:
 
 
 def get_gateway_embedded_limiting() -> GatewayConfig:
-
     chat_models = [
         make_chat_model(
             'openai-o4-mini', 'openai/gpt-4o-mini', temperature=0.9, max_tokens=150
@@ -246,7 +242,6 @@ def get_gateway_embedded_limiting() -> GatewayConfig:
 
 
 def get_gateway_ollama_no_api_key() -> GatewayConfig:
-
     chat_models = [
         Model(
             model_id='qwen',
@@ -278,7 +273,6 @@ def _make_model(model_id: str, model: str) -> Model:
 
 
 def get_gateway_routing_keyword() -> GatewayConfig:
-
     chat_models = [
         _make_model('billing_model', 'openai/gpt-4o'),
         _make_model('tech_support_model', 'openai/gpt-4o-mini'),
@@ -311,7 +305,6 @@ def get_gateway_routing_keyword() -> GatewayConfig:
 
 
 def get_gateway_routing_context_length() -> GatewayConfig:
-
     chat_models = [
         _make_model('gpt-4o', 'openai/gpt-4o'),
         _make_model('gpt-4o-mini', 'openai/gpt-4o-mini'),
@@ -340,7 +333,6 @@ def get_gateway_routing_context_length() -> GatewayConfig:
 
 
 def get_gateway_routing_time() -> GatewayConfig:
-
     chat_models = [
         _make_model('weekday_model', 'openai/gpt-4o'),
         _make_model('night_model', 'openai/gpt-4o-mini'),
@@ -371,7 +363,6 @@ def get_gateway_routing_time() -> GatewayConfig:
 
 
 def get_gateway_routing_token_length() -> GatewayConfig:
-
     chat_models = [
         _make_model('gpt-4o', 'openai/gpt-4o'),
         _make_model('gpt-4o-mini', 'openai/gpt-4o-mini'),
@@ -400,7 +391,6 @@ def get_gateway_routing_token_length() -> GatewayConfig:
 
 
 def get_gateway_routing_text_classification() -> GatewayConfig:
-
     chat_models = [
         _make_model('billing_model', 'openai/gpt-4o'),
         _make_model('tech_support_model', 'openai/gpt-4o-mini'),
