@@ -20,7 +20,6 @@ async def get_gateway_routes(request: Request) -> dict:
 
 
 async def get_request_uuid(request: Request) -> str:
-
     request_uuid = getattr(request.state, 'request_uuid', None)
     if request_uuid is None:
         logger.warning(
