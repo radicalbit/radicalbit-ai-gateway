@@ -16,6 +16,9 @@ jobs:
   ruff:
     name: ruff (lint & format)
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: ./gateway
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,14 +32,10 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/${{ env.UV_VERSION }}/install.sh | sh
 
-      # Identical to .pre-commit-config.yaml (ruff-check):
-      # args: [--config=gateway/pyproject.toml]
-      - name: Ruff Linter Check (gateway)
+      - name: Ruff Linter Check
         run: |
-          uv run --project gateway ruff check --config=gateway/pyproject.toml gateway
+          uv run ruff check
 
-      # Identical to .pre-commit-config.yaml (ruff-format):
-      # args: [--config=gateway/pyproject.toml] with --check for CI
-      - name: Ruff Formatter Check (gateway)
+      - name: Ruff Formatter Check
         run: |
-          uv run --project gateway ruff format --config=gateway/pyproject.toml --check gateway
+          uv run ruff format --check
