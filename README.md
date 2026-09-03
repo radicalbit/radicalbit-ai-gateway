@@ -549,7 +549,7 @@ mcp_servers:
 The route then speaks MCP at `POST /{project}/{route}/mcp`, with the same API key as the chat endpoints:
 
 ```bash
-curl http://localhost:9000/quickstart/my-assistant/mcp \
+curl http://localhost:9000/project-name/route-name/mcp \
   -H "Authorization: Bearer key" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
