@@ -4,14 +4,20 @@ from sqlalchemy.exc import IntegrityError
 
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
+from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     KeyFullOut,
     KeyGroupIn,
     KeyIn,
 )
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitIn,
+    CredentialLimitOut,
+)
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.utils.exceptions import (
+    CredentialLimitAlreadyExistsError,
     GroupNotFoundError,
     KeyAlreadyExistsError,
     KeyGroupAlreadyExistsError,
@@ -27,18 +33,26 @@ class KeyService:
         key_dao: KeyDAO,
         api_key_security: ApiKeySecurity,
         group_dao: GroupDAO,
+        key_limit_dao: KeyLimitDAO,
     ):
         self.key_dao = key_dao
         self.api_key_security = api_key_security
         self.group_dao = group_dao
+        self.key_limit_dao = key_limit_dao
 
-    def _get_key(self, key_uuid: UUID, include_groups: bool = False) -> KeyFullOut:
+    def _get_key(
+        self,
+        key_uuid: UUID,
+        include_groups: bool = False,
+        include_limits: bool = False,
+    ) -> KeyFullOut:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         return KeyFullOut.from_key_obscured(
             key=key,
             include_groups=include_groups,
+            include_limits=include_limits,
         )
 
     def create_key(self, key_in: KeyIn) -> KeyFullOut:
@@ -65,12 +79,18 @@ class KeyService:
                 f'An error occurred while creating the key: {e}'
             ) from e
 
-    def get_all(self, include_groups: bool, only_unassigned: bool) -> list[KeyFullOut]:
+    def get_all(
+        self,
+        include_groups: bool,
+        only_unassigned: bool,
+        include_limits: bool = False,
+    ) -> list[KeyFullOut]:
         keys = self.key_dao.get_all(only_unassigned=only_unassigned)
         return [
             KeyFullOut.from_key_obscured(
                 key=key,
                 include_groups=include_groups,
+                include_limits=include_limits,
             )
             for key in keys
         ]
@@ -88,8 +108,17 @@ class KeyService:
             raise KeyInternalError(f'Key {key.name} not deleted')
         return KeyFullOut.from_key_obscured(key=key, include_groups=include_groups)
 
-    def get_key_by_uuid(self, key_uuid: UUID, include_groups: bool) -> KeyFullOut:
-        return self._get_key(key_uuid=key_uuid, include_groups=include_groups)
+    def get_key_by_uuid(
+        self,
+        key_uuid: UUID,
+        include_groups: bool,
+        include_limits: bool = False,
+    ) -> KeyFullOut:
+        return self._get_key(
+            key_uuid=key_uuid,
+            include_groups=include_groups,
+            include_limits=include_limits,
+        )
 
     def update_key_name(self, key_uuid: UUID, key_in: KeyIn) -> KeyFullOut:
         key = self.key_dao.get_by_uuid(key_uuid)
@@ -200,3 +229,40 @@ class KeyService:
 
     def get_names_by_uuids(self, uuids: list[UUID]) -> dict[UUID, str]:
         return self.key_dao.get_names_by_uuids(uuids)
+
+    def add_limit_to_key(
+        self, key_uuid: UUID, limit_in: CredentialLimitIn
+    ) -> KeyFullOut:
+        key = self.key_dao.get_by_uuid(key_uuid)
+        if not key:
+            raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
+        if key.owner != 'gateway':
+            raise KeyOperationNotAllowedError(
+                f'Key {key_uuid} cannot have limits configured because owner is "{key.owner}"'
+            )
+        try:
+            self.key_limit_dao.insert(limit_in.to_key_limit(key_uuid))
+        except IntegrityError as e:
+            if 'uq_key_limit_KEY_UUID_CATEGORY_ALGORITHM_WINDOW_SIZE' in str(e.orig):
+                raise CredentialLimitAlreadyExistsError(
+                    f'A {limit_in.category.value} limit with algorithm '
+                    f'{limit_in.algorithm.value} and window {limit_in.window_size} '
+                    f'already exists on key {key_uuid}'
+                ) from e
+            raise KeyInternalError(
+                f'An error occurred while adding the limit: {e}'
+            ) from e
+        except Exception as e:
+            raise KeyInternalError(
+                f'An error occurred while adding the limit: {e}'
+            ) from e
+        return self._get_key(key_uuid, include_limits=True)
+
+    def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:
+        key = self.key_dao.get_by_uuid(key_uuid)
+        if not key:
+            raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
+        return [
+            CredentialLimitOut.from_key_limit(limit)
+            for limit in self.key_limit_dao.get_by_key_uuid(key_uuid)
+        ]

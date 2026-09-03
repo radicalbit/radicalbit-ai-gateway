@@ -6,6 +6,7 @@ from radicalbit_ai_gateway.db.models.event import EventDetails
 from radicalbit_ai_gateway.db.tables.event_table import Event
 from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 from radicalbit_ai_gateway.db.tables.group_table import Group
+from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.db.tables.otel_traces_table import OtelTraces
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
@@ -27,6 +28,10 @@ from radicalbit_ai_gateway.models.auth_dto import (
 )
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitCategory,
+    CredentialLimitIn,
+)
 from radicalbit_ai_gateway.models.project_dto import (
     ConfigSlotOut,
     ProjectConfigFileIn,
@@ -90,6 +95,41 @@ def get_sample_key_with_group(
         updated_at=now,
         group_uuid=group_uuid,
         group=get_sample_group(uuid=group_uuid),
+    )
+
+
+def get_sample_key_limit(
+    uuid: uuid.UUID = RANDOM_UUID,
+    key_uuid: uuid.UUID = RANDOM_UUID,
+    category: str = CredentialLimitCategory.BUDGET.value,
+    algorithm: str = 'FIXED_WINDOW',
+    window_size: str = '1 day',
+    max_value: float = 10.0,
+) -> KeyLimit:
+    now = datetime.datetime.now(tz=UTC)
+    return KeyLimit(
+        uuid=uuid,
+        key_uuid=key_uuid,
+        category=category,
+        algorithm=algorithm,
+        window_size=window_size,
+        max_value=max_value,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def get_sample_credential_limit_in(
+    category: CredentialLimitCategory = CredentialLimitCategory.BUDGET,
+    algorithm: str = 'FIXED_WINDOW',
+    window_size: str = '1 day',
+    value: float = 10.0,
+) -> CredentialLimitIn:
+    return CredentialLimitIn(
+        category=category,
+        algorithm=algorithm,
+        window_size=window_size,
+        value=value,
     )
 
 

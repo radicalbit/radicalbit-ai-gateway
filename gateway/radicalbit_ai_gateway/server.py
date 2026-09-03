@@ -33,6 +33,7 @@ from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
+from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
@@ -182,6 +183,7 @@ database = Database(conf=app_config.db_config)
 discover_plugins()
 
 key_dao = KeyDAO(database)
+key_limit_dao = KeyLimitDAO(database)
 group_dao = GroupDAO(database)
 group_route_dao = GroupRouteDAO(database)
 project_dao = ProjectDAO(database)
@@ -196,6 +198,7 @@ key_service = KeyService(
     key_dao=key_dao,
     api_key_security=api_key_security,
     group_dao=group_dao,
+    key_limit_dao=key_limit_dao,
 )
 group_service = GroupService(
     group_dao=group_dao,
