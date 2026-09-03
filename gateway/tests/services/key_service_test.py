@@ -16,7 +16,10 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyFullOut,
     KeyGroupIn,
 )
-from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitCategory,
+    CredentialLimitOut,
+)
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -358,49 +361,83 @@ class KeyServiceTest(unittest.TestCase):
         )
         self.key_dao.remove_group.assert_not_called()
 
-    def test_add_limit_to_key_ok(self):
+    def test_add_limits_to_key_ok(self):
         key_uuid = uuid.uuid4()
         key = db_mock.get_sample_key(uuid=key_uuid)
         limit = db_mock.get_sample_key_limit(key_uuid=key_uuid)
         key.limits = [limit]
-        limit_in = db_mock.get_sample_credential_limit_in()
+        limits_in = db_mock.get_sample_credential_limits_in()
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
-        self.key_limit_dao.insert = MagicMock(return_value=limit)
-        res = self.key_service.add_limit_to_key(key_uuid, limit_in)
-        self.key_limit_dao.insert.assert_called_once()
+        self.key_limit_dao.insert_many = MagicMock(return_value=[limit])
+        res = self.key_service.add_limits_to_key(key_uuid, limits_in)
+        self.key_limit_dao.insert_many.assert_called_once()
         assert res.limits == [CredentialLimitOut.from_key_limit(limit)]
         assert res == KeyFullOut.from_key_obscured(key, include_limits=True)
 
-    def test_add_limit_to_key_not_found(self):
+    def test_add_limits_to_key_with_groups(self):
+        key_uuid = uuid.uuid4()
+        group = db_mock.get_sample_group()
+        key = db_mock.get_sample_key(uuid=key_uuid)
+        key.group = group
+        key.limits = []
+        limits_in = db_mock.get_sample_credential_limits_in()
+        self.key_dao.get_by_uuid = MagicMock(return_value=key)
+        self.key_limit_dao.insert_many = MagicMock(return_value=[])
+        res = self.key_service.add_limits_to_key(
+            key_uuid, limits_in, include_groups=True
+        )
+        assert res.group == GroupOut.from_group(group)
+
+    def test_add_limits_to_key_multiple_categories(self):
+        key_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(uuid=key_uuid)
+        limits_in = db_mock.get_sample_credential_limits_in(
+            limits=[
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.RATE, window_size='1 hour'
+                ),
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.BUDGET, window_size='1 day'
+                ),
+            ]
+        )
+        self.key_dao.get_by_uuid = MagicMock(return_value=key)
+        self.key_limit_dao.insert_many = MagicMock(return_value=[])
+        self.key_service.add_limits_to_key(key_uuid, limits_in)
+        inserted = self.key_limit_dao.insert_many.call_args[0][0]
+        assert len(inserted) == 2
+        assert {limit.category for limit in inserted} == {'request_rate', 'budget'}
+
+    def test_add_limits_to_key_not_found(self):
         self.key_dao.get_by_uuid = MagicMock(return_value=None)
-        self.key_limit_dao.insert = MagicMock()
+        self.key_limit_dao.insert_many = MagicMock()
         pytest.raises(
             KeyNotFoundError,
-            self.key_service.add_limit_to_key,
+            self.key_service.add_limits_to_key,
             uuid.uuid4(),
-            db_mock.get_sample_credential_limit_in(),
+            db_mock.get_sample_credential_limits_in(),
         )
-        self.key_limit_dao.insert.assert_not_called()
+        self.key_limit_dao.insert_many.assert_not_called()
 
-    def test_add_limit_to_keycloak_key_raises(self):
+    def test_add_limits_to_keycloak_key_raises(self):
         key_uuid = uuid.uuid4()
         key = db_mock.get_sample_key(uuid=key_uuid)
         key.owner = 'keycloak'
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
-        self.key_limit_dao.insert = MagicMock()
+        self.key_limit_dao.insert_many = MagicMock()
         pytest.raises(
             KeyOperationNotAllowedError,
-            self.key_service.add_limit_to_key,
+            self.key_service.add_limits_to_key,
             key_uuid,
-            db_mock.get_sample_credential_limit_in(),
+            db_mock.get_sample_credential_limits_in(),
         )
-        self.key_limit_dao.insert.assert_not_called()
+        self.key_limit_dao.insert_many.assert_not_called()
 
-    def test_add_limit_to_key_duplicate_raises(self):
+    def test_add_limits_to_key_duplicate_raises(self):
         key_uuid = uuid.uuid4()
         key = db_mock.get_sample_key(uuid=key_uuid)
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
-        self.key_limit_dao.insert = MagicMock(
+        self.key_limit_dao.insert_many = MagicMock(
             side_effect=IntegrityError(
                 'INSERT',
                 {},
@@ -412,9 +449,9 @@ class KeyServiceTest(unittest.TestCase):
         )
         pytest.raises(
             CredentialLimitAlreadyExistsError,
-            self.key_service.add_limit_to_key,
+            self.key_service.add_limits_to_key,
             key_uuid,
-            db_mock.get_sample_credential_limit_in(),
+            db_mock.get_sample_credential_limits_in(),
         )
 
     def test_get_limits_for_key_ok(self):

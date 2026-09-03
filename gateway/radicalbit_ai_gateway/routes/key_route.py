@@ -9,7 +9,10 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyGroupIn,
     KeyIn,
 )
-from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitIn
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitOut,
+    CredentialLimitsIn,
+)
 from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -88,9 +91,21 @@ class KeyRoute:
             '/keys/{key_uuid}/limits', status_code=201, response_model=KeyFullOut
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid', action='ADD_LIMIT')
-        def add_limit_to_key(key_uuid: UUID, limit_in: CredentialLimitIn):
-            key = key_service.add_limit_to_key(key_uuid, limit_in)
-            logger.info('Added %s limit to key %s', limit_in.category.value, key_uuid)
+        def add_limits_to_key(
+            key_uuid: UUID,
+            limits_in: CredentialLimitsIn,
+            include_groups: bool = Query(False),
+        ):
+            key = key_service.add_limits_to_key(key_uuid, limits_in, include_groups)
+            logger.info('Added %s limit(s) to key %s', len(limits_in.limits), key_uuid)
             return key
+
+        @router.get(
+            '/keys/{key_uuid}/limits',
+            status_code=200,
+            response_model=list[CredentialLimitOut],
+        )
+        def get_limits_for_key(key_uuid: UUID):
+            return key_service.get_limits_for_key(key_uuid)
 
         return router

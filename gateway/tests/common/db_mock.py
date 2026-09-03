@@ -31,6 +31,7 @@ from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitIn,
+    CredentialLimitsIn,
 )
 from radicalbit_ai_gateway.models.project_dto import (
     ConfigSlotOut,
@@ -131,6 +132,12 @@ def get_sample_credential_limit_in(
         window_size=window_size,
         value=value,
     )
+
+
+def get_sample_credential_limits_in(
+    limits: list[CredentialLimitIn] | None = None,
+) -> CredentialLimitsIn:
+    return CredentialLimitsIn(limits=limits or [get_sample_credential_limit_in()])
 
 
 def get_sample_group_plain(

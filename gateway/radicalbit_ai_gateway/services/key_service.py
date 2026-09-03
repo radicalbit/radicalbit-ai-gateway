@@ -12,8 +12,8 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyIn,
 )
 from radicalbit_ai_gateway.models.credential_limiting import (
-    CredentialLimitIn,
     CredentialLimitOut,
+    CredentialLimitsIn,
 )
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -230,8 +230,11 @@ class KeyService:
     def get_names_by_uuids(self, uuids: list[UUID]) -> dict[UUID, str]:
         return self.key_dao.get_names_by_uuids(uuids)
 
-    def add_limit_to_key(
-        self, key_uuid: UUID, limit_in: CredentialLimitIn
+    def add_limits_to_key(
+        self,
+        key_uuid: UUID,
+        limits_in: CredentialLimitsIn,
+        include_groups: bool = False,
     ) -> KeyFullOut:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
@@ -241,22 +244,26 @@ class KeyService:
                 f'Key {key_uuid} cannot have limits configured because owner is "{key.owner}"'
             )
         try:
-            self.key_limit_dao.insert(limit_in.to_key_limit(key_uuid))
+            self.key_limit_dao.insert_many(limits_in.to_key_limits(key_uuid))
         except IntegrityError as e:
             if 'uq_key_limit_KEY_UUID_CATEGORY_ALGORITHM_WINDOW_SIZE' in str(e.orig):
+                categories = ', '.join(
+                    limit.category.value for limit in limits_in.limits
+                )
                 raise CredentialLimitAlreadyExistsError(
-                    f'A {limit_in.category.value} limit with algorithm '
-                    f'{limit_in.algorithm.value} and window {limit_in.window_size} '
-                    f'already exists on key {key_uuid}'
+                    f'One of the requested limits ({categories}) already exists '
+                    f'on key {key_uuid} with the same algorithm and window'
                 ) from e
             raise KeyInternalError(
-                f'An error occurred while adding the limit: {e}'
+                f'An error occurred while adding the limits: {e}'
             ) from e
         except Exception as e:
             raise KeyInternalError(
-                f'An error occurred while adding the limit: {e}'
+                f'An error occurred while adding the limits: {e}'
             ) from e
-        return self._get_key(key_uuid, include_limits=True)
+        return self._get_key(
+            key_uuid, include_groups=include_groups, include_limits=True
+        )
 
     def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:
         key = self.key_dao.get_by_uuid(key_uuid)

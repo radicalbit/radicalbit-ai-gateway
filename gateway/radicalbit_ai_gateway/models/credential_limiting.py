@@ -68,6 +68,33 @@ class CredentialLimitIn(BaseModel):
         )
 
 
+class CredentialLimitsIn(BaseModel):
+    """A batch of limits to create on a credential in a single call — e.g. a rate,
+    a token and a budget limit configured together from one UI form submission.
+    """
+
+    limits: list[CredentialLimitIn] = Field(..., min_length=1)
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    @model_validator(mode='after')
+    def no_duplicates_within_batch(self) -> CredentialLimitsIn:
+        seen = set()
+        for limit in self.limits:
+            key = (limit.category, limit.algorithm, str(limit.window_size))
+            if key in seen:
+                raise ValueError(
+                    f'Duplicate limit in request: {limit.category.value} with '
+                    f'algorithm {limit.algorithm.value} and window '
+                    f'{limit.window_size} was submitted more than once.'
+                )
+            seen.add(key)
+        return self
+
+    def to_key_limits(self, key_uuid: UUID) -> list[KeyLimit]:
+        return [limit.to_key_limit(key_uuid) for limit in self.limits]
+
+
 class CredentialLimitOut(BaseModel):
     uuid: UUID
     category: CredentialLimitCategory

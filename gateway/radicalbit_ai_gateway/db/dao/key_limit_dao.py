@@ -17,6 +17,15 @@ class KeyLimitDAO:
             session.flush()
             return key_limit
 
+    def insert_many(self, key_limits: list[KeyLimit]) -> list[KeyLimit]:
+        """Insert all limits in a single transaction: either all succeed, or
+        none do (e.g. if one duplicates an existing or another batch entry).
+        """
+        with self.db.begin_session() as session:
+            session.add_all(key_limits)
+            session.flush()
+            return key_limits
+
     def get_by_uuid(self, limit_uuid: UUID) -> KeyLimit | None:
         with self.db.begin_session() as session:
             return session.scalar(select(KeyLimit).where(KeyLimit.uuid == limit_uuid))

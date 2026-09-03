@@ -76,6 +76,38 @@ class KeyLimitDAOTest(DatabaseIntegration):
         self.key_limit_dao.insert(limit_one)
         pytest.raises(IntegrityError, self.key_limit_dao.insert, limit_two)
 
+    def test_insert_many(self):
+        key = self._insert_key()
+        limits = [
+            db_mock.get_sample_key_limit(
+                uuid=uuid.uuid4(), key_uuid=key.uuid, category='budget'
+            ),
+            db_mock.get_sample_key_limit(
+                uuid=uuid.uuid4(),
+                key_uuid=key.uuid,
+                category='request_rate',
+                window_size='1 hour',
+            ),
+        ]
+        inserted = self.key_limit_dao.insert_many(limits)
+        assert len(inserted) == 2
+        assert len(self.key_limit_dao.get_by_key_uuid(key.uuid)) == 2
+
+    def test_insert_many_is_atomic_on_conflict(self):
+        key = self._insert_key()
+        limits = [
+            db_mock.get_sample_key_limit(
+                uuid=uuid.uuid4(), key_uuid=key.uuid, category='request_rate'
+            ),
+            # Duplicates the first one: same category/algorithm/window.
+            db_mock.get_sample_key_limit(
+                uuid=uuid.uuid4(), key_uuid=key.uuid, category='request_rate'
+            ),
+        ]
+        pytest.raises(IntegrityError, self.key_limit_dao.insert_many, limits)
+        # Neither row should have been committed.
+        assert self.key_limit_dao.get_by_key_uuid(key.uuid) == []
+
     def test_cascade_delete_on_key_delete(self):
         key = self._insert_key()
         self.key_limit_dao.insert(
