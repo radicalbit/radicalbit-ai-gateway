@@ -435,7 +435,7 @@ class KeyServiceTest(unittest.TestCase):
 
     def test_add_limits_to_key_duplicate_raises(self):
         key_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid)
+        key = db_mock.get_sample_key(uuid=key_uuid, name='my-credential')
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
         self.key_limit_dao.insert_many = MagicMock(
             side_effect=IntegrityError(
@@ -447,12 +447,14 @@ class KeyServiceTest(unittest.TestCase):
                 ),
             )
         )
-        pytest.raises(
-            CredentialLimitAlreadyExistsError,
-            self.key_service.add_limits_to_key,
-            key_uuid,
-            db_mock.get_sample_credential_limits_in(),
-        )
+        with pytest.raises(CredentialLimitAlreadyExistsError) as exc_info:
+            self.key_service.add_limits_to_key(
+                key_uuid, db_mock.get_sample_credential_limits_in()
+            )
+        # The message should reference the credential by name, not by UUID,
+        # so it's actually readable to whoever hits this error.
+        assert 'my-credential' in str(exc_info.value)
+        assert str(key_uuid) not in str(exc_info.value)
 
     def test_get_limits_for_key_ok(self):
         key_uuid = uuid.uuid4()

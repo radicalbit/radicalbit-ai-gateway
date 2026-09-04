@@ -252,7 +252,7 @@ class KeyService:
                 )
                 raise CredentialLimitAlreadyExistsError(
                     f'One of the requested limits ({categories}) already exists '
-                    f'on key {key_uuid} with the same algorithm and window'
+                    f'on credential "{key.name}" with the same algorithm and window'
                 ) from e
             raise KeyInternalError(
                 f'An error occurred while adding the limits: {e}'

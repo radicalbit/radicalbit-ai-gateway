@@ -451,7 +451,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         body = ''
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={'detail': exc.errors(), 'body': body},
+        # exc.errors() can contain raw exception objects (e.g. the ctx.error of
+        # a model_validator that raised ValueError), which plain json.dumps
+        # cannot serialize — jsonable_encoder handles those.
+        content=jsonable_encoder({'detail': exc.errors(), 'body': body}),
     )
 
 
