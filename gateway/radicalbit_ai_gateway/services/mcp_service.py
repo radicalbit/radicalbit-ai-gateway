@@ -375,6 +375,7 @@ class McpService:
         cached = await list_cache.get(method)
         if cached is None:
             return None
+        set_operation_category(OperationCategory.CACHE)
         self._record_cache_hit(len(cached.get(key) or ()))
         list_cache.record_hit(method)
         return cached

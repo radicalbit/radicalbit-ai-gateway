@@ -12,6 +12,7 @@ from radicalbit_ai_gateway.mcp_proxy.list_cache import (
     RESOURCES_LIST,
     TOOLS_LIST,
     McpListCache,
+    servers_signature,
 )
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.event_type import EventType
@@ -160,6 +161,66 @@ def test_a_stdio_server_is_identified_by_its_command_line():
     )
 
 
+def test_rotating_a_static_header_invalidates_the_entry():
+    """The credential selects which tools the upstream exposes, so it is identity.
+
+    Same alias, same url, a token for a different scope or tenant: the
+    previous token's tools must not keep being served.
+    """
+    one = McpHttpServer(
+        alias='github',
+        url='https://github.example.com/mcp/',
+        headers={'authorization': 'Bearer tenant-a'},
+    )
+    other = McpHttpServer(
+        alias='github',
+        url='https://github.example.com/mcp/',
+        headers={'authorization': 'Bearer tenant-b'},
+    )
+    assert _cache(servers=[one])._key(TOOLS_LIST) != _cache(servers=[other])._key(
+        TOOLS_LIST
+    )
+    # and adding a credential where there was none is also a change of identity
+    assert _cache(servers=[one])._key(TOOLS_LIST) != _cache(servers=[GITHUB])._key(
+        TOOLS_LIST
+    )
+
+
+def test_changing_a_stdio_env_invalidates_the_entry():
+    one = McpStdioServer(alias='local', command='python', env={'TOKEN': 'a'})
+    other = McpStdioServer(alias='local', command='python', env={'TOKEN': 'b'})
+    assert _cache(servers=[one])._key(TOOLS_LIST) != _cache(servers=[other])._key(
+        TOOLS_LIST
+    )
+
+
+def test_reordering_the_same_headers_still_hits():
+    """The signature must key on the credential set, not on dict insertion order."""
+    one = McpHttpServer(
+        alias='github',
+        url='https://github.example.com/mcp/',
+        headers={'authorization': 'Bearer t', 'x-tenant': 'a'},
+    )
+    other = McpHttpServer(
+        alias='github',
+        url='https://github.example.com/mcp/',
+        headers={'x-tenant': 'a', 'authorization': 'Bearer t'},
+    )
+    assert _cache(servers=[one])._key(TOOLS_LIST) == _cache(servers=[other])._key(
+        TOOLS_LIST
+    )
+
+
+def test_a_credential_never_reaches_the_signature_in_the_clear():
+    secret = 'Bearer super-secret'
+    server = McpHttpServer(
+        alias='github',
+        url='https://github.example.com/mcp/',
+        headers={'authorization': secret},
+    )
+    assert secret not in servers_signature([server])
+
+
 async def test_a_stored_result_round_trips():
     cache = _cache()
     result = {'tools': [{'name': 'github__get_issue', 'description': 'a tool'}]}
@@ -183,7 +244,18 @@ async def test_a_list_entry_always_expires(ttl):
     assert client.set.await_args.args[2] == DEFAULT_LIST_TTL_SECONDS
 
 
-@pytest.mark.parametrize('stored', ['{not json', '["a", "list"]', '"a string"'])
+@pytest.mark.parametrize(
+    'stored',
+    [
+        '{not json',
+        '["a", "list"]',
+        '"a string"',
+        '{}',
+        '{"tools_v2": []}',
+        '{"tools": {"get_issue": {}}}',
+        '{"tools": null}',
+    ],
+)
 async def test_an_unusable_entry_is_a_miss_not_an_error(stored):
     client = MagicMock(spec_set=CacheToolsInMemory)
     client.get.return_value = stored
@@ -241,3 +313,10 @@ def test_an_exact_cache_reports_its_own_type():
         _cache(gateway_cache=exact).record_hit(RESOURCES_LIST)
 
     assert mock_emit.call_args.args[0].cache_type == 'exact'
+
+
+@pytest.mark.parametrize('method', ['tools/call', 'initialize'])
+async def test_a_method_that_is_not_a_list_is_never_served(method):
+    client = MagicMock(spec_set=CacheToolsInMemory)
+    assert await _cache(gateway_cache=GatewayCache(client)).get(method) is None
+    client.get.assert_not_awaited()

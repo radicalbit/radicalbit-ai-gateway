@@ -12,6 +12,7 @@ the /v1 endpoints use, no new YAML) and owns the guards that decide when a
 route may not be cached at all — see :meth:`McpListCache.for_route`.
 """
 
+import hashlib
 import json
 import logging
 
@@ -35,17 +36,46 @@ RESOURCES_LIST = 'resources/list'
 
 DEFAULT_LIST_TTL_SECONDS = 300
 
+# The result key each list method carries its payload under, and so also the
+# set of methods that may be cached at all.
+LIST_RESULT_KEY = {
+    TOOLS_LIST: 'tools',
+    PROMPTS_LIST: 'prompts',
+    RESOURCES_LIST: 'resources',
+}
+
 
 def servers_signature(servers: list[AnyMcpServer]) -> str:
-    """Identify the upstream set a cached list was produced from."""
+    """Identify the upstream set a cached list was produced from.
+
+    Every field that can change *which* items an upstream exposes belongs
+    here: its endpoint, and the credentials the gateway presents to it. The
+    static ``headers`` (HTTP) and ``env`` (stdio) are what carry those
+    credentials, so rotating a secret to a token with a different scope or
+    tenant — same alias, same url — has to miss rather than keep serving the
+    previous token's tools for the rest of the TTL. Their values are hashed,
+    never spelled out, so no secret reaches a cache key or a log line.
+    """
     parts = []
     for server in sorted(servers, key=lambda s: s.alias):
         if isinstance(server, McpHttpServer):
             endpoint = server.url
+            credentials = server.headers
         else:
             endpoint = json.dumps([server.command, *server.args, server.cwd or ''])
-        parts.append(f'{server.alias}|{server.transport}|{endpoint}')
+            credentials = server.env
+        parts.append(
+            f'{server.alias}|{server.transport}|{endpoint}|{_digest(credentials)}'
+        )
     return ';'.join(parts)
+
+
+def _digest(values: dict[str, str] | None) -> str:
+    """Hash a credential-bearing mapping for inclusion in the signature."""
+    if not values:
+        return ''
+    canonical = json.dumps(values, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 
 
 class McpListCache:
@@ -112,7 +142,18 @@ class McpListCache:
         )
 
     async def get(self, method: str) -> dict | None:
-        """Return the cached result for ``method``, or ``None`` on a miss."""
+        """Return the cached result for ``method``, or ``None`` on a miss.
+
+        Never returns a half-trusted entry: what comes back here is handed to
+        the client verbatim as the JSON-RPC result, so an entry that does not
+        carry this method's own result list — ``{}``, or one written by a
+        gateway version that shaped it differently — is a miss rather than a
+        schema violation the client's SDK rejects.
+        """
+        key = LIST_RESULT_KEY.get(method)
+        if key is None:
+            logger.warning('MCP %s is not a cacheable method, not looking up', method)
+            return None
         try:
             raw = await self._cache.get(self._key(method))
         except Exception:
@@ -125,8 +166,10 @@ class McpListCache:
         except ValueError:
             logger.warning('MCP %s cache entry is not valid JSON, ignoring', method)
             return None
-        if not isinstance(cached, dict):
-            logger.warning('MCP %s cache entry is not a JSON object, ignoring', method)
+        if not isinstance(cached, dict) or not isinstance(cached.get(key), list):
+            logger.warning(
+                "MCP %s cache entry does not carry a '%s' list, ignoring", method, key
+            )
             return None
         return cached
 
