@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from traceloop.sdk.decorators import workflow
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.mcp_proxy.list_cache import McpListCache
 from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.utils.dependencies import (
     get_gateway_routes,
@@ -62,7 +63,13 @@ class McpRoute:
                     project_name=authorized.project_name,
                 )
 
-            result = await mcp_service.dispatch(request, authorized)
+            list_cache = McpListCache.for_route(
+                gateway_cache=route.gateway_cache if route else None,
+                ttl=route.ttl if route else None,
+                authorized=authorized,
+            )
+
+            result = await mcp_service.dispatch(request, authorized, list_cache)
             if result.payload is None:
                 return Response(status_code=result.status_code)
             return JSONResponse(result.payload, status_code=result.status_code)

@@ -3,8 +3,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from mcp import types
 import pytest
 
+from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
+from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
+from radicalbit_ai_gateway.mcp_proxy.list_cache import McpListCache
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
+from radicalbit_ai_gateway.models.auth_dto import KeyDetails
+from radicalbit_ai_gateway.models.event_type import EventType
+from radicalbit_ai_gateway.models.mcp_authorized_request import McpAuthorizedRequest
 from radicalbit_ai_gateway.models.mcp_server import McpHttpServer
 from radicalbit_ai_gateway.services.mcp_service import (
     LATEST_PROTOCOL_VERSION,
@@ -967,3 +973,234 @@ async def test_fanout_is_not_recorded_on_a_non_recording_span():
         await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
 
     span.set_attribute.assert_not_called()
+
+
+LIST_CACHE = 'radicalbit_ai_gateway.mcp_proxy.list_cache'
+
+
+@pytest.fixture(autouse=True)
+def emitted_cache_hits():
+    """Keep CACHE_HIT events out of the real buffer; assert on the mock instead.
+
+    Autouse so no unit test reaches the Celery event buffer, and named so the
+    tests that care about the event can request it.
+    """
+    with (
+        patch(f'{LIST_CACHE}.emit_event') as mock_emit,
+        patch(f'{LIST_CACHE}.cache_hit_counter'),
+    ):
+        yield mock_emit
+
+
+def _list_cache(servers=SERVERS) -> McpListCache:
+    """Build a real in-memory cache, wired as the endpoint wires it.
+
+    for_route returns None for a route that must not be cached; these tests all
+    use cacheable routes, so the assert both narrows the type and fails loudly
+    if a guard ever starts firing on one of them.
+    """
+    cache = McpListCache.for_route(
+        gateway_cache=GatewayCache(CacheToolsInMemory()),
+        ttl=None,
+        authorized=McpAuthorizedRequest(
+            request_uuid='request-uuid',
+            project_name='my-project',
+            project_uuid='project-uuid',
+            route_name='my-route',
+            route_key='my-project/my-route',
+            key_details=KeyDetails(
+                api_key_uuid='key-uuid',
+                api_key_name='my-key',
+                group_uuid='group-uuid',
+                group_name='team-a',
+                hashed_api_key='hashed',
+            ),
+            servers=servers,
+        ),
+    )
+    assert cache is not None, 'expected these servers to be cacheable'
+    return cache
+
+
+async def test_a_second_tools_list_is_served_from_cache():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[_tool('get_issue')]),
+            types.ListToolsResult(tools=[_tool('search')]),
+        ]
+    )
+    service, cache = _service(client), _list_cache()
+
+    first = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    second = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+
+    assert second.payload['result'] == first.payload['result']
+    assert [t['name'] for t in second.payload['result']['tools']] == [
+        'github__get_issue',
+        'jira__search',
+    ]
+    # one fan-out for the two requests, not one per server per request
+    assert client.list_tools.await_count == len(SERVERS)
+
+
+async def test_prompts_list_and_resources_list_are_cached_too():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[_prompt('summarize')])
+    )
+    client.list_resources = AsyncMock(
+        return_value=types.ListResourcesResult(
+            resources=[_resource('https://a.example/1')]
+        )
+    )
+    service, cache = _service(client), _list_cache()
+
+    for method in ('prompts/list', 'resources/list'):
+        first = await service._dispatch(_request(method), SERVERS, None, cache)
+        second = await service._dispatch(_request(method), SERVERS, None, cache)
+        assert second.payload['result'] == first.payload['result']
+
+    assert client.list_prompts.await_count == len(SERVERS)
+    assert client.list_resources.await_count == len(SERVERS)
+    # the wrapped uri survives the round trip through the cache
+    assert all(
+        uri.startswith('mcp-resource:')
+        for uri in [r['uri'] for r in second.payload['result']['resources']]
+    )
+
+
+async def test_one_cached_method_never_answers_another():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    client.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[_prompt('summarize')])
+    )
+    service, cache = _service(client), _list_cache()
+
+    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    result = await service._dispatch(_request('prompts/list'), SERVERS, None, cache)
+
+    assert [p['name'] for p in result.payload['result']['prompts']] == [
+        'github__summarize',
+        'jira__summarize',
+    ]
+
+
+async def test_a_partial_fanout_is_never_cached():
+    """A transient outage must not pin a truncated list for the whole TTL."""
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(
+        side_effect=[
+            McpUpstreamError('github', 'boom'),
+            types.ListToolsResult(tools=[_tool('search')]),
+            types.ListToolsResult(tools=[_tool('get_issue')]),
+            types.ListToolsResult(tools=[_tool('search')]),
+        ]
+    )
+    service, cache = _service(client), _list_cache()
+
+    degraded = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    recovered = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+
+    assert [t['name'] for t in degraded.payload['result']['tools']] == ['jira__search']
+    assert [t['name'] for t in recovered.payload['result']['tools']] == [
+        'github__get_issue',
+        'jira__search',
+    ]
+    assert client.list_tools.await_count == 2 * len(SERVERS)
+
+
+async def test_a_fully_failed_fanout_is_never_cached():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(
+        side_effect=[
+            McpUpstreamError('github', 'boom'),
+            McpUpstreamError('jira', 'boom'),
+            types.ListToolsResult(tools=[_tool('get_issue')]),
+            types.ListToolsResult(tools=[_tool('search')]),
+        ]
+    )
+    service, cache = _service(client), _list_cache()
+
+    failed = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    recovered = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+
+    assert failed.payload['error']['code'] == -32000
+    assert len(recovered.payload['result']['tools']) == 2
+
+
+async def test_a_cache_hit_is_marked_on_the_span():
+    """A hit contacted no upstream, so it records no fan-out counts."""
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(tools=[_tool('get_issue')])
+    )
+    service, cache = _service(client), _list_cache()
+    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    span = _recording_span()
+
+    with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
+        await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+
+    assert _span_attrs(span) == {
+        'rb.gateway.mcp_cache_hit': True,
+        'rb.gateway.mcp_result_count': 2,
+    }
+
+
+async def test_a_cache_hit_emits_a_cache_hit_event(emitted_cache_hits):
+    """A hit reaches the usage view and alert rules, not just the trace."""
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    service, cache = _service(client), _list_cache()
+
+    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    assert emitted_cache_hits.call_count == 0  # the miss that populated it
+
+    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+
+    event = emitted_cache_hits.call_args.args[0]
+    assert event.event_type is EventType.CACHE_HIT
+    assert event.target == 'tools/list'
+    assert event.route_name == 'my-route'
+    assert event.api_key_uuid == 'key-uuid'
+    assert emitted_cache_hits.call_count == 1
+
+
+async def test_each_cached_method_emits_its_own_event(emitted_cache_hits):
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
+    client.list_resources = AsyncMock(
+        return_value=types.ListResourcesResult(resources=[])
+    )
+    service, cache = _service(client), _list_cache()
+
+    for method in ('prompts/list', 'resources/list'):
+        await service._dispatch(_request(method), SERVERS, None, cache)
+        await service._dispatch(_request(method), SERVERS, None, cache)
+
+    assert [c.args[0].target for c in emitted_cache_hits.call_args_list] == [
+        'prompts/list',
+        'resources/list',
+    ]
+
+
+async def test_a_degraded_fanout_emits_no_hit_because_it_was_never_cached(
+    emitted_cache_hits,
+):
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(
+        side_effect=[
+            McpUpstreamError('github', 'boom'),
+            types.ListToolsResult(tools=[_tool('search')]),
+            McpUpstreamError('github', 'boom'),
+            types.ListToolsResult(tools=[_tool('search')]),
+        ]
+    )
+    service, cache = _service(client), _list_cache()
+
+    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+
+    emitted_cache_hits.assert_not_called()
