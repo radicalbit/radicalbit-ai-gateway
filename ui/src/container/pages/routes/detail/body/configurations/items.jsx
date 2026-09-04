@@ -5,7 +5,7 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import isEmpty from 'lodash/isEmpty';
 import {
-  Bot, CircleCheck, CornerDownRight, Route, Shield, TableColumnsSplit, Timer,
+  Bot, CircleCheck, CornerDownRight, Hourglass, Route, Shield, TableColumnsSplit, Timer,
 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
@@ -16,8 +16,9 @@ export function useGetModelItem() {
   const { data } = useGetRouteByNameWithRange(name);
   const chatModels = data?.configuration?.chatModels;
   const embeddingModels = data?.configuration?.embeddingModels;
+  const transcriptionModels = data?.configuration?.transcriptionModels;
 
-  if (isEmpty(chatModels) && isEmpty(embeddingModels)) {
+  if (isEmpty(chatModels) && isEmpty(embeddingModels) && isEmpty(transcriptionModels)) {
     return {
       collapsible: 'disabled',
       showArrow: false,
@@ -50,8 +51,9 @@ export function Models() {
   const { data } = useGetRouteByNameWithRange(name);
   const chatModels = data?.configuration?.chatModels || [];
   const embeddingModels = data?.configuration?.embeddingModels || [];
+  const transcriptionModels = data?.configuration?.transcriptionModels || [];
 
-  return <Json data={{ chatModels, embeddingModels }} />;
+  return <Json data={{ chatModels, embeddingModels, transcriptionModels }} />;
 }
 
 // *** Fallback ***
@@ -224,13 +226,19 @@ export function useGetTokenLimitingItem() {
   const tokenLimiting = data?.configuration?.tokenLimiting;
   const tokenInputLimitTriggered = data?.metrics?.tokenInputLimitTriggered;
   const tokenOutputLimitTriggered = data?.metrics?.tokenOutputLimitTriggered;
+  const chatModels = data?.configuration?.chatModels;
+  const embeddingModels = data?.configuration?.embeddingModels;
 
   if (isEmpty(tokenLimiting)) {
+    const tooltip = isEmpty(chatModels) && isEmpty(embeddingModels)
+      ? 'Requires a chat or embedding model on this route'
+      : 'Configure this section into your configuration file';
+
     return {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content="Configure this section into your configuration file" placement="top">
+        <Popover content={tooltip} placement="top">
           <div className="flex justify-start items-center gap-4">
             <Button disabled shape="circle" type="secondary-light"><Lucide icon={TableColumnsSplit} /></Button>
 
@@ -268,6 +276,64 @@ export function TokenLimit() {
   const tokenLimiting = data?.configuration?.tokenLimiting;
 
   return <Json data={tokenLimiting} />;
+}
+
+// *** DurationLimiting ***
+export function useGetDurationLimitingItem() {
+  const { name } = useParams();
+
+  const { data } = useGetRouteByNameWithRange(name);
+  const durationLimiting = data?.configuration?.durationLimiting;
+  const transcriptionModels = data?.configuration?.transcriptionModels;
+
+  if (isEmpty(durationLimiting)) {
+    const tooltip = isEmpty(transcriptionModels)
+      ? 'Requires a transcription model on this route'
+      : 'Configure this section into your configuration file';
+
+    return {
+      collapsible: 'disabled',
+      showArrow: false,
+      label: (
+        <Popover content={tooltip} placement="top">
+          <div className="flex justify-start items-center gap-4">
+            <Button disabled shape="circle"><Lucide icon={Hourglass} /></Button>
+
+            <div>Duration Limiting</div>
+          </div>
+        </Popover>
+      ),
+    };
+  }
+
+  const durationLimitTriggered = data?.metrics?.durationLimitTriggered;
+  const type = (function getType() {
+    if (durationLimitTriggered > 0) {
+      return { type: 'primary' };
+    } if (!durationLimitTriggered) {
+      return { type: 'primary-light' };
+    }
+    return { disabled: true };
+  }());
+
+  return {
+    label: (
+      <div className="flex justify-start items-center gap-4">
+        <Button shape="circle" {...type}><Lucide icon={Hourglass} /></Button>
+
+        <div>Duration Limiting</div>
+      </div>
+    ),
+  };
+}
+
+export function DurationLimiting() {
+  const { name } = useParams();
+
+  const { data } = useGetRouteByNameWithRange(name);
+  const durationLimiting = data?.configuration?.durationLimiting;
+
+  return <Json data={durationLimiting} />;
 }
 
 // *** Caching ***

@@ -6,6 +6,8 @@ import {
 import { useParams } from 'react-router-dom';
 import Caching from './items/caching';
 import useGetCachingItem from './items/caching/use-get-caching-items';
+import DurationLimiting from './items/duration-limiting';
+import useGetDurationLimitingItem from './items/duration-limiting/use-get-duration-limiting-items';
 import Fallbacks from './items/fallbacks';
 import useGetFallbacksItem from './items/fallbacks/use-get-fallbacks-items';
 import Guardrails from './items/guardrails';
@@ -25,6 +27,7 @@ function Events() {
   const guardrailItem = useGetGuardrailsItem();
   const rateLimitingItem = useGetRateLimitingItem();
   const tokenLimitingItem = useGetTokensLimitingItem();
+  const durationLimitingItem = useGetDurationLimitingItem();
 
   if (isLoading) {
     return <IsLoading />;
@@ -64,7 +67,12 @@ function Events() {
       children: <TokensLimiting />,
       ...tokenLimitingItem,
     },
-  ];
+    {
+      key: 6,
+      children: <DurationLimiting />,
+      ...durationLimitingItem,
+    },
+  ].filter((item) => !item.hidden);
 
   return (
     <Collapse

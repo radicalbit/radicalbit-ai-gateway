@@ -2,35 +2,33 @@ import Lucide from '@Components/lucide';
 import { useGetEventsByRouteWithRange, useGetRouteByNameWithRange } from '@Src/store/state/routes/vertical-hooks';
 import { Button } from '@radicalbit/radicalbit-design-system';
 import isEmpty from 'lodash/isEmpty';
-import { TableColumnsSplit } from 'lucide-react';
+import { Hourglass } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
-const useGetTokensLimitingItem = () => {
+const useGetDurationLimitingItem = () => {
   const { name } = useParams();
 
   const { data } = useGetEventsByRouteWithRange(name);
   const { data: route } = useGetRouteByNameWithRange(name);
 
-  const tokenInputLimit = data?.tokenInputLimit;
-  const tokenOutputLimit = data?.tokenOutputLimit;
-  const chatModels = route?.configuration?.chatModels;
-  const embeddingModels = route?.configuration?.embeddingModels;
+  const durationLimit = data?.durationLimit;
+  const transcriptionModels = route?.configuration?.transcriptionModels;
 
-  if (isEmpty(chatModels) && isEmpty(embeddingModels)) {
+  if (isEmpty(transcriptionModels)) {
     return { hidden: true };
   }
 
   const type = (function getType() {
-    if (tokenInputLimit === undefined && tokenOutputLimit === undefined) {
+    if (durationLimit === undefined) {
       return { disabled: true };
     }
-    if (tokenInputLimit?.length === 0 && tokenOutputLimit?.length === 0) {
+    if (durationLimit.length === 0) {
       return { type: 'primary-light' };
     }
     return { type: 'primary' };
   }());
 
-  const collapseProps = !tokenInputLimit?.length && !tokenOutputLimit?.length
+  const collapseProps = !durationLimit?.length
     ? { collapsible: 'disabled', showArrow: false }
     : {};
 
@@ -38,12 +36,12 @@ const useGetTokensLimitingItem = () => {
     ...collapseProps,
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><Lucide icon={TableColumnsSplit} /></Button>
+        <Button shape="circle" {...type}><Lucide icon={Hourglass} /></Button>
 
-        <div>Token Limiting</div>
+        <div>Duration Limiting</div>
       </div>
     ),
   };
 };
 
-export default useGetTokensLimitingItem;
+export default useGetDurationLimitingItem;
