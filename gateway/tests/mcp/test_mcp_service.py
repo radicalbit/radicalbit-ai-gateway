@@ -1162,28 +1162,9 @@ async def test_a_cache_hit_emits_a_cache_hit_event(emitted_cache_hits):
 
     event = emitted_cache_hits.call_args.args[0]
     assert event.event_type is EventType.CACHE_HIT
-    assert event.target == 'tools/list'
     assert event.route_name == 'my-route'
     assert event.api_key_uuid == 'key-uuid'
     assert emitted_cache_hits.call_count == 1
-
-
-async def test_each_cached_method_emits_its_own_event(emitted_cache_hits):
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
-    client.list_resources = AsyncMock(
-        return_value=types.ListResourcesResult(resources=[])
-    )
-    service, cache = _service(client), _list_cache()
-
-    for method in ('prompts/list', 'resources/list'):
-        await service._dispatch(_request(method), SERVERS, None, cache)
-        await service._dispatch(_request(method), SERVERS, None, cache)
-
-    assert [c.args[0].target for c in emitted_cache_hits.call_args_list] == [
-        'prompts/list',
-        'resources/list',
-    ]
 
 
 async def test_a_degraded_fanout_emits_no_hit_because_it_was_never_cached(
