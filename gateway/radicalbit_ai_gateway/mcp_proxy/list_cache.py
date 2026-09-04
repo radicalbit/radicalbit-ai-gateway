@@ -33,6 +33,8 @@ TOOLS_LIST = 'tools/list'
 PROMPTS_LIST = 'prompts/list'
 RESOURCES_LIST = 'resources/list'
 
+DEFAULT_LIST_TTL_SECONDS = 300
+
 
 def servers_signature(servers: list[AnyMcpServer]) -> str:
     """Identify the upstream set a cached list was produced from."""
@@ -57,7 +59,7 @@ class McpListCache:
         signature: str,
     ):
         self._cache = gateway_cache
-        self._ttl = ttl
+        self._ttl = ttl if ttl and ttl > 0 else DEFAULT_LIST_TTL_SECONDS
         self._authorized = authorized
         self._signature = signature
 

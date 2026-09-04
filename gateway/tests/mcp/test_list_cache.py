@@ -7,6 +7,7 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
 from radicalbit_ai_gateway.mcp_proxy.list_cache import (
+    DEFAULT_LIST_TTL_SECONDS,
     PROMPTS_LIST,
     RESOURCES_LIST,
     TOOLS_LIST,
@@ -172,6 +173,14 @@ async def test_the_ttl_from_the_caching_block_is_passed_through():
     cache = _cache(gateway_cache=GatewayCache(client), ttl=30)
     await cache.set(TOOLS_LIST, {'tools': []})
     assert client.set.await_args.args[2] == 30
+
+
+@pytest.mark.parametrize('ttl', [None, 0])
+async def test_a_list_entry_always_expires(ttl):
+    client = MagicMock(spec_set=CacheToolsInMemory)
+    cache = _cache(gateway_cache=GatewayCache(client), ttl=ttl)
+    await cache.set(TOOLS_LIST, {'tools': []})
+    assert client.set.await_args.args[2] == DEFAULT_LIST_TTL_SECONDS
 
 
 @pytest.mark.parametrize('stored', ['{not json', '["a", "list"]', '"a string"'])
