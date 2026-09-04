@@ -59,7 +59,11 @@ cd radicalbit-ai-gateway
 
 ### 2. Add your provider credentials
 
-Create a `secrets.yaml` file in the project root. These are the keys the gateway uses to call your models:
+Create `secrets.yaml` in the project root by copying `secrets-dummy.yaml`, then add your provider keys:
+
+```bash
+cp secrets-dummy.yaml secrets.yaml
+```
 
 ```yaml
 # secrets.yaml
@@ -232,6 +236,11 @@ Full reference: [docs.ai-gateway.radicalbit.ai/configuration/basic-setup](https:
 | | Token limiting | Cap token usage per time window per route |
 | | Budget limiting | Cap spend per time window per route |
 | **Reliability** | Model fallback | Automatic failover across models and providers |
+| **MCP** | MCP proxy | Expose upstream MCP servers on a route behind a single gateway endpoint |
+| | Transports | Streamable HTTP and stdio upstreams, mixed on the same route |
+| | Tool namespacing | Tools, prompts, and resources merged across servers and prefixed with `{alias}__` |
+| | Credential isolation | Static upstream headers from `!secret`, plus a per-server allowlist for client-supplied headers |
+| | Rate limiting | The route's `rate_limiting` applies to MCP calls: one JSON-RPC POST counts as one request |
 | **Observability** | Usage dashboard | Cost and token volume by route and group |
 | | Request tracing | Routing decision, cache hit or miss, guardrail results, latency per span |
 | | Prometheus metrics | 20+ metrics on a dedicated endpoint: request rates, latency, token usage, cache hits, guardrail triggers, fallback activations |
@@ -519,6 +528,32 @@ routes:
 ```
 
 Fallback chains can mix providers, so a vendor outage does not take the route down.
+
+</details>
+
+<details>
+<summary><b>MCP:</b> proxying an upstream MCP server over Streamable HTTP</summary>
+
+Declare the upstream servers once, then reference them from the routes that may use them.
+
+```yaml
+mcp_servers:
+  - alias: github
+    transport: streamable_http
+    url: https://api.githubcopilot.com/mcp/
+    timeout: 30
+    headers:
+      Authorization: !secret GITHUB_MCP_TOKEN
+```
+
+The route then speaks MCP at `POST /{project}/{route}/mcp`, with the same API key as the chat endpoints:
+
+```bash
+curl http://localhost:9000/project-name/route-name/mcp \
+  -H "Authorization: Bearer key" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
+```
 
 </details>
 

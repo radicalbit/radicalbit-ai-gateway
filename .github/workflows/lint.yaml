@@ -1,0 +1,41 @@
+name: lint
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+    branches:
+      - "*"
+
+env:
+  PYTHON_VERSION: "3.11"
+  UV_VERSION: "0.7.13"
+
+jobs:
+  ruff:
+    name: ruff (lint & format)
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: ./gateway
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup uv
+        run: |
+          curl -LsSf https://astral.sh/uv/${{ env.UV_VERSION }}/install.sh | sh
+
+      - name: Ruff Linter Check
+        run: |
+          uv run ruff check
+
+      - name: Ruff Formatter Check
+        run: |
+          uv run ruff format --check

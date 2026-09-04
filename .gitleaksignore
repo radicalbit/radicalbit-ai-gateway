@@ -1,0 +1,13 @@
+# Gitleaks ignore list for historical false positives / mock test data
+087a99a78968b904b29fdc3e9b21a886d6d38bc9:README.md:curl-auth-header:104
+d8b5b58ad44026d75bf743ef746be807d2a7f08c:ui/.secret-keys.json:generic-api-key:2
+d8b5b58ad44026d75bf743ef746be807d2a7f08c:ui/src/store/state/routes/mock.js:generic-api-key:185
+d8b5b58ad44026d75bf743ef746be807d2a7f08c:ui/src/store/state/routes/mock.js:generic-api-key:199
+d8b5b58ad44026d75bf743ef746be807d2a7f08c:ui/src/store/state/routes/mock.js:generic-api-key:371
+d8b5b58ad44026d75bf743ef746be807d2a7f08c:ui/src/store/state/routes/mock.js:generic-api-key:385
+d8b5b58ad44026d75bf743ef746be807d2a7f08c:ui/src/store/state/routes/mock.js:generic-api-key:465
+d8b5b58ad44026d75bf743ef746be807d2a7f08c:ui/src/store/state/routes/mock.js:generic-api-key:629
+d8b5b58ad44026d75bf743ef746be807d2a7f08c:ui/src/store/state/routes/mock.js:generic-api-key:762
+d8b5b58ad44026d75bf743ef746be807d2a7f08c:ui/src/store/state/routes/mock.js:generic-api-key:863
+1963244be085f4f48c689c9621a67b022c433dc2:gateway/tests/common/db_mock.py:generic-api-key:41
+1963244be085f4f48c689c9621a67b022c433dc2:gateway/tests/common/db_mock.py:generic-api-key:42
