@@ -3,10 +3,12 @@ import { Divider, Popover } from '@radicalbit/radicalbit-design-system';
 function Models({ configuration }) {
   const chatModels = configuration?.chatModels || [];
   const embeddingModels = configuration?.embeddingModels || [];
+  const transcriptionModels = configuration?.transcriptionModels || [];
 
   const chatModelsCount = chatModels.length;
   const embeddingModelsCount = embeddingModels.length;
-  const count = chatModelsCount + embeddingModelsCount;
+  const transcriptionModelsCount = transcriptionModels.length;
+  const count = chatModelsCount + embeddingModelsCount + transcriptionModelsCount;
 
   if (count === 0) {
     return '--';
@@ -34,6 +36,20 @@ function Models({ configuration }) {
 
           <div className="flex flex-col">
             {embeddingModels.map(({ model }) => (
+              <div>{model}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(chatModelsCount > 0 || embeddingModelsCount > 0) && transcriptionModelsCount > 0 && <Divider style={{ margin: 0 }} />}
+
+      {transcriptionModelsCount > 0 && (
+        <div className="flex flex-col justify-center w-full gap-1">
+          <strong>Transcription models</strong>
+
+          <div className="flex flex-col">
+            {transcriptionModels.map(({ model }) => (
               <div>{model}</div>
             ))}
           </div>

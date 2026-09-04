@@ -11,6 +11,7 @@ import { useParams } from 'react-router-dom';
 import {
   AdvancedRouting,
   Cache,
+  DurationLimiting,
   Fallback,
   Guardrails,
   Models,
@@ -18,6 +19,7 @@ import {
   TokenLimit,
   useGetAdvancedRoutingItem,
   useGetCacheItem,
+  useGetDurationLimitingItem,
   useGetFallbackItem,
   useGetGuardrailsItem,
   useGetModelItem,
@@ -33,6 +35,7 @@ function Configurations() {
   const guardrailItem = useGetGuardrailsItem();
   const rateLimitingItem = useGetRateLimitingItem();
   const tokenLimitingItem = useGetTokenLimitingItem();
+  const durationLimitingItem = useGetDurationLimitingItem();
   const cacheItem = useGetCacheItem();
   const advancedRoutingItem = useGetAdvancedRoutingItem();
 
@@ -88,6 +91,11 @@ function Configurations() {
       key: 6,
       children: <TokenLimit />,
       ...tokenLimitingItem,
+    },
+    {
+      key: 7,
+      children: <DurationLimiting />,
+      ...durationLimitingItem,
     },
   ];
 

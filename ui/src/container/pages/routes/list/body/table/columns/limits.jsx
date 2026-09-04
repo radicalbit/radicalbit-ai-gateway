@@ -37,6 +37,9 @@ function PopoverContent({ configuration, metrics }) {
   const tokenLimitingOutput = configuration?.tokenLimiting?.output;
   const durationLimiting = configuration?.durationLimiting;
 
+  const supportsTokenLimiting = !!configuration?.chatModels?.length || !!configuration?.embeddingModels?.length;
+  const supportsDurationLimiting = !!configuration?.transcriptionModels?.length;
+
   const rate = numberFormatterInt(metrics.rateLimitTriggered) ?? '--';
   const tokenIn = numberFormatterInt(metrics.tokenInputLimitTriggered) ?? '--';
   const tokenOut = numberFormatterInt(metrics.tokenOutputLimitTriggered) ?? '--';
@@ -58,26 +61,20 @@ function PopoverContent({ configuration, metrics }) {
   const durationLimitingWindowSize = durationLimiting?.windowSize ?? '--';
   const durationLimitingMaxDurationSeconds = numberFormatterInt(durationLimiting?.maxDurationSeconds) ?? '--';
 
-  return (
-    <div className="flex flex-col">
-      <PopoverRow label="Rate:" value={rate} />
-
+  const tokenTriggerRows = supportsTokenLimiting ? (
+    <>
       <PopoverRow label="Token in:" value={tokenIn} />
 
       <PopoverRow label="Token out:" value={tokenOut} />
+    </>
+  ) : false;
 
-      <PopoverRow label="Duration:" value={duration} />
+  const durationTriggerRow = supportsDurationLimiting
+    ? <PopoverRow label="Duration:" value={duration} />
+    : false;
 
-      <Divider style={{ margin: '.5rem' }} />
-
-      <strong>Rate Limiting</strong>
-
-      <PopoverRow label="Algorithm:" value={rateLimitingalgorithm} />
-
-      <PopoverRow label="Window size:" value={rateLimitingwindowSize} />
-
-      <PopoverRow label="Max requests:" value={rateLimitingmaxRequests} />
-
+  const tokenLimitingSections = supportsTokenLimiting ? (
+    <>
       <Divider style={{ margin: '.5rem' }} />
 
       <strong>Token Limiting Input</strong>
@@ -97,7 +94,11 @@ function PopoverContent({ configuration, metrics }) {
       <PopoverRow label="Window size:" value={tokenLimitingOutputWindowSize} />
 
       <PopoverRow label="Max tokens:" value={tokenLimitingOutputMaxTokens} />
+    </>
+  ) : false;
 
+  const durationLimitingSection = supportsDurationLimiting ? (
+    <>
       <Divider style={{ margin: '.5rem' }} />
 
       <strong>Duration Limiting</strong>
@@ -107,6 +108,30 @@ function PopoverContent({ configuration, metrics }) {
       <PopoverRow label="Window size:" value={durationLimitingWindowSize} />
 
       <PopoverRow label="Max duration (s):" value={durationLimitingMaxDurationSeconds} />
+    </>
+  ) : false;
+
+  return (
+    <div className="flex flex-col">
+      <PopoverRow label="Rate:" value={rate} />
+
+      {tokenTriggerRows}
+
+      {durationTriggerRow}
+
+      <Divider style={{ margin: '.5rem' }} />
+
+      <strong>Rate Limiting</strong>
+
+      <PopoverRow label="Algorithm:" value={rateLimitingalgorithm} />
+
+      <PopoverRow label="Window size:" value={rateLimitingwindowSize} />
+
+      <PopoverRow label="Max requests:" value={rateLimitingmaxRequests} />
+
+      {tokenLimitingSections}
+
+      {durationLimitingSection}
     </div>
   );
 }
