@@ -89,6 +89,29 @@ class GatewayCache:
     ) -> str:
         return f'inputs:{json.dumps(input_texts, ensure_ascii=False)};extra_args:{json.dumps(kwargs)}'
 
+    def generate_mcp_list_cache_key(
+        self,
+        project_uuid: str,
+        route_name: str,
+        key_uuid: str,
+        method: str,
+        servers_signature: str,
+    ) -> str:
+        """Key a cached MCP list method (``tools/list`` and its siblings)."""
+        request_signature = self._build_mcp_list_request_signature(
+            method=method, servers_signature=servers_signature
+        )
+        return self.cache_client.generate_cache_key(
+            project_uuid, route_name, request_signature, key_uuid
+        )
+
+    @staticmethod
+    def _build_mcp_list_request_signature(
+        method: str,
+        servers_signature: str,
+    ) -> str:
+        return f'mcp_method:{method};mcp_servers:{servers_signature}'
+
     def generate_transcription_cache_key(
         self,
         project_uuid: str,

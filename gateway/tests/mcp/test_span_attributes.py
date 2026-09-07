@@ -30,6 +30,8 @@ from starlette.testclient import TestClient
 from traceloop.sdk import Traceloop
 from traceloop.sdk.tracing.tracing import TracerWrapper
 
+from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
+from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
@@ -151,6 +153,29 @@ def client(exporter, upstream) -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture
+def cached_client(client) -> Iterator[TestClient]:
+    """Return the same app, with the route declaring a ``caching:`` block.
+
+    The base fixture leaves ``app.state.routes`` empty, which the endpoint
+    reads as "no route-level features", so no list cache is built at all.
+    """
+    client.app.state.routes = {
+        'proj/my-route': SimpleNamespace(
+            request_rate_limiter=None,
+            gateway_cache=GatewayCache(CacheToolsInMemory()),
+            ttl=60,
+        )
+    }
+    # A hit reports itself to the events pipeline; that is asserted in
+    # test_list_cache.py and only noise here.
+    with (
+        patch('radicalbit_ai_gateway.mcp_proxy.list_cache.emit_event'),
+        patch('radicalbit_ai_gateway.mcp_proxy.list_cache.cache_hit_counter'),
+    ):
+        yield client
+
+
 def _post(client: TestClient, method: str, params: dict | None = None):
     body = {'jsonrpc': '2.0', 'id': 1, 'method': method}
     if params is not None:
@@ -164,6 +189,10 @@ def _span(exporter, name: str):
         f'no {name} span emitted, got {[s.name for s in exporter.get_finished_spans()]}'
     )
     return matches[-1]
+
+
+def _category(span) -> str | None:
+    return (span.attributes or {}).get(f'{ASSOC}rb.gateway.operation_category')
 
 
 def _mcp_attrs(span) -> dict:
@@ -413,3 +442,55 @@ def test_an_auth_failure_still_reports_the_route_it_targeted(client):
     assert payload.route_name == 'my-route'
     assert payload.project_name == 'proj'
     assert payload.status is RequestStatus.HANDLED_ERROR
+
+
+LIST_SPAN = 'mcp_tools_list.task'
+
+
+def test_a_list_served_from_cache_is_categorised_as_cache(
+    cached_client, exporter, upstream
+):
+    """A hit contacted no upstream, so it must not be bucketed as one.
+
+    Asserted on the emitted span rather than on a call to
+    set_operation_category, because where it lands is the whole point:
+    get_category_latencies groups every span by this attribute, and the task
+    span inherits the INVOCATION that dispatch set before it knew the method.
+    """
+    upstream.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+
+    assert _post(cached_client, 'tools/list').status_code == 200
+    assert _category(_span(exporter, LIST_SPAN)) == 'invocation'
+
+    assert _post(cached_client, 'tools/list').status_code == 200
+    assert _category(_span(exporter, LIST_SPAN)) == 'cache'
+    # and the second request really was a hit, not a second fan-out
+    assert upstream.list_tools.await_count == 2
+
+
+def test_the_root_span_of_a_cache_hit_stays_the_endpoint_bucket(
+    cached_client, exporter, upstream
+):
+    """ensure_endpoint_category owns the root span; the phases are per-span."""
+    upstream.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+
+    assert _post(cached_client, 'tools/list').status_code == 200
+    assert _post(cached_client, 'tools/list').status_code == 200
+
+    assert _category(_span(exporter, ROOT_SPAN)) == 'endpoint'
+
+
+def test_a_cache_hit_does_not_recategorise_the_next_requests_fanout(
+    cached_client, exporter, upstream
+):
+    """The correction is attached inside a task, so prove it unwinds with it."""
+    upstream.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    upstream.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
+
+    assert _post(cached_client, 'tools/list').status_code == 200
+    assert _post(cached_client, 'tools/list').status_code == 200
+    assert _category(_span(exporter, LIST_SPAN)) == 'cache'
+
+    # a different list method on the same route: a miss, and its own category
+    assert _post(cached_client, 'prompts/list').status_code == 200
+    assert _category(_span(exporter, 'mcp_prompts_list.task')) == 'invocation'
