@@ -5,12 +5,17 @@ import zipfile
 
 from sqlalchemy.exc import IntegrityError
 
+from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.project_budget_limiting import (
+    ProjectBudgetLimitOut,
+    ProjectBudgetLimitsIn,
+)
 from radicalbit_ai_gateway.models.project_dto import (
     ConfigListFilter,
     ConfigSlotOut,
@@ -21,11 +26,14 @@ from radicalbit_ai_gateway.models.project_dto import (
 )
 from radicalbit_ai_gateway.utils.exceptions import (
     ProjectAlreadyExistsError,
+    ProjectBudgetLimitAlreadyExistsError,
+    ProjectBudgetLimitConflictError,
     ProjectConfigValidationError,
     ProjectInternalError,
     ProjectNotFoundError,
 )
 from radicalbit_ai_gateway.utils.yaml_utils import (
+    config_has_route_budget_limiting,
     get_default_config_template,
     validate_gateway_config,
 )
@@ -37,9 +45,15 @@ def _sanitize_filename(name: str) -> str:
 
 
 class ProjectService:
-    def __init__(self, project_dao: ProjectDAO, project_config_dao: ProjectConfigDAO):
+    def __init__(
+        self,
+        project_dao: ProjectDAO,
+        project_config_dao: ProjectConfigDAO,
+        project_budget_limit_dao: ProjectBudgetLimitDAO,
+    ):
         self.project_dao = project_dao
         self.project_config_dao = project_config_dao
+        self.project_budget_limit_dao = project_budget_limit_dao
 
     def _get_project_or_raise(self, project_uuid: UUID) -> Project:
         project = self.project_dao.get_by_uuid(project_uuid)
@@ -57,17 +71,24 @@ class ProjectService:
             )
         return config
 
-    def _build_out(self, project: Project) -> ProjectOut:
+    def _build_out(self, project: Project, include_limits: bool = False) -> ProjectOut:
         configs = list(self.project_config_dao.list_by_project(project.uuid))
-        return ProjectOut.from_project(project, configs)
+        limit = None
+        if include_limits:
+            found = self.project_budget_limit_dao.get_by_project_uuid(project.uuid)
+            if found:
+                limit = ProjectBudgetLimitOut.from_project_budget_limit(found[0])
+        return ProjectOut.from_project(project, configs, limits=limit)
 
-    def _build_out_or_raise(self, project_uuid: UUID) -> ProjectOut:
+    def _build_out_or_raise(
+        self, project_uuid: UUID, include_limits: bool = False
+    ) -> ProjectOut:
         project = self.project_dao.get_by_uuid(project_uuid)
         if not project:
             raise ProjectInternalError(
                 f'Failed to fetch updated project {project_uuid}'
             )
-        return self._build_out(project)
+        return self._build_out(project, include_limits)
 
     def create_project(self, project_in: ProjectIn) -> ProjectOut:
         template = get_default_config_template()
@@ -93,10 +114,22 @@ class ProjectService:
 
         return self._build_out_or_raise(inserted.uuid)
 
+    def _reject_route_budget_limiting_conflict(
+        self, project_uuid: UUID, yaml_str: str
+    ) -> None:
+        if not config_has_route_budget_limiting(yaml_str):
+            return
+        if self.project_budget_limit_dao.get_by_project_uuid(project_uuid):
+            raise ProjectConfigValidationError(
+                f'Project {project_uuid} already has a budget limit assigned; '
+                'routes cannot configure budget_limiting'
+            )
+
     def update_config(
         self, project_uuid: UUID, config_uuid: UUID, config_in: ProjectConfigFileIn
     ) -> ProjectOut:
         validate_gateway_config(config_in.config_file, check_secrets=True)
+        self._reject_route_budget_limiting_conflict(project_uuid, config_in.config_file)
 
         config = self._get_config_or_raise(project_uuid, config_uuid)
         if config.config_status == ConfigStatus.SERVED.value:
@@ -121,6 +154,7 @@ class ProjectService:
             )
 
         validate_gateway_config(config.config_file, check_secrets=True)
+        self._reject_route_budget_limiting_conflict(project_uuid, config.config_file)
 
         self.project_config_dao.set_status(config_uuid, ConfigStatus.READY_TO_SERVE)
         return self._build_out_or_raise(project_uuid)
@@ -149,6 +183,7 @@ class ProjectService:
             )
 
         validate_gateway_config(config.config_file, check_secrets=True)
+        self._reject_route_budget_limiting_conflict(project_uuid, config.config_file)
 
         served = self.project_config_dao.serve(config_uuid)
         if served is None:
@@ -183,8 +218,10 @@ class ProjectService:
         self.project_dao.soft_delete(project_uuid)
         return out
 
-    def get_by_uuid(self, project_uuid: UUID) -> ProjectOut:
-        return self._build_out(self._get_project_or_raise(project_uuid))
+    def get_by_uuid(
+        self, project_uuid: UUID, include_limits: bool = False
+    ) -> ProjectOut:
+        return self._build_out(self._get_project_or_raise(project_uuid), include_limits)
 
     def get_config(self, project_uuid: UUID, config_uuid: UUID) -> ConfigSlotOut:
         return ConfigSlotOut.from_config(
@@ -251,6 +288,7 @@ class ProjectService:
             ) from e
 
         validate_gateway_config(config_file, check_secrets=True)
+        self._reject_route_budget_limiting_conflict(project_uuid, config_file)
 
         rows_updated = self.project_config_dao.update_config_file(
             config_uuid, config_file
@@ -258,6 +296,53 @@ class ProjectService:
         if rows_updated == 0:
             raise ProjectNotFoundError(f'Config {config_uuid} not found')
         return self._build_out_or_raise(project_uuid)
+
+    def add_budget_limits_to_project(
+        self, project_uuid: UUID, limits_in: ProjectBudgetLimitsIn
+    ) -> list[ProjectBudgetLimitOut]:
+        project = self._get_project_or_raise(project_uuid)
+
+        served = self.project_config_dao.get_served_by_project(project_uuid)
+        if (
+            served
+            and served.config_file
+            and config_has_route_budget_limiting(served.config_file)
+        ):
+            raise ProjectBudgetLimitConflictError(
+                f'Project "{project.name}" has a published route with '
+                'budget_limiting configured; remove it before assigning a '
+                'project-level budget limit'
+            )
+
+        try:
+            inserted = self.project_budget_limit_dao.insert_many(
+                limits_in.to_project_budget_limits(project_uuid)
+            )
+        except IntegrityError as e:
+            if 'uq_project_budget_limit_PROJECT_UUID_WINDOW_SIZE' in str(e.orig):
+                raise ProjectBudgetLimitAlreadyExistsError(
+                    f'Project "{project.name}" already has a budget limit for '
+                    'one of the requested time windows'
+                ) from e
+            raise ProjectInternalError(
+                f'An error occurred while adding the budget limits: {e}'
+            ) from e
+        except Exception as e:
+            raise ProjectInternalError(
+                f'An error occurred while adding the budget limits: {e}'
+            ) from e
+        return [
+            ProjectBudgetLimitOut.from_project_budget_limit(limit) for limit in inserted
+        ]
+
+    def get_budget_limits_for_project(
+        self, project_uuid: UUID
+    ) -> list[ProjectBudgetLimitOut]:
+        self._get_project_or_raise(project_uuid)
+        return [
+            ProjectBudgetLimitOut.from_project_budget_limit(limit)
+            for limit in self.project_budget_limit_dao.get_by_project_uuid(project_uuid)
+        ]
 
     def validate_exists(self, project_uuid: UUID) -> None:
         if not self.project_dao.get_by_uuid(project_uuid):
@@ -267,10 +352,12 @@ class ProjectService:
         return [self._build_out(project) for project in self.project_dao.get_all()]
 
     def get_all_filtered(
-        self, project_filter: ProjectFilter | None = None
+        self,
+        project_filter: ProjectFilter | None = None,
+        include_limits: bool = False,
     ) -> list[ProjectOut]:
         projects = self.project_dao.get_all_filtered(project_filter)
-        return [self._build_out(project) for project in projects]
+        return [self._build_out(project, include_limits) for project in projects]
 
     def get_configs(
         self, config_filter: ConfigListFilter | None = None

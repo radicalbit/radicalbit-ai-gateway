@@ -631,6 +631,26 @@ class ProjectConfigValidationError(AuthRegistryError):
         )
 
 
+class ProjectBudgetLimitAlreadyExistsError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_400_BAD_REQUEST,
+            'project_budget_limit_already_exists_bad_request',
+            log_message=log_message,
+        )
+
+
+class ProjectBudgetLimitConflictError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_400_BAD_REQUEST,
+            'project_budget_limit_conflict_bad_request',
+            log_message=log_message,
+        )
+
+
 class SecretNotFoundError(AppError):
     def __init__(self, key: str, source: str = ''):
         message = f"Secret '{key}' not found"

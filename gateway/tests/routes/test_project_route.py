@@ -10,6 +10,7 @@ from tests.common import db_mock
 
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitOut
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute
 from radicalbit_ai_gateway.services.config_generator_service import (
@@ -20,6 +21,8 @@ from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.utils.exceptions import (
     AuthRegistryError,
     ProjectAlreadyExistsError,
+    ProjectBudgetLimitAlreadyExistsError,
+    ProjectBudgetLimitConflictError,
     ProjectConfigValidationError,
     ProjectNotFoundError,
     auth_registry_exception_handler,
@@ -77,8 +80,17 @@ class TestProjectRoute(unittest.TestCase):
         res = self.client.get(f'{self.prefix}/projects', params={'filter': 'prod'})
         assert res.status_code == 200
         self.project_service.get_all_filtered.assert_called_once_with(
-            ProjectFilter.PROD
+            ProjectFilter.PROD, False
         )
+
+    def test_get_all_with_include_limits(self):
+        out = db_mock.get_sample_project_out()
+        self.project_service.get_all_filtered = MagicMock(return_value=[out])
+        res = self.client.get(
+            f'{self.prefix}/projects', params={'include_limits': 'true'}
+        )
+        assert res.status_code == 200
+        self.project_service.get_all_filtered.assert_called_once_with(None, True)
 
     def test_get_by_uuid(self):
         pid = uuid.uuid4()
@@ -86,7 +98,21 @@ class TestProjectRoute(unittest.TestCase):
         self.project_service.get_by_uuid = MagicMock(return_value=out)
         res = self.client.get(f'{self.prefix}/projects/{pid}')
         assert res.status_code == 200
-        self.project_service.get_by_uuid.assert_called_once_with(pid)
+        self.project_service.get_by_uuid.assert_called_once_with(pid, False)
+
+    def test_get_by_uuid_with_include_limits(self):
+        pid = uuid.uuid4()
+        limit_out = ProjectBudgetLimitOut.from_project_budget_limit(
+            db_mock.get_sample_project_budget_limit(uuid=uuid.uuid4(), project_uuid=pid)
+        )
+        out = db_mock.get_sample_project_out(uuid=pid, limits=limit_out)
+        self.project_service.get_by_uuid = MagicMock(return_value=out)
+        res = self.client.get(
+            f'{self.prefix}/projects/{pid}', params={'include_limits': 'true'}
+        )
+        assert res.status_code == 200
+        assert res.json()['limits'] == jsonable_encoder(limit_out)
+        self.project_service.get_by_uuid.assert_called_once_with(pid, True)
 
     def test_get_by_uuid_not_found(self):
         pid = uuid.uuid4()
@@ -363,6 +389,81 @@ class TestProjectRoute(unittest.TestCase):
         res = self.client.delete(f'{self.prefix}/projects/{pid}')
         assert res.status_code == 200
         self.deregister.assert_not_awaited()
+
+    # --- project budget limits ---
+
+    def test_add_budget_limits_to_project_success(self):
+        pid = uuid.uuid4()
+        limits_in = db_mock.get_sample_project_budget_limits_in()
+        limit_out = ProjectBudgetLimitOut.from_project_budget_limit(
+            db_mock.get_sample_project_budget_limit(uuid=uuid.uuid4(), project_uuid=pid)
+        )
+        self.project_service.add_budget_limits_to_project = MagicMock(
+            return_value=[limit_out]
+        )
+        res = self.client.post(
+            f'{self.prefix}/projects/{pid}/budget-limits',
+            json=jsonable_encoder(limits_in),
+        )
+        assert res.status_code == 201
+        assert res.json() == jsonable_encoder([limit_out])
+        self.project_service.add_budget_limits_to_project.assert_called_once_with(
+            pid, limits_in
+        )
+
+    def test_add_budget_limits_to_project_not_found(self):
+        pid = uuid.uuid4()
+        self.project_service.add_budget_limits_to_project = MagicMock(
+            side_effect=ProjectNotFoundError('nope')
+        )
+        res = self.client.post(
+            f'{self.prefix}/projects/{pid}/budget-limits',
+            json=jsonable_encoder(db_mock.get_sample_project_budget_limits_in()),
+        )
+        assert res.status_code == 404
+
+    def test_add_budget_limits_to_project_already_exists(self):
+        pid = uuid.uuid4()
+        self.project_service.add_budget_limits_to_project = MagicMock(
+            side_effect=ProjectBudgetLimitAlreadyExistsError('dup')
+        )
+        res = self.client.post(
+            f'{self.prefix}/projects/{pid}/budget-limits',
+            json=jsonable_encoder(db_mock.get_sample_project_budget_limits_in()),
+        )
+        assert res.status_code == 400
+
+    def test_add_budget_limits_to_project_conflict(self):
+        pid = uuid.uuid4()
+        self.project_service.add_budget_limits_to_project = MagicMock(
+            side_effect=ProjectBudgetLimitConflictError('conflict')
+        )
+        res = self.client.post(
+            f'{self.prefix}/projects/{pid}/budget-limits',
+            json=jsonable_encoder(db_mock.get_sample_project_budget_limits_in()),
+        )
+        assert res.status_code == 400
+
+    def test_get_budget_limits_for_project_success(self):
+        pid = uuid.uuid4()
+        limit_out = ProjectBudgetLimitOut.from_project_budget_limit(
+            db_mock.get_sample_project_budget_limit(uuid=uuid.uuid4(), project_uuid=pid)
+        )
+        self.project_service.get_budget_limits_for_project = MagicMock(
+            return_value=[limit_out]
+        )
+        res = self.client.get(f'{self.prefix}/projects/{pid}/budget-limits')
+        assert res.status_code == 200
+        assert res.json() == jsonable_encoder([limit_out])
+        self.project_service.get_budget_limits_for_project.assert_called_once_with(pid)
+
+    def test_get_budget_limits_for_project_not_found(self):
+        pid = uuid.uuid4()
+        self.project_service.get_budget_limits_for_project = MagicMock(
+            side_effect=ProjectNotFoundError('nope')
+        )
+        res = self.client.get(f'{self.prefix}/projects/{pid}/budget-limits')
+        assert res.status_code == 404
 
     # --- route_meta ---
 
