@@ -37,24 +37,37 @@ class DatabaseIntegration(unittest.TestCase):
     def _sanitize_unique_constraints(cls) -> None:
         """Remove duplicated UNIQUE constraints that may have been added by reflection.
         This avoids re-emitting both UNIQUE and UNIQUE NULLS DISTINCT on the same columns.
+
+        `table.constraints` is a set, so iteration order is not deterministic.
+        Grouping by (name, cols) before deciding which copy to keep avoids a
+        prior bug where, depending on iteration order, both the declared and
+        the reflected copy of a constraint could independently match removal
+        criteria and both end up removed, dropping the constraint entirely.
         """
         for table in list(database.BaseTable.metadata.tables.values()):
-            seen: set[tuple[str, tuple[str, ...]]] = set()
+            groups: dict[tuple[str, tuple[str, ...]], list] = {}
+            for constraint in table.constraints:
+                if type(constraint).__name__ != 'UniqueConstraint':
+                    continue
+                name = constraint.name or ''
+                cols = tuple(col.name for col in constraint.columns)
+                groups.setdefault((name, cols), []).append(constraint)
+
+            def _has_nulls_kwarg(constraint) -> bool:
+                dialect_kwargs = getattr(constraint, 'dialect_kwargs', {}) or {}
+                return any('nulls' in k for k in dialect_kwargs)
+
             to_remove = []
-            for constraint in list(table.constraints):
-                if type(constraint).__name__ == 'UniqueConstraint':
-                    name = constraint.name or ''
-                    cols = tuple(col.name for col in constraint.columns)
-                    key = (name, cols)
-                    # Remove if duplicated by name+columns
-                    if key in seen:
-                        to_remove.append(constraint)
-                        continue
-                    seen.add(key)
-                    # Remove dialect-added variants like NULLS DISTINCT if detected
-                    dialect_kwargs = getattr(constraint, 'dialect_kwargs', {}) or {}
-                    if any('nulls' in k for k in dialect_kwargs):
-                        to_remove.append(constraint)
+            for constraints in groups.values():
+                # Prefer to keep a copy with no dialect-added NULLS variant
+                # (the declared one); fall back to an arbitrary copy so a
+                # constraint is never dropped entirely.
+                survivor = next(
+                    (c for c in constraints if not _has_nulls_kwarg(c)),
+                    constraints[0],
+                )
+                to_remove.extend(c for c in constraints if c is not survivor)
+
             for c in to_remove:
                 table.constraints.remove(c)
 
