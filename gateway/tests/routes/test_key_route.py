@@ -9,6 +9,7 @@ from starlette.testclient import TestClient
 from tests.common import db_mock
 
 from radicalbit_ai_gateway.models.auth_dto import GroupFullOut, KeyFullOut
+from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -115,7 +116,7 @@ class TestKeyRoute(unittest.TestCase):
         res = self.client.get(f'{self.prefix}/keys/{key.uuid}')
         assert res.status_code == 200
         assert jsonable_encoder(key_out) == res.json()
-        self.key_service.get_key_by_uuid.assert_called_once_with(key.uuid, False)
+        self.key_service.get_key_by_uuid.assert_called_once_with(key.uuid, False, False)
 
     def test_get_missing_key_by_uuid(self):
         key = db_mock.get_sample_key()
@@ -130,7 +131,7 @@ class TestKeyRoute(unittest.TestCase):
                 'error', 'auth_registry_error', code='key_not_found', param=None
             ).error
         )
-        self.key_service.get_key_by_uuid.assert_called_once_with(key.uuid, False)
+        self.key_service.get_key_by_uuid.assert_called_once_with(key.uuid, False, False)
 
     def test_update_key_name(self):
         key_in = db_mock.get_sample_key_in()
@@ -268,4 +269,62 @@ class TestKeyRoute(unittest.TestCase):
         )
         self.key_service.get_associable_groups.assert_called_once_with(
             key.uuid, False, False
+        )
+
+    def test_add_limits_to_key_success(self):
+        key = db_mock.get_sample_key()
+        limits_in = db_mock.get_sample_credential_limits_in()
+        key_out = db_mock.get_sample_key_full_out()
+        self.key_service.add_limits_to_key = MagicMock(return_value=key_out)
+        res = self.client.post(
+            f'{self.prefix}/keys/{key.uuid}/limits',
+            json=jsonable_encoder(limits_in),
+        )
+        assert res.status_code == 201
+        assert res.json() == jsonable_encoder(key_out)
+        self.key_service.add_limits_to_key.assert_called_once_with(
+            key.uuid, limits_in, False
+        )
+
+    def test_add_limits_to_key_not_found(self):
+        key = db_mock.get_sample_key()
+        limits_in = db_mock.get_sample_credential_limits_in()
+        self.key_service.add_limits_to_key = MagicMock(
+            side_effect=KeyNotFoundError('error')
+        )
+        res = self.client.post(
+            f'{self.prefix}/keys/{key.uuid}/limits',
+            json=jsonable_encoder(limits_in),
+        )
+        assert res.status_code == 404
+        assert (
+            res.json()['error']
+            == ErrorOut(
+                'error', 'auth_registry_error', code='key_not_found', param=None
+            ).error
+        )
+
+    def test_get_limits_for_key_success(self):
+        key = db_mock.get_sample_key()
+        limit_out = CredentialLimitOut.from_key_limit(
+            db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
+        )
+        self.key_service.get_limits_for_key = MagicMock(return_value=[limit_out])
+        res = self.client.get(f'{self.prefix}/keys/{key.uuid}/limits')
+        assert res.status_code == 200
+        assert res.json() == jsonable_encoder([limit_out])
+        self.key_service.get_limits_for_key.assert_called_once_with(key.uuid)
+
+    def test_get_limits_for_key_not_found(self):
+        key = db_mock.get_sample_key()
+        self.key_service.get_limits_for_key = MagicMock(
+            side_effect=KeyNotFoundError('error')
+        )
+        res = self.client.get(f'{self.prefix}/keys/{key.uuid}/limits')
+        assert res.status_code == 404
+        assert (
+            res.json()['error']
+            == ErrorOut(
+                'error', 'auth_registry_error', code='key_not_found', param=None
+            ).error
         )

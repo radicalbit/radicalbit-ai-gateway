@@ -8,6 +8,7 @@ from pydantic.alias_generators import to_camel
 from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 from radicalbit_ai_gateway.db.tables.group_table import Group
 from radicalbit_ai_gateway.db.tables.key_table import Key
+from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
 
 
 class KeyIn(BaseModel, validate_assignment=True):
@@ -183,6 +184,7 @@ class GroupOut(BaseModel):
 
 class KeyFullOut(KeyOut):
     group: GroupOut | None
+    limits: list[CredentialLimitOut] | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -191,7 +193,10 @@ class KeyFullOut(KeyOut):
     # Used only on Key creation, to return api_key not obscured
     @staticmethod
     def from_key(
-        key: Key, plain_api_key: str, include_groups: bool = False
+        key: Key,
+        plain_api_key: str,
+        include_groups: bool = False,
+        include_limits: bool = False,
     ) -> 'KeyFullOut':
         return KeyFullOut(
             uuid=key.uuid,
@@ -203,13 +208,20 @@ class KeyFullOut(KeyOut):
             group=GroupOut.from_group(key.group)
             if include_groups and key.group
             else None,
+            limits=[CredentialLimitOut.from_key_limit(limit) for limit in key.limits]
+            if include_limits
+            else None,
             created_at=str(key.created_at),
             updated_at=str(key.updated_at),
         )
 
     # Used to return Key with api_key obscured
     @staticmethod
-    def from_key_obscured(key: Key, include_groups: bool = False) -> 'KeyFullOut':
+    def from_key_obscured(
+        key: Key,
+        include_groups: bool = False,
+        include_limits: bool = False,
+    ) -> 'KeyFullOut':
         return KeyFullOut(
             uuid=key.uuid,
             name=key.name,
@@ -219,6 +231,9 @@ class KeyFullOut(KeyOut):
             api_key=key.obscured_key,
             group=GroupOut.from_group(key.group)
             if include_groups and key.group
+            else None,
+            limits=[CredentialLimitOut.from_key_limit(limit) for limit in key.limits]
+            if include_limits
             else None,
             created_at=str(key.created_at),
             updated_at=str(key.updated_at),
