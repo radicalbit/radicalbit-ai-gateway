@@ -452,7 +452,7 @@ def get_sample_project_out(
     description: str | None = None,
     served_config_uuid: uuid.UUID | None = None,
     configs: list[ConfigSlotOut] | None = None,
-    limits: ProjectBudgetLimitOut | None = None,
+    limits: list[ProjectBudgetLimitOut] | None = None,
 ) -> ProjectOut:
     now = datetime.datetime.now(tz=UTC)
     if configs is None:

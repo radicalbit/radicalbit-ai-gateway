@@ -127,7 +127,7 @@ class ProjectOut(BaseModel):
     project_status: ProjectStatus
     served_config_uuid: UUID | None
     configs: list[ConfigSlotOut]
-    limits: ProjectBudgetLimitOut | None = None
+    limits: list[ProjectBudgetLimitOut] | None = None
     created_at: str
     updated_at: str
 
@@ -139,7 +139,7 @@ class ProjectOut(BaseModel):
     def from_project(
         project: Project,
         configs: list[ProjectConfig],
-        limits: ProjectBudgetLimitOut | None = None,
+        limits: list[ProjectBudgetLimitOut] | None = None,
     ) -> 'ProjectOut':
         ordered = sorted(configs, key=lambda c: c.slot)
         served = next(

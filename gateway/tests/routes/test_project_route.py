@@ -105,13 +105,13 @@ class TestProjectRoute(unittest.TestCase):
         limit_out = ProjectBudgetLimitOut.from_project_budget_limit(
             db_mock.get_sample_project_budget_limit(uuid=uuid.uuid4(), project_uuid=pid)
         )
-        out = db_mock.get_sample_project_out(uuid=pid, limits=limit_out)
+        out = db_mock.get_sample_project_out(uuid=pid, limits=[limit_out])
         self.project_service.get_by_uuid = MagicMock(return_value=out)
         res = self.client.get(
             f'{self.prefix}/projects/{pid}', params={'include_limits': 'true'}
         )
         assert res.status_code == 200
-        assert res.json()['limits'] == jsonable_encoder(limit_out)
+        assert res.json()['limits'] == jsonable_encoder([limit_out])
         self.project_service.get_by_uuid.assert_called_once_with(pid, True)
 
     def test_get_by_uuid_not_found(self):

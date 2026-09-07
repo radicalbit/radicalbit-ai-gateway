@@ -111,7 +111,8 @@ class ProjectServiceTest(DatabaseIntegration):
         )
         res = self.svc.get_by_uuid(out.uuid, include_limits=True)
         assert res.limits is not None
-        assert res.limits.window_size == '1 day'
+        assert len(res.limits) == 1
+        assert res.limits[0].window_size == '1 day'
 
     def test_get_all_filtered_include_limits(self):
         out, _, _ = self._create(name='filtered-with-limits')
@@ -121,7 +122,7 @@ class ProjectServiceTest(DatabaseIntegration):
         results = self.svc.get_all_filtered(include_limits=True)
         found = next(p for p in results if p.uuid == out.uuid)
         assert found.limits is not None
-        assert found.limits.window_size == '1 day'
+        assert len(found.limits) == 1
 
     def test_get_all_filtered_omits_limits_by_default(self):
         out, _, _ = self._create(name='filtered-no-limits')

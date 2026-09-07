@@ -73,12 +73,15 @@ class ProjectService:
 
     def _build_out(self, project: Project, include_limits: bool = False) -> ProjectOut:
         configs = list(self.project_config_dao.list_by_project(project.uuid))
-        limit = None
+        limits = None
         if include_limits:
-            found = self.project_budget_limit_dao.get_by_project_uuid(project.uuid)
-            if found:
-                limit = ProjectBudgetLimitOut.from_project_budget_limit(found[0])
-        return ProjectOut.from_project(project, configs, limits=limit)
+            limits = [
+                ProjectBudgetLimitOut.from_project_budget_limit(limit)
+                for limit in self.project_budget_limit_dao.get_by_project_uuid(
+                    project.uuid
+                )
+            ]
+        return ProjectOut.from_project(project, configs, limits=limits)
 
     def _build_out_or_raise(
         self, project_uuid: UUID, include_limits: bool = False
