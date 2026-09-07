@@ -59,6 +59,31 @@ _fanout_failed: ContextVar[tuple[str, ...]] = ContextVar(
 )
 
 
+_warned_unadvertised: set[tuple[str, str, str]] = set()
+
+
+def _warn_unadvertised(
+    kind: str, alias: str, allowlist: list[str] | None, advertised: set[str]
+) -> None:
+    """Warn once about allowlist entries this upstream does not advertise."""
+    if not allowlist:
+        return
+    missing = sorted(set(allowlist) - advertised)
+    if not missing:
+        return
+    key = (kind, alias, ','.join(missing))
+    if key in _warned_unadvertised:
+        return
+    _warned_unadvertised.add(key)
+    logger.warning(
+        "MCP server '%s': allowed_%s entries not advertised by the upstream "
+        '(they expose nothing): %s',
+        alias,
+        kind,
+        ', '.join(missing),
+    )
+
+
 def gateway_version() -> str:
     try:
         return _package_version('radicalbit-ai-gateway')
@@ -174,10 +199,11 @@ def target_attributes(method: str, params: dict, servers: list[AnyMcpServer]) ->
 class _McpMethodError(Exception):
     """Protocol-level failure inside a dispatched method → JSON-RPC error."""
 
-    def __init__(self, code: int, message: str):
+    def __init__(self, code: int, message: str, *, denied: bool = False):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.denied = denied
 
 
 class McpService:
@@ -430,6 +456,8 @@ class McpService:
                     ),
                 )
         except _McpMethodError as e:
+            if e.denied:
+                set_mcp_attributes(denied='allowlist')
             return McpDispatchResult(
                 status_code=200,
                 payload=jsonrpc.error_message(request_id, e.code, e.message),
@@ -470,32 +498,42 @@ class McpService:
         """Fan out to the route's upstreams and merge their tools.
 
         Each tool name is prefixed ``'{alias}__{tool}'``; all other fields
-        pass through verbatim. A failing upstream yields a partial list
-        (logged), unless every upstream failed.
+        pass through verbatim. A server's ``allowed_tools`` is applied to the
+        upstream name, before the prefix. A failing upstream yields a partial
+        list (logged), unless every upstream failed.
         """
-        if not servers:
+        targets = [s for s in servers if s.allowed_tools != []]
+        if not targets:
+            self._record_fanout(len(servers), [], 0)
             return {'tools': []}
         results = await asyncio.gather(
             *(
                 self._upstream_client.list_tools(s, client_headers=client_headers)
-                for s in servers
+                for s in targets
             ),
             return_exceptions=True,
         )
         tools: list[dict] = []
         failed: list[str] = []
-        for server, result in zip(servers, results, strict=True):
+        for server, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
-                # McpUpstreamError is already logged in detail at the raise site.
                 failed.append(server.alias)
                 continue
+            _warn_unadvertised(
+                'tools',
+                server.alias,
+                server.allowed_tools,
+                {t.name for t in result.tools},
+            )
             for tool in result.tools:
+                if not server.tool_allowed(tool.name):
+                    continue
                 data = tool.model_dump(mode='json', by_alias=True, exclude_none=True)
                 data['name'] = f'{server.alias}{ALIAS_TOOL_SEPARATOR}{tool.name}'
                 tools.append(data)
         self._record_fanout(len(servers), failed, len(tools))
         if failed:
-            if len(failed) == len(servers):
+            if len(failed) == len(targets):
                 raise _McpMethodError(
                     JSON_RPC_UPSTREAM_ERROR, 'All upstream MCP servers failed'
                 )
@@ -517,6 +555,11 @@ class McpService:
         The upstream ``CallToolResult`` passes through unchanged, including
         ``isError: true`` (tool-execution errors are results, not JSON-RPC
         errors).
+
+        A tool outside the server's ``allowed_tools`` is rejected here as well
+        as filtered from ``tools/list``: list-side filtering alone stops
+        nothing, since a client that cached an earlier listing — or simply
+        guesses — can call a name it was never offered.
         """
         name = params.get('name')
         if not isinstance(name, str) or not name:
@@ -534,6 +577,10 @@ class McpService:
         )
         if split is None or server is None:
             raise _McpMethodError(jsonrpc.INVALID_PARAMS, f'Unknown tool: {name}')
+        if not server.tool_allowed(split[1]):
+            raise _McpMethodError(
+                jsonrpc.INVALID_PARAMS, f'Unknown tool: {name}', denied=True
+            )
         result = await self._upstream_client.call_tool(
             server, split[1], arguments, client_headers=client_headers
         )
@@ -547,32 +594,46 @@ class McpService:
     ) -> dict:
         """Fan out to the route's upstreams and merge their prompts.
 
-        Same shape as :meth:`_tools_list`: each prompt name is prefixed
-        ``'{alias}__{name}'``; a failing upstream yields a partial list
-        (logged), unless every upstream failed.
+        Same shape as :meth:`_tools_list`, ``allowed_prompts`` included: each
+        prompt name is prefixed ``'{alias}__{name}'``; a failing upstream
+        yields a partial list (logged), unless every upstream failed.
         """
-        if not servers:
+        targets = [s for s in servers if s.allowed_prompts != []]
+        if not targets:
+            # Every server is gated shut, or the route has none. Still recorded:
+            # _record_fanout's contract is that the fan-out attributes are always
+            # present, so an absent count would be indistinguishable from an
+            # unreported one.
+            self._record_fanout(len(servers), [], 0)
             return {'prompts': []}
         results = await asyncio.gather(
             *(
                 self._upstream_client.list_prompts(s, client_headers=client_headers)
-                for s in servers
+                for s in targets
             ),
             return_exceptions=True,
         )
         prompts: list[dict] = []
         failed: list[str] = []
-        for server, result in zip(servers, results, strict=True):
+        for server, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
                 failed.append(server.alias)
                 continue
+            _warn_unadvertised(
+                'prompts',
+                server.alias,
+                server.allowed_prompts,
+                {p.name for p in result.prompts},
+            )
             for prompt in result.prompts:
+                if not server.prompt_allowed(prompt.name):
+                    continue
                 data = prompt.model_dump(mode='json', by_alias=True, exclude_none=True)
                 data['name'] = f'{server.alias}{ALIAS_TOOL_SEPARATOR}{prompt.name}'
                 prompts.append(data)
         self._record_fanout(len(servers), failed, len(prompts))
         if failed:
-            if len(failed) == len(servers):
+            if len(failed) == len(targets):
                 raise _McpMethodError(
                     JSON_RPC_UPSTREAM_ERROR, 'All upstream MCP servers failed'
                 )
@@ -609,6 +670,10 @@ class McpService:
         )
         if split is None or server is None:
             raise _McpMethodError(jsonrpc.INVALID_PARAMS, f'Unknown prompt: {name}')
+        if not server.prompt_allowed(split[1]):
+            raise _McpMethodError(
+                jsonrpc.INVALID_PARAMS, f'Unknown prompt: {name}', denied=True
+            )
         result = await self._upstream_client.get_prompt(
             server, split[1], arguments, client_headers=client_headers
         )
@@ -625,31 +690,53 @@ class McpService:
         Each resource ``uri`` is wrapped via :func:`encode_resource_uri` so
         ``resources/read`` can route it back to the right upstream; a failing
         upstream yields a partial list (logged), unless every upstream failed.
+
+        ``allowed_resources`` is matched against the upstream URI, before that
+        wrapping — resources are identified by URI rather than by name, so the
+        URI is what the allowlist names.
         """
-        if not servers:
+        targets = [s for s in servers if s.allowed_resources != []]
+        if not targets:
+            # Every server is gated shut, or the route has none. Still recorded:
+            # _record_fanout's contract is that the fan-out attributes are always
+            # present, so an absent count would be indistinguishable from an
+            # unreported one.
+            self._record_fanout(len(servers), [], 0)
             return {'resources': []}
         results = await asyncio.gather(
             *(
                 self._upstream_client.list_resources(s, client_headers=client_headers)
-                for s in servers
+                for s in targets
             ),
             return_exceptions=True,
         )
         resources: list[dict] = []
         failed: list[str] = []
-        for server, result in zip(servers, results, strict=True):
+        for server, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
                 failed.append(server.alias)
                 continue
-            for resource in result.resources:
-                data = resource.model_dump(
-                    mode='json', by_alias=True, exclude_none=True
-                )
+            # Dumped up front so the allowlist check, the warning and the
+            # wrapped URI all read one serialized form of the upstream's uri
+            # (an AnyUrl, which normalizes on parse) rather than two.
+            advertised = [
+                r.model_dump(mode='json', by_alias=True, exclude_none=True)
+                for r in result.resources
+            ]
+            _warn_unadvertised(
+                'resources',
+                server.alias,
+                server.allowed_resources,
+                {d['uri'] for d in advertised},
+            )
+            for data in advertised:
+                if not server.resource_allowed(data['uri']):
+                    continue
                 data['uri'] = encode_resource_uri(server.alias, data['uri'])
                 resources.append(data)
         self._record_fanout(len(servers), failed, len(resources))
         if failed:
-            if len(failed) == len(servers):
+            if len(failed) == len(targets):
                 raise _McpMethodError(
                     JSON_RPC_UPSTREAM_ERROR, 'All upstream MCP servers failed'
                 )
@@ -686,6 +773,18 @@ class McpService:
         if decoded is None or server is None:
             raise _McpMethodError(jsonrpc.INVALID_PARAMS, f'Unknown resource: {uri}')
         alias, upstream_uri = decoded
+        # Matched against the client's decoded string, where resources/list
+        # matched the upstream's AnyUrl-normalized one. The two can only differ
+        # for an allowlist entry written in a form the upstream's own parse
+        # would rewrite, and they fail in the safe direction — the check is
+        # exact membership either way, so nothing outside the allowlist is ever
+        # readable; such an entry is merely hidden from resources/list while
+        # staying readable. _warn_unadvertised flags exactly that entry, since a
+        # form the upstream never advertises is what it looks like from here.
+        if not server.resource_allowed(upstream_uri):
+            raise _McpMethodError(
+                jsonrpc.INVALID_PARAMS, f'Unknown resource: {uri}', denied=True
+            )
         result = await self._upstream_client.read_resource(
             server, upstream_uri, client_headers=client_headers
         )

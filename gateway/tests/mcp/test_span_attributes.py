@@ -388,6 +388,138 @@ def test_a_jsonrpc_error_is_a_handled_error_in_the_request_event(client):
     assert payload.error_code == '-32602'
 
 
+GATED_TOOL = 'get_issue'
+GATED_PROMPT = 'review'
+GATED_RESOURCE = 'https://gh.example/readme'
+
+
+@pytest.fixture
+def gated_client(client) -> TestClient:
+    """Rebuild the same wiring with github's allowlists opened for nothing."""
+    config = GatewayConfig.model_validate(
+        {
+            'chat_models': [{'model_id': 'm1', 'model': 'openai/gpt-4o'}],
+            'routes': {'my-route': {'chat_models': ['m1'], 'mcp_servers': ['github']}},
+            'mcp_servers': [
+                {
+                    'alias': 'github',
+                    'transport': 'streamable_http',
+                    'url': 'https://gh.example/mcp/',
+                    'allowed_tools': [],
+                    'allowed_prompts': [],
+                    'allowed_resources': [],
+                }
+            ],
+        }
+    )
+    entry = client.app.state.project_configs['proj']
+    client.app.state.project_configs['proj'] = ProjectEntry(
+        uuid=entry.uuid, config=config
+    )
+    return client
+
+
+GATED_CALLS = [
+    ('tools/call', {'name': f'github__{GATED_TOOL}'}, GATED_TOOL),
+    ('prompts/get', {'name': f'github__{GATED_PROMPT}'}, GATED_PROMPT),
+    (
+        'resources/read',
+        {'uri': encode_resource_uri('github', GATED_RESOURCE)},
+        GATED_RESOURCE,
+    ),
+]
+
+
+@pytest.mark.parametrize(('method', 'params', 'target'), GATED_CALLS)
+def test_an_allowlist_rejection_is_attributable_on_the_root_span(
+    gated_client, exporter, method, params, target
+):
+    """Pin the marker that tells a policy rejection from a typo.
+
+    The client-facing error is the same one a missing target gets, so the
+    ``denied`` attribute is the only thing separating the two when the trace is
+    read back — and it has to reach the ROOT span, not just the task.
+    """
+    assert _post(gated_client, method, params).status_code == 200
+
+    root = _span(exporter, ROOT_SPAN)
+    assert root.status.status_code is StatusCode.ERROR
+    assert _mcp_attrs(root) == {
+        'method': method,
+        'alias': 'github',
+        'target': target,
+        'error_code': '-32602',
+        'denied': 'allowlist',
+    }
+
+
+@pytest.mark.parametrize(('method', 'params', 'target'), GATED_CALLS)
+def test_an_allowlist_rejection_is_an_error_in_the_request_event(
+    gated_client, method, params, target
+):
+    with patch(EMIT) as emit:
+        assert _post(gated_client, method, params).status_code == 200
+
+    payload = emit.call_args.args[0]
+    assert payload.http_status_code == 200
+    assert payload.status is RequestStatus.HANDLED_ERROR
+    assert payload.error_type == 'mcp_jsonrpc_error'
+    assert payload.error_code == '-32602'
+
+
+@pytest.mark.parametrize(
+    ('method', 'span', 'total'),
+    [
+        ('tools/list', 'mcp_tools_list.task', 1),
+        ('prompts/list', 'mcp_prompts_list.task', 1),
+        ('resources/list', 'mcp_resources_list.task', 1),
+    ],
+)
+def test_a_fully_gated_list_still_records_its_fanout(
+    gated_client, exporter, method, span, total
+):
+    """No upstream is contacted, but an absent count reads as an unreported one.
+
+    ``mcp_upstream_total`` stays the route's server count so the dimension keeps
+    one meaning whether or not a server happens to be gated shut.
+    """
+    assert _post(gated_client, method).status_code == 200
+
+    attrs = _span(exporter, span).attributes
+    assert attrs['rb.gateway.mcp_upstream_total'] == total
+    assert attrs['rb.gateway.mcp_upstream_failed'] == ''
+    assert attrs['rb.gateway.mcp_result_count'] == 0
+
+
+@pytest.mark.parametrize(('method', 'params', 'target'), GATED_CALLS)
+def test_a_gated_call_never_reaches_the_upstream(
+    gated_client, upstream, method, params, target
+):
+    assert _post(gated_client, method, params).status_code == 200
+
+    upstream.call_tool.assert_not_awaited()
+    upstream.get_prompt.assert_not_awaited()
+    upstream.read_resource.assert_not_awaited()
+
+
+def test_a_permitted_call_carries_no_denied_marker(client, exporter):
+    assert _post(client, 'tools/call', {'name': 'github__get_issue'}).status_code == 200
+
+    assert 'denied' not in _mcp_attrs(_span(exporter, ROOT_SPAN))
+
+
+def test_a_denial_does_not_leak_into_the_next_request(gated_client, exporter):
+    """association_properties are merged, so a stale marker would mislabel."""
+    assert (
+        _post(gated_client, 'tools/call', {'name': 'github__get_issue'}).status_code
+        == 200
+    )
+    assert _mcp_attrs(_span(exporter, ROOT_SPAN))['denied'] == 'allowlist'
+
+    assert _post(gated_client, 'ping').status_code == 200
+    assert 'denied' not in _mcp_attrs(_span(exporter, ROOT_SPAN))
+
+
 def test_a_notification_emits_no_request_event(client):
     with patch(EMIT) as emit:
         response = client.post(
