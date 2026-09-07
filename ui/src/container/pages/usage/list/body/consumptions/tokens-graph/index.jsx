@@ -1,7 +1,7 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { useGetTokensChartStreamWithRange } from '@State/usage/vertical-hooks';
 import { Board, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
-import ReactEChartsCore from 'echarts-for-react/lib/core';
+import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { LineChart } from 'echarts/charts';
 import {
   DataZoomComponent,
