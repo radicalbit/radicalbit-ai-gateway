@@ -9,6 +9,9 @@ from radicalbit_ai_gateway.db.tables.group_table import Group
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.db.tables.otel_traces_table import OtelTraces
+from radicalbit_ai_gateway.db.tables.project_budget_limit_table import (
+    ProjectBudgetLimit,
+)
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.db.tables.request_event_table import RequestEvent
@@ -32,6 +35,11 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitIn,
     CredentialLimitsIn,
+)
+from radicalbit_ai_gateway.models.project_budget_limiting import (
+    ProjectBudgetLimitIn,
+    ProjectBudgetLimitOut,
+    ProjectBudgetLimitsIn,
 )
 from radicalbit_ai_gateway.models.project_dto import (
     ConfigSlotOut,
@@ -138,6 +146,45 @@ def get_sample_credential_limits_in(
     limits: list[CredentialLimitIn] | None = None,
 ) -> CredentialLimitsIn:
     return CredentialLimitsIn(limits=limits or [get_sample_credential_limit_in()])
+
+
+def get_sample_project_budget_limit(
+    uuid: uuid.UUID = RANDOM_UUID,
+    project_uuid: uuid.UUID = RANDOM_UUID,
+    algorithm: str = 'FIXED_WINDOW',
+    window_size: str = '1 day',
+    max_value: float = 10.0,
+) -> ProjectBudgetLimit:
+    now = datetime.datetime.now(tz=UTC)
+    return ProjectBudgetLimit(
+        uuid=uuid,
+        project_uuid=project_uuid,
+        algorithm=algorithm,
+        window_size=window_size,
+        max_value=max_value,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def get_sample_project_budget_limit_in(
+    algorithm: str = 'FIXED_WINDOW',
+    window_size: str = '1 day',
+    value: float = 10.0,
+) -> ProjectBudgetLimitIn:
+    return ProjectBudgetLimitIn(
+        algorithm=algorithm,
+        window_size=window_size,
+        value=value,
+    )
+
+
+def get_sample_project_budget_limits_in(
+    limits: list[ProjectBudgetLimitIn] | None = None,
+) -> ProjectBudgetLimitsIn:
+    return ProjectBudgetLimitsIn(
+        limits=limits or [get_sample_project_budget_limit_in()]
+    )
 
 
 def get_sample_group_plain(
@@ -405,6 +452,7 @@ def get_sample_project_out(
     description: str | None = None,
     served_config_uuid: uuid.UUID | None = None,
     configs: list[ConfigSlotOut] | None = None,
+    limits: list[ProjectBudgetLimitOut] | None = None,
 ) -> ProjectOut:
     now = datetime.datetime.now(tz=UTC)
     if configs is None:
@@ -421,6 +469,7 @@ def get_sample_project_out(
         else ProjectStatus.DEV,
         served_config_uuid=served_config_uuid,
         configs=configs,
+        limits=limits,
         created_at=str(now),
         updated_at=str(now),
     )

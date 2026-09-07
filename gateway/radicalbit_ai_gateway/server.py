@@ -35,6 +35,7 @@ from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
+from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
@@ -188,6 +189,7 @@ group_dao = GroupDAO(database)
 group_route_dao = GroupRouteDAO(database)
 project_dao = ProjectDAO(database)
 project_config_dao = ProjectConfigDAO(database)
+project_budget_limit_dao = ProjectBudgetLimitDAO(database)
 event_dao = EventDAO(ch_database)
 request_event_dao = RequestEventDAO(ch_database)
 otel_traces_dao = OtelTracesDAO(ch_database)
@@ -207,7 +209,9 @@ group_service = GroupService(
     project_configs=project_configs,
 )
 project_service = ProjectService(
-    project_dao=project_dao, project_config_dao=project_config_dao
+    project_dao=project_dao,
+    project_config_dao=project_config_dao,
+    project_budget_limit_dao=project_budget_limit_dao,
 )
 config_generator_service = ConfigGeneratorService()
 event_service = EventService(

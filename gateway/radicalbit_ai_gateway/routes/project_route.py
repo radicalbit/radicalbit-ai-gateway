@@ -12,6 +12,10 @@ from radicalbit_ai_gateway.models.auth_dto import (
     RouteGroupsIn,
 )
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.project_budget_limiting import (
+    ProjectBudgetLimitOut,
+    ProjectBudgetLimitsIn,
+)
 from radicalbit_ai_gateway.models.project_dto import (
     GenerateConfigIn,
     GenerateConfigOut,
@@ -39,8 +43,8 @@ _ALLOWED_IMPORT_SUFFIXES = ('.yaml', '.yml')
 
 @dataclass
 class ProjectRouteConfig:
-    get_projects_fn: Callable[[Request, ProjectFilter | None], Any] | None = None
-    get_project_fn: Callable[[Request, UUID], Any] | None = None
+    get_projects_fn: Callable[[Request, ProjectFilter | None, bool], Any] | None = None
+    get_project_fn: Callable[[Request, UUID, bool], Any] | None = None
     list_response_model: type = field(default_factory=lambda: list[ProjectOut])
     item_response_model: type = field(default_factory=lambda: ProjectOut)
 
@@ -59,10 +63,12 @@ class ProjectRoute:
     ) -> APIRouter:
         config = config or ProjectRouteConfig()
         get_projects_fn = config.get_projects_fn or (
-            lambda _, f: project_service.get_all_filtered(f)
+            lambda _, f, include_limits: project_service.get_all_filtered(
+                f, include_limits
+            )
         )
         get_project_fn = config.get_project_fn or (
-            lambda _, u: project_service.get_by_uuid(u)
+            lambda _, u, include_limits: project_service.get_by_uuid(u, include_limits)
         )
         router = APIRouter(tags=['project_api'])
 
@@ -79,16 +85,21 @@ class ProjectRoute:
         def get_all(
             request: Request,
             filter: ProjectFilter | None = Query(None),
+            include_limits: bool = Query(False),
         ):
-            return get_projects_fn(request, filter)
+            return get_projects_fn(request, filter, include_limits)
 
         @router.get(
             '/projects/{project_uuid}',
             status_code=200,
             response_model=config.item_response_model,
         )
-        def get_project_by_uuid(project_uuid: UUID, request: Request):
-            return get_project_fn(request, project_uuid)
+        def get_project_by_uuid(
+            project_uuid: UUID,
+            request: Request,
+            include_limits: bool = Query(False),
+        ):
+            return get_project_fn(request, project_uuid, include_limits)
 
         @router.patch(
             '/projects/{project_uuid}/configs/{config_uuid}',
@@ -308,5 +319,36 @@ class ProjectRoute:
             return group_service.get_associable_groups_for_project_route(
                 project.name, route_name, include_routes, include_keys
             )
+
+        @router.post(
+            '/projects/{project_uuid}/budget-limits',
+            status_code=201,
+            response_model=list[ProjectBudgetLimitOut],
+        )
+        @route_meta(
+            entity_type='PROJECT',
+            entity_uuid_param='project_uuid',
+            action='ADD_BUDGET_LIMIT',
+        )
+        def add_budget_limits_to_project(
+            project_uuid: UUID, limits_in: ProjectBudgetLimitsIn
+        ):
+            limits = project_service.add_budget_limits_to_project(
+                project_uuid, limits_in
+            )
+            logger.info(
+                'Added %s budget limit(s) to project %s',
+                len(limits_in.limits),
+                project_uuid,
+            )
+            return limits
+
+        @router.get(
+            '/projects/{project_uuid}/budget-limits',
+            status_code=200,
+            response_model=list[ProjectBudgetLimitOut],
+        )
+        def get_budget_limits_for_project(project_uuid: UUID):
+            return project_service.get_budget_limits_for_project(project_uuid)
 
         return router
