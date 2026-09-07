@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/ui"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      ui-security-patch:
+        applies-to: security-updates
+        update-types:
+          - "patch"
+      ui-security-minor-major:
+        applies-to: security-updates
+        update-types:
+          - "minor"
+          - "major"
+      ui-version-updates:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+          - "minor"
+      ui-major-updates:
+        applies-to: version-updates
+        update-types:
+          - "major"
