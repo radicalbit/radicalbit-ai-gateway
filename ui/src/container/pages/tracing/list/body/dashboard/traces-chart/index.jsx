@@ -2,7 +2,7 @@ import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetTracesChartWithRange } from '@Src/store/state/tracing/vertical-hooks';
 import { Board, Skeleton, Spinner, Void } from '@radicalbit/radicalbit-design-system';
-import ReactEChartsCore from 'echarts-for-react/lib/core';
+import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { echarts, tracesBarChartOption } from './options';
