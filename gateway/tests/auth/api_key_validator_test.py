@@ -1,13 +1,17 @@
 import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 import uuid
 
 import pytest
 
+from tests.common import db_mock
+
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.tables.group_table import Group
 from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
+from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
 from radicalbit_ai_gateway.services.commons.keyed_hash_algorithm import hash_key
 from radicalbit_ai_gateway.utils.exceptions import InvalidApiKey, KeyNotFoundError
 
@@ -50,6 +54,8 @@ def _gw_key(name: str, group: Group) -> Key:
         updated_at=now,
         group_uuid=group.uuid,
         group=group,
+        # unset .limits on a transient instance can hang (SQLAlchemy lazy-load)
+        limits=[],
     )
 
 
@@ -73,6 +79,21 @@ async def test_validate_token_returns_key_details():
     assert result.hashed_api_key == hash_key(token)
     assert result.group_uuid == str(group.uuid)
     assert result.group_name == 'team-a'
+    assert result.limits == []
+
+
+async def test_validate_token_propagates_limits_from_key_record():
+    validator, key_service = _make_validator()
+    group = _gw_group('team-a')
+    limit_out = CredentialLimitOut.from_key_limit(db_mock.get_sample_key_limit())
+    key = SimpleNamespace(
+        uuid=uuid.uuid4(), name='alice', group=group, limits=[limit_out]
+    )
+    key_service.get_key_by_hashed_key = MagicMock(return_value=key)
+
+    result = await validator.validate_token('sk-rb-mytoken')
+
+    assert result.limits == [limit_out]
 
 
 async def test_validate_token_calls_key_service_with_hashed_token():

@@ -225,7 +225,9 @@ class KeyService:
         key = self.key_dao.get_key_by_hashed_key(hashed_api_key=hashed_api_key)
         if not key:
             raise KeyNotFoundError('Key with does not exists')
-        return KeyFullOut.from_key_obscured(key=key, include_groups=True)
+        return KeyFullOut.from_key_obscured(
+            key=key, include_groups=True, include_limits=True
+        )
 
     def get_names_by_uuids(self, uuids: list[UUID]) -> dict[UUID, str]:
         return self.key_dao.get_names_by_uuids(uuids)

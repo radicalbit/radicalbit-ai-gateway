@@ -77,6 +77,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     GatewayInternalError,
     GuardrailBadRequest,
 )
+from radicalbit_ai_gateway.utils.request_context import get_current_credential_limiter
 from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
@@ -641,7 +642,11 @@ class GatewayRoute:
                 return cached_response
 
         # Validate limiters
-        if self.token_limiter or self.budget_limiter:
+        if (
+            self.token_limiter
+            or self.budget_limiter
+            or get_current_credential_limiter()
+        ):
             set_operation_category(OperationCategory.LIMITING)
             await self._validate_embedding_limiters(
                 request_uuid=request_uuid,
@@ -757,6 +762,12 @@ class GatewayRoute:
 
                 return cached_body
 
+        # Checked first: decides which error is reported when both would block.
+        credential_limiter = get_current_credential_limiter()
+        if credential_limiter:
+            set_operation_category(OperationCategory.LIMITING)
+            await credential_limiter.check_budget()
+
         if self.budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
             await self.budget_limiter.check_budget()
@@ -830,6 +841,12 @@ class GatewayRoute:
 
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._select_and_prepare_transcription_model()
+
+        # Checked first: decides which error is reported when both would block.
+        credential_limiter = get_current_credential_limiter()
+        if credential_limiter:
+            set_operation_category(OperationCategory.LIMITING)
+            await credential_limiter.check_budget()
 
         if self.budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
@@ -1045,7 +1062,11 @@ class GatewayRoute:
             )
 
         # Validate Limiters
-        if self.token_limiter or self.budget_limiter:
+        if (
+            self.token_limiter
+            or self.budget_limiter
+            or get_current_credential_limiter()
+        ):
             set_operation_category(OperationCategory.LIMITING)
             await self._validate_limiters(
                 request_uuid=request_uuid,
@@ -1698,6 +1719,31 @@ class GatewayRoute:
         model_selected: Model,
     ) -> None:
         user_content = build_user_content(messages)
+
+        # Checked before route/project limits: decides which error is
+        # reported when both would block.
+        credential_limiter = get_current_credential_limiter()
+        if credential_limiter:
+            await credential_limiter.check_input_tokens(
+                text=user_content,
+                model_string=model_selected.model,
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+            await credential_limiter.check_output_tokens(
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+            await credential_limiter.check_budget()
+
         if self.token_limiter:
             if self.token_limiter.input_config:
                 await self.token_limiter.check_input(
@@ -1738,6 +1784,23 @@ class GatewayRoute:
         """Apply token and budget limiting for embedding requests (input only)."""
 
         user_content = build_user_content_from_texts(input_texts)
+
+        # Checked before route/project limits: decides which error is
+        # reported when both would block.
+        credential_limiter = get_current_credential_limiter()
+        if credential_limiter:
+            await credential_limiter.check_input_tokens(
+                text=user_content,
+                model_string=model_selected.model,
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+            await credential_limiter.check_budget()
+
         if self.token_limiter and self.token_limiter.input_config:
             await self.token_limiter.check_input(
                 text=user_content,
@@ -1776,25 +1839,46 @@ class GatewayRoute:
                 output_cost_per_token=model_selected.output_cost_per_token,
             )
 
+        credential_limiter = get_current_credential_limiter()
+        if credential_limiter:
+            await credential_limiter.count_input_tokens(prompt_tokens)
+            await credential_limiter.count_output_tokens(completion_tokens)
+            if model_selected.input_cost_per_token:
+                await credential_limiter.count_budget_input(
+                    token_count=prompt_tokens,
+                    input_cost_per_token=model_selected.input_cost_per_token,
+                )
+            if model_selected.output_cost_per_token:
+                await credential_limiter.count_budget_output(
+                    token_count=completion_tokens,
+                    output_cost_per_token=model_selected.output_cost_per_token,
+                )
+
     async def _count_transcription_usage(
         self,
         usage: UsageTokens | UsageDuration | None,
         model_selected: Model,
     ) -> None:
-        """Count budget usage from a transcription response, mirroring _count_usage.
-
-        No token_limiter counting: token/duration limiting isn't applicable to
-        audio (AG-887 analysis).
-        """
-        if not self.budget_limiter or usage is None:
+        """Count budget usage from a transcription response, mirroring _count_usage."""
+        credential_limiter = get_current_credential_limiter()
+        if self.budget_limiter is None and credential_limiter is None:
+            return
+        if usage is None:
             return
 
         if usage.type == 'duration':
             if model_selected.input_cost_per_second:
-                await self.budget_limiter.count_duration(
-                    seconds=usage.seconds,
-                    cost_per_second=float(model_selected.input_cost_per_second),
-                )
+                cost_per_second = float(model_selected.input_cost_per_second)
+                if self.budget_limiter:
+                    await self.budget_limiter.count_duration(
+                        seconds=usage.seconds,
+                        cost_per_second=cost_per_second,
+                    )
+                if credential_limiter:
+                    await credential_limiter.count_budget_duration(
+                        seconds=usage.seconds,
+                        cost_per_second=cost_per_second,
+                    )
             return
 
         details = getattr(usage, 'input_token_details', None)
@@ -1804,20 +1888,38 @@ class GatewayRoute:
             text_tokens = usage.input_tokens
 
         if audio_tokens > 0 and model_selected.input_cost_per_audio_token:
-            await self.budget_limiter.count_input(
-                token_count=audio_tokens,
-                input_cost_per_token=model_selected.input_cost_per_audio_token,
-            )
+            if self.budget_limiter:
+                await self.budget_limiter.count_input(
+                    token_count=audio_tokens,
+                    input_cost_per_token=model_selected.input_cost_per_audio_token,
+                )
+            if credential_limiter:
+                await credential_limiter.count_budget_input(
+                    token_count=audio_tokens,
+                    input_cost_per_token=model_selected.input_cost_per_audio_token,
+                )
         if text_tokens > 0 and model_selected.input_cost_per_token:
-            await self.budget_limiter.count_input(
-                token_count=text_tokens,
-                input_cost_per_token=model_selected.input_cost_per_token,
-            )
+            if self.budget_limiter:
+                await self.budget_limiter.count_input(
+                    token_count=text_tokens,
+                    input_cost_per_token=model_selected.input_cost_per_token,
+                )
+            if credential_limiter:
+                await credential_limiter.count_budget_input(
+                    token_count=text_tokens,
+                    input_cost_per_token=model_selected.input_cost_per_token,
+                )
         if usage.output_tokens > 0 and model_selected.output_cost_per_token:
-            await self.budget_limiter.count_output(
-                token_count=usage.output_tokens,
-                output_cost_per_token=model_selected.output_cost_per_token,
-            )
+            if self.budget_limiter:
+                await self.budget_limiter.count_output(
+                    token_count=usage.output_tokens,
+                    output_cost_per_token=model_selected.output_cost_per_token,
+                )
+            if credential_limiter:
+                await credential_limiter.count_budget_output(
+                    token_count=usage.output_tokens,
+                    output_cost_per_token=model_selected.output_cost_per_token,
+                )
 
     # ============================================================================
     # Streaming

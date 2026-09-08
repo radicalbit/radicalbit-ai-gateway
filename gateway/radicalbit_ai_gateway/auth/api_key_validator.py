@@ -29,4 +29,5 @@ class ApiKeyValidator:
             hashed_api_key=hashed,
             group_uuid=str(group.uuid),
             group_name=group.name,
+            limits=key_record.limits or [],
         )

@@ -8,6 +8,10 @@ from radicalbit_ai_gateway.utils.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
+from radicalbit_ai_gateway.utils.request_context import (
+    get_current_credential_limiter,
+    reset_route_context,
+)
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     ensure_endpoint_category,
@@ -26,6 +30,7 @@ class McpRoute:
         @router.post('/{project_name}/{route_name}/mcp')
         @workflow(name='mcp_request')
         @ensure_endpoint_category
+        @reset_route_context
         async def mcp_post(
             request: Request,
             project_name: str,
@@ -43,6 +48,21 @@ class McpRoute:
             # decides when they run. After authorization, so an unknown route
             # or an unbound key never consumes budget.
             route = gateway_routes.get(authorized.route_key)
+
+            # Checked before route/project limits: decides which error is
+            # reported when both would block.
+            credential_limiter = get_current_credential_limiter()
+            if route is not None and credential_limiter:
+                set_operation_category(OperationCategory.LIMITING)
+                await credential_limiter.check_and_count_request(
+                    request_uuid=request_uuid,
+                    group_uuid=authorized.key_details.group_uuid,
+                    group_name=authorized.key_details.group_name,
+                    route_name=authorized.route_name,
+                    project_uuid=authorized.project_uuid,
+                    project_name=authorized.project_name,
+                )
+
             if route is not None and route.request_rate_limiter:
                 set_operation_category(OperationCategory.LIMITING)
                 # One inbound JSON-RPC message counts as 1. The check precedes
