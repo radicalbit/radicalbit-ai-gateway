@@ -402,6 +402,37 @@ mcp_servers:
 `content-type`, `accept`, `connection`, `transfer-encoding`, `te`, `upgrade`,
 `mcp-session-id`, `mcp-protocol-version`, `x-rb-tags` are all rejected.
 
+### Exposing only part of a server
+
+`allowed_tools`, `allowed_prompts` and `allowed_resources` narrow what a server
+exposes. They are per server and work on both transports. Use them whenever the user
+asks for only some of a server's tools, prompts or resources.
+
+```yaml
+mcp_servers:
+  - alias: github
+    transport: streamable_http
+    url: https://api.githubcopilot.com/mcp/
+    allowed_tools:
+      - get_issue
+      - list_issues
+    allowed_prompts: []
+```
+
+- Entries are the **upstream's own names**, before the `{alias}__` prefix: write
+  `get_issue`, never `github__get_issue`. `allowed_resources` entries are upstream
+  resource URIs, since a resource is identified by URI rather than by name.
+- Omitting a field, or setting it to `null`, exposes everything that server advertises.
+  This is the default — do not emit these fields unless the user asked to restrict
+  something.
+- An empty list exposes nothing of that kind. `allowed_prompts: []` above means the
+  route offers no prompts from `github` while still offering two of its tools. An empty
+  list is meaningfully different from omitting the field, so never substitute one for
+  the other.
+- Matching is exact and case-sensitive, and each list is enforced on both listing and
+  invocation: a non-allowlisted target is hidden from `tools/list` and rejected if
+  called anyway.
+
 ---
 
 ## `cache`

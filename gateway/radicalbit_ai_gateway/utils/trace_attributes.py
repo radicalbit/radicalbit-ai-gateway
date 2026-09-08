@@ -70,6 +70,7 @@ def set_mcp_attributes(
     target: str | None = None,
     error_code: int | None = None,
     upstream_failed: str | None = None,
+    denied: str | None = None,
 ) -> None:
     """Record MCP-specific attributes on the current trace.
 
@@ -80,6 +81,11 @@ def set_mcp_attributes(
 
     ``upstream_failed`` is the comma-joined aliases a list method's fan-out
     could not reach, set only when a fan-out was actually degraded.
+
+    ``denied`` names the gateway-side policy that rejected the request
+    (``'allowlist'``). The client-facing error is deliberately the same one an
+    unconfigured target gets, so this attribute is what makes a policy
+    rejection distinguishable from a missing target when a trace is read back.
     """
     properties = {
         'rb.gateway.mcp_method': method,
@@ -89,6 +95,7 @@ def set_mcp_attributes(
         if error_code is not None
         else None,
         'rb.gateway.mcp_upstream_failed': upstream_failed,
+        'rb.gateway.mcp_denied': denied,
     }
     properties = {k: v for k, v in properties.items() if v is not None}
     if properties:

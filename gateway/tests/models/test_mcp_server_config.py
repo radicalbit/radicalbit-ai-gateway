@@ -158,3 +158,85 @@ def test_timeout_must_be_positive():
         GatewayConfig.model_validate(
             _base_config(mcp_servers=[{**HTTP_SERVER, 'timeout': 0}])
         )
+
+
+ALLOWLIST_FIELDS = ['allowed_tools', 'allowed_prompts', 'allowed_resources']
+
+
+@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
+def test_allowlists_default_to_none_meaning_everything(field):
+    config = GatewayConfig.model_validate(_base_config(mcp_servers=[HTTP_SERVER]))
+    assert getattr(config.mcp_servers_by_alias['github'], field) is None
+
+
+@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
+def test_an_empty_allowlist_is_kept_distinct_from_unset(field):
+    config = GatewayConfig.model_validate(
+        _base_config(mcp_servers=[{**HTTP_SERVER, field: []}])
+    )
+    assert getattr(config.mcp_servers_by_alias['github'], field) == []
+
+
+@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
+def test_allowlist_entries_are_stripped_and_deduped_in_order(field):
+    config = GatewayConfig.model_validate(
+        _base_config(mcp_servers=[{**HTTP_SERVER, field: [' b ', 'a', 'b']}])
+    )
+    assert getattr(config.mcp_servers_by_alias['github'], field) == ['b', 'a']
+
+
+@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
+@pytest.mark.parametrize('entry', ['', '   '])
+def test_blank_allowlist_entries_rejected(field, entry):
+    with pytest.raises(ValueError, match=f'{field} entries must not be empty'):
+        GatewayConfig.model_validate(
+            _base_config(mcp_servers=[{**HTTP_SERVER, field: [entry]}])
+        )
+
+
+@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
+def test_allowlists_apply_to_stdio_servers_too(field):
+    config = GatewayConfig.model_validate(
+        _base_config(mcp_servers=[{**STDIO_SERVER, field: ['x']}])
+    )
+    assert getattr(config.mcp_servers_by_alias['local-tools'], field) == ['x']
+
+
+def test_allowlists_name_upstream_names_not_the_prefixed_ones():
+    """The allowlist is matched before the '{alias}__' prefix is applied."""
+    config = GatewayConfig.model_validate(
+        _base_config(mcp_servers=[{**HTTP_SERVER, 'allowed_tools': ['get_issue']}])
+    )
+    server = config.mcp_servers_by_alias['github']
+    assert server.tool_allowed('get_issue')
+    assert not server.tool_allowed('github__get_issue')
+
+
+@pytest.mark.parametrize(
+    ('field', 'method', 'value'),
+    [
+        ('allowed_tools', 'tool_allowed', 'get_issue'),
+        ('allowed_prompts', 'prompt_allowed', 'review'),
+        ('allowed_resources', 'resource_allowed', 'https://h.example/readme'),
+    ],
+)
+def test_unset_allowlist_allows_anything(field, method, value):
+    config = GatewayConfig.model_validate(_base_config(mcp_servers=[HTTP_SERVER]))
+    server = config.mcp_servers_by_alias['github']
+    assert getattr(server, method)(value)
+
+
+@pytest.mark.parametrize(
+    ('field', 'method', 'value'),
+    [
+        ('allowed_tools', 'tool_allowed', 'get_issue'),
+        ('allowed_prompts', 'prompt_allowed', 'review'),
+        ('allowed_resources', 'resource_allowed', 'https://h.example/readme'),
+    ],
+)
+def test_empty_allowlist_allows_nothing(field, method, value):
+    config = GatewayConfig.model_validate(
+        _base_config(mcp_servers=[{**HTTP_SERVER, field: []}])
+    )
+    server = config.mcp_servers_by_alias['github']
+    assert not getattr(server, method)(value)
