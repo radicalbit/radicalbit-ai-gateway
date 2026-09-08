@@ -651,6 +651,16 @@ class ProjectBudgetLimitConflictError(AuthRegistryError):
         )
 
 
+class ProjectBudgetLimitNotFoundError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_404_NOT_FOUND,
+            'project_budget_limit_not_found',
+            log_message=log_message,
+        )
+
+
 class SecretNotFoundError(AppError):
     def __init__(self, key: str, source: str = ''):
         message = f"Secret '{key}' not found"

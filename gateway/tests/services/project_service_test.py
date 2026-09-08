@@ -26,6 +26,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ProjectAlreadyExistsError,
     ProjectBudgetLimitAlreadyExistsError,
     ProjectBudgetLimitConflictError,
+    ProjectBudgetLimitNotFoundError,
     ProjectConfigValidationError,
     ProjectNotFoundError,
 )
@@ -475,6 +476,35 @@ class ProjectServiceTest(DatabaseIntegration):
     def test_get_budget_limits_for_project_not_found(self):
         with pytest.raises(ProjectNotFoundError):
             self.svc.get_budget_limits_for_project(uuid.uuid4())
+
+    def test_delete_budget_limit_from_project_ok(self):
+        out, _, _ = self._create(name='budget-delete-ok')
+        [limit] = self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        deleted = self.svc.delete_budget_limit_from_project(out.uuid, limit.uuid)
+        assert deleted.uuid == limit.uuid
+        assert self.svc.get_budget_limits_for_project(out.uuid) == []
+
+    def test_delete_budget_limit_from_project_not_found_project(self):
+        with pytest.raises(ProjectNotFoundError):
+            self.svc.delete_budget_limit_from_project(uuid.uuid4(), uuid.uuid4())
+
+    def test_delete_budget_limit_from_project_not_found_limit(self):
+        out, _, _ = self._create(name='budget-delete-not-found')
+        with pytest.raises(ProjectBudgetLimitNotFoundError):
+            self.svc.delete_budget_limit_from_project(out.uuid, uuid.uuid4())
+
+    def test_delete_budget_limit_from_project_not_found_when_owned_by_other_project(
+        self,
+    ):
+        owner, _, _ = self._create(name='budget-delete-owner')
+        other, _, _ = self._create(name='budget-delete-other')
+        [limit] = self.svc.add_budget_limits_to_project(
+            owner.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        with pytest.raises(ProjectBudgetLimitNotFoundError):
+            self.svc.delete_budget_limit_from_project(other.uuid, limit.uuid)
 
     # --- reverse validation: route config vs. existing project budget limit ---
 
