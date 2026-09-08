@@ -8,7 +8,7 @@ import {
   useGetCostsByModelStreamWithRange,
 } from '@State/usage/vertical-hooks';
 import { Board, Button, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
-import ReactEChartsCore from 'echarts-for-react/lib/core';
+import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
   DataZoomComponent,

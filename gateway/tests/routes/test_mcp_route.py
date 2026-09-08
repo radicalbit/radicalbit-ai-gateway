@@ -9,9 +9,12 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.testclient import TestClient
 
+from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
+from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
+from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.limiting import RateLimiting
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
@@ -87,6 +90,8 @@ def _make_client(
     key_bound: bool = True,
     with_project: bool = True,
     rate_limiter=None,
+    gateway_cache=None,
+    ttl: int | None = None,
     request_uuid: str | None = REQUEST_UUID,
 ) -> tuple[TestClient, MagicMock]:
     app = FastAPI(title='AI Gateway', debug=True)
@@ -109,7 +114,9 @@ def _make_client(
     # Mirrors what the route factory registers: the built GatewayRoute carrying
     # the route's live feature instances, keyed '{project}/{route}'.
     app.state.routes = {
-        'proj/my-route': SimpleNamespace(request_rate_limiter=rate_limiter)
+        'proj/my-route': SimpleNamespace(
+            request_rate_limiter=rate_limiter, gateway_cache=gateway_cache, ttl=ttl
+        )
     }
     app.state.token_validator = SimpleNamespace(
         validate_token=AsyncMock(return_value=KEY_DETAILS)
@@ -589,3 +596,87 @@ def test_a_missing_route_registry_is_a_503_like_the_v1_endpoints():
     client, _ = _make_client()
     del client.app.state.routes
     assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Route-level features: caching of the list methods
+# ---------------------------------------------------------------------------
+
+
+def _tools_list(request_id=1) -> dict:
+    return {'jsonrpc': '2.0', 'id': request_id, 'method': 'tools/list'}
+
+
+def _echoing_upstream() -> MagicMock:
+    upstream = MagicMock(spec_set=McpUpstreamClient)
+    upstream.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name='echo', inputSchema={'type': 'object', 'properties': {}}
+                )
+            ]
+        )
+    )
+    return upstream
+
+
+LIST_CACHE = 'radicalbit_ai_gateway.mcp_proxy.list_cache'
+
+
+@patch(f'{LIST_CACHE}.cache_hit_counter', autospec=True)
+@patch(f'{LIST_CACHE}.emit_event', autospec=True)
+def test_a_route_with_caching_serves_repeated_lists_without_the_upstreams(
+    mock_emit_event, mock_counter
+):
+    """The caching: block the /v1 endpoints already honour, with no new YAML."""
+    upstream = _echoing_upstream()
+    client, _ = _make_client(
+        upstream, gateway_cache=GatewayCache(CacheToolsInMemory()), ttl=60
+    )
+
+    first = client.post(PATH, json=_tools_list(1), headers=AUTH)
+    second = client.post(PATH, json=_tools_list(2), headers=AUTH)
+
+    assert first.status_code == second.status_code == 200
+    assert second.json()['result'] == first.json()['result']
+    assert [t['name'] for t in second.json()['result']['tools']] == ['github__echo']
+    upstream.list_tools.assert_awaited_once()
+
+    # the hit is reported under the identity the request authenticated with
+    event = mock_emit_event.call_args.args[0]
+    assert event.event_type is EventType.CACHE_HIT
+    assert event.route_name == 'my-route'
+    assert event.project_name == 'proj'
+    assert event.api_key_uuid == KEY_DETAILS.api_key_uuid
+    assert event.group_name == KEY_DETAILS.group_name
+    assert event.request_uuid == REQUEST_UUID
+    mock_counter.add.assert_called_once_with(1, {'route_name': 'my-route'})
+
+
+def test_a_route_without_caching_fans_out_every_time():
+    upstream = _echoing_upstream()
+    client, _ = _make_client(upstream)
+
+    assert client.post(PATH, json=_tools_list(1), headers=AUTH).status_code == 200
+    assert client.post(PATH, json=_tools_list(2), headers=AUTH).status_code == 200
+
+    assert upstream.list_tools.await_count == 2
+
+
+def test_only_the_list_methods_are_cached():
+    """tools/call is side-effecting: it must reach the upstream every time."""
+    upstream = _echoing_upstream()
+    upstream.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
+    client, _ = _make_client(upstream, gateway_cache=GatewayCache(CacheToolsInMemory()))
+    call = {
+        'jsonrpc': '2.0',
+        'id': 1,
+        'method': 'tools/call',
+        'params': {'name': 'github__echo', 'arguments': {'text': 'hi'}},
+    }
+
+    assert client.post(PATH, json=call, headers=AUTH).status_code == 200
+    assert client.post(PATH, json={**call, 'id': 2}, headers=AUTH).status_code == 200
+
+    assert upstream.call_tool.await_count == 2

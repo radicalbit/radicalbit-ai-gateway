@@ -2,7 +2,7 @@ import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { DEFAULT_POLLING_INTERVAL } from '@Src/constants';
 import { useGetRequestsWithErrorsForChartsByRouteNameWithRange } from '@Src/store/state/costs/vertical-hooks';
 import { Board, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
-import ReactEChartsCore from 'echarts-for-react/lib/core';
+import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
   DataZoomComponent,

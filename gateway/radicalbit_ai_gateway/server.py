@@ -33,7 +33,9 @@ from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
+from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
+from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
@@ -182,10 +184,12 @@ database = Database(conf=app_config.db_config)
 discover_plugins()
 
 key_dao = KeyDAO(database)
+key_limit_dao = KeyLimitDAO(database)
 group_dao = GroupDAO(database)
 group_route_dao = GroupRouteDAO(database)
 project_dao = ProjectDAO(database)
 project_config_dao = ProjectConfigDAO(database)
+project_budget_limit_dao = ProjectBudgetLimitDAO(database)
 event_dao = EventDAO(ch_database)
 request_event_dao = RequestEventDAO(ch_database)
 otel_traces_dao = OtelTracesDAO(ch_database)
@@ -196,6 +200,7 @@ key_service = KeyService(
     key_dao=key_dao,
     api_key_security=api_key_security,
     group_dao=group_dao,
+    key_limit_dao=key_limit_dao,
 )
 group_service = GroupService(
     group_dao=group_dao,
@@ -204,7 +209,9 @@ group_service = GroupService(
     project_configs=project_configs,
 )
 project_service = ProjectService(
-    project_dao=project_dao, project_config_dao=project_config_dao
+    project_dao=project_dao,
+    project_config_dao=project_config_dao,
+    project_budget_limit_dao=project_budget_limit_dao,
 )
 config_generator_service = ConfigGeneratorService()
 event_service = EventService(
@@ -448,7 +455,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         body = ''
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={'detail': exc.errors(), 'body': body},
+        # exc.errors() can contain raw exception objects (e.g. the ctx.error of
+        # a model_validator that raised ValueError), which plain json.dumps
+        # cannot serialize — jsonable_encoder handles those.
+        content=jsonable_encoder({'detail': exc.errors(), 'body': body}),
     )
 
 

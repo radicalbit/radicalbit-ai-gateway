@@ -17,7 +17,7 @@ import { useGetFeatureFlagsQuery } from '@State/feature-flags/api';
 import { actions as layoutActions, selectors as layoutSelectors } from '@State/layout';
 import { useNotification } from '@State/notification/hooks';
 import '@Styles/index.less';
-import '@Styles/tailwind.less';
+import '@Styles/tailwind.css';
 import { Board, Layout } from '@radicalbit/radicalbit-design-system';
 import { useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';

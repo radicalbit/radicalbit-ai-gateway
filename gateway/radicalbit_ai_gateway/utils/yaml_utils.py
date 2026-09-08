@@ -205,6 +205,16 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
     return yaml_str
 
 
+def config_has_route_budget_limiting(yaml_str: str) -> bool:
+    """Whether any route in *yaml_str* sets `budget_limiting`.
+
+    Assumes *yaml_str* already passed :func:`validate_gateway_config`.
+    """
+    parsed = parse_yaml_with_secret_placeholders(yaml_str)
+    config = GatewayConfig.model_validate(parsed)
+    return any(route.budget_limiting is not None for route in config.routes.values())
+
+
 def get_default_config_template() -> str:
     return (
         files('radicalbit_ai_gateway.resources')

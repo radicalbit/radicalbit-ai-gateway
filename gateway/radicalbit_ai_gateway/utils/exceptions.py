@@ -531,6 +531,16 @@ class KeyGroupAlreadyExistsError(AuthRegistryError):
         )
 
 
+class CredentialLimitAlreadyExistsError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_400_BAD_REQUEST,
+            'credential_limit_already_exists_bad_request',
+            log_message=log_message,
+        )
+
+
 class GroupInternalError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
@@ -617,6 +627,26 @@ class ProjectConfigValidationError(AuthRegistryError):
             message,
             status.HTTP_400_BAD_REQUEST,
             'project_config_validation_error',
+            log_message=log_message,
+        )
+
+
+class ProjectBudgetLimitAlreadyExistsError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_400_BAD_REQUEST,
+            'project_budget_limit_already_exists_bad_request',
+            log_message=log_message,
+        )
+
+
+class ProjectBudgetLimitConflictError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_400_BAD_REQUEST,
+            'project_budget_limit_conflict_bad_request',
             log_message=log_message,
         )
 

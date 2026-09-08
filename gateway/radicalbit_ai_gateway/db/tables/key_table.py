@@ -44,3 +44,10 @@ class Key(Reflected, BaseTable, BaseDAO):
         back_populates='keys',
         lazy='selectin',
     )
+    limits = relationship(
+        'KeyLimit',
+        back_populates='key',
+        cascade='all, delete-orphan',
+        passive_deletes=True,
+        lazy='selectin',
+    )

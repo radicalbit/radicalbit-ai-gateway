@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
 
+from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.models.config_slot import Slot
@@ -23,18 +24,40 @@ from radicalbit_ai_gateway.models.project_status import ProjectStatus
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.utils.exceptions import (
     ProjectAlreadyExistsError,
+    ProjectBudgetLimitAlreadyExistsError,
+    ProjectBudgetLimitConflictError,
     ProjectConfigValidationError,
     ProjectNotFoundError,
 )
 
 _VALID = db_mock.VALID_CONFIG_YAML
 
+_VALID_WITH_ROUTE_BUDGET_LIMITING = """\
+chat_models:
+  - model_id: mock-chat
+    model: mock/gateway
+    params:
+      latency_ms: 150
+      response_text: "mock response"
+routes:
+  test-route:
+    chat_models:
+      - mock-chat
+    budget_limiting:
+      window_size: "1 day"
+      max_budget: 5.0
+"""
+
 
 class ProjectServiceTest(DatabaseIntegration):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.svc = ProjectService(ProjectDAO(cls.db), ProjectConfigDAO(cls.db))
+        cls.svc = ProjectService(
+            ProjectDAO(cls.db),
+            ProjectConfigDAO(cls.db),
+            ProjectBudgetLimitDAO(cls.db),
+        )
 
     def _create(self, name='proj'):
         out = self.svc.create_project(ProjectIn(name=name))
@@ -65,7 +88,7 @@ class ProjectServiceTest(DatabaseIntegration):
     def test_create_project_already_exists(self):
         # IntegrityError -> ProjectAlreadyExistsError mapping is a unit concern,
         # tested with a mocked DAO to stay independent of create_all metadata.
-        svc = ProjectService(MagicMock(), MagicMock())
+        svc = ProjectService(MagicMock(), MagicMock(), MagicMock())
         svc.project_dao.insert_with_configs = MagicMock(
             side_effect=IntegrityError(None, None, BaseException('uq_project_NAME'))
         )
@@ -75,6 +98,40 @@ class ProjectServiceTest(DatabaseIntegration):
     def test_get_by_uuid_not_found(self):
         with pytest.raises(ProjectNotFoundError):
             self.svc.get_by_uuid(uuid.uuid4())
+
+    def test_get_by_uuid_omits_limits_by_default(self):
+        out, _, _ = self._create(name='no-limits')
+        res = self.svc.get_by_uuid(out.uuid)
+        assert res.limits is None
+
+    def test_get_by_uuid_include_limits(self):
+        out, _, _ = self._create(name='with-limits')
+        self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        res = self.svc.get_by_uuid(out.uuid, include_limits=True)
+        assert res.limits is not None
+        assert len(res.limits) == 1
+        assert res.limits[0].window_size == '1 day'
+
+    def test_get_all_filtered_include_limits(self):
+        out, _, _ = self._create(name='filtered-with-limits')
+        self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        results = self.svc.get_all_filtered(include_limits=True)
+        found = next(p for p in results if p.uuid == out.uuid)
+        assert found.limits is not None
+        assert len(found.limits) == 1
+
+    def test_get_all_filtered_omits_limits_by_default(self):
+        out, _, _ = self._create(name='filtered-no-limits')
+        self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        results = self.svc.get_all_filtered()
+        found = next(p for p in results if p.uuid == out.uuid)
+        assert found.limits is None
 
     # --- update ---
 
@@ -363,3 +420,129 @@ class ProjectServiceTest(DatabaseIntegration):
         assert [p.uuid for p in draft] == [draft_proj.uuid]
 
         assert self.svc.get_configs(ConfigListFilter.REQUEST_TO_PUBLISH) == []
+
+    # --- project budget limits ---
+
+    def test_add_budget_limits_to_project_ok(self):
+        out, _, _ = self._create(name='budget-ok')
+        limits = self.svc.add_budget_limits_to_project(
+            out.uuid,
+            db_mock.get_sample_project_budget_limits_in(
+                limits=[
+                    db_mock.get_sample_project_budget_limit_in(window_size='1 day'),
+                    db_mock.get_sample_project_budget_limit_in(
+                        window_size='1 month', value=15
+                    ),
+                ]
+            ),
+        )
+        assert {limit.window_size for limit in limits} == {'1 day', '1 month'}
+        fetched = self.svc.get_budget_limits_for_project(out.uuid)
+        assert {limit.window_size for limit in fetched} == {'1 day', '1 month'}
+
+    def test_add_budget_limits_to_project_not_found(self):
+        with pytest.raises(ProjectNotFoundError):
+            self.svc.add_budget_limits_to_project(
+                uuid.uuid4(), db_mock.get_sample_project_budget_limits_in()
+            )
+
+    def test_add_budget_limits_to_project_duplicate_window_raises(self):
+        out, _, _ = self._create(name='budget-dup')
+        self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        with pytest.raises(ProjectBudgetLimitAlreadyExistsError):
+            self.svc.add_budget_limits_to_project(
+                out.uuid, db_mock.get_sample_project_budget_limits_in()
+            )
+
+    def test_add_budget_limits_rejected_when_published_route_has_budget_limiting(
+        self,
+    ):
+        out, a, _ = self._create(name='budget-conflict')
+        self.svc.update_config(
+            out.uuid,
+            a,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        self.svc.approve_config(out.uuid, a)
+        self.svc.serve_config(out.uuid, a)
+        with pytest.raises(ProjectBudgetLimitConflictError):
+            self.svc.add_budget_limits_to_project(
+                out.uuid, db_mock.get_sample_project_budget_limits_in()
+            )
+
+    def test_get_budget_limits_for_project_not_found(self):
+        with pytest.raises(ProjectNotFoundError):
+            self.svc.get_budget_limits_for_project(uuid.uuid4())
+
+    # --- reverse validation: route config vs. existing project budget limit ---
+
+    def test_update_config_rejected_when_project_has_budget_limit_and_route_sets_it(
+        self,
+    ):
+        out, a, _ = self._create(name='route-conflict-update')
+        self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.update_config(
+                out.uuid,
+                a,
+                ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+            )
+
+    def test_approve_config_rejected_when_project_has_budget_limit_and_route_sets_it(
+        self,
+    ):
+        out, a, _ = self._create(name='route-conflict-approve')
+        self.svc.update_config(
+            out.uuid,
+            a,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.approve_config(out.uuid, a)
+
+    def test_serve_config_rejected_when_project_has_budget_limit_and_route_sets_it(
+        self,
+    ):
+        out, a, _ = self._create(name='route-conflict-serve')
+        self.svc.update_config(
+            out.uuid,
+            a,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        self.svc.approve_config(out.uuid, a)
+        self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.serve_config(out.uuid, a)
+
+    def test_import_config_rejected_when_project_has_budget_limit_and_route_sets_it(
+        self,
+    ):
+        out, a, _ = self._create(name='route-conflict-import')
+        self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.import_config(
+                out.uuid, a, _VALID_WITH_ROUTE_BUDGET_LIMITING.encode()
+            )
+
+    def test_update_config_allowed_when_no_conflict(self):
+        # Guards against over-rejection: a project budget limit alone (no route
+        # budget_limiting in the submitted config) must not block saving.
+        out, a, _ = self._create(name='route-no-conflict')
+        self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        res = self.svc.update_config(
+            out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
+        )
+        assert next(c for c in res.configs if c.uuid == a).config_file == _VALID

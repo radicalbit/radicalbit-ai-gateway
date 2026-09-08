@@ -16,6 +16,12 @@ from radicalbit_ai_gateway.mcp_proxy.errors import (
     JSON_RPC_UPSTREAM_ERROR,
     McpUpstreamError,
 )
+from radicalbit_ai_gateway.mcp_proxy.list_cache import (
+    PROMPTS_LIST,
+    RESOURCES_LIST,
+    TOOLS_LIST,
+    McpListCache,
+)
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.models.mcp_authorized_request import McpAuthorizedRequest
@@ -291,9 +297,18 @@ class McpService:
         )
 
     async def dispatch(
-        self, request: Request, authorized: McpAuthorizedRequest
+        self,
+        request: Request,
+        authorized: McpAuthorizedRequest,
+        list_cache: McpListCache | None = None,
     ) -> McpDispatchResult:
-        """Dispatch the JSON-RPC message on an already-authorized request."""
+        """Dispatch the JSON-RPC message on an already-authorized request.
+
+        ``list_cache`` is the route's cache for the three list methods, or
+        ``None`` when the route declares no caching or must not be cached. Like
+        the limiters, it is resolved by the caller and only carried here — see
+        :meth:`McpListCache.for_route`.
+        """
         self._validate_protocol_version(request)
 
         try:
@@ -310,7 +325,9 @@ class McpService:
             )
 
         set_operation_category(OperationCategory.INVOCATION)
-        result = await self._dispatch(body, authorized.servers, request.headers)
+        result = await self._dispatch(
+            body, authorized.servers, request.headers, list_cache
+        )
         self._record_degradation()
         return self._record_error_outcome(request, result)
 
@@ -358,6 +375,55 @@ class McpService:
             span.set_attribute('rb.gateway.mcp_result_count', count)
 
     @staticmethod
+    def _record_cache_hit(count: int) -> None:
+        """Record a list method served from cache on its own span.
+
+        Deliberately not routed through :meth:`_record_fanout`: no upstream was
+        contacted, so ``mcp_upstream_total``/``mcp_upstream_failed`` would be
+        fiction. ``mcp_result_count`` is still set, so a list's size stays
+        comparable across hits and misses; a span without
+        ``mcp_cache_hit`` is a miss.
+        """
+        span = get_current_span()
+        if span and span.is_recording():
+            span.set_attribute('rb.gateway.mcp_cache_hit', True)
+            span.set_attribute('rb.gateway.mcp_result_count', count)
+
+    async def _cached_list(
+        self,
+        list_cache: McpListCache | None,
+        method: str,
+        key: str,
+    ) -> dict | None:
+        """Return the cached result for a list method, or ``None`` to fan out."""
+        if list_cache is None:
+            return None
+        cached = await list_cache.get(method)
+        if cached is None:
+            return None
+        set_operation_category(OperationCategory.CACHE)
+        self._record_cache_hit(len(cached.get(key) or ()))
+        list_cache.record_hit(method)
+        return cached
+
+    @staticmethod
+    async def _store_list(
+        list_cache: McpListCache | None,
+        method: str,
+        result: dict,
+        failed: list[str],
+    ) -> None:
+        """Cache a list method's result, unless the fan-out was degraded.
+
+        A partial result must never be written: one transient upstream outage
+        would otherwise pin a truncated list for the whole TTL, and the client
+        silently loses the tools of a server that is healthy again.
+        """
+        if list_cache is None or failed:
+            return
+        await list_cache.set(method, result)
+
+    @staticmethod
     def _record_degradation() -> None:
         """Hoist a fan-out's failed upstreams onto the root span.
 
@@ -376,6 +442,7 @@ class McpService:
         body: dict,
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
+        list_cache: McpListCache | None = None,
     ) -> McpDispatchResult:
         """Dispatch one JSON-RPC message; returns its HTTP-level outcome.
 
@@ -433,15 +500,15 @@ class McpService:
             elif method == 'ping':
                 result = {}
             elif method == 'tools/list':
-                result = await self._tools_list(servers, client_headers)
+                result = await self._tools_list(servers, client_headers, list_cache)
             elif method == 'tools/call':
                 result = await self._tools_call(params or {}, servers, client_headers)
             elif method == 'prompts/list':
-                result = await self._prompts_list(servers, client_headers)
+                result = await self._prompts_list(servers, client_headers, list_cache)
             elif method == 'prompts/get':
                 result = await self._prompts_get(params or {}, servers, client_headers)
             elif method == 'resources/list':
-                result = await self._resources_list(servers, client_headers)
+                result = await self._resources_list(servers, client_headers, list_cache)
             elif method == 'resources/read':
                 result = await self._resources_read(
                     params or {}, servers, client_headers
@@ -494,6 +561,7 @@ class McpService:
         self,
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
+        list_cache: McpListCache | None = None,
     ) -> dict:
         """Fan out to the route's upstreams and merge their tools.
 
@@ -506,6 +574,9 @@ class McpService:
         if not targets:
             self._record_fanout(len(servers), [], 0)
             return {'tools': []}
+        cached = await self._cached_list(list_cache, TOOLS_LIST, 'tools')
+        if cached is not None:
+            return cached
         results = await asyncio.gather(
             *(
                 self._upstream_client.list_tools(s, client_headers=client_headers)
@@ -541,7 +612,9 @@ class McpService:
                 'tools/list: partial result, upstream MCP servers failed: %s',
                 ', '.join(failed),
             )
-        return {'tools': tools}
+        result = {'tools': tools}
+        await self._store_list(list_cache, TOOLS_LIST, result, failed)
+        return result
 
     @task(name='mcp_tools_call')
     async def _tools_call(
@@ -591,6 +664,7 @@ class McpService:
         self,
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
+        list_cache: McpListCache | None = None,
     ) -> dict:
         """Fan out to the route's upstreams and merge their prompts.
 
@@ -606,6 +680,9 @@ class McpService:
             # unreported one.
             self._record_fanout(len(servers), [], 0)
             return {'prompts': []}
+        cached = await self._cached_list(list_cache, PROMPTS_LIST, 'prompts')
+        if cached is not None:
+            return cached
         results = await asyncio.gather(
             *(
                 self._upstream_client.list_prompts(s, client_headers=client_headers)
@@ -641,7 +718,9 @@ class McpService:
                 'prompts/list: partial result, upstream MCP servers failed: %s',
                 ', '.join(failed),
             )
-        return {'prompts': prompts}
+        result = {'prompts': prompts}
+        await self._store_list(list_cache, PROMPTS_LIST, result, failed)
+        return result
 
     @task(name='mcp_prompts_get')
     async def _prompts_get(
@@ -684,6 +763,7 @@ class McpService:
         self,
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
+        list_cache: McpListCache | None = None,
     ) -> dict:
         """Fan out to the route's upstreams and merge their resources.
 
@@ -703,6 +783,9 @@ class McpService:
             # unreported one.
             self._record_fanout(len(servers), [], 0)
             return {'resources': []}
+        cached = await self._cached_list(list_cache, RESOURCES_LIST, 'resources')
+        if cached is not None:
+            return cached
         results = await asyncio.gather(
             *(
                 self._upstream_client.list_resources(s, client_headers=client_headers)
@@ -744,7 +827,9 @@ class McpService:
                 'resources/list: partial result, upstream MCP servers failed: %s',
                 ', '.join(failed),
             )
-        return {'resources': resources}
+        result = {'resources': resources}
+        await self._store_list(list_cache, RESOURCES_LIST, result, failed)
+        return result
 
     @task(name='mcp_resources_read')
     async def _resources_read(
