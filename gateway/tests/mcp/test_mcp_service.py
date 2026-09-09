@@ -348,6 +348,8 @@ async def test_tools_call_forwards_and_passes_result_through():
     assert dispatch_result.payload['result'] == {
         'content': [{'type': 'text', 'text': 'issue #42'}],
         'isError': False,
+        # Added by the SDK in mcp 2.x; always serialized, older peers ignore it.
+        'resultType': 'complete',
     }
     client.call_tool.assert_awaited_once_with(
         GITHUB, 'get_issue', {'id': '42'}, client_headers=headers

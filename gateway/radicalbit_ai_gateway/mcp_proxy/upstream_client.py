@@ -10,9 +10,8 @@ from mcp.client.stdio import (
     get_default_environment,
     stdio_client,
 )
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.exceptions import McpError as SdkMcpError
-from pydantic import AnyUrl
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
+from mcp.shared.exceptions import MCPError as SdkMcpError
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
@@ -30,6 +29,11 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 T = TypeVar('T')
 
 
+def _page(cursor: str | None) -> types.PaginatedRequestParams | None:
+    """Wrap an opaque cursor in the SDK's paginated-request params."""
+    return types.PaginatedRequestParams(cursor=cursor) if cursor else None
+
+
 class McpUpstreamClient:
     """Stateless outbound MCP client: one ephemeral session per operation.
 
@@ -42,10 +46,10 @@ class McpUpstreamClient:
     def __init__(
         self,
         default_timeout: float = DEFAULT_TIMEOUT_SECONDS,
-        httpx_client_factory=None,
+        http_client_factory=None,
     ):
         self._default_timeout = default_timeout
-        self._httpx_client_factory = httpx_client_factory
+        self._http_client_factory = http_client_factory
 
     @task(name='mcp_upstream_list_tools')
     async def list_tools(
@@ -56,7 +60,9 @@ class McpUpstreamClient:
         client_headers: Mapping[str, str] | None = None,
     ) -> types.ListToolsResult:
         return await self._run(
-            server, lambda session: session.list_tools(cursor), client_headers
+            server,
+            lambda session: session.list_tools(params=_page(cursor)),
+            client_headers,
         )
 
     @task(name='mcp_upstream_call_tool')
@@ -81,7 +87,9 @@ class McpUpstreamClient:
         client_headers: Mapping[str, str] | None = None,
     ) -> types.ListPromptsResult:
         return await self._run(
-            server, lambda session: session.list_prompts(cursor), client_headers
+            server,
+            lambda session: session.list_prompts(params=_page(cursor)),
+            client_headers,
         )
 
     @task(name='mcp_upstream_get_prompt')
@@ -106,7 +114,9 @@ class McpUpstreamClient:
         client_headers: Mapping[str, str] | None = None,
     ) -> types.ListResourcesResult:
         return await self._run(
-            server, lambda session: session.list_resources(cursor), client_headers
+            server,
+            lambda session: session.list_resources(params=_page(cursor)),
+            client_headers,
         )
 
     @task(name='mcp_upstream_read_resource')
@@ -118,7 +128,7 @@ class McpUpstreamClient:
         client_headers: Mapping[str, str] | None = None,
     ) -> types.ReadResourceResult:
         return await self._run(
-            server, lambda session: session.read_resource(AnyUrl(uri)), client_headers
+            server, lambda session: session.read_resource(uri), client_headers
         )
 
     @asynccontextmanager
@@ -128,16 +138,17 @@ class McpUpstreamClient:
         client_headers: Mapping[str, str] | None,
     ) -> AsyncIterator[ClientSession]:
         if isinstance(server, McpHttpServer):
-            kwargs = {}
-            if self._httpx_client_factory is not None:
-                kwargs['httpx_client_factory'] = self._httpx_client_factory
-            transport = streamablehttp_client(
-                server.url,
-                headers=build_upstream_headers(server, client_headers),
-                **kwargs,
-            )
+            # The transport no longer takes headers: they belong to the httpx
+            # client, which we own and therefore have to close ourselves.
+            headers = build_upstream_headers(server, client_headers)
+            factory = self._http_client_factory or create_mcp_http_client
+            http_client = factory(headers=headers)
             async with (
-                transport as (read, write, _get_session_id),
+                http_client,
+                streamable_http_client(server.url, http_client=http_client) as (
+                    read,
+                    write,
+                ),
                 ClientSession(read, write) as session,
             ):
                 await session.initialize()

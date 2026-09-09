@@ -4,8 +4,9 @@ import uuid
 
 from fastapi import FastAPI
 import httpx
+import httpx2
 from mcp import types
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.testclient import TestClient
 
@@ -361,8 +362,14 @@ def test_tools_call_forwards_and_other_routes_alias_is_invisible():
 
 
 async def test_end_to_end_against_real_upstream():
-    upstream = FastMCP(
-        'upstream',
+    upstream = MCPServer('upstream')
+
+    @upstream.tool()
+    def echo(text: str) -> str:
+        """Echo the given text back."""
+        return f'echo: {text}'
+
+    upstream_app = upstream.streamable_http_app(
         stateless_http=True,
         json_response=True,
         transport_security=TransportSecuritySettings(
@@ -370,24 +377,15 @@ async def test_end_to_end_against_real_upstream():
         ),
     )
 
-    @upstream.tool()
-    def echo(text: str) -> str:
-        """Echo the given text back."""
-        return f'echo: {text}'
-
-    upstream_app = upstream.streamable_http_app()
-
-    def upstream_client_factory(headers=None, timeout=None, auth=None):
-        return httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=upstream_app),
+    def upstream_client_factory(headers=None):
+        return httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=upstream_app),
             base_url='http://testserver',
             headers=headers,
-            timeout=timeout,
-            auth=auth,
         )
 
     real_upstream_client = McpUpstreamClient(
-        default_timeout=20.0, httpx_client_factory=upstream_client_factory
+        default_timeout=20.0, http_client_factory=upstream_client_factory
     )
     client, _ = _make_client(real_upstream_client)
     client.app.state.project_configs['proj'].config.mcp_servers_by_alias[
