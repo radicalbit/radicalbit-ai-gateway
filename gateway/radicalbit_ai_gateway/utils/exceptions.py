@@ -841,7 +841,7 @@ async def unhandled_exception_handler(request: Request, err: Exception):
     ctx.error_code = to_snake(ctx.error_type)
     ctx.is_unhandled_error = True
 
-    logger.exception(
+    logger.error(
         'Unhandled exception: %s (error_type=%s, error_code=%s)',
         error_str,
         ctx.error_type,
