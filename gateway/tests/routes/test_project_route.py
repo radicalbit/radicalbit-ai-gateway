@@ -493,10 +493,27 @@ class TestProjectRoute(unittest.TestCase):
 
     def _get_endpoint(self, path_suffix: str, method: str = 'PATCH') -> object:
         """Return the endpoint function for a given path suffix and method."""
-        for route in self.client.app.routes:
-            if hasattr(route, 'path') and route.path.endswith(path_suffix):
-                if method.upper() in getattr(route, 'methods', set()):
-                    return route.endpoint
+
+        def _find_route(routes):
+            for route in routes:
+                if hasattr(route, 'original_router') and hasattr(
+                    route.original_router, 'routes'
+                ):
+                    found = _find_route(route.original_router.routes)
+                    if found:
+                        return found
+                if hasattr(route, 'routes'):
+                    found = _find_route(route.routes)
+                    if found:
+                        return found
+                if hasattr(route, 'path') and route.path.endswith(path_suffix):
+                    if method.upper() in getattr(route, 'methods', set()):
+                        return route.endpoint
+            return None
+
+        endpoint = _find_route(self.client.app.routes)
+        if endpoint is not None:
+            return endpoint
         msg = f'No route found for {method} ...{path_suffix}'
         raise AssertionError(msg)
 
