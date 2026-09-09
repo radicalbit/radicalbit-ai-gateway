@@ -33,6 +33,7 @@ def reset_route_context(func):
             return await func(*args, **kwargs)
         finally:
             current_route_config_ctx.set(None)
+            current_credential_limiter_ctx.set(None)
 
     return wrapper
 
@@ -49,3 +50,19 @@ def set_current_request_tags(tags: tuple[str, ...]) -> None:
 
 def get_current_request_tags() -> tuple[str, ...]:
     return current_request_tags_ctx.get()
+
+
+# The calling credential's own CredentialLimiter, or None when it has no
+# limits configured. Same problem as the tags above: a GatewayRoute instance
+# is a shared singleton, so a per-credential limiter can't live on `self`.
+current_credential_limiter_ctx: ContextVar[Any] = ContextVar(
+    'current_credential_limiter', default=None
+)
+
+
+def set_current_credential_limiter(limiter: Any) -> None:
+    current_credential_limiter_ctx.set(limiter)
+
+
+def get_current_credential_limiter() -> Any:
+    return current_credential_limiter_ctx.get()

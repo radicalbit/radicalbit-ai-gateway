@@ -289,7 +289,9 @@ class KeyServiceTest(unittest.TestCase):
         self.key_dao.get_key_by_hashed_key.assert_called_once_with(
             hashed_api_key=db_mock.HASHED_KEY
         )
-        assert res == KeyFullOut.from_key_obscured(key, include_groups=True)
+        assert res == KeyFullOut.from_key_obscured(
+            key, include_groups=True, include_limits=True
+        )
 
     def test_get_associable_groups_unassigned_key(self):
         key = db_mock.get_sample_key()

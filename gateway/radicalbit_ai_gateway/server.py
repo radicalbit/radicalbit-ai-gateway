@@ -126,6 +126,7 @@ from radicalbit_ai_gateway.utils.open_ai_types import (
     TranscriptionCreateParamsCustom,
 )
 from radicalbit_ai_gateway.utils.request_context import (
+    get_current_credential_limiter,
     get_current_request_tags,
     reset_route_context,
     set_current_route_config,
@@ -656,6 +657,20 @@ async def chat_completions(
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
 
+    # Checked before route/project limits: decides which error is reported
+    # when both would block.
+    credential_limiter = get_current_credential_limiter()
+    if credential_limiter:
+        set_operation_category(OperationCategory.LIMITING)
+        await credential_limiter.check_and_count_request(
+            request_uuid=request_uuid,
+            group_uuid=key_details.group_uuid,
+            group_name=key_details.group_name,
+            route_name=route_name,
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+        )
+
     if route.request_rate_limiter:
         set_operation_category(OperationCategory.LIMITING)
         await route.request_rate_limiter.check_and_count_request(
@@ -873,7 +888,19 @@ async def embeddings(
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
 
-    # Check and count request rate limits BEFORE any processing
+    # Check and count request rate limits BEFORE any processing. Credential
+    # limit first: decides which error is reported when both would block.
+    credential_limiter = get_current_credential_limiter()
+    if credential_limiter:
+        await credential_limiter.check_and_count_request(
+            request_uuid=request_uuid,
+            group_uuid=key_details.group_uuid,
+            group_name=key_details.group_name,
+            route_name=route_name,
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+        )
+
     if route.request_rate_limiter:
         await route.request_rate_limiter.check_and_count_request(
             request_uuid=request_uuid,
@@ -959,7 +986,19 @@ async def audio_transcriptions(
     ctx.project_name = route.project_name
     request.state.otel_route_name = route_name
 
-    # Check and count request rate limits BEFORE any processing
+    # Check and count request rate limits BEFORE any processing. Credential
+    # limit first: decides which error is reported when both would block.
+    credential_limiter = get_current_credential_limiter()
+    if credential_limiter:
+        await credential_limiter.check_and_count_request(
+            request_uuid=request_uuid,
+            group_uuid=key_details.group_uuid,
+            group_name=key_details.group_name,
+            route_name=route_name,
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+        )
+
     if route.request_rate_limiter:
         await route.request_rate_limiter.check_and_count_request(
             request_uuid=request_uuid,
@@ -1160,6 +1199,20 @@ async def responses(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
+
+    # Checked before route/project limits: decides which error is reported
+    # when both would block.
+    credential_limiter = get_current_credential_limiter()
+    if credential_limiter:
+        set_operation_category(OperationCategory.LIMITING)
+        await credential_limiter.check_and_count_request(
+            request_uuid=request_uuid,
+            group_uuid=key_details.group_uuid,
+            group_name=key_details.group_name,
+            route_name=route_name,
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+        )
 
     if route.request_rate_limiter:
         set_operation_category(OperationCategory.LIMITING)

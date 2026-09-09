@@ -82,6 +82,9 @@ class LimitEventPayload(EventBase):
         EventType.TOKEN_INPUT_LIMIT,
         EventType.TOKEN_OUTPUT_LIMIT,
         EventType.AUDIO_DURATION_LIMIT,
+        EventType.CREDENTIAL_RATE_LIMIT,
+        EventType.CREDENTIAL_TOKEN_INPUT_LIMIT,
+        EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT,
     ]
 
 

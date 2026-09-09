@@ -82,6 +82,8 @@ def get_sample_key(
         created_at=now,
         updated_at=now,
         group_uuid=group_uuid,
+        # unset .limits on a transient instance can hang (SQLAlchemy lazy-load)
+        limits=[],
     )
 
 
@@ -104,6 +106,7 @@ def get_sample_key_with_group(
         updated_at=now,
         group_uuid=group_uuid,
         group=get_sample_group(uuid=group_uuid),
+        limits=[],
     )
 
 

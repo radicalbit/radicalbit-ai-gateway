@@ -2,7 +2,7 @@ import datetime
 import json
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
@@ -294,3 +294,4 @@ class KeyDetails(BaseModel):
     group_uuid: str
     group_name: str
     hashed_api_key: str
+    limits: list[CredentialLimitOut] = Field(default_factory=list)
