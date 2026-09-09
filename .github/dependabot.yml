@@ -24,3 +24,28 @@ updates:
         applies-to: version-updates
         update-types:
           - "major"
+
+  - package-ecosystem: "pip"
+    directory: "/gateway"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      gateway-security-patch:
+        applies-to: security-updates
+        update-types:
+          - "patch"
+      gateway-security-minor-major:
+        applies-to: security-updates
+        update-types:
+          - "minor"
+          - "major"
+      gateway-version-updates:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+          - "minor"
+      gateway-major-updates:
+        applies-to: version-updates
+        update-types:
+          - "major"
