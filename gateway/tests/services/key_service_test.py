@@ -558,10 +558,7 @@ class TestDeleteLimitFromKey:
 
     @pytest.mark.asyncio
     async def test_redis_clear_failure_does_not_fail_the_request(self):
-        """The DB row is the source of truth: a Redis-side error clearing the
-        counter must not undo (or fail to report) an already-successful
-        deletion.
-        """
+        """A Redis-side error clearing the counter must not undo the delete."""
         service, key_dao, key_limit_dao = self._make_service()
         key_uuid = uuid.uuid4()
         limit_uuid = uuid.uuid4()

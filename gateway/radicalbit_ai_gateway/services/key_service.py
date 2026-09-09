@@ -294,7 +294,6 @@ class KeyService:
             raise CredentialLimitNotFoundError(
                 f'Limit {limit_uuid} not found for key "{key.name}"'
             )
-        # Built before deletion so the caller still sees what was removed.
         out = CredentialLimitOut.from_key_limit(limit)
         self.key_limit_dao.delete_by_uuid(limit_uuid)
         try:
@@ -305,12 +304,7 @@ class KeyService:
                 window_size=limit.window_size,
             )
         except Exception:
-            # The DB row is already gone — that's the source of truth for
-            # whether the limit exists. A stale counter left behind here
-            # would only matter if a new limit with the exact same
-            # category/algorithm/window is created before it naturally
-            # expires, so this is worth logging but not worth failing the
-            # request over.
+            # best-effort: the DB row is already gone, that's what matters
             logger.exception(
                 'Failed to clear the limit counter for limit %s on key %s',
                 limit_uuid,

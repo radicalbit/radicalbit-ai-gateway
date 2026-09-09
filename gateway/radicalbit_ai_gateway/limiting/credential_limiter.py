@@ -355,13 +355,7 @@ class CredentialLimiter:
 async def clear_limit_counter(
     *, credential_uuid: str, category: str, algorithm: str, window_size: str
 ) -> None:
-    """Delete the stored counter for one credential limit.
-
-    The storage key is derived from credential_uuid + category + algorithm +
-    window_size, not the limit's own uuid — so deleting a limit and then
-    recreating one with the same category/algorithm/window would otherwise
-    inherit the deleted one's usage unless this runs first.
-    """
+    """Key is derived from category/algorithm/window_size, not the limit's uuid."""
     if app_config.redis_config.redis_url:
         storage = RedisStorage(uri=app_config.redis_config.redis_url)
     else:

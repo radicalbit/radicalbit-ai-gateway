@@ -67,9 +67,4 @@ class Storage(ABC):
 
     @abstractmethod
     async def delete(self, key: str) -> None:
-        """Delete a key's counter, if present.
-
-        Args:
-            key: The storage key.
-
-        """
+        """Delete a key's counter, if present."""
