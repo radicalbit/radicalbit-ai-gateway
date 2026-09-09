@@ -233,3 +233,19 @@ class TestInMemoryStorage:
             window_id_2 = await storage.get_window_id('test-key')
             assert window_id_2 is not None
             assert window_id_1 != window_id_2
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_existing_key(self) -> None:
+        storage = InMemoryStorage()
+        window_start = time.time_ns() // 1_000_000_000
+        await storage.increment(
+            'test-key', 5, ttl_seconds=60, window_start=window_start
+        )
+        await storage.delete('test-key')
+        assert await storage.get('test-key') is None
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent_key_is_a_noop(self) -> None:
+        storage = InMemoryStorage()
+        await storage.delete('nonexistent')  # must not raise
+        assert await storage.get('nonexistent') is None

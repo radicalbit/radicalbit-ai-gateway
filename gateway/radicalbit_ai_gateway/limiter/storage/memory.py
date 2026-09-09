@@ -96,3 +96,8 @@ class InMemoryStorage(Storage):
                 window_start=window_start,
             )
             return new_value, window_id
+
+    async def delete(self, key: str) -> None:
+        """Delete a key's counter, if present."""
+        async with self._lock:
+            self._data.pop(key, None)

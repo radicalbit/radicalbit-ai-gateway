@@ -5,7 +5,10 @@ import pytest
 
 from tests.common.db_mock import GROUP_UUID, REQUEST_UUID
 
-from radicalbit_ai_gateway.limiting.credential_limiter import CredentialLimiter
+from radicalbit_ai_gateway.limiting.credential_limiter import (
+    CredentialLimiter,
+    clear_limit_counter,
+)
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
@@ -208,3 +211,67 @@ class TestCredentialScoping:
 
         # credential B, same route, untouched
         await limiter_b.check_and_count_request(**_CALL_ARGS)
+
+
+class TestClearLimitCounter:
+    @pytest.mark.asyncio
+    async def test_clears_the_same_key_the_limiter_uses(self):
+        limiter = _limiter(
+            [_limit(CredentialLimitCategory.RATE, 2, window_size='1 minute')]
+        )
+        entry = limiter._entries[CredentialLimitCategory.RATE][0]
+        await entry.limiter.hit(entry.window, cost=1)
+        assert (await entry.limiter.get_window_stats(entry.window)).remaining == 1
+
+        with patch(
+            'radicalbit_ai_gateway.limiting.credential_limiter.InMemoryStorage',
+            return_value=entry.limiter._storage,
+        ):
+            await clear_limit_counter(
+                credential_uuid=_CREDENTIAL_UUID,
+                category=CredentialLimitCategory.RATE.value,
+                algorithm=LimitingAlgorithmType.FIXED_WINDOW.value,
+                window_size='1 minute',
+            )
+
+        stats = await entry.limiter.get_window_stats(entry.window)
+        assert stats.remaining == 2  # back to full capacity
+
+    @pytest.mark.asyncio
+    async def test_matches_aligned_fixed_window_key(self):
+        limiter = _limiter(
+            [
+                _limit(
+                    CredentialLimitCategory.BUDGET,
+                    5,
+                    window_size='1 hour',
+                    algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
+                )
+            ]
+        )
+        entry = limiter._entries[CredentialLimitCategory.BUDGET][0]
+        await entry.limiter.hit(entry.window, cost=1)
+
+        with patch(
+            'radicalbit_ai_gateway.limiting.credential_limiter.InMemoryStorage',
+            return_value=entry.limiter._storage,
+        ):
+            await clear_limit_counter(
+                credential_uuid=_CREDENTIAL_UUID,
+                category=CredentialLimitCategory.BUDGET.value,
+                algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW.value,
+                window_size='1 hour',
+            )
+
+        stats = await entry.limiter.get_window_stats(entry.window)
+        # BUDGET values are stored in micro-units (BUDGET_MULTIPLIER).
+        assert stats.remaining == entry.window.limit
+
+    @pytest.mark.asyncio
+    async def test_clearing_a_never_hit_counter_does_not_raise(self):
+        await clear_limit_counter(
+            credential_uuid=str(uuid4()),
+            category=CredentialLimitCategory.RATE.value,
+            algorithm=LimitingAlgorithmType.FIXED_WINDOW.value,
+            window_size='1 minute',
+        )

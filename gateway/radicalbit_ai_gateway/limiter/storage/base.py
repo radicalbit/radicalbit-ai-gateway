@@ -64,3 +64,12 @@ class Storage(ABC):
             Tuple of (new_count, window_id).
 
         """
+
+    @abstractmethod
+    async def delete(self, key: str) -> None:
+        """Delete a key's counter, if present.
+
+        Args:
+            key: The storage key.
+
+        """
