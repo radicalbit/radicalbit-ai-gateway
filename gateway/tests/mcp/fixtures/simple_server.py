@@ -3,9 +3,9 @@
 Run over stdio: ``python tests/mcp/fixtures/simple_server.py``.
 """
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-mcp = FastMCP('simple-test-server')
+mcp = MCPServer('simple-test-server')
 
 
 @mcp.tool()
