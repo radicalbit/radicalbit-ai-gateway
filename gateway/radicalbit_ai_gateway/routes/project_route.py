@@ -351,4 +351,21 @@ class ProjectRoute:
         def get_budget_limits_for_project(project_uuid: UUID):
             return project_service.get_budget_limits_for_project(project_uuid)
 
+        @router.delete(
+            '/projects/{project_uuid}/budget-limits/{limit_uuid}',
+            status_code=200,
+            response_model=ProjectBudgetLimitOut,
+        )
+        @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
+        async def delete_budget_limit_from_project(
+            project_uuid: UUID, limit_uuid: UUID
+        ):
+            limit = project_service.delete_budget_limit_from_project(
+                project_uuid, limit_uuid
+            )
+            logger.info(
+                'Deleted budget limit %s from project %s', limit_uuid, project_uuid
+            )
+            return limit
+
         return router

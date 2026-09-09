@@ -92,6 +92,20 @@ class ProjectBudgetLimitDAOTest(DatabaseIntegration):
         # Neither row should have been committed.
         assert self.project_budget_limit_dao.get_by_project_uuid(project.uuid) == []
 
+    def test_delete_by_uuid(self):
+        project = self._insert_project()
+        limit = db_mock.get_sample_project_budget_limit(
+            uuid=uuid.uuid4(), project_uuid=project.uuid
+        )
+        self.project_budget_limit_dao.insert(limit)
+        rowcount = self.project_budget_limit_dao.delete_by_uuid(limit.uuid)
+        assert rowcount == 1
+        assert self.project_budget_limit_dao.get_by_uuid(limit.uuid) is None
+
+    def test_delete_by_uuid_nonexistent_returns_zero(self):
+        rowcount = self.project_budget_limit_dao.delete_by_uuid(uuid.uuid4())
+        assert rowcount == 0
+
     def test_cascade_delete_on_project_delete(self):
         project = self._insert_project()
         self.project_budget_limit_dao.insert(

@@ -23,6 +23,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ProjectAlreadyExistsError,
     ProjectBudgetLimitAlreadyExistsError,
     ProjectBudgetLimitConflictError,
+    ProjectBudgetLimitNotFoundError,
     ProjectConfigValidationError,
     ProjectNotFoundError,
     auth_registry_exception_handler,
@@ -463,6 +464,29 @@ class TestProjectRoute(unittest.TestCase):
             side_effect=ProjectNotFoundError('nope')
         )
         res = self.client.get(f'{self.prefix}/projects/{pid}/budget-limits')
+        assert res.status_code == 404
+
+    def test_delete_budget_limit_from_project_success(self):
+        pid, lid = uuid.uuid4(), uuid.uuid4()
+        limit_out = ProjectBudgetLimitOut.from_project_budget_limit(
+            db_mock.get_sample_project_budget_limit(uuid=lid, project_uuid=pid)
+        )
+        self.project_service.delete_budget_limit_from_project = MagicMock(
+            return_value=limit_out
+        )
+        res = self.client.delete(f'{self.prefix}/projects/{pid}/budget-limits/{lid}')
+        assert res.status_code == 200
+        assert res.json() == jsonable_encoder(limit_out)
+        self.project_service.delete_budget_limit_from_project.assert_called_once_with(
+            pid, lid
+        )
+
+    def test_delete_budget_limit_from_project_not_found(self):
+        pid, lid = uuid.uuid4(), uuid.uuid4()
+        self.project_service.delete_budget_limit_from_project = MagicMock(
+            side_effect=ProjectBudgetLimitNotFoundError('nope')
+        )
+        res = self.client.delete(f'{self.prefix}/projects/{pid}/budget-limits/{lid}')
         assert res.status_code == 404
 
     # --- route_meta ---

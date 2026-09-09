@@ -28,6 +28,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ProjectAlreadyExistsError,
     ProjectBudgetLimitAlreadyExistsError,
     ProjectBudgetLimitConflictError,
+    ProjectBudgetLimitNotFoundError,
     ProjectConfigValidationError,
     ProjectInternalError,
     ProjectNotFoundError,
@@ -346,6 +347,20 @@ class ProjectService:
             ProjectBudgetLimitOut.from_project_budget_limit(limit)
             for limit in self.project_budget_limit_dao.get_by_project_uuid(project_uuid)
         ]
+
+    def delete_budget_limit_from_project(
+        self, project_uuid: UUID, limit_uuid: UUID
+    ) -> ProjectBudgetLimitOut:
+        self._get_project_or_raise(project_uuid)
+        limit = self.project_budget_limit_dao.get_by_uuid(limit_uuid)
+        if not limit or limit.project_uuid != project_uuid:
+            raise ProjectBudgetLimitNotFoundError(
+                f'Budget limit {limit_uuid} not found for project {project_uuid}'
+            )
+        # Build the response before deletion so the caller can still see it.
+        out = ProjectBudgetLimitOut.from_project_budget_limit(limit)
+        self.project_budget_limit_dao.delete_by_uuid(limit_uuid)
+        return out
 
     def validate_exists(self, project_uuid: UUID) -> None:
         if not self.project_dao.get_by_uuid(project_uuid):

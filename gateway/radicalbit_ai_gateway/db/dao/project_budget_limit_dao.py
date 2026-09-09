@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.project_budget_limit_table import (
@@ -43,3 +43,10 @@ class ProjectBudgetLimitDAO:
                 ProjectBudgetLimit.project_uuid == project_uuid
             )
             return session.scalars(stmt).all()
+
+    def delete_by_uuid(self, limit_uuid: UUID) -> int:
+        with self.db.begin_session() as session:
+            query = delete(ProjectBudgetLimit).where(
+                ProjectBudgetLimit.uuid == limit_uuid
+            )
+            return session.execute(query).rowcount
