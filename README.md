@@ -1,3 +1,18 @@
+[![GitHub Release][releases-shield]][releases]
+![Project Stage][project-stage-shield]
+[![License][license-shield]](LICENSE.md)
+
+![Maintenance][maintenance-shield]
+[![GitHub Activity][commits-shield]][commits]
+
+[releases-shield]: https://img.shields.io/github/release/radicalbit/radicalbit-ai-gateway.svg
+[releases]: https://github.com/radicalbit/radicalbit-ai-gateway/releases
+[project-stage-shield]: https://img.shields.io/badge/project%20stage-production%20ready-brightgreen.svg
+[license-shield]: https://img.shields.io/github/license/radicalbit/radicalbit-ai-gateway
+[maintenance-shield]: https://img.shields.io/maintenance/yes/2026.svg
+[commits-shield]: https://img.shields.io/github/commit-activity/y/radicalbit/radicalbit-ai-gateway.svg
+[commits]: https://img.shields.io/github/commits/radicalbit/radicalbit-ai-gateway
+
 <div align="center">
 
 <img src="docs/assets/Glifo Radicalbit colore.png" alt="Radicalbit AI Gateway" width="180" />
@@ -607,6 +622,23 @@ The open-source edition has everything needed to run the gateway in production. 
     <img src="docs/assets/book-a-demo-btn.svg" alt="Book a Demo" height="52"/>
   </a>
 </div>
+
+---
+
+## Contributors
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+<a href="https://github.com/radicalbit/radicalbit-ai-gateway/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=radicalbit/radicalbit-ai-gateway" />
+</a>
 
 ---
 
