@@ -157,3 +157,21 @@ class TestRedisStorage:
         window_id_2 = await redis_storage.get_window_id(key)
         assert window_id_2 is not None
         assert window_id_1 != window_id_2
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_existing_key(
+        self, redis_storage: RedisStorage
+    ) -> None:
+        window_start = time.time_ns() // 1_000_000_000
+        await redis_storage.increment(
+            'test-key-delete', 5, ttl_seconds=60, window_start=window_start
+        )
+        await redis_storage.delete('test-key-delete')
+        assert await redis_storage.get('test-key-delete') is None
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent_key_is_a_noop(
+        self, redis_storage: RedisStorage
+    ) -> None:
+        await redis_storage.delete('nonexistent-key')  # must not raise
+        assert await redis_storage.get('nonexistent-key') is None

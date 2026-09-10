@@ -116,3 +116,15 @@ class KeyLimitDAOTest(DatabaseIntegration):
         deleted_rows = self.key_dao.delete_by_uuid(key.uuid)
         assert deleted_rows == 1
         assert self.key_limit_dao.get_by_key_uuid(key.uuid) == []
+
+    def test_delete_by_uuid(self):
+        key = self._insert_key()
+        limit = self.key_limit_dao.insert(
+            db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
+        )
+        deleted_rows = self.key_limit_dao.delete_by_uuid(limit.uuid)
+        assert deleted_rows == 1
+        assert self.key_limit_dao.get_by_uuid(limit.uuid) is None
+
+    def test_delete_by_uuid_missing_returns_zero(self):
+        assert self.key_limit_dao.delete_by_uuid(uuid.uuid4()) == 0

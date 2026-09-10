@@ -541,6 +541,16 @@ class CredentialLimitAlreadyExistsError(AuthRegistryError):
         )
 
 
+class CredentialLimitNotFoundError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_404_NOT_FOUND,
+            'credential_limit_not_found',
+            log_message=log_message,
+        )
+
+
 class GroupInternalError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(

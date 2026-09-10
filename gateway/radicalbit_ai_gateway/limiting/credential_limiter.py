@@ -350,3 +350,27 @@ class CredentialLimiter:
     ) -> None:
         cost = int(seconds * cost_per_second * BUDGET_MULTIPLIER)
         await self._hit(CredentialLimitCategory.BUDGET, cost=cost)
+
+
+async def clear_limit_counter(
+    *, credential_uuid: str, category: str, algorithm: str, window_size: str
+) -> None:
+    """Key is derived from category/algorithm/window_size, not the limit's uuid."""
+    if app_config.redis_config.redis_url:
+        storage = RedisStorage(uri=app_config.redis_config.redis_url)
+    else:
+        storage = InMemoryStorage()
+    limiter_cls = (
+        AlignedFixedWindowLimiter
+        if algorithm == LimitingAlgorithmType.ALIGNED_FIXED_WINDOW.value
+        else FixedWindowLimiter
+    )
+    limiter = limiter_cls(storage)
+    window = WindowConfig.from_parts(
+        limit=0,
+        window=window_size,
+        project_uuid=credential_uuid,
+        route_name='*',
+        scenario_type=ScenarioType(category),
+    )
+    await storage.delete(limiter._build_key(window))
