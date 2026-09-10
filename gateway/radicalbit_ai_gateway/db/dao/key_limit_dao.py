@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
@@ -41,3 +41,8 @@ class KeyLimitDAO:
         with self.db.begin_session() as session:
             stmt = select(KeyLimit).where(KeyLimit.key_uuid.in_(key_uuids))
             return session.scalars(stmt).all()
+
+    def delete_by_uuid(self, limit_uuid: UUID) -> int:
+        with self.db.begin_session() as session:
+            query = delete(KeyLimit).where(KeyLimit.uuid == limit_uuid)
+            return session.execute(query).rowcount

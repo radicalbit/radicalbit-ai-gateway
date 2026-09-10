@@ -2,13 +2,13 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
-import httpx
+import httpx2
 from mcp import types
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
 import pytest
 
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
@@ -52,19 +52,21 @@ async def test_each_operation_calls_matching_session_method():
     client = _client_with_mock_session(session)
 
     await client.list_tools(HTTP_SERVER, cursor='c1')
-    session.list_tools.assert_awaited_once_with('c1')
+    session.list_tools.assert_awaited_once_with(
+        params=types.PaginatedRequestParams(cursor='c1')
+    )
 
     await client.call_tool(HTTP_SERVER, 'echo', {'text': 'hi'})
     session.call_tool.assert_awaited_once_with('echo', {'text': 'hi'})
 
     await client.list_prompts(HTTP_SERVER)
-    session.list_prompts.assert_awaited_once_with(None)
+    session.list_prompts.assert_awaited_once_with(params=None)
 
     await client.get_prompt(HTTP_SERVER, 'greeting', {'name': 'x'})
     session.get_prompt.assert_awaited_once_with('greeting', {'name': 'x'})
 
     await client.list_resources(HTTP_SERVER)
-    session.list_resources.assert_awaited_once_with(None)
+    session.list_resources.assert_awaited_once_with(params=None)
 
     await client.read_resource(HTTP_SERVER, 'note://welcome')
     (uri,) = session.read_resource.await_args.args
@@ -141,9 +143,7 @@ async def test_group_with_base_exception_propagates():
 
 async def test_upstream_jsonrpc_error_preserves_code_and_message():
     session = AsyncMock()
-    session.call_tool.side_effect = McpError(
-        types.ErrorData(code=-32602, message='Unknown tool: nope')
-    )
+    session.call_tool.side_effect = MCPError(code=-32602, message='Unknown tool: nope')
     client = _client_with_mock_session(session)
 
     with pytest.raises(McpUpstreamError) as exc_info:
@@ -162,31 +162,31 @@ async def test_tool_is_error_result_passed_through():
 
     returned = await client.call_tool(HTTP_SERVER, 'echo', {})
     assert returned is result
-    assert returned.isError is True
+    assert returned.is_error is True
 
 
-async def test_http_transport_receives_built_headers():
-    with patch(
-        'radicalbit_ai_gateway.mcp_proxy.upstream_client.streamablehttp_client'
-    ) as transport:
-        transport.side_effect = RuntimeError('stop here')
-        client = McpUpstreamClient()
-        server = HTTP_SERVER.model_copy(update={'forward_headers': ['x-user-jwt']})
+async def test_http_client_receives_built_headers():
+    recorded: dict[str, str] = {}
 
-        with pytest.raises(McpUpstreamError):
-            await client.list_tools(
-                server,
-                client_headers={
-                    'X-User-Jwt': 'jwt-1',
-                    'Authorization': 'Bearer sk-rb-x',
-                },
-            )
-        transport.assert_called_once()
-        _, kwargs = transport.call_args
-        assert kwargs['headers'] == {
-            'x-user-jwt': 'jwt-1',
-            'Authorization': 'Bearer secret-pat',
-        }
+    def factory(headers=None):
+        recorded.update(headers or {})
+        raise RuntimeError('stop here')
+
+    client = McpUpstreamClient(http_client_factory=factory)
+    server = HTTP_SERVER.model_copy(update={'forward_headers': ['x-user-jwt']})
+
+    with pytest.raises(McpUpstreamError):
+        await client.list_tools(
+            server,
+            client_headers={
+                'X-User-Jwt': 'jwt-1',
+                'Authorization': 'Bearer sk-rb-x',
+            },
+        )
+    assert recorded == {
+        'x-user-jwt': 'jwt-1',
+        'Authorization': 'Bearer secret-pat',
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ async def test_stdio_list_and_call_tool(client):
     assert [t.name for t in tools.tools] == ['echo']
 
     result = await client.call_tool(STDIO_SERVER, 'echo', {'text': 'hi'})
-    assert result.isError is False
+    assert result.is_error is False
     assert result.content[0].text == 'echo: hi'
 
 
@@ -226,7 +226,7 @@ async def test_stdio_resources(client):
 
 async def test_stdio_unknown_tool_is_error_result(client):
     result = await client.call_tool(STDIO_SERVER, 'does-not-exist', {})
-    assert result.isError is True
+    assert result.is_error is True
 
 
 async def test_stdio_spawn_failure_maps_to_sanitized_error():
@@ -247,20 +247,13 @@ async def test_stdio_spawn_failure_maps_to_sanitized_error():
 
 def _build_http_upstream():
     """In-process stateless Streamable HTTP MCP server plus a matching
-    (client, McpHttpServer) pair wired through httpx.ASGITransport.
+    (client, McpHttpServer) pair wired through httpx2.ASGITransport.
 
     Returns ``(app, client, server, received_headers)``; the caller must run
     the test body inside ``app.router.lifespan_context(app)`` (entering the
     anyio task group in a fixture breaks pytest-asyncio task affinity).
     """
-    upstream = FastMCP(
-        'http-test-server',
-        stateless_http=True,
-        json_response=True,
-        transport_security=TransportSecuritySettings(
-            allowed_hosts=['testserver'], allowed_origins=['http://testserver']
-        ),
-    )
+    upstream = MCPServer('http-test-server')
 
     received_headers: dict[str, str] = {}
 
@@ -269,7 +262,13 @@ def _build_http_upstream():
         """Echo the given text back."""
         return f'echo: {text}'
 
-    app = upstream.streamable_http_app()
+    app = upstream.streamable_http_app(
+        stateless_http=True,
+        json_response=True,
+        transport_security=TransportSecuritySettings(
+            allowed_hosts=['testserver'], allowed_origins=['http://testserver']
+        ),
+    )
 
     class HeaderRecorder:
         """ASGI middleware capturing the headers the upstream receives."""
@@ -286,18 +285,14 @@ def _build_http_upstream():
 
     wrapped = HeaderRecorder(app)
 
-    def client_factory(headers=None, timeout=None, auth=None):
-        return httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=wrapped),
+    def client_factory(headers=None):
+        return httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=wrapped),
             base_url='http://testserver',
             headers=headers,
-            timeout=timeout,
-            auth=auth,
         )
 
-    client = McpUpstreamClient(
-        default_timeout=20.0, httpx_client_factory=client_factory
-    )
+    client = McpUpstreamClient(default_timeout=20.0, http_client_factory=client_factory)
     server = McpHttpServer(
         alias='http-upstream',
         url='http://testserver/mcp',
@@ -324,7 +319,7 @@ async def test_http_list_and_call_tool():
                 'X-Mcp-Http-Upstream-Authorization': 'Bearer user-jwt',
             },
         )
-        assert result.isError is False
+        assert result.is_error is False
         assert result.content[0].text == 'echo: hi'
 
     assert received_headers['x-api-key'] == 'static-secret'

@@ -541,6 +541,16 @@ class CredentialLimitAlreadyExistsError(AuthRegistryError):
         )
 
 
+class CredentialLimitNotFoundError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_404_NOT_FOUND,
+            'credential_limit_not_found',
+            log_message=log_message,
+        )
+
+
 class GroupInternalError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
@@ -841,7 +851,7 @@ async def unhandled_exception_handler(request: Request, err: Exception):
     ctx.error_code = to_snake(ctx.error_type)
     ctx.is_unhandled_error = True
 
-    logger.exception(
+    logger.error(
         'Unhandled exception: %s (error_type=%s, error_code=%s)',
         error_str,
         ctx.error_type,

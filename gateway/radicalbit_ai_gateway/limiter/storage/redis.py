@@ -95,6 +95,10 @@ class RedisStorage(Storage):
         returned_window_id = result[1].decode('utf-8')
         return new_value, returned_window_id
 
+    async def delete(self, key: str) -> None:
+        """Delete a key's counter, if present."""
+        await self._client.delete(key)
+
     async def close(self) -> None:
         """Close the Redis connection."""
         await self._client.aclose()

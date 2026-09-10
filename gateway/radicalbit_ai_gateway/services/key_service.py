@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -5,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
+from radicalbit_ai_gateway.limiting.credential_limiter import clear_limit_counter
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     KeyFullOut,
@@ -16,8 +18,10 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitsIn,
 )
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     CredentialLimitAlreadyExistsError,
+    CredentialLimitNotFoundError,
     GroupNotFoundError,
     KeyAlreadyExistsError,
     KeyGroupAlreadyExistsError,
@@ -25,6 +29,9 @@ from radicalbit_ai_gateway.utils.exceptions import (
     KeyNotFoundError,
     KeyOperationNotAllowedError,
 )
+
+app_config = get_app_config()
+logger = logging.getLogger(app_config.log_config.logger_name)
 
 
 class KeyService:
@@ -225,7 +232,9 @@ class KeyService:
         key = self.key_dao.get_key_by_hashed_key(hashed_api_key=hashed_api_key)
         if not key:
             raise KeyNotFoundError('Key with does not exists')
-        return KeyFullOut.from_key_obscured(key=key, include_groups=True)
+        return KeyFullOut.from_key_obscured(
+            key=key, include_groups=True, include_limits=True
+        )
 
     def get_names_by_uuids(self, uuids: list[UUID]) -> dict[UUID, str]:
         return self.key_dao.get_names_by_uuids(uuids)
@@ -273,3 +282,32 @@ class KeyService:
             CredentialLimitOut.from_key_limit(limit)
             for limit in self.key_limit_dao.get_by_key_uuid(key_uuid)
         ]
+
+    async def delete_limit_from_key(
+        self, key_uuid: UUID, limit_uuid: UUID
+    ) -> CredentialLimitOut:
+        key = self.key_dao.get_by_uuid(key_uuid)
+        if not key:
+            raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
+        limit = self.key_limit_dao.get_by_uuid(limit_uuid)
+        if not limit or limit.key_uuid != key_uuid:
+            raise CredentialLimitNotFoundError(
+                f'Limit {limit_uuid} not found for key "{key.name}"'
+            )
+        out = CredentialLimitOut.from_key_limit(limit)
+        self.key_limit_dao.delete_by_uuid(limit_uuid)
+        try:
+            await clear_limit_counter(
+                credential_uuid=str(key_uuid),
+                category=limit.category,
+                algorithm=limit.algorithm,
+                window_size=limit.window_size,
+            )
+        except Exception:
+            # best-effort: the DB row is already gone, that's what matters
+            logger.exception(
+                'Failed to clear the limit counter for limit %s on key %s',
+                limit_uuid,
+                key_uuid,
+            )
+        return out

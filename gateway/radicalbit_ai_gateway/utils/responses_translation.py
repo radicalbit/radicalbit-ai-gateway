@@ -257,9 +257,12 @@ def chat_completion_to_response(
             cached = u.prompt_tokens_details.cached_tokens
         if u.completion_tokens_details and u.completion_tokens_details.reasoning_tokens:
             reasoning = u.completion_tokens_details.reasoning_tokens
+        input_details_kwargs: dict[str, int] = {'cached_tokens': cached}
+        if 'cache_write_tokens' in InputTokensDetails.model_fields:
+            input_details_kwargs['cache_write_tokens'] = 0
         usage = ResponseUsage(
             input_tokens=u.prompt_tokens,
-            input_tokens_details=InputTokensDetails(cached_tokens=cached),
+            input_tokens_details=InputTokensDetails(**input_details_kwargs),
             output_tokens=u.completion_tokens,
             output_tokens_details=OutputTokensDetails(reasoning_tokens=reasoning),
             total_tokens=u.total_tokens,

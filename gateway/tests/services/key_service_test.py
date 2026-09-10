@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 import pytest
@@ -24,6 +24,7 @@ from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
     CredentialLimitAlreadyExistsError,
+    CredentialLimitNotFoundError,
     KeyGroupAlreadyExistsError,
     KeyInternalError,
     KeyNotFoundError,
@@ -289,7 +290,9 @@ class KeyServiceTest(unittest.TestCase):
         self.key_dao.get_key_by_hashed_key.assert_called_once_with(
             hashed_api_key=db_mock.HASHED_KEY
         )
-        assert res == KeyFullOut.from_key_obscured(key, include_groups=True)
+        assert res == KeyFullOut.from_key_obscured(
+            key, include_groups=True, include_limits=True
+        )
 
     def test_get_associable_groups_unassigned_key(self):
         key = db_mock.get_sample_key()
@@ -473,3 +476,103 @@ class KeyServiceTest(unittest.TestCase):
             self.key_service.get_limits_for_key,
             uuid.uuid4(),
         )
+
+
+class TestDeleteLimitFromKey:
+    def _make_service(self):
+        key_dao = MagicMock(spec_set=KeyDAO)
+        key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
+        service = KeyService(
+            key_dao=key_dao,
+            api_key_security=MagicMock(spec_set=ApiKeySecurity),
+            group_dao=MagicMock(spec_set=GroupDAO),
+            key_limit_dao=key_limit_dao,
+        )
+        return service, key_dao, key_limit_dao
+
+    @pytest.mark.asyncio
+    async def test_ok(self):
+        service, key_dao, key_limit_dao = self._make_service()
+        key_uuid = uuid.uuid4()
+        limit_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(uuid=key_uuid)
+        limit = db_mock.get_sample_key_limit(uuid=limit_uuid, key_uuid=key_uuid)
+        key_dao.get_by_uuid = MagicMock(return_value=key)
+        key_limit_dao.get_by_uuid = MagicMock(return_value=limit)
+        key_limit_dao.delete_by_uuid = MagicMock(return_value=1)
+
+        with patch(
+            'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
+            new=AsyncMock(),
+        ) as mock_clear:
+            res = await service.delete_limit_from_key(key_uuid, limit_uuid)
+
+        key_limit_dao.delete_by_uuid.assert_called_once_with(limit_uuid)
+        mock_clear.assert_awaited_once_with(
+            credential_uuid=str(key_uuid),
+            category=limit.category,
+            algorithm=limit.algorithm,
+            window_size=limit.window_size,
+        )
+        assert res == CredentialLimitOut.from_key_limit(limit)
+
+    @pytest.mark.asyncio
+    async def test_key_not_found(self):
+        service, key_dao, key_limit_dao = self._make_service()
+        key_dao.get_by_uuid = MagicMock(return_value=None)
+
+        with pytest.raises(KeyNotFoundError):
+            await service.delete_limit_from_key(uuid.uuid4(), uuid.uuid4())
+        key_limit_dao.delete_by_uuid.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_limit_not_found(self):
+        service, key_dao, key_limit_dao = self._make_service()
+        key_uuid = uuid.uuid4()
+        key_dao.get_by_uuid = MagicMock(
+            return_value=db_mock.get_sample_key(uuid=key_uuid)
+        )
+        key_limit_dao.get_by_uuid = MagicMock(return_value=None)
+
+        with pytest.raises(CredentialLimitNotFoundError):
+            await service.delete_limit_from_key(key_uuid, uuid.uuid4())
+        key_limit_dao.delete_by_uuid.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_limit_belongs_to_a_different_key(self):
+        service, key_dao, key_limit_dao = self._make_service()
+        key_uuid = uuid.uuid4()
+        limit_uuid = uuid.uuid4()
+        key_dao.get_by_uuid = MagicMock(
+            return_value=db_mock.get_sample_key(uuid=key_uuid)
+        )
+        key_limit_dao.get_by_uuid = MagicMock(
+            return_value=db_mock.get_sample_key_limit(
+                uuid=limit_uuid, key_uuid=uuid.uuid4()
+            )
+        )
+
+        with pytest.raises(CredentialLimitNotFoundError):
+            await service.delete_limit_from_key(key_uuid, limit_uuid)
+        key_limit_dao.delete_by_uuid.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_redis_clear_failure_does_not_fail_the_request(self):
+        """A Redis-side error clearing the counter must not undo the delete."""
+        service, key_dao, key_limit_dao = self._make_service()
+        key_uuid = uuid.uuid4()
+        limit_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(uuid=key_uuid)
+        limit = db_mock.get_sample_key_limit(uuid=limit_uuid, key_uuid=key_uuid)
+        key_dao.get_by_uuid = MagicMock(return_value=key)
+        key_limit_dao.get_by_uuid = MagicMock(return_value=limit)
+        key_limit_dao.delete_by_uuid = MagicMock(return_value=1)
+
+        with patch(
+            'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
+            new=AsyncMock(side_effect=ConnectionError('redis unreachable')),
+        ):
+            res = await service.delete_limit_from_key(key_uuid, limit_uuid)
+
+        key_limit_dao.delete_by_uuid.assert_called_once_with(limit_uuid)
+        assert res == CredentialLimitOut.from_key_limit(limit)

@@ -108,4 +108,15 @@ class KeyRoute:
         def get_limits_for_key(key_uuid: UUID):
             return key_service.get_limits_for_key(key_uuid)
 
+        @router.delete(
+            '/keys/{key_uuid}/limits/{limit_uuid}',
+            status_code=200,
+            response_model=CredentialLimitOut,
+        )
+        @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
+        async def delete_limit_from_key(key_uuid: UUID, limit_uuid: UUID):
+            limit = await key_service.delete_limit_from_key(key_uuid, limit_uuid)
+            logger.info('Deleted limit %s from key %s', limit_uuid, key_uuid)
+            return limit
+
         return router

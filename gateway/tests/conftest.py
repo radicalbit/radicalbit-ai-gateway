@@ -6,6 +6,8 @@ from celery import Celery
 import fakeredis
 import pytest
 
+import tests.common.pook_httpx2  # noqa: F401
+
 from radicalbit_ai_gateway.events import buffer
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.secrets import (

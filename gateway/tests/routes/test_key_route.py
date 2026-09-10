@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import uuid
 
 from fastapi import FastAPI
@@ -14,6 +14,7 @@ from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
     AuthRegistryError,
+    CredentialLimitNotFoundError,
     ErrorOut,
     KeyInternalError,
     KeyNotFoundError,
@@ -321,6 +322,53 @@ class TestKeyRoute(unittest.TestCase):
             side_effect=KeyNotFoundError('error')
         )
         res = self.client.get(f'{self.prefix}/keys/{key.uuid}/limits')
+        assert res.status_code == 404
+        assert (
+            res.json()['error']
+            == ErrorOut(
+                'error', 'auth_registry_error', code='key_not_found', param=None
+            ).error
+        )
+
+    def test_delete_limit_from_key_success(self):
+        key = db_mock.get_sample_key()
+        limit_out = CredentialLimitOut.from_key_limit(
+            db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
+        )
+        self.key_service.delete_limit_from_key = AsyncMock(return_value=limit_out)
+        res = self.client.delete(
+            f'{self.prefix}/keys/{key.uuid}/limits/{limit_out.uuid}'
+        )
+        assert res.status_code == 200
+        assert res.json() == jsonable_encoder(limit_out)
+        self.key_service.delete_limit_from_key.assert_awaited_once_with(
+            key.uuid, limit_out.uuid
+        )
+
+    def test_delete_limit_from_key_not_found(self):
+        key = db_mock.get_sample_key()
+        self.key_service.delete_limit_from_key = AsyncMock(
+            side_effect=CredentialLimitNotFoundError('error')
+        )
+        res = self.client.delete(f'{self.prefix}/keys/{key.uuid}/limits/{uuid.uuid4()}')
+        assert res.status_code == 404
+        assert (
+            res.json()['error']
+            == ErrorOut(
+                'error',
+                'auth_registry_error',
+                code='credential_limit_not_found',
+                param=None,
+            ).error
+        )
+
+    def test_delete_limit_from_key_key_not_found(self):
+        self.key_service.delete_limit_from_key = AsyncMock(
+            side_effect=KeyNotFoundError('error')
+        )
+        res = self.client.delete(
+            f'{self.prefix}/keys/{uuid.uuid4()}/limits/{uuid.uuid4()}'
+        )
         assert res.status_code == 404
         assert (
             res.json()['error']
