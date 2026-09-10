@@ -51,11 +51,18 @@ jobs:
         run: |
           uv run pytest -v
 
+      - name: Compute artifact-safe name
+        id: safe-name
+        if: ${{ inputs.run-pytest }}
+        run: |
+          SAFE_NAME=$(echo "${{ inputs.working-directory }}" | sed 's/^\.\///; s/\//-/g')
+          echo "name=$SAFE_NAME" >> "$GITHUB_OUTPUT"
+
       - name: Upload coverage report (artifact)
         if: ${{ inputs.run-pytest && always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report-${{ inputs.working-directory }}
+          name: coverage-report-${{ steps.safe-name.outputs.name }}
           path: ${{ inputs.working-directory }}/htmlcov/
 
       - name: Upload coverage to Codecov
@@ -63,6 +70,6 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           files: ${{ inputs.working-directory }}/coverage.xml
-          flags: ${{ inputs.working-directory }}
+          flags: ${{ steps.safe-name.outputs.name }}
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
