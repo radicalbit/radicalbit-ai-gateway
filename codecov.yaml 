@@ -1,0 +1,18 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto      # compare against the last commit on main, not a fixed number
+        threshold: 1%      # tolerate small fluctuations without failing the check
+    patch:
+      default:
+        target: 89%        # minimum coverage required on new/changed code in a PR
+
+flags:
+  gateway:
+    paths:
+      - gateway/
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
