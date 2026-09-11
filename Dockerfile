@@ -1,7 +1,7 @@
 # ============================================
 # Stage 1: UI Dependencies Installation
 # ============================================
-FROM node:20-bookworm-slim AS ui-install
+FROM node:22-bookworm-slim AS ui-install
 
 WORKDIR /app
 
@@ -23,7 +23,7 @@ COPY ./ui/*.js ./ui/*.cjs ./ui/*.html ./
 # ============================================
 # Stage 2: UI Build
 # ============================================
-FROM node:20-bookworm-slim AS ui-build
+FROM node:22-bookworm-slim AS ui-build
 
 WORKDIR /app
 
