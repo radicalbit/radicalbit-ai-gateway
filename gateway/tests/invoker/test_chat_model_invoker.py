@@ -148,9 +148,12 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
         )
 
         m = HumanMessage(content='What is the capital of France?')
-        with pytest.raises(
-            ModelInvokerInternalError,
-            match=r'All chat models failed for model test-route: You exceeded your current quota, please check your plan and billing details.',
+        with (
+            self.assertLogs('radicalbit-ai-gateway', level='ERROR'),
+            pytest.raises(
+                ModelInvokerInternalError,
+                match=r'All chat models failed for model test-route: You exceeded your current quota, please check your plan and billing details.',
+            ),
         ):
             await self.chat_model_invoker.complete(
                 request_uuid=str(REQUEST_UUID),
