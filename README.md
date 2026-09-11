@@ -4,6 +4,7 @@
 
 ![Maintenance][maintenance-shield]
 [![GitHub Activity][commits-shield]][commits]
+[![codecov](https://codecov.io/gh/radicalbit/radicalbit-ai-gateway/branch/main/graph/badge.svg)](https://codecov.io/gh/radicalbit/radicalbit-ai-gateway)
 
 [releases-shield]: https://img.shields.io/github/release/radicalbit/radicalbit-ai-gateway.svg
 [releases]: https://github.com/radicalbit/radicalbit-ai-gateway/releases
