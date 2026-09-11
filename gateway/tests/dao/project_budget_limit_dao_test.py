@@ -106,6 +106,34 @@ class ProjectBudgetLimitDAOTest(DatabaseIntegration):
         rowcount = self.project_budget_limit_dao.delete_by_uuid(uuid.uuid4())
         assert rowcount == 0
 
+    def test_delete_by_project_uuid(self):
+        project = self._insert_project()
+        other_project = self._insert_project(name='rb-project-other')
+        limits = [
+            db_mock.get_sample_project_budget_limit(
+                uuid=uuid.uuid4(), project_uuid=project.uuid, window_size='1 day'
+            ),
+            db_mock.get_sample_project_budget_limit(
+                uuid=uuid.uuid4(), project_uuid=project.uuid, window_size='1 month'
+            ),
+        ]
+        _ = [self.project_budget_limit_dao.insert(limit) for limit in limits]
+        other_limit = db_mock.get_sample_project_budget_limit(
+            uuid=uuid.uuid4(), project_uuid=other_project.uuid
+        )
+        self.project_budget_limit_dao.insert(other_limit)
+
+        rowcount = self.project_budget_limit_dao.delete_by_project_uuid(project.uuid)
+
+        assert rowcount == 2
+        assert self.project_budget_limit_dao.get_by_project_uuid(project.uuid) == []
+        # A different project's limits are untouched.
+        assert self.project_budget_limit_dao.get_by_uuid(other_limit.uuid) is not None
+
+    def test_delete_by_project_uuid_nonexistent_returns_zero(self):
+        rowcount = self.project_budget_limit_dao.delete_by_project_uuid(uuid.uuid4())
+        assert rowcount == 0
+
     def test_cascade_delete_on_project_delete(self):
         project = self._insert_project()
         self.project_budget_limit_dao.insert(

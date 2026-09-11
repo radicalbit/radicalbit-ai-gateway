@@ -377,7 +377,7 @@ class TestProjectRoute(unittest.TestCase):
     def test_delete_project_deregisters_when_served(self):
         pid = uuid.uuid4()
         out = db_mock.get_sample_project_out(uuid=pid, served_config_uuid=uuid.uuid4())
-        self.project_service.delete_project = MagicMock(return_value=out)
+        self.project_service.delete_project = AsyncMock(return_value=out)
         res = self.client.delete(f'{self.prefix}/projects/{pid}')
         assert res.status_code == 200
         self.project_service.delete_project.assert_called_once_with(pid)
@@ -386,7 +386,7 @@ class TestProjectRoute(unittest.TestCase):
     def test_delete_project_no_deregister_when_dev(self):
         pid = uuid.uuid4()
         out = db_mock.get_sample_project_out(uuid=pid, served_config_uuid=None)
-        self.project_service.delete_project = MagicMock(return_value=out)
+        self.project_service.delete_project = AsyncMock(return_value=out)
         res = self.client.delete(f'{self.prefix}/projects/{pid}')
         assert res.status_code == 200
         self.deregister.assert_not_awaited()
@@ -471,7 +471,7 @@ class TestProjectRoute(unittest.TestCase):
         limit_out = ProjectBudgetLimitOut.from_project_budget_limit(
             db_mock.get_sample_project_budget_limit(uuid=lid, project_uuid=pid)
         )
-        self.project_service.delete_budget_limit_from_project = MagicMock(
+        self.project_service.delete_budget_limit_from_project = AsyncMock(
             return_value=limit_out
         )
         res = self.client.delete(f'{self.prefix}/projects/{pid}/budget-limits/{lid}')
@@ -483,7 +483,7 @@ class TestProjectRoute(unittest.TestCase):
 
     def test_delete_budget_limit_from_project_not_found(self):
         pid, lid = uuid.uuid4(), uuid.uuid4()
-        self.project_service.delete_budget_limit_from_project = MagicMock(
+        self.project_service.delete_budget_limit_from_project = AsyncMock(
             side_effect=ProjectBudgetLimitNotFoundError('nope')
         )
         res = self.client.delete(f'{self.prefix}/projects/{pid}/budget-limits/{lid}')

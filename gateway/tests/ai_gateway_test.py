@@ -54,7 +54,10 @@ from radicalbit_ai_gateway.utils.exceptions import (
     BudgetLimitExceededError,
     GatewayBadRequest,
 )
-from radicalbit_ai_gateway.utils.request_context import set_current_credential_limiter
+from radicalbit_ai_gateway.utils.request_context import (
+    set_current_credential_limiter,
+    set_current_project_budget_limiter,
+)
 
 
 @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
@@ -923,6 +926,134 @@ async def test_credential_limit_is_checked_before_route_limit(
         set_current_credential_limiter(None)
 
     budget_limiter.check_budget.assert_not_awaited()
+    assert len(pook.pending_mocks()) == 0
+
+    pook.disable_network()
+
+
+@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@pook.activate
+@pytest.mark.asyncio
+async def test_project_budget_limit_is_checked_before_route_limit(
+    mock_model_invoker_emit_event,
+):
+    """When both the project's and the route's limit would block the same
+    request, the project's is the one reported.
+    """
+    pook.enable_network()
+    gateway_config = get_gateway_embedded_limiting()
+    cost_service = MagicMock(spec_set=CostService)
+    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
+    guardrail_engine = GuardrailEngine(
+        presidio_engine=PresidioEngine(),
+        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
+        cost_service=cost_service,
+        guardrails=gateway_config.guardrails or [],
+    )
+
+    route_cfg, chat_models, embedding_models = resolve_route_models(
+        gateway_config, 'rb-gateway'
+    )
+    budget_limiter = route_cfg.get_budget_limiter(
+        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    )
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=chat_models,
+        embedding_models=embedding_models,
+        guardrail_engine=guardrail_engine,
+        gateway_cache=None,
+        cost_service=cost_service,
+        budget_limiter=budget_limiter,
+    )
+    budget_limiter.check_budget = AsyncMock(
+        side_effect=BudgetLimitExceededError('Route budget limit exceeded')
+    )
+
+    project_budget_limiter = MagicMock()
+    project_budget_limiter.check_budget = AsyncMock(
+        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
+    )
+    set_current_project_budget_limiter(project_budget_limiter)
+    try:
+        with pytest.raises(BudgetLimitExceededError, match='Project budget'):
+            await ai_gateway.invoke_embeddings(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                api_key_name='rb-key',
+                route_name='rb-gateway',
+                input_texts=['hello world'],
+                group_uuid=str(GROUP_UUID),
+                group_name='test-group',
+            )
+    finally:
+        set_current_project_budget_limiter(None)
+
+    budget_limiter.check_budget.assert_not_awaited()
+    assert len(pook.pending_mocks()) == 0
+
+    pook.disable_network()
+
+
+@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@pook.activate
+@pytest.mark.asyncio
+async def test_credential_limit_is_checked_before_project_limit(
+    mock_model_invoker_emit_event,
+):
+    """When both the credential's and the project's limit would block the
+    same request, the credential's is the one reported.
+    """
+    pook.enable_network()
+    gateway_config = get_gateway_embedded_limiting()
+    cost_service = MagicMock(spec_set=CostService)
+    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
+    guardrail_engine = GuardrailEngine(
+        presidio_engine=PresidioEngine(),
+        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
+        cost_service=cost_service,
+        guardrails=gateway_config.guardrails or [],
+    )
+
+    route_cfg, chat_models, embedding_models = resolve_route_models(
+        gateway_config, 'rb-gateway'
+    )
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=chat_models,
+        embedding_models=embedding_models,
+        guardrail_engine=guardrail_engine,
+        gateway_cache=None,
+        cost_service=cost_service,
+    )
+
+    credential_limiter = MagicMock()
+    credential_limiter.check_input_tokens = AsyncMock()
+    credential_limiter.check_budget = AsyncMock(
+        side_effect=BudgetLimitExceededError('Credential budget limit exceeded')
+    )
+    project_budget_limiter = MagicMock()
+    project_budget_limiter.check_budget = AsyncMock(
+        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
+    )
+    set_current_credential_limiter(credential_limiter)
+    set_current_project_budget_limiter(project_budget_limiter)
+    try:
+        with pytest.raises(BudgetLimitExceededError, match='Credential budget'):
+            await ai_gateway.invoke_embeddings(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                api_key_name='rb-key',
+                route_name='rb-gateway',
+                input_texts=['hello world'],
+                group_uuid=str(GROUP_UUID),
+                group_name='test-group',
+            )
+    finally:
+        set_current_credential_limiter(None)
+        set_current_project_budget_limiter(None)
+
+    project_budget_limiter.check_budget.assert_not_awaited()
     assert len(pook.pending_mocks()) == 0
 
     pook.disable_network()
