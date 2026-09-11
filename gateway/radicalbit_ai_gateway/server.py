@@ -41,6 +41,9 @@ from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.events.events_processor import set_alert_rule_service
+from radicalbit_ai_gateway.limiting.project_budget_limiter import (
+    load_project_budget_limiter,
+)
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.metrics.define_metrics import (
     request_latency_histogram,
@@ -129,6 +132,7 @@ from radicalbit_ai_gateway.utils.request_context import (
     get_current_credential_limiter,
     get_current_request_tags,
     reset_route_context,
+    set_current_project_budget_limiter,
     set_current_route_config,
 )
 from radicalbit_ai_gateway.utils.responses_streaming import (
@@ -656,6 +660,11 @@ async def chat_completions(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
+    set_current_project_budget_limiter(
+        load_project_budget_limiter(
+            route.project_uuid, route.project_name, project_budget_limit_dao
+        )
+    )
 
     # Checked before route/project limits: decides which error is reported
     # when both would block.
@@ -887,6 +896,11 @@ async def embeddings(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
+    set_current_project_budget_limiter(
+        load_project_budget_limiter(
+            route.project_uuid, route.project_name, project_budget_limit_dao
+        )
+    )
 
     # Check and count request rate limits BEFORE any processing. Credential
     # limit first: decides which error is reported when both would block.
@@ -984,6 +998,11 @@ async def audio_transcriptions(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
+    set_current_project_budget_limiter(
+        load_project_budget_limiter(
+            route.project_uuid, route.project_name, project_budget_limit_dao
+        )
+    )
     request.state.otel_route_name = route_name
 
     # Check and count request rate limits BEFORE any processing. Credential
@@ -1199,6 +1218,11 @@ async def responses(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
+    set_current_project_budget_limiter(
+        load_project_budget_limiter(
+            route.project_uuid, route.project_name, project_budget_limit_dao
+        )
+    )
 
     # Checked before route/project limits: decides which error is reported
     # when both would block.
