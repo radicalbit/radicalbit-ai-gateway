@@ -1059,6 +1059,134 @@ async def test_credential_limit_is_checked_before_project_limit(
     pook.disable_network()
 
 
+@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@pook.activate
+@pytest.mark.asyncio
+async def test_project_budget_limit_blocks_chat_with_no_other_limiters_configured(
+    mock_model_invoker_emit_event, fake_redis_client
+):
+    """Regression: _prepare_and_validate_request only calls
+    _validate_limiters when a route or credential limiter is configured —
+    a project-only budget limit must still be checked.
+    """
+    pook.enable_network()
+    gateway_config = get_gateway_openai_with_guardrails()
+    cost_service: CostService = MagicMock(spec_set=CostService)
+    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
+    redis_cache = RedisCache(fake_redis_client)
+    guardrail_engine = GuardrailEngine(
+        presidio_engine=PresidioEngine(),
+        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
+        cost_service=cost_service,
+        guardrails=gateway_config.guardrails or [],
+    )
+    gateway_cache = GatewayCache(redis_cache)
+
+    route_cfg, chat_models, embedding_models = resolve_route_models(
+        gateway_config, 'rb-gateway'
+    )
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=chat_models,
+        embedding_models=embedding_models,
+        guardrail_engine=guardrail_engine,
+        gateway_cache=gateway_cache,
+        cost_service=cost_service,
+        project_uuid=str(TEST_PROJECT_UUID),
+    )
+    assert ai_gateway.token_limiter is None
+    assert ai_gateway.budget_limiter is None
+    assert ai_gateway.request_rate_limiter is None
+
+    project_budget_limiter = MagicMock()
+    project_budget_limiter.check_budget = AsyncMock(
+        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
+    )
+    set_current_project_budget_limiter(project_budget_limiter)
+    try:
+        with pytest.raises(BudgetLimitExceededError, match='Project budget'):
+            await ai_gateway.invoke(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                api_key_name='rb-key',
+                messages=[HumanMessage(content='What is the capital of France?')],
+                route_name='rb-gateway',
+                tools=[],
+                tool_choice=None,
+                group_uuid=str(GROUP_UUID),
+                group_name='test-group',
+            )
+    finally:
+        set_current_project_budget_limiter(None)
+
+    project_budget_limiter.check_budget.assert_awaited_once()
+    assert len(pook.pending_mocks()) == 0
+
+    pook.disable_network()
+
+
+@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@pook.activate
+@pytest.mark.asyncio
+async def test_project_budget_limit_blocks_embeddings_with_no_other_limiters_configured(
+    mock_model_invoker_emit_event,
+):
+    """Regression: invoke_embeddings only calls _validate_embedding_limiters
+    when a route or credential limiter is configured — a project-only
+    budget limit must still be checked.
+    """
+    pook.enable_network()
+    gateway_config = get_gateway_openai_with_guardrails()
+    cost_service = MagicMock(spec_set=CostService)
+    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
+    guardrail_engine = GuardrailEngine(
+        presidio_engine=PresidioEngine(),
+        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
+        cost_service=cost_service,
+        guardrails=gateway_config.guardrails or [],
+    )
+
+    route_cfg, chat_models, embedding_models = resolve_route_models(
+        gateway_config, 'rb-gateway'
+    )
+
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=chat_models,
+        embedding_models=embedding_models,
+        guardrail_engine=guardrail_engine,
+        gateway_cache=None,
+        cost_service=cost_service,
+    )
+    assert ai_gateway.token_limiter is None
+    assert ai_gateway.budget_limiter is None
+
+    project_budget_limiter = MagicMock()
+    project_budget_limiter.check_budget = AsyncMock(
+        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
+    )
+    set_current_project_budget_limiter(project_budget_limiter)
+    try:
+        with pytest.raises(BudgetLimitExceededError, match='Project budget'):
+            await ai_gateway.invoke_embeddings(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                api_key_name='rb-key',
+                route_name='rb-gateway',
+                input_texts=['hello world'],
+                group_uuid=str(GROUP_UUID),
+                group_name='test-group',
+            )
+    finally:
+        set_current_project_budget_limiter(None)
+
+    project_budget_limiter.check_budget.assert_awaited_once()
+    assert len(pook.pending_mocks()) == 0
+
+    pook.disable_network()
+
+
 def _make_transcription_route_config(
     model_id: str = 'whisper-1', **budget_kwargs
 ) -> GatewayRouteConfig:

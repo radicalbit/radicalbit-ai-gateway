@@ -649,6 +649,7 @@ class GatewayRoute:
             self.token_limiter
             or self.budget_limiter
             or get_current_credential_limiter()
+            or get_current_project_budget_limiter()
         ):
             set_operation_category(OperationCategory.LIMITING)
             await self._validate_embedding_limiters(
@@ -1079,6 +1080,7 @@ class GatewayRoute:
             self.token_limiter
             or self.budget_limiter
             or get_current_credential_limiter()
+            or get_current_project_budget_limiter()
         ):
             set_operation_category(OperationCategory.LIMITING)
             await self._validate_limiters(
