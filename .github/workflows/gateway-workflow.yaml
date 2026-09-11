@@ -29,6 +29,7 @@ jobs:
     with:
       working-directory: ./gateway
       run-pytest: true
+    secrets: inherit
 
   pipeline:
     needs: test

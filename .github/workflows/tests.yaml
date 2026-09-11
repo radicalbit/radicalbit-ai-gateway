@@ -12,6 +12,9 @@ on:
         required: false
         default: false
         type: boolean
+    secrets:
+      CODECOV_TOKEN:
+        required: false
 
 env:
   PYTHON_VERSION: "3.11"
@@ -25,20 +28,48 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
       - name: Setup uv
         run: |
           curl -LsSf https://astral.sh/uv/${{ env.UV_VERSION }}/install.sh | sh
+
       - name: Run formatting validation
         run: |
           uv run ruff check
+
       - name: Run format check
         run: |
           uv run ruff format --check
+
       - name: Run tests
         if: ${{ inputs.run-pytest }}
         run: |
           uv run pytest -v
+
+      - name: Compute artifact-safe name
+        id: safe-name
+        if: ${{ inputs.run-pytest }}
+        run: |
+          SAFE_NAME=$(echo "${{ inputs.working-directory }}" | sed 's/^\.\///; s/\//-/g')
+          echo "name=$SAFE_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload coverage report (artifact)
+        if: ${{ inputs.run-pytest && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ steps.safe-name.outputs.name }}
+          path: ${{ inputs.working-directory }}/htmlcov/
+
+      - name: Upload coverage to Codecov
+        if: ${{ inputs.run-pytest && always() }}
+        uses: codecov/codecov-action@v4
+        with:
+          files: ${{ inputs.working-directory }}/coverage.xml
+          flags: ${{ steps.safe-name.outputs.name }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
