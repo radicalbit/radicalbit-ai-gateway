@@ -1,6 +1,6 @@
 import datetime
 import unittest
-from unittest.mock import MagicMock, call
+from unittest.mock import AsyncMock, MagicMock, call
 import uuid
 from uuid import UUID
 
@@ -11,6 +11,7 @@ from tests.common import db_mock
 from tests.common.mocked_gateway_config import get_plain_gateway
 
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
+from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.models.auth_dto import (
@@ -20,13 +21,20 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyFullOut,
     RouteGroupsIn,
 )
+from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitCategory
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
+from radicalbit_ai_gateway.models.group_limiting import (
+    GroupLimitOverwriteWarning,
+    GroupLimitsApplyOut,
+)
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
     GroupAlreadyExistsError,
     GroupInternalError,
+    GroupLimitAlreadyExistsError,
+    GroupLimitNotFoundError,
     GroupNotFoundError,
     GroupOperationNotAllowedError,
     RouteNotFoundError,
@@ -42,6 +50,7 @@ class GroupServiceTest(unittest.TestCase):
         cls.key_dao: KeyDAO = MagicMock(spec_set=KeyDAO)
         cls.key_service: KeyService = MagicMock()(spec_set=KeyService)
         cls.group_route_dao: GroupRouteDAO = MagicMock(spec_set=GroupRouteDAO)
+        cls.group_limit_dao: GroupLimitDAO = MagicMock(spec_set=GroupLimitDAO)
         gw_a = get_plain_gateway('route-A')
         gw_b = get_plain_gateway('route-B')
         project_config = GatewayConfig(
@@ -58,6 +67,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=cls.group_dao,
             key_service=cls.key_service,
             group_route_dao=cls.group_route_dao,
+            group_limit_dao=cls.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -66,6 +76,7 @@ class GroupServiceTest(unittest.TestCase):
             cls.group_dao,
             cls.key_service,
             cls.group_route_dao,
+            cls.group_limit_dao,
         ]
 
     def setUp(self):
@@ -181,40 +192,6 @@ class GroupServiceTest(unittest.TestCase):
             False,
         )
         self.key_service.add_group_to_key.assert_not_called()
-
-    def test_remove_key(self):
-        group = db_mock.get_sample_group()
-        key = db_mock.get_sample_key_full_out()
-        self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        self.key_service.remove_group_from_key = MagicMock(return_value=key)
-        res = self.group_service.remove_key(group.uuid, key.uuid)
-        assert self.group_dao.get_by_uuid.call_count == 2
-        self.key_service.remove_group_from_key.assert_called_once_with(
-            key_uuid=key.uuid, group_uuid=group.uuid
-        )
-        assert res == GroupFullOut.from_group(group, True, True)
-
-    def test_remove_key_missing_group(self):
-        group = db_mock.get_sample_group_plain()
-        key = db_mock.get_sample_key()
-        self.group_dao.get_by_uuid = MagicMock(return_value=None)
-        self.key_dao.get_by_uuid = MagicMock(return_value=key)
-        pytest.raises(
-            GroupNotFoundError, self.group_service.remove_key, group.uuid, key.uuid
-        )
-
-    def test_remove_key_from_keycloak_group_raises(self):
-        group = db_mock.get_sample_group_plain()
-        group.owner = 'keycloak'
-        key = db_mock.get_sample_key()
-        self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        pytest.raises(
-            GroupOperationNotAllowedError,
-            self.group_service.remove_key,
-            group.uuid,
-            key.uuid,
-        )
-        self.key_service.remove_group_from_key.assert_not_called()
 
     def test_delete_group(self):
         group = db_mock.get_sample_group_plain()
@@ -493,6 +470,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -505,6 +483,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={},
         )
         pytest.raises(
@@ -518,6 +497,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -550,6 +530,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={},
         )
         group = db_mock.get_sample_group_plain()
@@ -574,6 +555,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -595,6 +577,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={},
         )
         pytest.raises(
@@ -613,6 +596,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -636,6 +620,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -674,6 +659,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -708,6 +694,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={},
         )
         pytest.raises(
@@ -728,6 +715,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -756,6 +744,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -780,6 +769,7 @@ class GroupServiceTest(unittest.TestCase):
             group_dao=self.group_dao,
             key_service=self.key_service,
             group_route_dao=self.group_route_dao,
+            group_limit_dao=self.group_limit_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
@@ -817,3 +807,244 @@ class GroupServiceTest(unittest.TestCase):
         assert removed == 3
         args = self.group_dao.delete_orphaned_associations.call_args.args
         assert args[1] == []
+
+
+class _AsyncGroupServiceTestBase:
+    def _make_service(self):
+        group_dao = MagicMock(spec_set=GroupDAO)
+        key_service = MagicMock(spec_set=KeyService)
+        group_limit_dao = MagicMock(spec_set=GroupLimitDAO)
+        group_limit_dao.get_by_group_uuid = MagicMock(return_value=[])
+        service = GroupService(
+            group_dao=group_dao,
+            key_service=key_service,
+            group_route_dao=MagicMock(spec_set=GroupRouteDAO),
+            group_limit_dao=group_limit_dao,
+        )
+        return service, group_dao, key_service, group_limit_dao
+
+
+class TestRemoveKey(_AsyncGroupServiceTestBase):
+    @pytest.mark.asyncio
+    async def test_ok(self):
+        service, group_dao, key_service, _ = self._make_service()
+        group = db_mock.get_sample_group()
+        key = db_mock.get_sample_key_full_out()
+        group_dao.get_by_uuid = MagicMock(return_value=group)
+        key_service.remove_group_from_key = AsyncMock(return_value=key)
+        res = await service.remove_key(group.uuid, key.uuid)
+        assert group_dao.get_by_uuid.call_count == 2
+        key_service.remove_group_from_key.assert_awaited_once_with(
+            key_uuid=key.uuid, group_uuid=group.uuid
+        )
+        assert res == GroupFullOut.from_group(group, True, True)
+
+    @pytest.mark.asyncio
+    async def test_missing_group(self):
+        service, group_dao, _, _ = self._make_service()
+        group = db_mock.get_sample_group_plain()
+        key = db_mock.get_sample_key()
+        group_dao.get_by_uuid = MagicMock(return_value=None)
+        with pytest.raises(GroupNotFoundError):
+            await service.remove_key(group.uuid, key.uuid)
+
+    @pytest.mark.asyncio
+    async def test_keycloak_group_raises(self):
+        service, group_dao, key_service, _ = self._make_service()
+        group = db_mock.get_sample_group_plain()
+        group.owner = 'keycloak'
+        key = db_mock.get_sample_key()
+        group_dao.get_by_uuid = MagicMock(return_value=group)
+        with pytest.raises(GroupOperationNotAllowedError):
+            await service.remove_key(group.uuid, key.uuid)
+        key_service.remove_group_from_key.assert_not_called()
+
+
+class TestAddLimitsToGroup(_AsyncGroupServiceTestBase):
+    def test_ok(self):
+        service, group_dao, key_service, group_limit_dao = self._make_service()
+        group_uuid = uuid.uuid4()
+        group = db_mock.get_sample_group(uuid=group_uuid)
+        limit = db_mock.get_sample_group_limit(group_uuid=group_uuid)
+        limits_in = db_mock.get_sample_group_limits_in()
+        group_dao.get_by_uuid = MagicMock(return_value=group)
+        group_limit_dao.insert_many = MagicMock(return_value=[limit])
+        key_service.propagate_group_limits = MagicMock(return_value=([], []))
+
+        res = service.add_limits_to_group(group_uuid, limits_in)
+
+        group_limit_dao.insert_many.assert_called_once()
+        key_service.propagate_group_limits.assert_called_once_with(
+            group_limits=[limit], keys=group.keys
+        )
+        assert isinstance(res, GroupLimitsApplyOut)
+        assert len(res.limits) == 1
+        assert res.limits[0].uuid == limit.uuid
+        assert res.overwritten == []
+
+    def test_surfaces_overwrite_warnings_without_failing(self):
+        service, group_dao, key_service, group_limit_dao = self._make_service()
+        group_uuid = uuid.uuid4()
+        group = db_mock.get_sample_group(uuid=group_uuid)
+        limit = db_mock.get_sample_group_limit(group_uuid=group_uuid)
+        limits_in = db_mock.get_sample_group_limits_in()
+        group_dao.get_by_uuid = MagicMock(return_value=group)
+        group_limit_dao.insert_many = MagicMock(return_value=[limit])
+        warning = GroupLimitOverwriteWarning(
+            key_uuid=uuid.uuid4(),
+            key_name='already-limited',
+            category=CredentialLimitCategory.BUDGET,
+            algorithm='FIXED_WINDOW',
+            window_size='1 day',
+        )
+        key_service.propagate_group_limits = MagicMock(return_value=([], [warning]))
+
+        res = service.add_limits_to_group(group_uuid, limits_in)
+
+        assert res.overwritten == [warning]
+
+    def test_group_not_found(self):
+        service, group_dao, _, group_limit_dao = self._make_service()
+        group_dao.get_by_uuid = MagicMock(return_value=None)
+        with pytest.raises(GroupNotFoundError):
+            service.add_limits_to_group(
+                uuid.uuid4(), db_mock.get_sample_group_limits_in()
+            )
+        group_limit_dao.insert_many.assert_not_called()
+
+    def test_keycloak_group_raises(self):
+        service, group_dao, _, group_limit_dao = self._make_service()
+        group = db_mock.get_sample_group_plain()
+        group.owner = 'keycloak'
+        group_dao.get_by_uuid = MagicMock(return_value=group)
+        with pytest.raises(GroupOperationNotAllowedError):
+            service.add_limits_to_group(
+                group.uuid, db_mock.get_sample_group_limits_in()
+            )
+        group_limit_dao.insert_many.assert_not_called()
+
+    def test_duplicate_limit_raises(self):
+        """Only a concurrent-insert race can still hit the DB constraint —
+        the normal case is now handled by the update-in-place path below.
+        """
+        service, group_dao, _, group_limit_dao = self._make_service()
+        group = db_mock.get_sample_group(name='my-group')
+        group_dao.get_by_uuid = MagicMock(return_value=group)
+        group_limit_dao.insert_many = MagicMock(
+            side_effect=IntegrityError(
+                'INSERT',
+                {},
+                Exception(
+                    'duplicate key value violates unique constraint '
+                    '"uq_group_limit_GROUP_UUID_CATEGORY_ALGORITHM_WINDOW_SIZE"'
+                ),
+            )
+        )
+        with pytest.raises(GroupLimitAlreadyExistsError) as exc_info:
+            service.add_limits_to_group(
+                group.uuid, db_mock.get_sample_group_limits_in()
+            )
+        assert 'my-group' in str(exc_info.value)
+
+    def test_updates_an_existing_group_limit_in_place(self):
+        """Re-submitting the same category/algorithm/window the group
+        already has updates that limit's value instead of colliding with the
+        unique constraint, and re-propagates the new value to members.
+        """
+        service, group_dao, key_service, group_limit_dao = self._make_service()
+        group_uuid = uuid.uuid4()
+        group = db_mock.get_sample_group(uuid=group_uuid)
+        existing = db_mock.get_sample_group_limit(group_uuid=group_uuid)
+        limits_in = db_mock.get_sample_group_limits_in()
+        group_dao.get_by_uuid = MagicMock(return_value=group)
+        group_limit_dao.get_by_group_uuid = MagicMock(return_value=[existing])
+        group_limit_dao.insert_many = MagicMock()
+        group_limit_dao.update_many = MagicMock(side_effect=lambda limits: limits)
+        key_service.propagate_group_limits = MagicMock(return_value=([], []))
+
+        res = service.add_limits_to_group(group_uuid, limits_in)
+
+        group_limit_dao.insert_many.assert_not_called()
+        group_limit_dao.update_many.assert_called_once_with([existing])
+        assert existing.max_value == limits_in.limits[0].value
+        key_service.propagate_group_limits.assert_called_once_with(
+            group_limits=[existing], keys=group.keys
+        )
+        assert res.limits[0].uuid == existing.uuid
+
+
+class TestGetLimitsForGroup(_AsyncGroupServiceTestBase):
+    def test_ok(self):
+        service, group_dao, _, group_limit_dao = self._make_service()
+        group_uuid = uuid.uuid4()
+        group = db_mock.get_sample_group(uuid=group_uuid)
+        limit = db_mock.get_sample_group_limit(group_uuid=group_uuid)
+        group_dao.get_by_uuid = MagicMock(return_value=group)
+        group_limit_dao.get_by_group_uuid = MagicMock(return_value=[limit])
+        res = service.get_limits_for_group(group_uuid)
+        group_limit_dao.get_by_group_uuid.assert_called_once_with(group_uuid)
+        assert len(res) == 1
+        assert res[0].uuid == limit.uuid
+
+    def test_group_not_found(self):
+        service, group_dao, _, _ = self._make_service()
+        group_dao.get_by_uuid = MagicMock(return_value=None)
+        with pytest.raises(GroupNotFoundError):
+            service.get_limits_for_group(uuid.uuid4())
+
+
+class TestDeleteLimitFromGroup(_AsyncGroupServiceTestBase):
+    @pytest.mark.asyncio
+    async def test_ok(self):
+        service, group_dao, key_service, group_limit_dao = self._make_service()
+        group_uuid = uuid.uuid4()
+        limit_uuid = uuid.uuid4()
+        group = db_mock.get_sample_group(uuid=group_uuid)
+        limit = db_mock.get_sample_group_limit(uuid=limit_uuid, group_uuid=group_uuid)
+        group_dao.get_by_uuid = MagicMock(return_value=group)
+        group_limit_dao.get_by_uuid = MagicMock(return_value=limit)
+        key_service.clear_propagated_limit_counters = AsyncMock()
+        group_limit_dao.delete_by_uuid = MagicMock(return_value=1)
+
+        res = await service.delete_limit_from_group(group_uuid, limit_uuid)
+
+        key_service.clear_propagated_limit_counters.assert_awaited_once_with(limit_uuid)
+        group_limit_dao.delete_by_uuid.assert_called_once_with(limit_uuid)
+        assert res.uuid == limit_uuid
+
+    @pytest.mark.asyncio
+    async def test_group_not_found(self):
+        service, group_dao, _, group_limit_dao = self._make_service()
+        group_dao.get_by_uuid = MagicMock(return_value=None)
+        with pytest.raises(GroupNotFoundError):
+            await service.delete_limit_from_group(uuid.uuid4(), uuid.uuid4())
+        group_limit_dao.delete_by_uuid.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_limit_not_found(self):
+        service, group_dao, _, group_limit_dao = self._make_service()
+        group_uuid = uuid.uuid4()
+        group_dao.get_by_uuid = MagicMock(
+            return_value=db_mock.get_sample_group(uuid=group_uuid)
+        )
+        group_limit_dao.get_by_uuid = MagicMock(return_value=None)
+        with pytest.raises(GroupLimitNotFoundError):
+            await service.delete_limit_from_group(group_uuid, uuid.uuid4())
+        group_limit_dao.delete_by_uuid.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_limit_belongs_to_a_different_group(self):
+        service, group_dao, _, group_limit_dao = self._make_service()
+        group_uuid = uuid.uuid4()
+        limit_uuid = uuid.uuid4()
+        group_dao.get_by_uuid = MagicMock(
+            return_value=db_mock.get_sample_group(uuid=group_uuid)
+        )
+        group_limit_dao.get_by_uuid = MagicMock(
+            return_value=db_mock.get_sample_group_limit(
+                uuid=limit_uuid, group_uuid=uuid.uuid4()
+            )
+        )
+        with pytest.raises(GroupLimitNotFoundError):
+            await service.delete_limit_from_group(group_uuid, limit_uuid)
+        group_limit_dao.delete_by_uuid.assert_not_called()

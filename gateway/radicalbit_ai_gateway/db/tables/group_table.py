@@ -37,3 +37,10 @@ class Group(Reflected, BaseTable, BaseDAO):
         passive_deletes=True,
         lazy='selectin',
     )
+    limits = relationship(
+        'GroupLimit',
+        back_populates='group',
+        cascade='all, delete-orphan',
+        passive_deletes=True,
+        lazy='selectin',
+    )

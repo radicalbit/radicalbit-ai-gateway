@@ -31,6 +31,7 @@ from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
+from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
@@ -192,6 +193,7 @@ key_dao = KeyDAO(database)
 key_limit_dao = KeyLimitDAO(database)
 group_dao = GroupDAO(database)
 group_route_dao = GroupRouteDAO(database)
+group_limit_dao = GroupLimitDAO(database)
 project_dao = ProjectDAO(database)
 project_config_dao = ProjectConfigDAO(database)
 project_budget_limit_dao = ProjectBudgetLimitDAO(database)
@@ -206,11 +208,13 @@ key_service = KeyService(
     api_key_security=api_key_security,
     group_dao=group_dao,
     key_limit_dao=key_limit_dao,
+    group_limit_dao=group_limit_dao,
 )
 group_service = GroupService(
     group_dao=group_dao,
     group_route_dao=group_route_dao,
     key_service=key_service,
+    group_limit_dao=group_limit_dao,
     project_configs=project_configs,
 )
 project_service = ProjectService(
