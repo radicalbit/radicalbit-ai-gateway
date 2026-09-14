@@ -248,19 +248,23 @@ class KeyService:
                 )
                 existing = existing_by_signature.get(signature)
                 if existing is not None:
+                    was_from_a_different_source = (
+                        existing.group_limit_uuid != group_limit.uuid
+                    )
                     existing.max_value = group_limit.max_value
                     existing.group_limit_uuid = group_limit.uuid
                     existing.updated_at = now
                     to_update.append(existing)
-                    overwritten.append(
-                        GroupLimitOverwriteWarning(
-                            key_uuid=key.uuid,
-                            key_name=key.name,
-                            category=CredentialLimitCategory(group_limit.category),
-                            algorithm=LimitingAlgorithmType(group_limit.algorithm),
-                            window_size=group_limit.window_size,
+                    if was_from_a_different_source:
+                        overwritten.append(
+                            GroupLimitOverwriteWarning(
+                                key_uuid=key.uuid,
+                                key_name=key.name,
+                                category=CredentialLimitCategory(group_limit.category),
+                                algorithm=LimitingAlgorithmType(group_limit.algorithm),
+                                window_size=group_limit.window_size,
+                            )
                         )
-                    )
                 else:
                     to_insert.append(
                         KeyLimit(
@@ -358,47 +362,27 @@ class KeyService:
             raise KeyOperationNotAllowedError(
                 f'Key {key_uuid} cannot have limits configured because owner is "{key.owner}"'
             )
-        existing_by_signature = {
-            (limit.category, limit.algorithm, limit.window_size): limit
+        existing_signatures = {
+            (limit.category, limit.algorithm, limit.window_size)
             for limit in self.key_limit_dao.get_by_key_uuid(key_uuid)
         }
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
-        to_insert: list[KeyLimit] = []
-        to_update: list[KeyLimit] = []
         for limit_in in limits_in.limits:
             signature = (
                 limit_in.category.value,
                 limit_in.algorithm.value,
                 str(limit_in.window_size),
             )
-            existing = existing_by_signature.get(signature)
-            if existing is None:
-                to_insert.append(limit_in.to_key_limit(key_uuid))
-            elif existing.group_limit_uuid is not None:
-                # The last limit applied to a credential always wins: this
-                # individual limit overwrites the one inherited from a group.
-                logger.info(
-                    'Individual limit overwrote a group-derived limit on key '
-                    '%s (%s/%s/%s)',
-                    key_uuid,
-                    *signature,
-                )
-                existing.max_value = limit_in.value
-                existing.group_limit_uuid = None
-                existing.updated_at = now
-                to_update.append(existing)
-            else:
+            if signature in existing_signatures:
+                # No overwrite here, regardless of whether the existing limit
+                # is individually-set or inherited from a group: delete it
+                # first, then add the new one, if you want to replace it.
                 raise CredentialLimitAlreadyExistsError(
                     f'A limit for {limit_in.category.value} with algorithm '
                     f'{limit_in.algorithm.value} and window {limit_in.window_size} '
                     f'already exists on credential "{key.name}"'
                 )
         try:
-            if to_insert:
-                self.key_limit_dao.insert_many(to_insert)
-            if to_update:
-                self.key_limit_dao.update_many(to_update)
+            self.key_limit_dao.insert_many(limits_in.to_key_limits(key_uuid))
         except IntegrityError as e:
             if 'uq_key_limit_KEY_UUID_CATEGORY_ALGORITHM_WINDOW_SIZE' in str(e.orig):
                 raise CredentialLimitAlreadyExistsError(

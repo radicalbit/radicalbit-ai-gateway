@@ -425,9 +425,6 @@ class KeyServiceTest(unittest.TestCase):
         self.key_limit_dao.insert_many.assert_not_called()
 
     def test_add_limits_to_key_duplicate_individual_limit_raises(self):
-        """A duplicate of an existing *individually-set* limit is still
-        rejected — only a group-derived one gets overwritten.
-        """
         key_uuid = uuid.uuid4()
         key = db_mock.get_sample_key(uuid=key_uuid, name='my-credential')
         existing = db_mock.get_sample_key_limit(key_uuid=key_uuid)
@@ -444,24 +441,24 @@ class KeyServiceTest(unittest.TestCase):
         assert str(key_uuid) not in str(exc_info.value)
         self.key_limit_dao.insert_many.assert_not_called()
 
-    def test_add_limits_to_key_overwrites_a_group_derived_limit(self):
+    def test_add_limits_to_key_duplicate_of_group_derived_limit_also_raises(self):
+        """No silent overwrite here regardless of the existing limit's
+        origin: delete it first, then add the new one, to replace it.
+        """
         key_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid)
+        key = db_mock.get_sample_key(uuid=key_uuid, name='my-credential')
         existing = db_mock.get_sample_key_limit(
             key_uuid=key_uuid, group_limit_uuid=uuid.uuid4()
         )
-        limits_in = db_mock.get_sample_credential_limits_in()
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
         self.key_limit_dao.get_by_key_uuid = MagicMock(return_value=[existing])
         self.key_limit_dao.insert_many = MagicMock()
-        self.key_limit_dao.update_many = MagicMock(side_effect=lambda limits: limits)
-
-        self.key_service.add_limits_to_key(key_uuid, limits_in)
-
+        with pytest.raises(CredentialLimitAlreadyExistsError):
+            self.key_service.add_limits_to_key(
+                key_uuid, db_mock.get_sample_credential_limits_in()
+            )
         self.key_limit_dao.insert_many.assert_not_called()
-        self.key_limit_dao.update_many.assert_called_once_with([existing])
-        assert existing.group_limit_uuid is None
-        assert existing.max_value == limits_in.limits[0].value
+        assert existing.group_limit_uuid is not None
 
     def test_get_limits_for_key_ok(self):
         key_uuid = uuid.uuid4()
@@ -677,6 +674,39 @@ class TestPropagateGroupLimits:
             group_limits=[group_limit], keys=[key]
         )
 
+        assert len(applied) == 1
+        assert overwritten == []
+
+    def test_refreshing_an_already_propagated_limit_is_not_reported_as_overwritten(
+        self,
+    ):
+        """Re-applying (e.g. updating the value of) a group limit that a key
+        already has from this SAME group limit is a refresh, not an
+        overwrite of something foreign — it shouldn't show up as a warning.
+        """
+        service, key_limit_dao = self._make_service()
+        key_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(uuid=key_uuid)
+        group_limit = db_mock.get_sample_group_limit(
+            category=CredentialLimitCategory.BUDGET.value,
+            window_size='1 day',
+            max_value=99.0,
+        )
+        existing = db_mock.get_sample_key_limit(
+            key_uuid=key_uuid,
+            category=CredentialLimitCategory.BUDGET.value,
+            window_size='1 day',
+            group_limit_uuid=group_limit.uuid,
+        )
+        key_limit_dao.get_all_by_key_uuids = MagicMock(return_value=[existing])
+        key_limit_dao.update_many = MagicMock(side_effect=lambda limits: limits)
+
+        applied, overwritten = service.propagate_group_limits(
+            group_limits=[group_limit], keys=[key]
+        )
+
+        key_limit_dao.update_many.assert_called_once_with([existing])
+        assert existing.max_value == 99.0
         assert len(applied) == 1
         assert overwritten == []
 
