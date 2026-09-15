@@ -64,7 +64,7 @@ function ErrorAlert({ error }) {
     return false;
   }
 
-  return <Alert message={error} type="error" />;
+  return <Alert title={error} type="error" />;
 }
 
 function Actions({ config, isGenerated, setIsGenerated, setDescription }) {

@@ -65,7 +65,7 @@ function Body() {
 
   if (isExternallyManaged) {
     return (
-      <Alert message={DISABLED_GROUP_TOOLTIP} type="warning" />
+      <Alert title={DISABLED_GROUP_TOOLTIP} type="warning" />
     );
   }
 

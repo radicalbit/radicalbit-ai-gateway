@@ -1,18 +1,19 @@
 import classNames from 'classnames';
+import { forwardRef } from 'react';
 import './_styles.less';
 
 const SIZE_CLASSNAMES = {
   md: 'w-5 h-5',
 };
 
-function Lucide({
+const Lucide = forwardRef(({
   icon: Icon,
   size = 'md',
   className = '',
   disabled,
   type = 'default',
   ...rest
-}) {
+}, ref) => {
   const css = classNames(
     {
       [`c-lucide--type-${type}`]: type,
@@ -25,9 +26,12 @@ function Lucide({
   return (
     <Icon
       className={`inline-block align-middle ${sizeClassName} ${className} ${css}`}
+      ref={ref}
       {...rest}
     />
   );
-}
+});
+
+Lucide.displayName = 'Lucide';
 
 export default Lucide;

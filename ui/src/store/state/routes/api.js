@@ -1,5 +1,6 @@
 import { API_BASE_URL } from '@Api/config';
 import { API_TAGS, apiService } from '@Src/store/apis';
+import eventSourceWithBackoff from '@State/event-source-with-backoff';
 import timeFiltersQueryParamFactory from '@State/time-filter-query-params-factory';
 
 export const routesApiSlice = apiService.injectEndpoints({
@@ -114,17 +115,13 @@ export const routesApiSlice = apiService.injectEndpoints({
 
           const params = (() => (gte ? `_gte=${gte}` : timeFiltersQueryParamFactory({ from, to, gte }).toString()))();
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/most-requested/stream?${params}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }
@@ -143,17 +140,13 @@ export const routesApiSlice = apiService.injectEndpoints({
 
           const params = (() => (gte ? `_gte=${gte}` : timeFiltersQueryParamFactory({ from, to, gte }).toString()))();
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/most-requested-error/stream?${params}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }
@@ -172,17 +165,13 @@ export const routesApiSlice = apiService.injectEndpoints({
 
           const params = (() => (gte ? `_gte=${gte}` : timeFiltersQueryParamFactory({ from, to, gte }).toString()))();
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/most-expensive/stream?${params}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }

@@ -1,5 +1,6 @@
 import { API_BASE_URL } from '@Api/config';
 import { apiService } from '@Src/store/apis';
+import eventSourceWithBackoff from '@State/event-source-with-backoff';
 import { appendTagsToParams } from '@State/tags-query-params-factory';
 import timeFiltersQueryParamFactory from '@State/time-filter-query-params-factory';
 
@@ -32,17 +33,13 @@ export const usageApiSlice = apiService.injectEndpoints({
           appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/summary/stream?${params.toString()}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }
@@ -71,17 +68,13 @@ export const usageApiSlice = apiService.injectEndpoints({
           }
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/limits/stream?${params.toString()}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }
@@ -111,17 +104,13 @@ export const usageApiSlice = apiService.injectEndpoints({
           appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/tokens/stream?${params.toString()}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }
@@ -151,17 +140,13 @@ export const usageApiSlice = apiService.injectEndpoints({
           appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/invocations/stream?${params.toString()}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }
@@ -191,23 +176,18 @@ export const usageApiSlice = apiService.injectEndpoints({
           appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/stream?${params.toString()}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => ({ loading: false, error: false, chart: parsed }));
-          };
-
-          eventSource.onerror = (e) => {
-            console.error(e);
-
-            if (eventSource.readyState === EventSource.CLOSED) {
-              updateCachedData((draft) => { draft.loading = false; draft.error = true; });
-            }
-          };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => ({ loading: false, error: false, chart: parsed })); },
+            onStreamError: ({ isGivingUp }) => {
+              if (isGivingUp) {
+                updateCachedData((draft) => { draft.loading = false; draft.error = true; });
+              }
+            },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
           updateCachedData((draft) => { draft.loading = false; draft.error = true; });
@@ -236,17 +216,13 @@ export const usageApiSlice = apiService.injectEndpoints({
           appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/model/${encodeURIComponent(modelId)}/stream?${params.toString()}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }
@@ -274,17 +250,13 @@ export const usageApiSlice = apiService.injectEndpoints({
           appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/group/${encodeURIComponent(groupUuid)}/stream?${params.toString()}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }
@@ -312,17 +284,13 @@ export const usageApiSlice = apiService.injectEndpoints({
           appendTagsToParams(params, tags);
 
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/key/${encodeURIComponent(keyUuid)}/stream?${params.toString()}`;
-          const eventSource = new EventSource(url, { withCredentials: true });
-
-          eventSource.onmessage = ({ data }) => {
-            const parsed = JSON.parse(data);
-            updateCachedData(() => parsed);
-          };
-
-          eventSource.onerror = (e) => { console.error(e); };
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => { updateCachedData(() => parsed); },
+          });
 
           await cacheEntryRemoved;
-          eventSource.close();
+          subscription.close();
         } catch (error) {
           console.error(error);
         }
