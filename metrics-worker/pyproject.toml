@@ -16,6 +16,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ruff>=0.15.1",
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
 ]
 
 [tool.uv]
@@ -26,6 +28,15 @@ constraint-dependencies = [
     "requests>=2.33.0",
     "urllib3>=2.7.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = "."
+testpaths = ["tests"]
+addopts = "--cov=worker --cov-report=term-missing --cov-report=xml --cov-report=html"
+
+[tool.coverage.run]
+source = ["worker"]
+omit = ["*/tests/*"]
 
 [tool.ruff]
 exclude = [".venv"]
