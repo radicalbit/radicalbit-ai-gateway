@@ -58,7 +58,7 @@ services:
       SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
       SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-alerts@radicalbit.ai}"
       # AI Config Generator
-      CONFIG_GENERATOR_OPENAI_API_KEY: "sk-123"
+      CONFIG_GENERATOR_OPENAI_API_KEY: "${CONFIG_GENERATOR_OPENAI_API_KEY:-sk1234}" 
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9000/health"]
       interval: 5s
