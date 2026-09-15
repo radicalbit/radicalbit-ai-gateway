@@ -23,6 +23,7 @@ from radicalbit_ai_gateway.services.mcp_service import (
     split_alias_name,
     strip_uri_credentials,
 )
+from radicalbit_ai_gateway.utils.request_context import set_current_request_tags
 
 GITHUB = McpHttpServer(alias='github', url='https://github.example.com/mcp/')
 JIRA = McpHttpServer(alias='jira', url='https://jira.example.com/mcp/')
@@ -58,6 +59,25 @@ def _request(method: str, request_id=1, params=None) -> dict:
     if params is not None:
         body['params'] = params
     return body
+
+
+def _authorized(servers=None) -> McpAuthorizedRequest:
+    """Build the authorization result an endpoint hands to dispatch."""
+    return McpAuthorizedRequest(
+        request_uuid='request-uuid',
+        project_name='my-project',
+        project_uuid='project-uuid',
+        route_name='my-route',
+        route_key='my-project/my-route',
+        key_details=KeyDetails(
+            api_key_uuid='key-uuid',
+            api_key_name='my-key',
+            group_uuid='group-uuid',
+            group_name='team-a',
+            hashed_api_key='hashed',
+        ),
+        servers=SERVERS if servers is None else servers,
+    )
 
 
 RESOURCE_A = 'https://github.example.com/a'
@@ -1332,21 +1352,7 @@ def _list_cache(servers=SERVERS) -> McpListCache:
     cache = McpListCache.for_route(
         gateway_cache=GatewayCache(CacheToolsInMemory()),
         ttl=None,
-        authorized=McpAuthorizedRequest(
-            request_uuid='request-uuid',
-            project_name='my-project',
-            project_uuid='project-uuid',
-            route_name='my-route',
-            route_key='my-project/my-route',
-            key_details=KeyDetails(
-                api_key_uuid='key-uuid',
-                api_key_name='my-key',
-                group_uuid='group-uuid',
-                group_name='team-a',
-                hashed_api_key='hashed',
-            ),
-            servers=servers,
-        ),
+        authorized=_authorized(servers),
     )
     assert cache is not None, 'expected these servers to be cacheable'
     return cache
@@ -1515,3 +1521,207 @@ async def test_a_degraded_fanout_emits_no_hit_because_it_was_never_cached(
     await service._dispatch(_request('tools/list'), SERVERS, None, cache)
 
     emitted_cache_hits.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# MCP invocation events
+# ---------------------------------------------------------------------------
+
+EVENTS_PROCESSOR = 'radicalbit_ai_gateway.events.events_processor'
+
+
+@pytest.fixture(autouse=True)
+def recorded_events():
+    """Capture the event dicts dispatch records, not the Celery buffer.
+
+    Autouse so no unit test reaches the real buffer. The dict is what the
+    worker inserts, so asserting on it covers both the payload dispatch builds
+    and the column it maps to, in one place.
+    """
+    with patch(f'{EVENTS_PROCESSOR}._events_buffer') as buffer:
+        yield buffer.add
+
+
+def _mcp_events(recorded) -> list[dict]:
+    return [
+        call.args[0]
+        for call in recorded.call_args_list
+        if call.args[0]['EVENT_TYPE'] is EventType.MCP_INVOCATION
+    ]
+
+
+def _invoking_client() -> MagicMock:
+    """Build an upstream that answers all three addressed methods."""
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
+    client.get_prompt = AsyncMock(return_value=types.GetPromptResult(messages=[]))
+    client.read_resource = AsyncMock(return_value=types.ReadResourceResult(contents=[]))
+    return client
+
+
+ADDRESSED = [
+    ('tools/call', {'name': 'github__get_issue'}),
+    ('prompts/get', {'name': 'github__summarize'}),
+    ('resources/read', {'uri': encode_resource_uri('github', RESOURCE_A)}),
+]
+
+
+@pytest.mark.parametrize(('method', 'params'), ADDRESSED)
+async def test_an_addressed_invocation_is_recorded(recorded_events, method, params):
+    await _service(_invoking_client())._dispatch(
+        _request(method, params=params), SERVERS, None, authorized=_authorized()
+    )
+
+    (event,) = _mcp_events(recorded_events)
+    assert event['MCP_METHOD'] == method
+    assert event['MCP_ALIAS'] == 'github'
+    # one per event, so a count and a sum of values agree
+    assert event['VALUE'] == 1.0
+
+
+@pytest.mark.parametrize(
+    'method',
+    ['initialize', 'ping', 'tools/list', 'prompts/list', 'resources/list'],
+)
+async def test_handshake_and_list_methods_record_nothing(recorded_events, method):
+    await _service(_list_client())._dispatch(
+        _request(method), SERVERS, None, authorized=_authorized()
+    )
+    assert _mcp_events(recorded_events) == []
+
+
+async def test_a_notification_records_nothing(recorded_events):
+    result = await _service()._dispatch(
+        {'jsonrpc': '2.0', 'method': 'notifications/initialized'},
+        SERVERS,
+        None,
+        authorized=_authorized(),
+    )
+    assert result.status_code == 202
+    assert _mcp_events(recorded_events) == []
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        'not a dict',
+        {'id': 1, 'method': 'tools/call'},  # missing jsonrpc
+        {'jsonrpc': '2.0', 'id': 1},  # missing method
+    ],
+)
+async def test_a_malformed_envelope_records_nothing(recorded_events, body):
+    await _service()._dispatch(body, SERVERS, None, authorized=_authorized())
+    assert _mcp_events(recorded_events) == []
+
+
+async def test_a_failed_call_is_still_recorded(recorded_events):
+    """An operator needs to see a key that keeps failing, not lose it."""
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.call_tool = AsyncMock(side_effect=McpUpstreamError('github', 'timed out'))
+
+    result = await _service(client)._dispatch(
+        _request('tools/call', params={'name': 'github__get_issue'}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
+    )
+
+    assert result.payload['error']['code'] == -32000
+    (event,) = _mcp_events(recorded_events)
+    assert event['MCP_METHOD'] == 'tools/call'
+    assert event['MCP_ALIAS'] == 'github'
+
+
+async def test_a_call_denied_by_an_allowlist_is_still_recorded(recorded_events):
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.call_tool = AsyncMock()
+    servers = [_server(allowed_tools=['other'])]
+
+    result = await _service(client)._dispatch(
+        _request('tools/call', params={'name': 'github__get_issue'}),
+        servers,
+        None,
+        authorized=_authorized(servers),
+    )
+
+    assert result.payload['error']['code'] == -32602
+    client.call_tool.assert_not_awaited()
+    (event,) = _mcp_events(recorded_events)
+    assert event['MCP_ALIAS'] == 'github'
+
+
+async def test_a_call_naming_an_unconfigured_server_is_recorded_without_an_alias(
+    recorded_events,
+):
+    """Misdirected traffic stays visible, and the totals stay comparable."""
+    await _service()._dispatch(
+        _request('tools/call', params={'name': 'confluence__x'}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
+    )
+
+    (event,) = _mcp_events(recorded_events)
+    assert event['MCP_METHOD'] == 'tools/call'
+    assert event['MCP_ALIAS'] == ''
+
+
+async def test_an_invocation_carries_the_request_envelope(recorded_events):
+    set_current_request_tags(('env=prod', 'team=retail'))
+    try:
+        await _service(_invoking_client())._dispatch(
+            _request('tools/call', params={'name': 'github__get_issue'}),
+            SERVERS,
+            None,
+            authorized=_authorized(),
+        )
+    finally:
+        set_current_request_tags(())
+
+    (event,) = _mcp_events(recorded_events)
+    assert event['REQUEST_UUID'] == 'request-uuid'
+    assert event['ROUTE_NAME'] == 'my-route'
+    assert event['API_KEY_UUID'] == 'key-uuid'
+    assert event['API_KEY_NAME'] == 'my-key'
+    assert event['GROUP_UUID'] == 'group-uuid'
+    assert event['GROUP_NAME'] == 'team-a'
+    assert event['PROJECT_UUID'] == 'project-uuid'
+    assert event['PROJECT_NAME'] == 'my-project'
+    assert event['TAGS'] == ['env=prod', 'team=retail']
+
+
+async def test_recording_never_fails_the_call():
+    """Observability must not be able to take the proxy down."""
+    client = _invoking_client()
+    with patch(f'{MCP_SERVICE}.emit_event', side_effect=RuntimeError('broker down')):
+        result = await _service(client)._dispatch(
+            _request('tools/call', params={'name': 'github__get_issue'}),
+            SERVERS,
+            None,
+            authorized=_authorized(),
+        )
+
+    assert result.status_code == 200
+    assert 'result' in result.payload
+    client.call_tool.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        # params that are not an object: nothing was addressed
+        {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': 5},
+        # an id the protocol does not allow: rejected like a bad envelope
+        {'jsonrpc': '2.0', 'id': 1.5, 'method': 'tools/call'},
+    ],
+)
+async def test_a_call_rejected_before_it_addressed_anything_records_nothing(
+    recorded_events, body
+):
+    """The line is "a well-formed addressed call", not "any tools/call".
+
+    Both of these are rejected before a target can be resolved, so counting
+    them would mean counting requests that never named a server.
+    """
+    await _service()._dispatch(body, SERVERS, None, authorized=_authorized())
+    assert _mcp_events(recorded_events) == []

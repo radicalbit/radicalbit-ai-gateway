@@ -76,6 +76,18 @@ class RoutingEventPayload(EventBase):
     selected_model_id: str
 
 
+class McpInvocationEventPayload(EventBase):
+    """One addressed MCP invocation: a tool call, prompt fetch or resource read.
+
+    ``mcp_alias`` is the MCP server the call addressed. It is empty when the
+    client named a server the route does not configure.
+    """
+
+    event_type: Literal[EventType.MCP_INVOCATION]
+    mcp_method: str
+    mcp_alias: str = ''
+
+
 class LimitEventPayload(EventBase):
     event_type: Literal[
         EventType.RATE_LIMIT,
@@ -129,6 +141,7 @@ EventPayload = Annotated[
         GuardrailEventPayload,
         RoutingEventPayload,
         LimitEventPayload,
+        McpInvocationEventPayload,
     ],
     Field(discriminator='event_type'),
 ]

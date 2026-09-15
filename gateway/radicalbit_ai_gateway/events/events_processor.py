@@ -115,6 +115,8 @@ def _create_event_dict(
     guardrail_behavior = extra_attributes.get('behavior', '')
     routing_name = extra_attributes.get('routing_name', '')
     routing_selected_model_id = extra_attributes.get('selected_model_id', '')
+    mcp_method = extra_attributes.get('mcp_method', '')
+    mcp_alias = extra_attributes.get('mcp_alias', '')
 
     # Convert to strings for ClickHouse Map(LowCardinality(String), String)
     extra_attributes_string = {
@@ -148,6 +150,8 @@ def _create_event_dict(
         'IS_JUDGE': is_judge,
         'ROUTING_NAME': routing_name,
         'ROUTING_SELECTED_MODEL_ID': routing_selected_model_id,
+        'MCP_METHOD': mcp_method,
+        'MCP_ALIAS': mcp_alias,
         'ATTRIBUTES': extra_attributes_string,
         'TAGS': tags,
     }
