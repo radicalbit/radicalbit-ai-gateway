@@ -44,6 +44,8 @@ COLUMN_NAMES = [
     'ROUTING_NAME',
     'ROUTING_SELECTED_MODEL_ID',
     'TAGS',
+    'MCP_METHOD',
+    'MCP_ALIAS',
 ]
 
 
@@ -187,6 +189,8 @@ def insert_event_record_connect_async(event_payload):
             event_data.get('ROUTING_NAME', ''),
             event_data.get('ROUTING_SELECTED_MODEL_ID', ''),
             event_data.get('TAGS', []),
+            event_data.get('MCP_METHOD', ''),
+            event_data.get('MCP_ALIAS', ''),
         ]
 
         buffer.append(data_row)
