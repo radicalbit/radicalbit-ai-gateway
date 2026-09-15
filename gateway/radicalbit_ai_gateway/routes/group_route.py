@@ -11,6 +11,11 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyFullOut,
     KeysUuidIn,
 )
+from radicalbit_ai_gateway.models.group_limiting import (
+    GroupLimitOut,
+    GroupLimitsApplyOut,
+    GroupLimitsIn,
+)
 from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.project_service import ProjectService
@@ -135,8 +140,8 @@ class GroupRoute:
         @route_meta(
             entity_type='GROUP', entity_uuid_param='group_uuid', action='REVOKE'
         )
-        def remove_key(group_uuid: UUID, key_uuid: UUID):
-            return group_service.remove_key(group_uuid, key_uuid)
+        async def remove_key(group_uuid: UUID, key_uuid: UUID):
+            return await group_service.remove_key(group_uuid, key_uuid)
 
         @router.get(
             '/groups/{group_uuid}/associable-keys',
@@ -145,6 +150,40 @@ class GroupRoute:
         )
         def get_associable_keys(group_uuid: UUID):
             return group_service.get_associable_keys(group_uuid)
+
+        @router.post(
+            '/groups/{group_uuid}/limits',
+            status_code=201,
+            response_model=GroupLimitsApplyOut,
+        )
+        @route_meta(
+            entity_type='GROUP', entity_uuid_param='group_uuid', action='ADD_LIMIT'
+        )
+        def add_limits_to_group(group_uuid: UUID, limits_in: GroupLimitsIn):
+            result = group_service.add_limits_to_group(group_uuid, limits_in)
+            logger.info(
+                'Added %s limit(s) to group %s', len(limits_in.limits), group_uuid
+            )
+            return result
+
+        @router.get(
+            '/groups/{group_uuid}/limits',
+            status_code=200,
+            response_model=list[GroupLimitOut],
+        )
+        def get_limits_for_group(group_uuid: UUID):
+            return group_service.get_limits_for_group(group_uuid)
+
+        @router.delete(
+            '/groups/{group_uuid}/limits/{limit_uuid}',
+            status_code=200,
+            response_model=GroupLimitOut,
+        )
+        @route_meta(entity_type='GROUP', entity_uuid_param='group_uuid')
+        async def delete_limit_from_group(group_uuid: UUID, limit_uuid: UUID):
+            limit = await group_service.delete_limit_from_group(group_uuid, limit_uuid)
+            logger.info('Deleted limit %s from group %s', limit_uuid, group_uuid)
+            return limit
 
         @router.get(
             '/groups/{group_uuid}/projects/{project_uuid}/associable-routes',

@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from radicalbit_ai_gateway.db.models.event import EventDetails
 from radicalbit_ai_gateway.db.tables.event_table import Event
+from radicalbit_ai_gateway.db.tables.group_limit_table import GroupLimit
 from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 from radicalbit_ai_gateway.db.tables.group_table import Group
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
@@ -36,6 +37,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitIn,
     CredentialLimitsIn,
 )
+from radicalbit_ai_gateway.models.group_limiting import GroupLimitIn, GroupLimitsIn
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitIn,
     ProjectBudgetLimitOut,
@@ -117,6 +119,7 @@ def get_sample_key_limit(
     algorithm: str = 'FIXED_WINDOW',
     window_size: str = '1 day',
     max_value: float = 10.0,
+    group_limit_uuid: uuid.UUID | None = None,
 ) -> KeyLimit:
     now = datetime.datetime.now(tz=UTC)
     return KeyLimit(
@@ -128,6 +131,11 @@ def get_sample_key_limit(
         max_value=max_value,
         created_at=now,
         updated_at=now,
+        # Set only the FK scalar, not the `group_limit` relationship itself:
+        # touching a many-to-one relationship attribute makes SQLAlchemy
+        # resync the FK column from it at flush time, silently clobbering an
+        # explicitly-passed group_limit_uuid back to NULL.
+        group_limit_uuid=group_limit_uuid,
     )
 
 
@@ -210,6 +218,7 @@ def get_sample_group(
     name: str = 'group',
     group_routes: list[GroupRoute] = [],
     keys: list[Key] = [],
+    limits: list[GroupLimit] = [],
 ) -> Group:
     now = datetime.datetime.now(tz=UTC)
     return Group(
@@ -221,7 +230,49 @@ def get_sample_group(
         group_metadata=None,
         group_routes=group_routes,
         keys=keys,
+        limits=limits,
     )
+
+
+def get_sample_group_limit(
+    uuid: uuid.UUID = RANDOM_UUID,
+    group_uuid: uuid.UUID = RANDOM_UUID,
+    category: str = CredentialLimitCategory.BUDGET.value,
+    algorithm: str = 'FIXED_WINDOW',
+    window_size: str = '1 day',
+    max_value: float = 10.0,
+) -> GroupLimit:
+    now = datetime.datetime.now(tz=UTC)
+    return GroupLimit(
+        uuid=uuid,
+        group_uuid=group_uuid,
+        category=category,
+        algorithm=algorithm,
+        window_size=window_size,
+        max_value=max_value,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def get_sample_group_limit_in(
+    category: CredentialLimitCategory = CredentialLimitCategory.BUDGET,
+    algorithm: str = 'FIXED_WINDOW',
+    window_size: str = '1 day',
+    value: float = 10.0,
+) -> GroupLimitIn:
+    return GroupLimitIn(
+        category=category,
+        algorithm=algorithm,
+        window_size=window_size,
+        value=value,
+    )
+
+
+def get_sample_group_limits_in(
+    limits: list[GroupLimitIn] | None = None,
+) -> GroupLimitsIn:
+    return GroupLimitsIn(limits=limits or [get_sample_group_limit_in()])
 
 
 def get_sample_group_route_plain(

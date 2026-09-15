@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import uuid
 
 from fastapi import FastAPI
@@ -13,6 +13,11 @@ from radicalbit_ai_gateway.models.auth_dto import (
     GroupRouteOut,
     KeyFullOut,
 )
+from radicalbit_ai_gateway.models.group_limiting import (
+    GroupLimitOut,
+    GroupLimitOverwriteWarning,
+    GroupLimitsApplyOut,
+)
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.project_service import ProjectService
@@ -20,6 +25,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     AuthRegistryError,
     ErrorOut,
     GroupInternalError,
+    GroupLimitNotFoundError,
     GroupNotFoundError,
     KeyNotFoundError,
     ProjectNotFoundError,
@@ -167,18 +173,18 @@ class TestGroupRoute(unittest.TestCase):
         key = db_mock.get_sample_key()
         group = db_mock.get_sample_group(keys=[key])
         group_out = GroupFullOut.from_group(group, False, True)
-        self.group_service.remove_key = MagicMock(return_value=group_out)
+        self.group_service.remove_key = AsyncMock(return_value=group_out)
         res = self.client.delete(
             f'{self.prefix}/groups/{group.uuid}/keys/{key.uuid}',
         )
         assert res.status_code == 200
         assert jsonable_encoder(group_out) == res.json()
-        self.group_service.remove_key.assert_called_once_with(group.uuid, key.uuid)
+        self.group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
 
     def test_remove_key_ko(self):
         group = db_mock.get_sample_group()
         key = db_mock.get_sample_key()
-        self.group_service.remove_key = MagicMock(
+        self.group_service.remove_key = AsyncMock(
             side_effect=GroupInternalError('error')
         )
         res = self.client.delete(
@@ -191,12 +197,12 @@ class TestGroupRoute(unittest.TestCase):
                 'error', 'auth_registry_error', code='group_internal_error', param=None
             ).error
         )
-        self.group_service.remove_key.assert_called_once_with(group.uuid, key.uuid)
+        self.group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
 
     def test_remove_missing_key(self):
         group = db_mock.get_sample_group()
         key = db_mock.get_sample_key()
-        self.group_service.remove_key = MagicMock(side_effect=KeyNotFoundError('error'))
+        self.group_service.remove_key = AsyncMock(side_effect=KeyNotFoundError('error'))
         res = self.client.delete(
             f'{self.prefix}/groups/{group.uuid}/keys/{key.uuid}',
         )
@@ -207,12 +213,12 @@ class TestGroupRoute(unittest.TestCase):
                 'error', 'auth_registry_error', code='key_not_found', param=None
             ).error
         )
-        self.group_service.remove_key.assert_called_once_with(group.uuid, key.uuid)
+        self.group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
 
     def test_remove_key_missing_group(self):
         group = db_mock.get_sample_group()
         key = db_mock.get_sample_key()
-        self.group_service.remove_key = MagicMock(
+        self.group_service.remove_key = AsyncMock(
             side_effect=GroupNotFoundError('error')
         )
         res = self.client.delete(
@@ -225,7 +231,93 @@ class TestGroupRoute(unittest.TestCase):
                 'error', 'auth_registry_error', code='group_not_found', param=None
             ).error
         )
-        self.group_service.remove_key.assert_called_once_with(group.uuid, key.uuid)
+        self.group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
+
+    def test_add_limits_to_group(self):
+        group = db_mock.get_sample_group()
+        limit = db_mock.get_sample_group_limit(group_uuid=group.uuid)
+        limits_in = db_mock.get_sample_group_limits_in()
+        result = GroupLimitsApplyOut(
+            limits=[GroupLimitOut.from_group_limit(limit)], overwritten=[]
+        )
+        self.group_service.add_limits_to_group = MagicMock(return_value=result)
+        res = self.client.post(
+            f'{self.prefix}/groups/{group.uuid}/limits',
+            json=jsonable_encoder(limits_in),
+        )
+        assert res.status_code == 201
+        assert res.json() == jsonable_encoder(result)
+        self.group_service.add_limits_to_group.assert_called_once_with(
+            group.uuid, limits_in
+        )
+
+    def test_add_limits_to_group_with_overwrite_warning(self):
+        group = db_mock.get_sample_group()
+        limit = db_mock.get_sample_group_limit(group_uuid=group.uuid)
+        limits_in = db_mock.get_sample_group_limits_in()
+        warning = GroupLimitOverwriteWarning(
+            key_uuid=uuid.uuid4(),
+            key_name='has-own-limit',
+            category=limit.category,
+            algorithm=limit.algorithm,
+            window_size=limit.window_size,
+        )
+        result = GroupLimitsApplyOut(
+            limits=[GroupLimitOut.from_group_limit(limit)], overwritten=[warning]
+        )
+        self.group_service.add_limits_to_group = MagicMock(return_value=result)
+        res = self.client.post(
+            f'{self.prefix}/groups/{group.uuid}/limits',
+            json=jsonable_encoder(limits_in),
+        )
+        assert res.status_code == 201
+        assert len(res.json()['overwritten']) == 1
+
+    def test_add_limits_to_group_not_found(self):
+        group = db_mock.get_sample_group()
+        limits_in = db_mock.get_sample_group_limits_in()
+        self.group_service.add_limits_to_group = MagicMock(
+            side_effect=GroupNotFoundError('error')
+        )
+        res = self.client.post(
+            f'{self.prefix}/groups/{group.uuid}/limits',
+            json=jsonable_encoder(limits_in),
+        )
+        assert res.status_code == 404
+
+    def test_get_limits_for_group(self):
+        group = db_mock.get_sample_group()
+        limit = db_mock.get_sample_group_limit(group_uuid=group.uuid)
+        limits_out = [GroupLimitOut.from_group_limit(limit)]
+        self.group_service.get_limits_for_group = MagicMock(return_value=limits_out)
+        res = self.client.get(f'{self.prefix}/groups/{group.uuid}/limits')
+        assert res.status_code == 200
+        assert res.json() == jsonable_encoder(limits_out)
+        self.group_service.get_limits_for_group.assert_called_once_with(group.uuid)
+
+    def test_delete_limit_from_group(self):
+        group = db_mock.get_sample_group()
+        limit = db_mock.get_sample_group_limit(group_uuid=group.uuid)
+        limit_out = GroupLimitOut.from_group_limit(limit)
+        self.group_service.delete_limit_from_group = AsyncMock(return_value=limit_out)
+        res = self.client.delete(
+            f'{self.prefix}/groups/{group.uuid}/limits/{limit.uuid}'
+        )
+        assert res.status_code == 200
+        assert res.json() == jsonable_encoder(limit_out)
+        self.group_service.delete_limit_from_group.assert_awaited_once_with(
+            group.uuid, limit.uuid
+        )
+
+    def test_delete_limit_from_group_not_found(self):
+        group = db_mock.get_sample_group()
+        self.group_service.delete_limit_from_group = AsyncMock(
+            side_effect=GroupLimitNotFoundError('error')
+        )
+        res = self.client.delete(
+            f'{self.prefix}/groups/{group.uuid}/limits/{uuid.uuid4()}'
+        )
+        assert res.status_code == 404
 
     def test_delete_group(self):
         group = db_mock.get_sample_group_plain()

@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
@@ -26,6 +26,25 @@ class KeyLimitDAO:
             session.flush()
             return key_limits
 
+    def update_many(self, key_limits: list[KeyLimit]) -> list[KeyLimit]:
+        """Update max_value/group_limit_uuid/updated_at for existing rows,
+        identified by their own uuid. One transaction: either all succeed or
+        none do.
+        """
+        with self.db.begin_session() as session:
+            for limit in key_limits:
+                session.execute(
+                    update(KeyLimit)
+                    .where(KeyLimit.uuid == limit.uuid)
+                    .values(
+                        max_value=limit.max_value,
+                        group_limit_uuid=limit.group_limit_uuid,
+                        updated_at=limit.updated_at,
+                    )
+                )
+            session.flush()
+            return key_limits
+
     def get_by_uuid(self, limit_uuid: UUID) -> KeyLimit | None:
         with self.db.begin_session() as session:
             return session.scalar(select(KeyLimit).where(KeyLimit.uuid == limit_uuid))
@@ -46,3 +65,26 @@ class KeyLimitDAO:
         with self.db.begin_session() as session:
             query = delete(KeyLimit).where(KeyLimit.uuid == limit_uuid)
             return session.execute(query).rowcount
+
+    def get_by_group_limit_uuid(self, group_limit_uuid: UUID) -> Sequence[KeyLimit]:
+        with self.db.begin_session() as session:
+            stmt = select(KeyLimit).where(KeyLimit.group_limit_uuid == group_limit_uuid)
+            return session.scalars(stmt).all()
+
+    def delete_group_limits_by_key_uuid(self, key_uuid: UUID) -> Sequence[KeyLimit]:
+        """Delete every limit propagated from a group onto this key (leaving
+        individually-set limits untouched), returning the deleted rows so the
+        caller can clear their rate-limiting counters.
+        """
+        with self.db.begin_session() as session:
+            stmt = select(KeyLimit).where(
+                KeyLimit.key_uuid == key_uuid, KeyLimit.group_limit_uuid.isnot(None)
+            )
+            to_delete = session.scalars(stmt).all()
+            if not to_delete:
+                return []
+            query = delete(KeyLimit).where(
+                KeyLimit.uuid.in_([limit.uuid for limit in to_delete])
+            )
+            session.execute(query)
+            return to_delete

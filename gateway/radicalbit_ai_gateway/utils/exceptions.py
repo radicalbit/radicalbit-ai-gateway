@@ -591,6 +591,26 @@ class GroupOperationNotAllowedError(AuthRegistryError):
         )
 
 
+class GroupLimitAlreadyExistsError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_400_BAD_REQUEST,
+            'group_limit_already_exists_bad_request',
+            log_message=log_message,
+        )
+
+
+class GroupLimitNotFoundError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_404_NOT_FOUND,
+            'group_limit_not_found',
+            log_message=log_message,
+        )
+
+
 class RouteNotFoundError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
