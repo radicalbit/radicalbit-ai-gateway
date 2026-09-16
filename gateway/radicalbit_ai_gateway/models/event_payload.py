@@ -77,10 +77,9 @@ class RoutingEventPayload(EventBase):
 
 
 class McpInvocationEventPayload(EventBase):
-    """One addressed MCP invocation: a tool call, prompt fetch or resource read.
+    """One addressed MCP invocation, with the server it addressed.
 
-    ``mcp_alias`` is the MCP server the call addressed. It is empty when the
-    client named a server the route does not configure.
+    ``mcp_alias`` is empty when the route does not configure that server.
     """
 
     event_type: Literal[EventType.MCP_INVOCATION]

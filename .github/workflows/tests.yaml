@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       run-pytest:
-        description: Whether to run the pytest suite (gateway only).
+        description: Whether to run the pytest suite.
         required: false
         default: false
         type: boolean

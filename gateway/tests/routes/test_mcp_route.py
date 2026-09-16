@@ -8,6 +8,7 @@ import httpx2
 from mcp import types
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+import pytest
 from starlette.testclient import TestClient
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
@@ -128,6 +129,22 @@ def _make_client(
     if request_uuid is not None:
         app.add_middleware(_StampRequestUuid, value=request_uuid)
     return TestClient(app), group_service
+
+
+EVENTS_PROCESSOR = 'radicalbit_ai_gateway.events.events_processor'
+
+
+@pytest.fixture(autouse=True)
+def recorded_events():
+    """Collect what these requests record, and keep it off the Celery buffer."""
+    recorded: list[dict] = []
+    with patch(f'{EVENTS_PROCESSOR}._events_buffer') as buffer:
+        buffer.add.side_effect = recorded.append
+        yield recorded
+
+
+def _mcp_events(recorded: list[dict]) -> list[dict]:
+    return [e for e in recorded if e['EVENT_TYPE'] is EventType.MCP_INVOCATION]
 
 
 def _ping(request_id=1) -> dict:
@@ -678,3 +695,46 @@ def test_only_the_list_methods_are_cached():
     assert client.post(PATH, json={**call, 'id': 2}, headers=AUTH).status_code == 200
 
     assert upstream.call_tool.await_count == 2
+
+
+def test_a_tool_call_over_http_records_an_mcp_invocation(recorded_events):
+    """The public path hands the authorization result to the emitter.
+
+    Every other emission test drives ``_dispatch`` and supplies one by hand.
+    This is the link that would break in production without a word: dispatch
+    stops passing it on, the suite stays green, and the widgets go empty.
+    """
+    upstream = _echoing_upstream()
+    upstream.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
+    client, _ = _make_client(upstream)
+
+    res = client.post(
+        PATH,
+        json={
+            'jsonrpc': '2.0',
+            'id': 1,
+            'method': 'tools/call',
+            'params': {'name': 'github__echo', 'arguments': {'text': 'hi'}},
+        },
+        headers=AUTH,
+    )
+
+    assert res.status_code == 200
+    (event,) = _mcp_events(recorded_events)
+    assert event['MCP_METHOD'] == 'tools/call'
+    assert event['MCP_ALIAS'] == 'github'
+    # under the identity the request authenticated with
+    assert event['ROUTE_NAME'] == 'my-route'
+    assert event['PROJECT_NAME'] == 'proj'
+    assert event['API_KEY_UUID'] == KEY_DETAILS.api_key_uuid
+    assert event['GROUP_NAME'] == KEY_DETAILS.group_name
+    assert event['REQUEST_UUID'] == REQUEST_UUID
+
+
+def test_protocol_traffic_over_http_records_no_invocation(recorded_events):
+    client, _ = _make_client(_echoing_upstream())
+
+    assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+    assert client.post(PATH, json=_tools_list(2), headers=AUTH).status_code == 200
+
+    assert _mcp_events(recorded_events) == []

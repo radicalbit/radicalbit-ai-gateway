@@ -452,7 +452,7 @@ class McpService:
 
     @staticmethod
     def _record_invocation(
-        authorized: McpAuthorizedRequest | None, method: str, alias: str
+        authorized: McpAuthorizedRequest, method: str, alias: str
     ) -> None:
         """Report an addressed MCP invocation to the events pipeline.
 
@@ -461,12 +461,8 @@ class McpService:
         visible, and the per-server chart still totals to the per-key table.
 
         Never raises. Recording usage must not be able to fail an MCP call.
-
-        ``authorized`` is None only in unit tests, which drive ``_dispatch``
-        on its own to exercise the protocol. Production has one caller,
-        :meth:`dispatch`, and it always passes one.
         """
-        if method not in ADDRESSED_METHODS or authorized is None:
+        if method not in ADDRESSED_METHODS:
             return
         try:
             emit_event(
@@ -489,7 +485,7 @@ class McpService:
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
         *,
-        authorized: McpAuthorizedRequest | None = None,
+        authorized: McpAuthorizedRequest,
     ) -> McpDispatchResult:
         """Dispatch one JSON-RPC message; returns its HTTP-level outcome.
 
@@ -542,8 +538,8 @@ class McpService:
         target = target_attributes(method, params or {}, servers)
         set_mcp_attributes(**target)
         # Before the method runs. The outcome must not change what is counted.
-        # A call that fails, is denied by an allowlist, or names a tool that
-        # does not exist is still an invocation the operator wants to see.
+        # A failed call is still an invocation. So is one an allowlist denied,
+        # and one that named a tool the upstream does not have.
         self._record_invocation(authorized, method, target.get('alias', ''))
 
         try:

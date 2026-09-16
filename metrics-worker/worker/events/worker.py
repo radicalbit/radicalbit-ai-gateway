@@ -160,40 +160,41 @@ def insert_event_record_connect_async(event_payload):
             logger.warning('Invalid event payload skipped: %s', exc)
             continue
 
-        data_row = [
-            request_uuid,
-            event_data['TIMESTAMP'],
-            event_data['EVENT_TYPE'],
-            event_data['ROUTE_NAME'],
-            event_data['VALUE'],
-            event_data.get('ATTRIBUTES', {}),
-            api_key_uuid,
-            event_data['API_KEY_NAME'],
-            group_uuid,
-            event_data['GROUP_NAME'],
-            cost,
-            project_uuid,
-            event_data.get('PROJECT_NAME', ''),
-            event_data.get('MODEL_ID', ''),
-            event_data.get('MODEL_TYPE', ''),
-            event_data.get('IS_CACHED_TOKENS', False),
-            event_data.get('CACHE_TYPE', ''),
-            event_data.get('TARGET', ''),
-            event_data.get('FALLBACK', ''),
-            event_data.get('GUARDRAIL_NAME', ''),
-            event_data.get('GUARDRAIL_TYPE', ''),
-            event_data.get('GUARDRAIL_WHERE', ''),
-            event_data.get('GUARDRAIL_PARAMS', ''),
-            event_data.get('GUARDRAIL_BEHAVIOR', ''),
-            event_data.get('IS_JUDGE', False),
-            event_data.get('ROUTING_NAME', ''),
-            event_data.get('ROUTING_SELECTED_MODEL_ID', ''),
-            event_data.get('TAGS', []),
-            event_data.get('MCP_METHOD', ''),
-            event_data.get('MCP_ALIAS', ''),
-        ]
-
-        buffer.append(data_row)
+        values = {
+            'REQUEST_UUID': request_uuid,
+            'TIMESTAMP': event_data['TIMESTAMP'],
+            'EVENT_TYPE': event_data['EVENT_TYPE'],
+            'ROUTE_NAME': event_data['ROUTE_NAME'],
+            'VALUE': event_data['VALUE'],
+            'ATTRIBUTES': event_data.get('ATTRIBUTES', {}),
+            'API_KEY_UUID': api_key_uuid,
+            'API_KEY_NAME': event_data['API_KEY_NAME'],
+            'GROUP_UUID': group_uuid,
+            'GROUP_NAME': event_data['GROUP_NAME'],
+            'COST': cost,
+            'PROJECT_UUID': project_uuid,
+            'PROJECT_NAME': event_data.get('PROJECT_NAME', ''),
+            'MODEL_ID': event_data.get('MODEL_ID', ''),
+            'MODEL_TYPE': event_data.get('MODEL_TYPE', ''),
+            'IS_CACHED_TOKENS': event_data.get('IS_CACHED_TOKENS', False),
+            'CACHE_TYPE': event_data.get('CACHE_TYPE', ''),
+            'TARGET': event_data.get('TARGET', ''),
+            'FALLBACK': event_data.get('FALLBACK', ''),
+            'GUARDRAIL_NAME': event_data.get('GUARDRAIL_NAME', ''),
+            'GUARDRAIL_TYPE': event_data.get('GUARDRAIL_TYPE', ''),
+            'GUARDRAIL_WHERE': event_data.get('GUARDRAIL_WHERE', ''),
+            'GUARDRAIL_PARAMS': event_data.get('GUARDRAIL_PARAMS', ''),
+            'GUARDRAIL_BEHAVIOR': event_data.get('GUARDRAIL_BEHAVIOR', ''),
+            'IS_JUDGE': event_data.get('IS_JUDGE', False),
+            'ROUTING_NAME': event_data.get('ROUTING_NAME', ''),
+            'ROUTING_SELECTED_MODEL_ID': event_data.get(
+                'ROUTING_SELECTED_MODEL_ID', ''
+            ),
+            'TAGS': event_data.get('TAGS', []),
+            'MCP_METHOD': event_data.get('MCP_METHOD', ''),
+            'MCP_ALIAS': event_data.get('MCP_ALIAS', ''),
+        }
+        buffer.append([values[column] for column in COLUMN_NAMES])
         processed_ids.append(str(request_uuid))
 
     if not processed_ids:

@@ -108,6 +108,33 @@ def _list_client() -> MagicMock:
     return client
 
 
+EVENTS_PROCESSOR = 'radicalbit_ai_gateway.events.events_processor'
+
+
+@pytest.fixture(autouse=True)
+def recorded_events():
+    """Collect the event dicts dispatch records, instead of the Celery buffer.
+
+    Autouse, and it has to be: every dispatch here is given an authorization
+    result, so an addressed method emits for real. Without this the whole
+    module would talk to Celery.
+
+    The dict is what the worker inserts. Asserting on it covers the payload
+    dispatch builds and the column it maps to, in one place.
+    """
+    recorded: list[dict] = []
+    with patch(f'{EVENTS_PROCESSOR}._events_buffer') as buffer:
+        buffer.add.side_effect = recorded.append
+        yield recorded
+
+
+def _mcp_events(recorded: list[dict]) -> list[dict]:
+    """Return only the MCP invocation events out of everything recorded."""
+    return [
+        event for event in recorded if event['EVENT_TYPE'] is EventType.MCP_INVOCATION
+    ]
+
+
 @pytest.fixture(autouse=True)
 def _forget_unadvertised_warnings():
     """Clear the process-global warn-once guard so tests do not inherit it."""
@@ -198,7 +225,7 @@ def test_strip_uri_credentials(uri, expected):
     ],
 )
 async def test_invalid_envelope_is_400_invalid_request(body):
-    result = await _service()._dispatch(body, SERVERS, None)
+    result = await _service()._dispatch(body, SERVERS, None, authorized=_authorized())
     assert result.status_code == 400
     assert result.payload['error']['code'] == -32600
     assert result.payload['id'] is None
@@ -207,7 +234,7 @@ async def test_invalid_envelope_is_400_invalid_request(body):
 @pytest.mark.parametrize('request_id', [None, True, 1.5, {'x': 1}])
 async def test_invalid_request_id_rejected(request_id):
     result = await _service()._dispatch(
-        _request('ping', request_id=request_id), SERVERS, None
+        _request('ping', request_id=request_id), SERVERS, None, authorized=_authorized()
     )
     assert result.status_code == 400
     assert result.payload['error']['code'] == -32600
@@ -216,7 +243,7 @@ async def test_invalid_request_id_rejected(request_id):
 @pytest.mark.parametrize('request_id', [0, 1, 'abc'])
 async def test_valid_request_ids_echoed(request_id):
     result = await _service()._dispatch(
-        _request('ping', request_id=request_id), SERVERS, None
+        _request('ping', request_id=request_id), SERVERS, None, authorized=_authorized()
     )
     assert result.status_code == 200
     assert result.payload == {'jsonrpc': '2.0', 'id': request_id, 'result': {}}
@@ -226,14 +253,19 @@ async def test_notifications_get_202_and_no_body():
     service = _service()
     for method in ('notifications/initialized', 'notifications/cancelled'):
         result = await service._dispatch(
-            {'jsonrpc': '2.0', 'method': method}, SERVERS, None
+            {'jsonrpc': '2.0', 'method': method},
+            SERVERS,
+            None,
+            authorized=_authorized(),
         )
         assert result.status_code == 202
         assert result.payload is None
 
 
 async def test_unknown_method_is_32601():
-    result = await _service()._dispatch(_request('completion/complete'), SERVERS, None)
+    result = await _service()._dispatch(
+        _request('completion/complete'), SERVERS, None, authorized=_authorized()
+    )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32601
     assert 'completion/complete' in result.payload['error']['message']
@@ -241,7 +273,7 @@ async def test_unknown_method_is_32601():
 
 async def test_non_object_params_is_32602():
     result = await _service()._dispatch(
-        _request('tools/call', params=[1, 2]), SERVERS, None
+        _request('tools/call', params=[1, 2]), SERVERS, None, authorized=_authorized()
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -257,6 +289,7 @@ async def test_initialize_advertises_capabilities():
         _request('initialize', params={'protocolVersion': '2025-06-18'}),
         SERVERS,
         None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     payload_result = result.payload['result']
@@ -276,6 +309,7 @@ async def test_initialize_negotiates_unsupported_version():
         _request('initialize', params={'protocolVersion': '2024-11-05'}),
         SERVERS,
         None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['result']['protocolVersion'] == LATEST_PROTOCOL_VERSION
@@ -296,7 +330,9 @@ async def test_tools_list_fans_out_and_prefixes():
     )
     headers = {'x-user-jwt': 'jwt-1'}
 
-    result = await _service(client)._dispatch(_request('tools/list'), SERVERS, headers)
+    result = await _service(client)._dispatch(
+        _request('tools/list'), SERVERS, headers, authorized=_authorized()
+    )
 
     assert result.status_code == 200
     tools = result.payload['result']['tools']
@@ -314,7 +350,9 @@ async def test_tools_list_fans_out_and_prefixes():
 
 
 async def test_tools_list_without_servers_is_empty():
-    result = await _service()._dispatch(_request('tools/list'), [], None)
+    result = await _service()._dispatch(
+        _request('tools/list'), [], None, authorized=_authorized()
+    )
     assert result.status_code == 200
     assert result.payload['result'] == {'tools': []}
 
@@ -327,7 +365,9 @@ async def test_tools_list_tolerates_one_failing_upstream():
             types.ListToolsResult(tools=[_tool('search')]),
         ]
     )
-    result = await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
+    result = await _service(client)._dispatch(
+        _request('tools/list'), SERVERS, None, authorized=_authorized()
+    )
     assert result.status_code == 200
     assert [t['name'] for t in result.payload['result']['tools']] == ['jira__search']
 
@@ -335,7 +375,9 @@ async def test_tools_list_tolerates_one_failing_upstream():
 async def test_tools_list_all_upstreams_failing_is_32000():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.list_tools = AsyncMock(side_effect=McpUpstreamError('github', 'boom'))
-    result = await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
+    result = await _service(client)._dispatch(
+        _request('tools/list'), SERVERS, None, authorized=_authorized()
+    )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32000
     assert 'boom' not in result.payload['error']['message']
@@ -362,6 +404,7 @@ async def test_tools_call_forwards_and_passes_result_through():
         ),
         SERVERS,
         headers,
+        authorized=_authorized(),
     )
 
     assert dispatch_result.status_code == 200
@@ -384,7 +427,10 @@ async def test_tools_call_is_error_result_passes_through():
     client.call_tool = AsyncMock(return_value=result)
 
     dispatch_result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__get_issue'}), SERVERS, None
+        _request('tools/call', params={'name': 'github__get_issue'}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert dispatch_result.status_code == 200
     assert dispatch_result.payload['result']['isError'] is True
@@ -394,7 +440,10 @@ async def test_tools_call_splits_on_first_separator_only():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
     await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__ns__tool'}), SERVERS, None
+        _request('tools/call', params={'name': 'github__ns__tool'}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert client.call_tool.await_args.args[1] == 'ns__tool'
 
@@ -406,7 +455,10 @@ async def test_tools_call_unknown_tool_is_32602(name):
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock()
     result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': name}), SERVERS, None
+        _request('tools/call', params={'name': name}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -418,7 +470,10 @@ async def test_tools_call_alias_outside_scope_is_32602():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock()
     result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'jira__search'}), [GITHUB], None
+        _request('tools/call', params={'name': 'jira__search'}),
+        [GITHUB],
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -431,7 +486,7 @@ async def test_tools_call_alias_outside_scope_is_32602():
 )
 async def test_tools_call_bad_params_is_32602(params):
     result = await _service()._dispatch(
-        _request('tools/call', params=params), SERVERS, None
+        _request('tools/call', params=params), SERVERS, None, authorized=_authorized()
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -443,7 +498,10 @@ async def test_tools_call_upstream_error_maps_to_jsonrpc_error():
         side_effect=McpUpstreamError('github', "Upstream MCP server 'github' timed out")
     )
     result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__get_issue'}), SERVERS, None
+        _request('tools/call', params={'name': 'github__get_issue'}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32000
@@ -454,7 +512,10 @@ async def test_unexpected_exception_is_sanitized_internal_error():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.call_tool = AsyncMock(side_effect=ValueError('secret detail'))
     result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__get_issue'}), SERVERS, None
+        _request('tools/call', params={'name': 'github__get_issue'}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32603
@@ -479,7 +540,7 @@ async def test_prompts_list_fans_out_and_prefixes():
     headers = {'x-user-jwt': 'jwt-1'}
 
     result = await _service(client)._dispatch(
-        _request('prompts/list'), SERVERS, headers
+        _request('prompts/list'), SERVERS, headers, authorized=_authorized()
     )
 
     assert result.status_code == 200
@@ -496,7 +557,9 @@ async def test_prompts_list_fans_out_and_prefixes():
 
 
 async def test_prompts_list_without_servers_is_empty():
-    result = await _service()._dispatch(_request('prompts/list'), [], None)
+    result = await _service()._dispatch(
+        _request('prompts/list'), [], None, authorized=_authorized()
+    )
     assert result.status_code == 200
     assert result.payload['result'] == {'prompts': []}
 
@@ -509,7 +572,9 @@ async def test_prompts_list_tolerates_one_failing_upstream():
             types.ListPromptsResult(prompts=[_prompt('search')]),
         ]
     )
-    result = await _service(client)._dispatch(_request('prompts/list'), SERVERS, None)
+    result = await _service(client)._dispatch(
+        _request('prompts/list'), SERVERS, None, authorized=_authorized()
+    )
     assert result.status_code == 200
     assert [p['name'] for p in result.payload['result']['prompts']] == ['jira__search']
 
@@ -517,7 +582,9 @@ async def test_prompts_list_tolerates_one_failing_upstream():
 async def test_prompts_list_all_upstreams_failing_is_32000():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.list_prompts = AsyncMock(side_effect=McpUpstreamError('github', 'boom'))
-    result = await _service(client)._dispatch(_request('prompts/list'), SERVERS, None)
+    result = await _service(client)._dispatch(
+        _request('prompts/list'), SERVERS, None, authorized=_authorized()
+    )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32000
 
@@ -547,6 +614,7 @@ async def test_prompts_get_forwards_and_passes_result_through():
         ),
         SERVERS,
         headers,
+        authorized=_authorized(),
     )
 
     assert dispatch_result.status_code == 200
@@ -560,7 +628,10 @@ async def test_prompts_get_splits_on_first_separator_only():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.get_prompt = AsyncMock(return_value=types.GetPromptResult(messages=[]))
     await _service(client)._dispatch(
-        _request('prompts/get', params={'name': 'github__ns__prompt'}), SERVERS, None
+        _request('prompts/get', params={'name': 'github__ns__prompt'}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert client.get_prompt.await_args.args[1] == 'ns__prompt'
 
@@ -572,7 +643,10 @@ async def test_prompts_get_unknown_prompt_is_32602(name):
     client = MagicMock(spec_set=McpUpstreamClient)
     client.get_prompt = AsyncMock()
     result = await _service(client)._dispatch(
-        _request('prompts/get', params={'name': name}), SERVERS, None
+        _request('prompts/get', params={'name': name}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -583,7 +657,10 @@ async def test_prompts_get_alias_outside_scope_is_32602():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.get_prompt = AsyncMock()
     result = await _service(client)._dispatch(
-        _request('prompts/get', params={'name': 'jira__search'}), [GITHUB], None
+        _request('prompts/get', params={'name': 'jira__search'}),
+        [GITHUB],
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -596,7 +673,7 @@ async def test_prompts_get_alias_outside_scope_is_32602():
 )
 async def test_prompts_get_bad_params_is_32602(params):
     result = await _service()._dispatch(
-        _request('prompts/get', params=params), SERVERS, None
+        _request('prompts/get', params=params), SERVERS, None, authorized=_authorized()
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -608,7 +685,10 @@ async def test_prompts_get_upstream_error_maps_to_jsonrpc_error():
         side_effect=McpUpstreamError('github', "Upstream MCP server 'github' timed out")
     )
     result = await _service(client)._dispatch(
-        _request('prompts/get', params={'name': 'github__summarize'}), SERVERS, None
+        _request('prompts/get', params={'name': 'github__summarize'}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32000
@@ -635,7 +715,7 @@ async def test_resources_list_fans_out_and_aliases_uris():
     headers = {'x-user-jwt': 'jwt-1'}
 
     result = await _service(client)._dispatch(
-        _request('resources/list'), SERVERS, headers
+        _request('resources/list'), SERVERS, headers, authorized=_authorized()
     )
 
     assert result.status_code == 200
@@ -657,7 +737,9 @@ async def test_resources_list_fans_out_and_aliases_uris():
 
 
 async def test_resources_list_without_servers_is_empty():
-    result = await _service()._dispatch(_request('resources/list'), [], None)
+    result = await _service()._dispatch(
+        _request('resources/list'), [], None, authorized=_authorized()
+    )
     assert result.status_code == 200
     assert result.payload['result'] == {'resources': []}
 
@@ -672,7 +754,9 @@ async def test_resources_list_tolerates_one_failing_upstream():
             ),
         ]
     )
-    result = await _service(client)._dispatch(_request('resources/list'), SERVERS, None)
+    result = await _service(client)._dispatch(
+        _request('resources/list'), SERVERS, None, authorized=_authorized()
+    )
     assert result.status_code == 200
     resources = result.payload['result']['resources']
     assert len(resources) == 1
@@ -682,7 +766,9 @@ async def test_resources_list_tolerates_one_failing_upstream():
 async def test_resources_list_all_upstreams_failing_is_32000():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.list_resources = AsyncMock(side_effect=McpUpstreamError('github', 'boom'))
-    result = await _service(client)._dispatch(_request('resources/list'), SERVERS, None)
+    result = await _service(client)._dispatch(
+        _request('resources/list'), SERVERS, None, authorized=_authorized()
+    )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32000
 
@@ -707,7 +793,10 @@ async def test_resources_read_forwards_and_realiases_result():
     encoded = encode_resource_uri('github', upstream_uri)
 
     dispatch_result = await _service(client)._dispatch(
-        _request('resources/read', params={'uri': encoded}), SERVERS, headers
+        _request('resources/read', params={'uri': encoded}),
+        SERVERS,
+        headers,
+        authorized=_authorized(),
     )
 
     assert dispatch_result.status_code == 200
@@ -733,7 +822,10 @@ async def test_resources_read_bad_or_unknown_uri_is_32602(params):
     client = MagicMock(spec_set=McpUpstreamClient)
     client.read_resource = AsyncMock()
     result = await _service(client)._dispatch(
-        _request('resources/read', params=params), SERVERS, None
+        _request('resources/read', params=params),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -745,7 +837,10 @@ async def test_resources_read_alias_outside_scope_is_32602():
     client.read_resource = AsyncMock()
     encoded = encode_resource_uri('jira', 'https://jira.example.com/board')
     result = await _service(client)._dispatch(
-        _request('resources/read', params={'uri': encoded}), [GITHUB], None
+        _request('resources/read', params={'uri': encoded}),
+        [GITHUB],
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -759,7 +854,10 @@ async def test_resources_read_upstream_error_maps_to_jsonrpc_error():
     )
     encoded = encode_resource_uri('github', 'https://github.example.com/readme')
     result = await _service(client)._dispatch(
-        _request('resources/read', params={'uri': encoded}), SERVERS, None
+        _request('resources/read', params={'uri': encoded}),
+        SERVERS,
+        None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32000
@@ -804,7 +902,9 @@ async def test_dispatch_records_the_method_for_every_request(method):
     )
 
     with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(_request(method), SERVERS, None)
+        await _service(client)._dispatch(
+            _request(method), SERVERS, None, authorized=_authorized()
+        )
 
     assert _recorded_methods(mock_set_attrs) == [method]
 
@@ -814,7 +914,9 @@ async def test_dispatch_records_the_method_for_notifications():
     body = {'jsonrpc': '2.0', 'method': 'notifications/initialized'}
 
     with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        result = await _service()._dispatch(body, SERVERS, None)
+        result = await _service()._dispatch(
+            body, SERVERS, None, authorized=_authorized()
+        )
 
     assert result.status_code == 202
     assert _recorded_methods(mock_set_attrs) == ['notifications/initialized']
@@ -822,7 +924,9 @@ async def test_dispatch_records_the_method_for_notifications():
 
 async def test_dispatch_records_no_method_for_a_malformed_envelope():
     with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service()._dispatch({'jsonrpc': '1.0'}, SERVERS, None)
+        await _service()._dispatch(
+            {'jsonrpc': '1.0'}, SERVERS, None, authorized=_authorized()
+        )
 
     assert _recorded_methods(mock_set_attrs) == []
 
@@ -836,6 +940,7 @@ async def test_tools_call_records_alias_and_target():
             _request('tools/call', params={'name': 'github__get_issue'}),
             SERVERS,
             None,
+            authorized=_authorized(),
         )
 
     mock_set_attrs.assert_any_call(alias='github', target='get_issue')
@@ -847,7 +952,10 @@ async def test_prompts_get_records_alias_and_target():
 
     with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
         await _service(client)._dispatch(
-            _request('prompts/get', params={'name': 'github__review'}), SERVERS, None
+            _request('prompts/get', params={'name': 'github__review'}),
+            SERVERS,
+            None,
+            authorized=_authorized(),
         )
 
     mock_set_attrs.assert_any_call(alias='github', target='review')
@@ -866,6 +974,7 @@ async def test_resources_read_records_alias_and_the_upstream_uri():
             ),
             SERVERS,
             None,
+            authorized=_authorized(),
         )
 
     # the decoded upstream URI, not the wrapped mcp-resource: form
@@ -883,7 +992,10 @@ async def test_a_target_naming_no_known_upstream_records_nothing():
 
     with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
         result = await _service(client)._dispatch(
-            _request('tools/call', params={'name': 'unknown__tool'}), SERVERS, None
+            _request('tools/call', params={'name': 'unknown__tool'}),
+            SERVERS,
+            None,
+            authorized=_authorized(),
         )
 
     assert result.payload['error']['code'] == -32602
@@ -906,6 +1018,7 @@ async def test_a_resource_uris_credentials_are_stripped_before_reaching_a_span()
             ),
             SERVERS,
             None,
+            authorized=_authorized(),
         )
 
     mock_set_attrs.assert_any_call(
@@ -929,7 +1042,10 @@ async def test_an_unsplittable_target_records_nothing(params):
 
     with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
         await _service(client)._dispatch(
-            _request('tools/call', params=params), SERVERS, None
+            _request('tools/call', params=params),
+            SERVERS,
+            None,
+            authorized=_authorized(),
         )
 
     assert all(c.kwargs.get('alias') is None for c in mock_set_attrs.call_args_list)
@@ -949,7 +1065,10 @@ async def test_methods_without_a_single_target_record_none(method):
 
     with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
         await _service(client)._dispatch(
-            _request(method, params={'name': 'github__x'}), SERVERS, None
+            _request(method, params={'name': 'github__x'}),
+            SERVERS,
+            None,
+            authorized=_authorized(),
         )
 
     assert all(c.kwargs.get('target') is None for c in mock_set_attrs.call_args_list)
@@ -976,7 +1095,9 @@ async def test_tools_list_records_fanout_on_a_partial_failure():
     span = _recording_span()
 
     with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
+        await _service(client)._dispatch(
+            _request('tools/list'), SERVERS, None, authorized=_authorized()
+        )
 
     assert _span_attrs(span) == {
         'rb.gateway.mcp_upstream_total': 2,
@@ -997,7 +1118,9 @@ async def test_list_records_fanout_on_full_success():
     span = _recording_span()
 
     with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await _service(client)._dispatch(_request('prompts/list'), SERVERS, None)
+        await _service(client)._dispatch(
+            _request('prompts/list'), SERVERS, None, authorized=_authorized()
+        )
 
     assert _span_attrs(span) == {
         'rb.gateway.mcp_upstream_total': 2,
@@ -1017,7 +1140,9 @@ async def test_resources_list_records_fanout():
     span = _recording_span()
 
     with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await _service(client)._dispatch(_request('resources/list'), SERVERS, None)
+        await _service(client)._dispatch(
+            _request('resources/list'), SERVERS, None, authorized=_authorized()
+        )
 
     assert _span_attrs(span)['rb.gateway.mcp_upstream_failed'] == 'jira'
 
@@ -1029,7 +1154,9 @@ async def test_fanout_is_not_recorded_on_a_non_recording_span():
     span.is_recording.return_value = False
 
     with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await _service(client)._dispatch(_request('tools/list'), SERVERS, None)
+        await _service(client)._dispatch(
+            _request('tools/list'), SERVERS, None, authorized=_authorized()
+        )
 
     span.set_attribute.assert_not_called()
 
@@ -1037,7 +1164,10 @@ async def test_fanout_is_not_recorded_on_a_non_recording_span():
 async def test_tools_list_exposes_only_the_allowlisted_tools():
     client = _list_client()
     result = await _service(client)._dispatch(
-        _request('tools/list'), [_server(allowed_tools=['a', 'b'])], None
+        _request('tools/list'),
+        [_server(allowed_tools=['a', 'b'])],
+        None,
+        authorized=_authorized(),
     )
     assert [t['name'] for t in result.payload['result']['tools']] == [
         'github__a',
@@ -1047,7 +1177,9 @@ async def test_tools_list_exposes_only_the_allowlisted_tools():
 
 async def test_tools_list_with_no_allowlist_exposes_everything():
     client = _list_client()
-    result = await _service(client)._dispatch(_request('tools/list'), [_server()], None)
+    result = await _service(client)._dispatch(
+        _request('tools/list'), [_server()], None, authorized=_authorized()
+    )
     assert [t['name'] for t in result.payload['result']['tools']] == [
         'github__a',
         'github__b',
@@ -1058,7 +1190,10 @@ async def test_tools_list_with_no_allowlist_exposes_everything():
 async def test_tools_list_with_an_empty_allowlist_exposes_nothing():
     client = _list_client()
     result = await _service(client)._dispatch(
-        _request('tools/list'), [_server(allowed_tools=[])], None
+        _request('tools/list'),
+        [_server(allowed_tools=[])],
+        None,
+        authorized=_authorized(),
     )
     assert result.payload['result']['tools'] == []
 
@@ -1067,7 +1202,10 @@ async def test_an_empty_tool_allowlist_skips_the_upstream_entirely():
     """Nothing can come back, so the round trip is pure cost."""
     client = _list_client()
     await _service(client)._dispatch(
-        _request('tools/list'), [_server(allowed_tools=[])], None
+        _request('tools/list'),
+        [_server(allowed_tools=[])],
+        None,
+        authorized=_authorized(),
     )
     client.list_tools.assert_not_awaited()
 
@@ -1075,7 +1213,10 @@ async def test_an_empty_tool_allowlist_skips_the_upstream_entirely():
 async def test_an_allowlist_entry_the_upstream_never_advertises_is_inert():
     client = _list_client()
     result = await _service(client)._dispatch(
-        _request('tools/list'), [_server(allowed_tools=['a', 'nonexistent'])], None
+        _request('tools/list'),
+        [_server(allowed_tools=['a', 'nonexistent'])],
+        None,
+        authorized=_authorized(),
     )
     assert [t['name'] for t in result.payload['result']['tools']] == ['github__a']
 
@@ -1087,6 +1228,7 @@ async def test_tools_call_forwards_an_allowlisted_tool():
         _request('tools/call', params={'name': 'github__a'}),
         [_server(allowed_tools=['a'])],
         None,
+        authorized=_authorized(),
     )
     assert 'error' not in result.payload
     assert client.call_tool.await_args.args[1] == 'a'
@@ -1101,6 +1243,7 @@ async def test_tools_call_rejects_a_tool_outside_the_allowlist(allowed_tools):
         _request('tools/call', params={'name': 'github__a'}),
         [_server(allowed_tools=allowed_tools)],
         None,
+        authorized=_authorized(),
     )
     assert result.status_code == 200
     assert result.payload['error']['code'] == -32602
@@ -1113,7 +1256,10 @@ async def test_tools_call_rejects_a_tool_outside_the_allowlist(allowed_tools):
 async def test_prompts_list_exposes_only_the_allowlisted_prompts():
     client = _list_client()
     result = await _service(client)._dispatch(
-        _request('prompts/list'), [_server(allowed_prompts=['b'])], None
+        _request('prompts/list'),
+        [_server(allowed_prompts=['b'])],
+        None,
+        authorized=_authorized(),
     )
     assert [p['name'] for p in result.payload['result']['prompts']] == ['github__b']
 
@@ -1121,7 +1267,10 @@ async def test_prompts_list_exposes_only_the_allowlisted_prompts():
 async def test_prompts_list_with_an_empty_allowlist_exposes_nothing():
     client = _list_client()
     result = await _service(client)._dispatch(
-        _request('prompts/list'), [_server(allowed_prompts=[])], None
+        _request('prompts/list'),
+        [_server(allowed_prompts=[])],
+        None,
+        authorized=_authorized(),
     )
     assert result.payload['result']['prompts'] == []
     client.list_prompts.assert_not_awaited()
@@ -1130,7 +1279,7 @@ async def test_prompts_list_with_an_empty_allowlist_exposes_nothing():
 async def test_prompts_list_with_no_allowlist_exposes_everything():
     client = _list_client()
     result = await _service(client)._dispatch(
-        _request('prompts/list'), [_server()], None
+        _request('prompts/list'), [_server()], None, authorized=_authorized()
     )
     assert len(result.payload['result']['prompts']) == 3
 
@@ -1143,6 +1292,7 @@ async def test_prompts_get_rejects_a_prompt_outside_the_allowlist(allowed_prompt
         _request('prompts/get', params={'name': 'github__a'}),
         [_server(allowed_prompts=allowed_prompts)],
         None,
+        authorized=_authorized(),
     )
     assert result.payload['error']['code'] == -32602
     assert result.payload['error']['message'] == 'Unknown prompt: github__a'
@@ -1156,6 +1306,7 @@ async def test_prompts_get_forwards_an_allowlisted_prompt():
         _request('prompts/get', params={'name': 'github__a'}),
         [_server(allowed_prompts=['a'])],
         None,
+        authorized=_authorized(),
     )
     assert 'error' not in result.payload
 
@@ -1163,7 +1314,10 @@ async def test_prompts_get_forwards_an_allowlisted_prompt():
 async def test_resources_list_exposes_only_the_allowlisted_uris():
     client = _list_client()
     result = await _service(client)._dispatch(
-        _request('resources/list'), [_server(allowed_resources=[RESOURCE_B])], None
+        _request('resources/list'),
+        [_server(allowed_resources=[RESOURCE_B])],
+        None,
+        authorized=_authorized(),
     )
     uris = [r['uri'] for r in result.payload['result']['resources']]
     assert uris == [encode_resource_uri('github', RESOURCE_B)]
@@ -1172,7 +1326,10 @@ async def test_resources_list_exposes_only_the_allowlisted_uris():
 async def test_resources_list_with_an_empty_allowlist_exposes_nothing():
     client = _list_client()
     result = await _service(client)._dispatch(
-        _request('resources/list'), [_server(allowed_resources=[])], None
+        _request('resources/list'),
+        [_server(allowed_resources=[])],
+        None,
+        authorized=_authorized(),
     )
     assert result.payload['result']['resources'] == []
     client.list_resources.assert_not_awaited()
@@ -1181,7 +1338,7 @@ async def test_resources_list_with_an_empty_allowlist_exposes_nothing():
 async def test_resources_list_with_no_allowlist_exposes_everything():
     client = _list_client()
     result = await _service(client)._dispatch(
-        _request('resources/list'), [_server()], None
+        _request('resources/list'), [_server()], None, authorized=_authorized()
     )
     assert len(result.payload['result']['resources']) == 2
 
@@ -1195,6 +1352,7 @@ async def test_resources_read_rejects_a_uri_outside_the_allowlist(allowed_resour
         _request('resources/read', params={'uri': wrapped}),
         [_server(allowed_resources=allowed_resources)],
         None,
+        authorized=_authorized(),
     )
     assert result.payload['error']['code'] == -32602
     assert result.payload['error']['message'] == f'Unknown resource: {wrapped}'
@@ -1211,6 +1369,7 @@ async def test_resources_read_forwards_an_allowlisted_uri():
         ),
         [_server(allowed_resources=[RESOURCE_A])],
         None,
+        authorized=_authorized(),
     )
     assert 'error' not in result.payload
     assert client.read_resource.await_args.args[1] == RESOURCE_A
@@ -1222,7 +1381,9 @@ async def test_allowlists_are_scoped_to_their_own_server():
         _server(allowed_tools=['a']),
         McpHttpServer(alias='jira', url='https://jira.example.com/mcp/'),
     ]
-    result = await _service(client)._dispatch(_request('tools/list'), servers, None)
+    result = await _service(client)._dispatch(
+        _request('tools/list'), servers, None, authorized=_authorized()
+    )
     assert [t['name'] for t in result.payload['result']['tools']] == [
         'github__a',
         'jira__a',
@@ -1241,7 +1402,9 @@ async def test_a_fully_gated_server_does_not_count_as_a_failed_upstream():
         _server(allowed_tools=[]),
         McpHttpServer(alias='jira', url='https://jira.example.com/mcp/'),
     ]
-    result = await _service(client)._dispatch(_request('tools/list'), servers, None)
+    result = await _service(client)._dispatch(
+        _request('tools/list'), servers, None, authorized=_authorized()
+    )
     assert [t['name'] for t in result.payload['result']['tools']] == ['jira__a']
 
 
@@ -1252,7 +1415,9 @@ async def test_every_contacted_upstream_failing_still_raises_when_one_is_gated()
         _server(allowed_tools=[]),
         McpHttpServer(alias='jira', url='https://jira.example.com/mcp/'),
     ]
-    result = await _service(client)._dispatch(_request('tools/list'), servers, None)
+    result = await _service(client)._dispatch(
+        _request('tools/list'), servers, None, authorized=_authorized()
+    )
     assert result.payload['error']['code'] == -32000
 
 
@@ -1265,6 +1430,7 @@ async def test_an_allowlist_rejection_is_attributable_in_traces():
             _request('tools/call', params={'name': 'github__a'}),
             [_server(allowed_tools=[])],
             None,
+            authorized=_authorized(),
         )
 
     mock_set_attrs.assert_any_call(denied='allowlist')
@@ -1276,7 +1442,10 @@ async def test_an_unknown_alias_is_not_attributed_to_the_allowlist():
 
     with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
         await _service(client)._dispatch(
-            _request('tools/call', params={'name': 'nope__a'}), SERVERS, None
+            _request('tools/call', params={'name': 'nope__a'}),
+            SERVERS,
+            None,
+            authorized=_authorized(),
         )
 
     assert all(c.kwargs.get('denied') is None for c in mock_set_attrs.call_args_list)
@@ -1297,7 +1466,10 @@ async def test_an_unadvertised_allowlist_entry_is_warned_about_at_runtime(
     client = _list_client()
     with patch(f'{MCP_SERVICE}.logger') as mock_logger:
         await _service(client)._dispatch(
-            _request(f'{kind}/list'), [_server(**{field: [entry]})], None
+            _request(f'{kind}/list'),
+            [_server(**{field: [entry]})],
+            None,
+            authorized=_authorized(),
         )
     warnings = [c.args for c in mock_logger.warning.call_args_list]
     assert any(entry in args for args in warnings), warnings
@@ -1310,7 +1482,9 @@ async def test_an_unadvertised_entry_is_warned_about_only_once(kind, field, entr
     servers = [_server(**{field: [entry]})]
     with patch(f'{MCP_SERVICE}.logger') as mock_logger:
         for _ in range(3):
-            await _service(client)._dispatch(_request(f'{kind}/list'), servers, None)
+            await _service(client)._dispatch(
+                _request(f'{kind}/list'), servers, None, authorized=_authorized()
+            )
     assert mock_logger.warning.call_count == 1
 
 
@@ -1320,7 +1494,10 @@ async def test_a_fully_advertised_allowlist_warns_about_nothing(kind, field, ent
     client = _list_client()
     with patch(f'{MCP_SERVICE}.logger') as mock_logger:
         await _service(client)._dispatch(
-            _request(f'{kind}/list'), [_server(**{field: [advertised]})], None
+            _request(f'{kind}/list'),
+            [_server(**{field: [advertised]})],
+            None,
+            authorized=_authorized(),
         )
     mock_logger.warning.assert_not_called()
 
@@ -1368,8 +1545,12 @@ async def test_a_second_tools_list_is_served_from_cache():
     )
     service, cache = _service(client), _list_cache()
 
-    first = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
-    second = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    first = await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
+    second = await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
 
     assert second.payload['result'] == first.payload['result']
     assert [t['name'] for t in second.payload['result']['tools']] == [
@@ -1393,8 +1574,12 @@ async def test_prompts_list_and_resources_list_are_cached_too():
     service, cache = _service(client), _list_cache()
 
     for method in ('prompts/list', 'resources/list'):
-        first = await service._dispatch(_request(method), SERVERS, None, cache)
-        second = await service._dispatch(_request(method), SERVERS, None, cache)
+        first = await service._dispatch(
+            _request(method), SERVERS, None, cache, authorized=_authorized()
+        )
+        second = await service._dispatch(
+            _request(method), SERVERS, None, cache, authorized=_authorized()
+        )
         assert second.payload['result'] == first.payload['result']
 
     assert client.list_prompts.await_count == len(SERVERS)
@@ -1414,8 +1599,12 @@ async def test_one_cached_method_never_answers_another():
     )
     service, cache = _service(client), _list_cache()
 
-    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
-    result = await service._dispatch(_request('prompts/list'), SERVERS, None, cache)
+    await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
+    result = await service._dispatch(
+        _request('prompts/list'), SERVERS, None, cache, authorized=_authorized()
+    )
 
     assert [p['name'] for p in result.payload['result']['prompts']] == [
         'github__summarize',
@@ -1436,8 +1625,12 @@ async def test_a_partial_fanout_is_never_cached():
     )
     service, cache = _service(client), _list_cache()
 
-    degraded = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
-    recovered = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    degraded = await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
+    recovered = await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
 
     assert [t['name'] for t in degraded.payload['result']['tools']] == ['jira__search']
     assert [t['name'] for t in recovered.payload['result']['tools']] == [
@@ -1459,8 +1652,12 @@ async def test_a_fully_failed_fanout_is_never_cached():
     )
     service, cache = _service(client), _list_cache()
 
-    failed = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
-    recovered = await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    failed = await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
+    recovered = await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
 
     assert failed.payload['error']['code'] == -32000
     assert len(recovered.payload['result']['tools']) == 2
@@ -1473,11 +1670,15 @@ async def test_a_cache_hit_is_marked_on_the_span():
         return_value=types.ListToolsResult(tools=[_tool('get_issue')])
     )
     service, cache = _service(client), _list_cache()
-    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
     span = _recording_span()
 
     with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+        await service._dispatch(
+            _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+        )
 
     assert _span_attrs(span) == {
         'rb.gateway.mcp_cache_hit': True,
@@ -1491,10 +1692,14 @@ async def test_a_cache_hit_emits_a_cache_hit_event(emitted_cache_hits):
     client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
     service, cache = _service(client), _list_cache()
 
-    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
     assert emitted_cache_hits.call_count == 0  # the miss that populated it
 
-    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
 
     event = emitted_cache_hits.call_args.args[0]
     assert event.event_type is EventType.CACHE_HIT
@@ -1517,8 +1722,12 @@ async def test_a_degraded_fanout_emits_no_hit_because_it_was_never_cached(
     )
     service, cache = _service(client), _list_cache()
 
-    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
-    await service._dispatch(_request('tools/list'), SERVERS, None, cache)
+    await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
+    await service._dispatch(
+        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    )
 
     emitted_cache_hits.assert_not_called()
 
@@ -1526,28 +1735,6 @@ async def test_a_degraded_fanout_emits_no_hit_because_it_was_never_cached(
 # ---------------------------------------------------------------------------
 # MCP invocation events
 # ---------------------------------------------------------------------------
-
-EVENTS_PROCESSOR = 'radicalbit_ai_gateway.events.events_processor'
-
-
-@pytest.fixture(autouse=True)
-def recorded_events():
-    """Capture the event dicts dispatch records, not the Celery buffer.
-
-    Autouse so no unit test reaches the real buffer. The dict is what the
-    worker inserts, so asserting on it covers both the payload dispatch builds
-    and the column it maps to, in one place.
-    """
-    with patch(f'{EVENTS_PROCESSOR}._events_buffer') as buffer:
-        yield buffer.add
-
-
-def _mcp_events(recorded) -> list[dict]:
-    return [
-        call.args[0]
-        for call in recorded.call_args_list
-        if call.args[0]['EVENT_TYPE'] is EventType.MCP_INVOCATION
-    ]
 
 
 def _invoking_client() -> MagicMock:

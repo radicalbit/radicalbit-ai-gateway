@@ -1,8 +1,7 @@
 """What the metrics worker inserts for an event dictionary.
 
-The insert names its columns explicitly and builds each row positionally, so a
-new column added to the gateway but not here fails silently: events flow, the
-insert succeeds, and the column is empty. These tests are that check.
+The insert names its columns explicitly. A column the gateway sends but the
+worker does not build is the failure to watch for. These tests are that check.
 """
 
 from datetime import UTC, datetime
