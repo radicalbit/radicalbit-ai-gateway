@@ -5,6 +5,7 @@ worker does not build is the failure to watch for. These tests are that check.
 """
 
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 import uuid
 
 import pytest
@@ -97,3 +98,83 @@ def test_the_envelope_survives_the_round_trip(buffer):
     assert str(row['PROJECT_UUID']) == event['PROJECT_UUID']
     assert row['ROUTE_NAME'] == 'my-route'
     assert row['TAGS'] == ['env=prod']
+
+
+def test_the_task_returns_the_ids_it_processed(buffer):
+    events = [_event(), _event()]
+
+    processed = insert_event_record_connect_async(events)
+
+    assert processed == [e['REQUEST_UUID'] for e in events]
+
+
+def test_a_single_dict_payload_is_accepted(buffer):
+    insert_event_record_connect_async(_event())
+
+    assert len(buffer.rows) == 1
+
+
+def test_an_event_without_a_request_uuid_is_skipped(buffer):
+    event = _event()
+    del event['REQUEST_UUID']
+
+    assert insert_event_record_connect_async([event]) == []
+    assert buffer.rows == []
+
+
+def test_an_event_with_an_unparseable_uuid_is_skipped(buffer):
+    assert insert_event_record_connect_async([_event(REQUEST_UUID='nope')]) == []
+    assert buffer.rows == []
+
+
+def test_one_bad_event_does_not_drop_the_good_ones(buffer):
+    """A single malformed event must not cost the whole batch."""
+    good = _event()
+
+    processed = insert_event_record_connect_async([_event(REQUEST_UUID='nope'), good])
+
+    assert processed == [good['REQUEST_UUID']]
+    assert len(buffer.rows) == 1
+
+
+def test_a_non_numeric_cost_takes_down_the_whole_batch(buffer):
+    """Known bug, pinned so that fixing it is a deliberate change.
+
+    The guard catches KeyError and ValueError. Decimal raises
+    InvalidOperation, which is an ArithmeticError and neither of those, so a
+    COST that is not a number escapes the per-event skip and fails the task.
+    Celery then retries the same payload until it gives up, and the good
+    events batched with it never land.
+
+    The fix is to add InvalidOperation to the caught exceptions.
+    """
+    with pytest.raises(InvalidOperation):
+        insert_event_record_connect_async([_event(COST='free'), _event()])
+
+    assert buffer.rows == []
+
+
+def test_an_empty_payload_processes_nothing(buffer):
+    assert insert_event_record_connect_async([]) == []
+
+
+@pytest.mark.parametrize('column', ['API_KEY_UUID', 'GROUP_UUID', 'PROJECT_UUID'])
+@pytest.mark.parametrize('empty', ['', None])
+def test_an_absent_uuid_becomes_null_not_an_empty_string(buffer, column, empty):
+    """The ClickHouse column is Nullable(UUID). '' would not parse."""
+    insert_event_record_connect_async([_event(**{column: empty})])
+
+    assert _row(buffer)[column] is None
+
+
+def test_an_absent_cost_stays_null(buffer):
+    insert_event_record_connect_async([_event(COST=None)])
+
+    assert _row(buffer)['COST'] is None
+
+
+def test_a_cost_is_carried_as_a_decimal(buffer):
+    """Float rounding on money is the bug this avoids."""
+    insert_event_record_connect_async([_event(COST=0.1)])
+
+    assert _row(buffer)['COST'] == Decimal('0.1')
