@@ -4,6 +4,7 @@
 
 ![Maintenance][maintenance-shield]
 [![GitHub Activity][commits-shield]][commits]
+[![codecov](https://codecov.io/gh/radicalbit/radicalbit-ai-gateway/branch/main/graph/badge.svg)](https://codecov.io/gh/radicalbit/radicalbit-ai-gateway)
 
 [releases-shield]: https://img.shields.io/github/release/radicalbit/radicalbit-ai-gateway.svg
 [releases]: https://github.com/radicalbit/radicalbit-ai-gateway/releases
@@ -42,9 +43,10 @@ An LLM proxy with guardrails, rate limiting, multi-strategy routing, semantic ca
 <div align="center">
 
 <!-- TODO: Replace with hero GIF - show: AI-generated config in the UI, Serve button, curl call in terminal -->
+
 ![Generating a configuration from a prompt, serving it, and calling the route](docs/assets/ai_configuration.gif)
 
-*Generating a configuration from a prompt, serving it, and calling the route.*
+_Generating a configuration from a prompt, serving it, and calling the route._
 
 </div>
 
@@ -122,6 +124,7 @@ Open **[http://localhost:9000](http://localhost:9000)** and:
 You are all set up!
 
 ### 5. Call your route
+
 Open a terminal and send this cURL:
 
 ```bash
@@ -147,7 +150,7 @@ Back in the UI:
 
 In the configuration editor, click **Generate** and try:
 
-> *"Add a guardrail to the my-assistant route that blocks any input containing PII: email addresses, phone numbers, and credit card numbers."*
+> _"Add a guardrail to the my-assistant route that blocks any input containing PII: email addresses, phone numbers, and credit card numbers."_
 
 The assistant updates the YAML. Save, approve, and serve it, then repeat the curl with an email address in the message and watch the request get blocked.
 
@@ -167,7 +170,7 @@ The [Radicalbit Skills](https://github.com/radicalbit/radicalbit-skills) plugin 
 
 Describe what you need:
 
-> *"Create a route called `customer-support` that uses GPT-4o for complex queries and GPT-4o mini for short ones, with a 500-token threshold. Block any input containing PII."*
+> _"Create a route called `customer-support` that uses GPT-4o for complex queries and GPT-4o mini for short ones, with a 500-token threshold. Block any input containing PII."_
 
 The skill writes a valid `config.yaml` into your project.
 
@@ -231,38 +234,38 @@ Full reference: [docs.ai-gateway.radicalbit.ai/configuration/basic-setup](https:
 
 ## Features
 
-| Category | Feature | Description |
-|---|---|---|
-| **Routing** | Keyword | Route by keyword match in the message |
-| | Token length | Route by token count of the last message |
-| | Context length | Route by total conversation token count |
-| | Time | Route by time of day using cron expressions |
-| | Budget | Switch to cheaper models as spend increases |
-| | Text classification | Delegate routing to an external ML model over HTTP |
-| | LLM-based | Use an LLM to classify request intent and select the target model |
-| | Semantic | Embedding similarity against intent examples |
-| **Guardrails** | Pattern matching | `contains`, `starts_with`, `ends_with`, `regex` |
-| | PII detection | Detect PII in requests via Microsoft Presidio |
-| | PII redaction | Mask PII in responses before they reach the client |
-| | LLM judge | Evaluate requests or responses against your own criteria, defined as prompt templates |
-| **Caching** | Exact cache | Return stored responses for identical requests |
-| | Semantic cache | Match similar requests by embedding similarity |
-| **Limits** | Rate limiting | Cap requests per time window per route (HTTP 429 on breach) |
-| | Token limiting | Cap token usage per time window per route |
-| | Budget limiting | Cap spend per time window per route |
-| **Reliability** | Model fallback | Automatic failover across models and providers |
-| **MCP** | MCP proxy | Expose upstream MCP servers on a route behind a single gateway endpoint |
-| | Transports | Streamable HTTP and stdio upstreams, mixed on the same route |
-| | Tool namespacing | Tools, prompts, and resources merged across servers and prefixed with `{alias}__` |
-| | Credential isolation | Static upstream headers from `!secret`, plus a per-server allowlist for client-supplied headers |
-| | Rate limiting | The route's `rate_limiting` applies to MCP calls: one JSON-RPC POST counts as one request |
-| **Observability** | Usage dashboard | Cost and token volume by route and group |
-| | Request tracing | Routing decision, cache hit or miss, guardrail results, latency per span |
-| | Prometheus metrics | 20+ metrics on a dedicated endpoint: request rates, latency, token usage, cache hits, guardrail triggers, fallback activations |
-| | OpenTelemetry | Distributed tracing stored in ClickHouse, with OTLP export to Jaeger, Grafana Tempo, or any collector |
-| | Alert rules | Email notifications on guardrail, caching, and route events |
-| **Providers** | Native | OpenAI, Anthropic, Google Gemini, DeepSeek, Mistral, Azure OpenAI |
-| | Compatible | Any OpenAI-format endpoint: Ollama, vLLM, OpenRouter, on-premises |
+| Category          | Feature              | Description                                                                                                                    |
+| ----------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Routing**       | Keyword              | Route by keyword match in the message                                                                                          |
+|                   | Token length         | Route by token count of the last message                                                                                       |
+|                   | Context length       | Route by total conversation token count                                                                                        |
+|                   | Time                 | Route by time of day using cron expressions                                                                                    |
+|                   | Budget               | Switch to cheaper models as spend increases                                                                                    |
+|                   | Text classification  | Delegate routing to an external ML model over HTTP                                                                             |
+|                   | LLM-based            | Use an LLM to classify request intent and select the target model                                                              |
+|                   | Semantic             | Embedding similarity against intent examples                                                                                   |
+| **Guardrails**    | Pattern matching     | `contains`, `starts_with`, `ends_with`, `regex`                                                                                |
+|                   | PII detection        | Detect PII in requests via Microsoft Presidio                                                                                  |
+|                   | PII redaction        | Mask PII in responses before they reach the client                                                                             |
+|                   | LLM judge            | Evaluate requests or responses against your own criteria, defined as prompt templates                                          |
+| **Caching**       | Exact cache          | Return stored responses for identical requests                                                                                 |
+|                   | Semantic cache       | Match similar requests by embedding similarity                                                                                 |
+| **Limits**        | Rate limiting        | Cap requests per time window per route (HTTP 429 on breach)                                                                    |
+|                   | Token limiting       | Cap token usage per time window per route                                                                                      |
+|                   | Budget limiting      | Cap spend per time window per route                                                                                            |
+| **Reliability**   | Model fallback       | Automatic failover across models and providers                                                                                 |
+| **MCP**           | MCP proxy            | Expose upstream MCP servers on a route behind a single gateway endpoint                                                        |
+|                   | Transports           | Streamable HTTP and stdio upstreams, mixed on the same route                                                                   |
+|                   | Tool namespacing     | Tools, prompts, and resources merged across servers and prefixed with `{alias}__`                                              |
+|                   | Credential isolation | Static upstream headers from `!secret`, plus a per-server allowlist for client-supplied headers                                |
+|                   | Rate limiting        | The route's `rate_limiting` applies to MCP calls: one JSON-RPC POST counts as one request                                      |
+| **Observability** | Usage dashboard      | Cost and token volume by route and group                                                                                       |
+|                   | Request tracing      | Routing decision, cache hit or miss, guardrail results, latency per span                                                       |
+|                   | Prometheus metrics   | 20+ metrics on a dedicated endpoint: request rates, latency, token usage, cache hits, guardrail triggers, fallback activations |
+|                   | OpenTelemetry        | Distributed tracing stored in ClickHouse, with OTLP export to Jaeger, Grafana Tempo, or any collector                          |
+|                   | Alert rules          | Email notifications on guardrail, caching, and route events                                                                    |
+| **Providers**     | Native               | OpenAI, Anthropic, Google Gemini, DeepSeek, Mistral, Azure OpenAI                                                              |
+|                   | Compatible           | Any OpenAI-format endpoint: Ollama, vLLM, OpenRouter, on-premises                                                              |
 
 ### Configuration examples
 
@@ -335,7 +338,7 @@ routing:
     output_mapping:
       - model_id: gpt-4o
         conditions:
-          - "0 9-17 * * 1-5"    # Mon-Fri, 09:00-17:00 UTC
+          - "0 9-17 * * 1-5" # Mon-Fri, 09:00-17:00 UTC
 ```
 
 **Budget.** Degrade gracefully as spend approaches the limit.
@@ -349,7 +352,7 @@ routing:
     output_mapping:
       - model_id: gpt-4o-mini
         conditions:
-          threshold: 0.8        # switch when 80% of budget is consumed
+          threshold: 0.8 # switch when 80% of budget is consumed
 ```
 
 </details>

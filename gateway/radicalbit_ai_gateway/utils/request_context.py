@@ -34,6 +34,7 @@ def reset_route_context(func):
         finally:
             current_route_config_ctx.set(None)
             current_credential_limiter_ctx.set(None)
+            current_project_budget_limiter_ctx.set(None)
 
     return wrapper
 
@@ -66,3 +67,21 @@ def set_current_credential_limiter(limiter: Any) -> None:
 
 def get_current_credential_limiter() -> Any:
     return current_credential_limiter_ctx.get()
+
+
+# The calling project's own ProjectBudgetLimiter, or None when it has no
+# budget limits configured. Same problem as the credential limiter above:
+# a GatewayRoute instance is a shared singleton, so a limiter built from
+# DB rows that can change independently of the route config can't live on
+# `self`.
+current_project_budget_limiter_ctx: ContextVar[Any] = ContextVar(
+    'current_project_budget_limiter', default=None
+)
+
+
+def set_current_project_budget_limiter(limiter: Any) -> None:
+    current_project_budget_limiter_ctx.set(limiter)
+
+
+def get_current_project_budget_limiter() -> Any:
+    return current_project_budget_limiter_ctx.get()

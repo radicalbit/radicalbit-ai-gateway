@@ -15,15 +15,15 @@ from radicalbit_ai_gateway.db.dao.base_dao import BaseDAO
 from radicalbit_ai_gateway.db.database import BaseTable, Reflected
 
 
-class KeyLimit(Reflected, BaseTable, BaseDAO):
-    __tablename__ = 'key_limit'
+class GroupLimit(Reflected, BaseTable, BaseDAO):
+    __tablename__ = 'group_limit'
     __table_args__ = (
         UniqueConstraint(
-            'KEY_UUID',
+            'GROUP_UUID',
             'CATEGORY',
             'ALGORITHM',
             'WINDOW_SIZE',
-            name='uq_key_limit_KEY_UUID_CATEGORY_ALGORITHM_WINDOW_SIZE',
+            name='uq_group_limit_GROUP_UUID_CATEGORY_ALGORITHM_WINDOW_SIZE',
         ),
     )
 
@@ -34,10 +34,10 @@ class KeyLimit(Reflected, BaseTable, BaseDAO):
         default=uuid.uuid4,
         primary_key=True,
     )
-    key_uuid = Column(
-        'KEY_UUID',
+    group_uuid = Column(
+        'GROUP_UUID',
         UUID(as_uuid=True),
-        ForeignKey('key.UUID', ondelete='CASCADE'),
+        ForeignKey('group.UUID', ondelete='CASCADE'),
         nullable=False,
     )
     category = Column('CATEGORY', VARCHAR(), nullable=False)
@@ -46,20 +46,14 @@ class KeyLimit(Reflected, BaseTable, BaseDAO):
     max_value = Column('MAX_VALUE', NUMERIC(), nullable=False)
     created_at = Column('CREATED_AT', TIMESTAMP(timezone=True), nullable=False)
     updated_at = Column('UPDATED_AT', TIMESTAMP(timezone=True), nullable=False)
-    group_limit_uuid = Column(
-        'GROUP_LIMIT_UUID',
-        UUID(as_uuid=True),
-        ForeignKey('group_limit.UUID', ondelete='CASCADE'),
-        nullable=True,
-    )
 
-    key = relationship(
-        'Key',
+    group = relationship(
+        'Group',
         back_populates='limits',
         lazy='selectin',
     )
-    group_limit = relationship(
-        'GroupLimit',
-        back_populates='propagated_key_limits',
+    propagated_key_limits = relationship(
+        'KeyLimit',
+        back_populates='group_limit',
         lazy='selectin',
     )

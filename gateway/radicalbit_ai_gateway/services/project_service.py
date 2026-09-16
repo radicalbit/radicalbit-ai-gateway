@@ -1,4 +1,5 @@
 import io
+import logging
 import re
 from uuid import UUID
 import zipfile
@@ -10,6 +11,9 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
+from radicalbit_ai_gateway.limiting.project_budget_limiter import (
+    clear_project_budget_limit_counter,
+)
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_budget_limiting import (
@@ -24,6 +28,7 @@ from radicalbit_ai_gateway.models.project_dto import (
     ProjectIn,
     ProjectOut,
 )
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     ProjectAlreadyExistsError,
     ProjectBudgetLimitAlreadyExistsError,
@@ -38,6 +43,9 @@ from radicalbit_ai_gateway.utils.yaml_utils import (
     get_default_config_template,
     validate_gateway_config,
 )
+
+app_config = get_app_config()
+logger = logging.getLogger(app_config.log_config.logger_name)
 
 
 def _sanitize_filename(name: str) -> str:
@@ -207,7 +215,7 @@ class ProjectService:
             raise ProjectInternalError(f'Failed to unserve config {config_uuid}')
         return self._build_out_or_raise(project_uuid)
 
-    def delete_project(self, project_uuid: UUID) -> ProjectOut:
+    async def delete_project(self, project_uuid: UUID) -> ProjectOut:
         project = self._get_project_or_raise(project_uuid)
 
         # Build the response before deletion so the caller can still see the
@@ -220,6 +228,14 @@ class ProjectService:
 
         self.project_config_dao.soft_delete_by_project(project_uuid)
         self.project_dao.soft_delete(project_uuid)
+
+        # The project row is soft-deleted, so the table's ON DELETE CASCADE
+        # FK never fires — budget limits must be cleaned up explicitly.
+        limits = self.project_budget_limit_dao.get_by_project_uuid(project_uuid)
+        if limits:
+            self.project_budget_limit_dao.delete_by_project_uuid(project_uuid)
+            await self._clear_budget_limit_counters(project_uuid, limits)
+
         return out
 
     def get_by_uuid(
@@ -348,7 +364,7 @@ class ProjectService:
             for limit in self.project_budget_limit_dao.get_by_project_uuid(project_uuid)
         ]
 
-    def delete_budget_limit_from_project(
+    async def delete_budget_limit_from_project(
         self, project_uuid: UUID, limit_uuid: UUID
     ) -> ProjectBudgetLimitOut:
         self._get_project_or_raise(project_uuid)
@@ -360,7 +376,26 @@ class ProjectService:
         # Build the response before deletion so the caller can still see it.
         out = ProjectBudgetLimitOut.from_project_budget_limit(limit)
         self.project_budget_limit_dao.delete_by_uuid(limit_uuid)
+        await self._clear_budget_limit_counters(project_uuid, [limit])
         return out
+
+    @staticmethod
+    async def _clear_budget_limit_counters(project_uuid: UUID, limits) -> None:
+        """Best-effort: the DB rows are already gone, that's what matters."""
+        for limit in limits:
+            try:
+                await clear_project_budget_limit_counter(
+                    project_uuid=str(project_uuid),
+                    algorithm=limit.algorithm,
+                    window_size=limit.window_size,
+                )
+            except Exception:
+                logger.exception(
+                    'Failed to clear the budget limit counter for limit %s on '
+                    'project %s',
+                    limit.uuid,
+                    project_uuid,
+                )
 
     def validate_exists(self, project_uuid: UUID) -> None:
         if not self.project_dao.get_by_uuid(project_uuid):

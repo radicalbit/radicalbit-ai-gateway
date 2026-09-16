@@ -142,7 +142,10 @@ class TestEmbeddingModelInvoker(unittest.IsolatedAsyncioTestCase):
             [],
         )
 
-        with pytest.raises(ModelInvokerInternalError, match='Embedding model failure'):
+        with (
+            self.assertLogs('radicalbit-ai-gateway', level='ERROR'),
+            pytest.raises(ModelInvokerInternalError, match='Embedding model failure'),
+        ):
             await self.embedding_model_invoker.embed(
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),

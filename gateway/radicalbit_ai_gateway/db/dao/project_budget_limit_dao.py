@@ -50,3 +50,10 @@ class ProjectBudgetLimitDAO:
                 ProjectBudgetLimit.uuid == limit_uuid
             )
             return session.execute(query).rowcount
+
+    def delete_by_project_uuid(self, project_uuid: UUID) -> int:
+        with self.db.begin_session() as session:
+            query = delete(ProjectBudgetLimit).where(
+                ProjectBudgetLimit.project_uuid == project_uuid
+            )
+            return session.execute(query).rowcount

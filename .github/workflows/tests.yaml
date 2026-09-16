@@ -67,9 +67,10 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: ${{ inputs.run-pytest && always() }}
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: ${{ inputs.working-directory }}/coverage.xml
           flags: ${{ steps.safe-name.outputs.name }}
           token: ${{ secrets.CODECOV_TOKEN }}
+          slug: radicalbit/radicalbit-ai-gateway
           fail_ci_if_error: false

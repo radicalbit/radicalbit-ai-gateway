@@ -1,36 +1,20 @@
 from __future__ import annotations
 
 import datetime
-from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
-from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
-from radicalbit_ai_gateway.limiter.window_config import ScenarioType
+from radicalbit_ai_gateway.db.tables.group_limit_table import GroupLimit
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CATEGORY_TO_LIMITING_FIELD,
+    CredentialLimitCategory,
+)
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
 
 
-class CredentialLimitCategory(str, Enum):
-    RATE = ScenarioType.REQUEST_RATE.value
-    TOKEN_INPUT = ScenarioType.TOKEN_INPUT.value
-    TOKEN_OUTPUT = ScenarioType.TOKEN_OUTPUT.value
-    BUDGET = ScenarioType.BUDGET.value
-
-
-# Which field of the existing `Limiting` model each category maps to, so we can
-# reuse its algorithm/window_size validation instead of duplicating it. Shared
-# with group_limiting.py, which validates against the same categories.
-CATEGORY_TO_LIMITING_FIELD: dict[CredentialLimitCategory, str] = {
-    CredentialLimitCategory.RATE: 'max_requests',
-    CredentialLimitCategory.TOKEN_INPUT: 'max_tokens',
-    CredentialLimitCategory.TOKEN_OUTPUT: 'max_tokens',
-    CredentialLimitCategory.BUDGET: 'max_budget',
-}
-
-
-class CredentialLimitIn(BaseModel):
+class GroupLimitIn(BaseModel):
     category: CredentialLimitCategory
     algorithm: LimitingAlgorithmType = LimitingAlgorithmType.FIXED_WINDOW
     window_size: int | str = '1 minute'
@@ -44,7 +28,7 @@ class CredentialLimitIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
     @model_validator(mode='after')
-    def validate_against_limiting_schema(self) -> CredentialLimitIn:
+    def validate_against_limiting_schema(self) -> GroupLimitIn:
         field_name = CATEGORY_TO_LIMITING_FIELD[self.category]
         # Raises ValueError (-> 422) if algorithm/window_size are inconsistent,
         # reusing the validation already defined on `Limiting`.
@@ -55,11 +39,11 @@ class CredentialLimitIn(BaseModel):
         )
         return self
 
-    def to_key_limit(self, key_uuid: UUID) -> KeyLimit:
+    def to_group_limit(self, group_uuid: UUID) -> GroupLimit:
         UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
         now = datetime.datetime.now(tz=UTC)
-        return KeyLimit(
-            key_uuid=key_uuid,
+        return GroupLimit(
+            group_uuid=group_uuid,
             category=self.category.value,
             algorithm=self.algorithm.value,
             window_size=str(self.window_size),
@@ -69,17 +53,15 @@ class CredentialLimitIn(BaseModel):
         )
 
 
-class CredentialLimitsIn(BaseModel):
-    """A batch of limits to create on a credential in a single call — e.g. a rate,
-    a token and a budget limit configured together from one UI form submission.
-    """
+class GroupLimitsIn(BaseModel):
+    """A batch of limits to create on a group in a single call."""
 
-    limits: list[CredentialLimitIn] = Field(..., min_length=1)
+    limits: list[GroupLimitIn] = Field(..., min_length=1)
 
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
     @model_validator(mode='after')
-    def no_duplicates_within_batch(self) -> CredentialLimitsIn:
+    def no_duplicates_within_batch(self) -> GroupLimitsIn:
         seen = set()
         for limit in self.limits:
             key = (limit.category, limit.algorithm, str(limit.window_size))
@@ -92,11 +74,11 @@ class CredentialLimitsIn(BaseModel):
             seen.add(key)
         return self
 
-    def to_key_limits(self, key_uuid: UUID) -> list[KeyLimit]:
-        return [limit.to_key_limit(key_uuid) for limit in self.limits]
+    def to_group_limits(self, group_uuid: UUID) -> list[GroupLimit]:
+        return [limit.to_group_limit(group_uuid) for limit in self.limits]
 
 
-class CredentialLimitOut(BaseModel):
+class GroupLimitOut(BaseModel):
     uuid: UUID
     category: CredentialLimitCategory
     algorithm: LimitingAlgorithmType
@@ -108,13 +90,35 @@ class CredentialLimitOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
     @staticmethod
-    def from_key_limit(key_limit: KeyLimit) -> CredentialLimitOut:
-        return CredentialLimitOut(
-            uuid=key_limit.uuid,
-            category=CredentialLimitCategory(key_limit.category),
-            algorithm=LimitingAlgorithmType(key_limit.algorithm),
-            window_size=key_limit.window_size,
-            value=float(key_limit.max_value),
-            created_at=str(key_limit.created_at),
-            updated_at=str(key_limit.updated_at),
+    def from_group_limit(group_limit: GroupLimit) -> GroupLimitOut:
+        return GroupLimitOut(
+            uuid=group_limit.uuid,
+            category=CredentialLimitCategory(group_limit.category),
+            algorithm=LimitingAlgorithmType(group_limit.algorithm),
+            window_size=group_limit.window_size,
+            value=float(group_limit.max_value),
+            created_at=str(group_limit.created_at),
+            updated_at=str(group_limit.updated_at),
         )
+
+
+class GroupLimitOverwriteWarning(BaseModel):
+    """A member credential whose own limit of this type (individually-set or
+    from a different/same group) was overwritten by this group limit. The
+    last limit applied to a credential always wins.
+    """
+
+    key_uuid: UUID
+    key_name: str
+    category: CredentialLimitCategory
+    algorithm: LimitingAlgorithmType
+    window_size: str
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+
+class GroupLimitsApplyOut(BaseModel):
+    limits: list[GroupLimitOut]
+    overwritten: list[GroupLimitOverwriteWarning]
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)

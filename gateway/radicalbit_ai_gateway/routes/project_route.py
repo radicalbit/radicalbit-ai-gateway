@@ -279,7 +279,7 @@ class ProjectRoute:
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def delete_project(project_uuid: UUID):
-            project = project_service.delete_project(project_uuid)
+            project = await project_service.delete_project(project_uuid)
             if deregister_project_routes and project.served_config_uuid:
                 await deregister_project_routes(project_uuid)
             logger.info('Deleted project %s', project_uuid)
@@ -360,7 +360,7 @@ class ProjectRoute:
         async def delete_budget_limit_from_project(
             project_uuid: UUID, limit_uuid: UUID
         ):
-            limit = project_service.delete_budget_limit_from_project(
+            limit = await project_service.delete_budget_limit_from_project(
                 project_uuid, limit_uuid
             )
             logger.info(
