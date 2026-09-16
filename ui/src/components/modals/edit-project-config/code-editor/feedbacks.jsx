@@ -19,7 +19,7 @@ function FeedbacksDefault() {
   const backendError = error('silent.backend');
 
   if (backendError) {
-    return <Alert closable message={backendError} showIcon type="error" />;
+    return <Alert closable showIcon title={backendError} type="error" />;
   }
 
   return false;
@@ -30,10 +30,10 @@ function FeedbacksReadyToServe() {
   const backendError = error('silent.backend');
 
   if (backendError) {
-    return <Alert closable message={backendError} showIcon type="error" />;
+    return <Alert closable showIcon title={backendError} type="error" />;
   }
 
-  return <Alert closable message="Publish request submitted for approval." showIcon type="warning" />;
+  return <Alert closable showIcon title="Publish request submitted for approval." type="warning" />;
 }
 
 export default Feedbacks;

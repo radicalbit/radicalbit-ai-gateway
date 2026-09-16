@@ -61,7 +61,7 @@ function Body() {
 
   if (isExternallyManaged) {
     return (
-      <Alert message={DISABLED_CREDENTIALS_TOOLTIP} type="warning" />
+      <Alert title={DISABLED_CREDENTIALS_TOOLTIP} type="warning" />
     );
   }
 

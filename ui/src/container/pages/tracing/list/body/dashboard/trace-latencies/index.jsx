@@ -39,7 +39,7 @@ function TraceLatencies() {
           columns={columns}
           dataSource={dataSource}
           pagination={false}
-          rowKey="trace-latencies"
+          rowKey={() => 'trace-latencies'}
         />
       )}
     />
