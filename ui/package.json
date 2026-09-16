@@ -26,7 +26,7 @@
     "echarts": "^6.1.0",
     "echarts-for-react": "^3.0.6",
     "lodash": "^4.17.21",
-    "lucide-react": "^1.41.0",
+    "lucide-react": "^1.45.0",
     "markdown-to-jsx": "^9.10.2",
     "query-string": "^9.5.1",
     "react": "^19.2.8",
@@ -34,7 +34,7 @@
     "react-dom": "^19.2.8",
     "react-redux": "^9.3.0",
     "react-router-dom": "^7.18.3",
-    "vite": "^8.2.2",
+    "vite": "^8.3.0",
     "vite-plugin-svgr": "^5.2.0",
     "yup": "^1.4.0"
   },
