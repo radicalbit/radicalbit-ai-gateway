@@ -11,6 +11,7 @@ from opentelemetry.trace import Status, StatusCode, get_current_span
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
+from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.mcp_proxy import jsonrpc
 from radicalbit_ai_gateway.mcp_proxy.errors import (
     JSON_RPC_UPSTREAM_ERROR,
@@ -24,6 +25,8 @@ from radicalbit_ai_gateway.mcp_proxy.list_cache import (
 )
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
+from radicalbit_ai_gateway.models.event_payload import McpInvocationEventPayload
+from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.mcp_authorized_request import McpAuthorizedRequest
 from radicalbit_ai_gateway.models.mcp_dispatch_result import McpDispatchResult
 from radicalbit_ai_gateway.models.mcp_server import ALIAS_TOOL_SEPARATOR, AnyMcpServer
@@ -45,6 +48,12 @@ SUPPORTED_PROTOCOL_VERSIONS = ('2025-06-18', '2025-11-25')
 LATEST_PROTOCOL_VERSION = '2025-11-25'
 PROTOCOL_VERSION_HEADER = 'mcp-protocol-version'
 MCP_SERVER_NAME = 'radicalbit-ai-gateway-mcp'
+
+# The methods that address one object on one upstream. Only these count as an
+# invocation. Handshake, ping and the list methods are protocol traffic, not
+# usage. The rule lives here, not in the queries that read these events, so
+# two widgets cannot drift apart.
+ADDRESSED_METHODS = frozenset({'tools/call', 'prompts/get', 'resources/read'})
 
 # Resources are identified by an arbitrary URI, not a name, so the
 # '{alias}__{name}' prefix used for tools/prompts can't apply directly (an
@@ -326,7 +335,11 @@ class McpService:
 
         set_operation_category(OperationCategory.INVOCATION)
         result = await self._dispatch(
-            body, authorized.servers, request.headers, list_cache
+            body,
+            authorized.servers,
+            request.headers,
+            list_cache,
+            authorized=authorized,
         )
         self._record_degradation()
         return self._record_error_outcome(request, result)
@@ -437,12 +450,42 @@ class McpService:
         if failed:
             set_mcp_attributes(upstream_failed=','.join(failed))
 
+    @staticmethod
+    def _record_invocation(
+        authorized: McpAuthorizedRequest, method: str, alias: str
+    ) -> None:
+        """Report an addressed MCP invocation to the events pipeline.
+
+        ``alias`` is empty when the client named a server this route does not
+        configure. The event is emitted anyway. Misdirected traffic stays
+        visible, and the per-server chart still totals to the per-key table.
+
+        Never raises. Recording usage must not be able to fail an MCP call.
+        """
+        if method not in ADDRESSED_METHODS:
+            return
+        try:
+            emit_event(
+                McpInvocationEventPayload(
+                    **authorized.event_envelope(),
+                    event_type=EventType.MCP_INVOCATION,
+                    value=1.0,
+                    cost=0.0,
+                    mcp_method=method,
+                    mcp_alias=alias,
+                )
+            )
+        except Exception:
+            logger.exception('Failed to record MCP %s invocation', method)
+
     async def _dispatch(
         self,
         body: dict,
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
+        *,
+        authorized: McpAuthorizedRequest,
     ) -> McpDispatchResult:
         """Dispatch one JSON-RPC message; returns its HTTP-level outcome.
 
@@ -492,7 +535,12 @@ class McpService:
                 ),
             )
 
-        set_mcp_attributes(**target_attributes(method, params or {}, servers))
+        target = target_attributes(method, params or {}, servers)
+        set_mcp_attributes(**target)
+        # Before the method runs. The outcome must not change what is counted.
+        # A failed call is still an invocation. So is one an allowlist denied,
+        # and one that named a tool the upstream does not have.
+        self._record_invocation(authorized, method, target.get('alias', ''))
 
         try:
             if method == 'initialize':

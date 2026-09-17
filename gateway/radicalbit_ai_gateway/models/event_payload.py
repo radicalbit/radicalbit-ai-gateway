@@ -76,6 +76,17 @@ class RoutingEventPayload(EventBase):
     selected_model_id: str
 
 
+class McpInvocationEventPayload(EventBase):
+    """One addressed MCP invocation, with the server it addressed.
+
+    ``mcp_alias`` is empty when the route does not configure that server.
+    """
+
+    event_type: Literal[EventType.MCP_INVOCATION]
+    mcp_method: str
+    mcp_alias: str = ''
+
+
 class LimitEventPayload(EventBase):
     event_type: Literal[
         EventType.RATE_LIMIT,
@@ -129,6 +140,7 @@ EventPayload = Annotated[
         GuardrailEventPayload,
         RoutingEventPayload,
         LimitEventPayload,
+        McpInvocationEventPayload,
     ],
     Field(discriminator='event_type'),
 ]

@@ -51,6 +51,8 @@ class Event(ClickHouseBaseTable):
     tags = Column('TAGS', Array(String), default=[])
     value = Column('VALUE', Float, default=1.0)
     cost = Column('COST', Decimal(64, 9), default=0.0)
+    mcp_method = Column('MCP_METHOD', LowCardinality(String), default='')
+    mcp_alias = Column('MCP_ALIAS', LowCardinality(String), default='')
     __table_args__ = (
         MergeTree(
             partition_by=func.toDate(

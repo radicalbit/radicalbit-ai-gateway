@@ -191,19 +191,11 @@ class McpListCache:
             method,
             self._authorized.route_name,
         )
-        key_details = self._authorized.key_details
         emit_event(
             CacheEventPayload(
-                value=1.0,
-                request_uuid=self._authorized.request_uuid,
+                **self._authorized.event_envelope(),
                 event_type=EventType.CACHE_HIT,
-                route_name=self._authorized.route_name,
-                api_key_uuid=key_details.api_key_uuid,
-                api_key_name=key_details.api_key_name,
-                group_uuid=key_details.group_uuid,
-                group_name=key_details.group_name,
-                project_uuid=self._authorized.project_uuid,
-                project_name=self._authorized.project_name,
+                value=1.0,
                 cost=0.0,
                 cache_type=str(self._cache.cache_type.value),
                 model_id='',

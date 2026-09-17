@@ -29,7 +29,8 @@ jobs:
     uses: ./.github/workflows/tests.yaml
     with:
       working-directory: ./metrics-worker
-      run-pytest: false
+      run-pytest: true
+    secrets: inherit
 
   pipeline:
     needs: test
