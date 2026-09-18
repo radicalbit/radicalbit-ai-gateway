@@ -78,6 +78,7 @@ from radicalbit_ai_gateway.services.event_service import EventService
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.services.mcp_service import McpService
+from radicalbit_ai_gateway.services.mcp_usage_service import McpUsageService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
@@ -239,6 +240,7 @@ mcp_service = McpService(
     upstream_client=McpUpstreamClient(),
     group_service=group_service,
 )
+mcp_usage_service = McpUsageService(event_dao=event_dao)
 
 alert_rule_dao = AlertRuleDAO(database)
 alert_rule_service = AlertRuleService(
@@ -395,6 +397,7 @@ app.include_router(
     UsageRoute.get_usage_router(
         event_service=event_service,
         project_service=project_service,
+        mcp_usage_service=mcp_usage_service,
     ),
     prefix=prefix,
 )

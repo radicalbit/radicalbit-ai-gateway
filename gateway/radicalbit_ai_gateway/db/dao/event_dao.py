@@ -2,7 +2,9 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import Float, String, and_, desc, func as F, literal, select, text
+from fastapi_pagination import Page, Params
+from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy import Float, Row, String, and_, desc, func as F, literal, select, text
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
@@ -1315,3 +1317,61 @@ class EventDAO:
                 MostExpensiveChartData.model_validate(dict(zip(FIELD_NAMES, row_tuple)))
                 for row_tuple in res
             ]
+
+    def get_mcp_key_usage_paginated(
+        self,
+        project_uuid: UUID,
+        route_names: list[str] | None,
+        _from: datetime | None,
+        _to: datetime | None,
+        params: Params,
+        tags: list[str] | None = None,
+    ) -> Page[Row]:
+        """Rank the keys that made MCP invocations in a project.
+
+        Membership comes from the event type alone: the emission side already
+        decided what counts as an invocation, so no method or outcome filter
+        belongs here.
+        """
+        T = self.T
+        conditions = [T.c['EVENT_TYPE'] == 'MCP_INVOCATION']
+        self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
+        if route_names:
+            conditions.append(T.c['ROUTE_NAME'].in_(route_names))
+        if _from is not None:
+            conditions.append(T.c['TIMESTAMP'] >= _from)
+        if _to is not None:
+            conditions.append(T.c['TIMESTAMP'] <= _to)
+
+        group_by_columns = [
+            T.c['API_KEY_UUID'],
+            T.c['API_KEY_NAME'],
+            T.c['GROUP_UUID'],
+            T.c['GROUP_NAME'],
+        ]
+        stmt = (
+            select(
+                T.c['API_KEY_UUID'].label('key_uuid'),
+                T.c['API_KEY_NAME'].label('key_name'),
+                T.c['GROUP_UUID'].label('group_uuid'),
+                T.c['GROUP_NAME'].label('group_name'),
+                F.count().label('counter'),
+                F.max(T.c['TIMESTAMP']).label('last_call'),
+            )
+            .select_from(Event)
+            .where(*conditions)
+            .group_by(*group_by_columns)
+            # A total order. Count alone would let a key show up on two pages.
+            # The key identifier breaks a full tie, read as text so the order
+            # is the one an operator sees on screen.
+            .order_by(
+                text('counter DESC'),
+                text('last_call DESC'),
+                F.toString(T.c['API_KEY_UUID']),
+            )
+        )
+
+        with self.db.begin_session() as session:
+            # unique=False: every row is one key, so there is nothing to dedup.
+            return paginate(session, stmt, params, unique=False)
