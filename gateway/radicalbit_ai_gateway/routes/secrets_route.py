@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request
@@ -14,7 +14,6 @@ class SecretsRouteConfig:
     # The search argument is always None here. AG-968 adds the query parameter
     # that fills it. The signature ships now so Enterprise can build against it.
     get_secrets_fn: Callable[[Request, str | None], Any] | None = None
-    list_response_model: type = field(default_factory=lambda: Page[SecretOut])
 
 
 class SecretsRoute:
@@ -32,7 +31,7 @@ class SecretsRoute:
         @router.get(
             '/secrets',
             status_code=200,
-            response_model=config.list_response_model,
+            response_model=Page[SecretOut],
         )
         def get_secrets(
             request: Request,
