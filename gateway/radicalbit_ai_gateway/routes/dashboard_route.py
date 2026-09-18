@@ -33,6 +33,7 @@ from radicalbit_ai_gateway.models.prompt_dto import (
 )
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.event_service import EventService
+from radicalbit_ai_gateway.services.mcp_usage_service import McpUsageService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -108,8 +109,17 @@ class DashboardRoute:
         event_service: EventService,
         request_event_service: RequestEventService,
         project_service: ProjectService,
+        mcp_usage_service: McpUsageService,
     ) -> APIRouter:
         router = APIRouter(tags=['dashboard_api'])
+
+        def validate_project_exists(project_uuid: UUID) -> None:
+            """Fail an unknown project before the stream opens.
+
+            Inside the generator the response has already started, so a 404
+            could no longer reach the caller.
+            """
+            project_service.validate_exists(project_uuid)
 
         @router.get(
             '/projects/{project_uuid}/metrics',
@@ -898,6 +908,41 @@ class DashboardRoute:
                     tags=tags,
                 )
                 yield result if result is not None else {}
+                sleep(10)
+
+        @router.get(
+            '/projects/{project_uuid}/routes/mcp/servers/stream',
+            status_code=200,
+            response_class=EventSourceResponse,
+        )
+        def stream_mcp_servers_chart(
+            project_uuid: UUID,
+            routes: Annotated[list[str] | None, Query()] = None,
+            _gte: Annotated[
+                int | None,
+                Query(
+                    description='Seconds to look back from now (mutually exclusive with _from/_to)'
+                ),
+            ] = None,
+            _from: Annotated[int | None, Query()] = None,
+            _to: Annotated[int | None, Query()] = None,
+            group_by: Literal['services', 'groups', 'keys'] = Query('services'),
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
+            _: None = Depends(validate_sse_params),
+            __: None = Depends(validate_project_exists),
+        ) -> StreamingResponse:
+            while True:
+                # Recomputed every tick, so a rolling look-back really rolls.
+                from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
+                result = mcp_usage_service.get_mcp_server_chart_data(
+                    project_uuid=project_uuid,
+                    route_names=routes,
+                    _from=from_datetime,
+                    _to=to_datetime,
+                    group_by=group_by,
+                    tags=tags,
+                )
+                yield result.model_dump(by_alias=True)
                 sleep(10)
 
         return router
