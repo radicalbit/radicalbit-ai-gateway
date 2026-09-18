@@ -13,9 +13,6 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss(), svgr({ include: '**/*.svg' })],
     server: {
       port: 5173,
-      fs: {
-        allow: ['..', path.resolve(__dirname, '../../rbit-design-system-github')],
-      },
       proxy: {
         '/auth': {
           target: backendUrl,
@@ -28,18 +25,12 @@ export default defineConfig(({ mode }) => {
     optimizeDeps: {
       force: true,
       include: ['@radicalbit/radicalbit-design-system'],
-      needsInterop: ['@radicalbit/radicalbit-design-system'],
     },
     resolve: {
       dedupe: ['react', 'react-dom'],
-      preserveSymlinks: false,
       alias: {
         react: path.resolve(__dirname, 'node_modules/react'),
         'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
-        '@radicalbit/radicalbit-design-system': path.resolve(
-          __dirname,
-          '../../rbit-design-system-github/dist/index.js',
-        ),
         '@Api': path.resolve(__dirname, 'src/api/'),
         '@Components': path.resolve(__dirname, 'src/components/'),
         '@Container': path.resolve(__dirname, 'src/container/'),
