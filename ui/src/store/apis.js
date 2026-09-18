@@ -12,6 +12,7 @@ export const API_TAGS = {
   PROJECTS: 'PROJECTS',
   USAGE: 'USAGE',
   ROUTES: 'ROUTES',
+  SECRETS: 'SECRETS',
   TRACING: 'TRACING',
 };
 
