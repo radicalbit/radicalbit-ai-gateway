@@ -13,6 +13,14 @@ class SecretProvider(ABC):
         """Resolve a secret by key. Raises SecretNotFoundError if unavailable."""
         ...
 
+    @abstractmethod
+    def list_secret_keys(self) -> list[str]:
+        """Return the secret keys the backend holds.
+
+        Keys only. A secret value is never returned by this method.
+        """
+        ...
+
     def validate_secret(self, key: str) -> str | None:
         """Check that *key* exists and has a non-empty value.
 
@@ -45,6 +53,9 @@ class FileSecretProvider(SecretProvider):
         if value is None:
             raise SecretNotFoundError(key, str(self._secrets_path))
         return value
+
+    def list_secret_keys(self) -> list[str]:
+        return list(self._load().keys())
 
 
 _secret_provider_factory: list[type[SecretProvider] | None] = [None]
