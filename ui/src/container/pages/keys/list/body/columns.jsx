@@ -20,6 +20,8 @@ import { useNavigate } from 'react-router-dom';
 import DeleteKey from '../delete-key';
 
 const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and cannot be modified';
+
+const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
 const NO_GROUPS_TOOLTIP = 'No groups are available to associate';
 
 const columns = [
@@ -128,7 +130,19 @@ function ActionAssociateGroup({ uuid }) {
     return <IsLoadingAction />;
   }
 
-  if (!isSuccess || isError) {
+  if (isError) {
+    return (
+      <Tooltip title={UNAVAILABLE_TOOLTIP}>
+        <div>
+          <Button disabled size="small" type="text">
+            <Lucide icon={Plus} />
+          </Button>
+        </div>
+      </Tooltip>
+    );
+  }
+
+  if (!isSuccess) {
     return false;
   }
 
@@ -243,7 +257,19 @@ function ActionEditKey({ uuid }) {
     return <IsLoadingAction />;
   }
 
-  if (!isSuccess || isError) {
+  if (isError) {
+    return (
+      <Tooltip title={UNAVAILABLE_TOOLTIP}>
+        <div>
+          <Button disabled size="small" type="text">
+            <Lucide icon={PencilLine} />
+          </Button>
+        </div>
+      </Tooltip>
+    );
+  }
+
+  if (!isSuccess) {
     return false;
   }
 
@@ -277,7 +303,19 @@ function ActionDeleteKey({ uuid }) {
     return <IsLoadingAction />;
   }
 
-  if (!isSuccess || isError) {
+  if (isError) {
+    return (
+      <Tooltip title={UNAVAILABLE_TOOLTIP}>
+        <div>
+          <Button disabled size="small" type="text">
+            <Lucide icon={Trash} />
+          </Button>
+        </div>
+      </Tooltip>
+    );
+  }
+
+  if (!isSuccess) {
     return false;
   }
 

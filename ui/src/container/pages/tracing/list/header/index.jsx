@@ -49,7 +49,7 @@ function RouteSelector() {
   const [searchParams, setSearchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid');
 
-  const { data = [] } = useGetRoutesWithRange();
+  const { data = [], isError } = useGetRoutesWithRange();
   const routeNames = data.map((r) => r.routeName);
 
   const selectedRoutes = searchParams.get('routes')
@@ -72,6 +72,16 @@ function RouteSelector() {
       <Select
         disabled
         placeholder="Select a project first"
+        style={{ width: 250 }}
+      />
+    );
+  }
+
+  if (isError) {
+    return (
+      <Select
+        disabled
+        placeholder="Unable to load routes"
         style={{ width: 250 }}
       />
     );

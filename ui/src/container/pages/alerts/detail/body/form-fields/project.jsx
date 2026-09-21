@@ -6,8 +6,10 @@ function Project() {
   const { error, form, write } = useFormbitContext();
   const project = form?.project;
 
-  const { data = [], isLoading } = useGetProjectsQuery();
+  const { data = [], isError, isLoading } = useGetProjectsQuery();
   const options = data.map(({ name, uuid }) => ({ label: name, value: uuid }));
+
+  const projectsErrorMessage = isError ? 'Unable to load projects, please retry later' : undefined;
 
   const handleOnChange = (value) => {
     write('project', value);
@@ -20,8 +22,9 @@ function Project() {
   }
 
   return (
-    <FormField label="Project" message={error('project')} required>
+    <FormField label="Project" message={error('project') || projectsErrorMessage} required>
       <Select
+        disabled={isError}
         onChange={handleOnChange}
         options={options}
         placeholder="Select a project"

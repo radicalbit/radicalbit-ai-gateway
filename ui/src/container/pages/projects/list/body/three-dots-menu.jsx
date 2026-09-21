@@ -11,6 +11,7 @@ import {
   useServeConfigMutation,
   useUnserveConfigMutation,
 } from '@State/projects/api';
+import { Tooltip } from '@radicalbit/radicalbit-design-system';
 import {
   CircleStop,
   GitPullRequest,
@@ -19,6 +20,8 @@ import {
   SquarePen,
   Trash,
 } from 'lucide-react';
+
+const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
 
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { data, isLoading, isError, isSuccess } = useGetProjectQuery(uuid, { skip: !uuid });
@@ -34,7 +37,16 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     return [];
   }
 
-  if (isLoading || !isSuccess || isError || !data) {
+  if (isError) {
+    return [
+      {
+        label: <Tooltip title={UNAVAILABLE_TOOLTIP}>Unable to load project</Tooltip>,
+        disabled: true,
+      },
+    ];
+  }
+
+  if (isLoading || !isSuccess || !data) {
     return [];
   }
 
