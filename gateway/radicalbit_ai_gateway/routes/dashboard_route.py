@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Iterator
 from datetime import datetime, timezone
 import logging
 from time import sleep
@@ -930,7 +931,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
             __: None = Depends(validate_project_exists),
-        ) -> StreamingResponse:
+        ) -> Iterator[dict]:
             while True:
                 # Recomputed every tick, so a rolling look-back really rolls.
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)

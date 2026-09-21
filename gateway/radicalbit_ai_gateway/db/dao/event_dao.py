@@ -243,7 +243,7 @@ class EventDAO:
         conditions = [self.T.c['EVENT_TYPE'] == 'MCP_INVOCATION']
         self._add_project_filter(conditions, project_uuid)
         self._add_tags_filter(conditions, tags=tags)
-        if route_names:
+        if route_names is not None:
             conditions.append(self.T.c['ROUTE_NAME'].in_(route_names))
         if _from is not None:
             conditions.append(self.T.c['TIMESTAMP'] >= _from)
