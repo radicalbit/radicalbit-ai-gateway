@@ -11,16 +11,16 @@ export default function usePersistProjectUuid() {
 
   const [candidate, setCandidate] = useState(() => (projectUuid ? null : localStorage.getItem(STORAGE_KEY)));
 
-  const { isError: isCandidateError, isSuccess: isCandidateValid } = useVerifyProjectQuery(candidate ?? skipToken);
+  const { isError, isSuccess } = useVerifyProjectQuery(candidate ?? skipToken);
 
-  useRestoreValidatedUuid({ candidate, isCandidateValid, setCandidate, setSearchParams });
-  useDropStaleUuid({ candidate, isCandidateError, setCandidate });
+  useRestoreValidatedUuid({ candidate, isSuccess, setCandidate, setSearchParams });
+  useDropStaleUuid({ candidate, isError, setCandidate });
   usePersistSelectedUuid(projectUuid);
 }
 
-const useRestoreValidatedUuid = ({ candidate, isCandidateValid, setCandidate, setSearchParams }) => {
+const useRestoreValidatedUuid = ({ candidate, isSuccess, setCandidate, setSearchParams }) => {
   useEffect(() => {
-    if (!candidate || !isCandidateValid) {
+    if (!candidate || !isSuccess) {
       return;
     }
 
@@ -30,18 +30,18 @@ const useRestoreValidatedUuid = ({ candidate, isCandidateValid, setCandidate, se
     }, { replace: true });
 
     setCandidate(null);
-  }, [candidate, isCandidateValid, setCandidate, setSearchParams]);
+  }, [candidate, isSuccess, setCandidate, setSearchParams]);
 };
 
-const useDropStaleUuid = ({ candidate, isCandidateError, setCandidate }) => {
+const useDropStaleUuid = ({ candidate, isError, setCandidate }) => {
   useEffect(() => {
-    if (!candidate || !isCandidateError) {
+    if (!candidate || !isError) {
       return;
     }
 
     localStorage.removeItem(STORAGE_KEY);
     setCandidate(null);
-  }, [candidate, isCandidateError, setCandidate]);
+  }, [candidate, isError, setCandidate]);
 };
 
 const usePersistSelectedUuid = (projectUuid) => {

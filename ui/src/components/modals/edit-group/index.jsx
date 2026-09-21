@@ -52,7 +52,7 @@ function Body() {
 
   const { error } = useFormbitContext();
 
-  const { data, isError: isGroupError, isLoading: isGroupLoading } = useGetGroupQuery(uuid, { skip: !uuid });
+  const { data, isError, isLoading: isGroupLoading } = useGetGroupQuery(uuid, { skip: !uuid });
   const isExternallyManaged = data ? data.owner !== GATEWAY_OWNER : false;
 
   const { isLoading: isInitializing } = useInitializeForm();
@@ -61,7 +61,7 @@ function Body() {
     return <IsLoading />;
   }
 
-  if (isGroupError) {
+  if (isError) {
     return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
   }
 
@@ -123,7 +123,7 @@ function Actions() {
   const { hideModal, modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data, isError: isGroupError, isLoading: isGroupLoading, isSuccess } = useGetGroupQuery(uuid, { skip: !uuid });
+  const { data, isError, isLoading: isGroupLoading, isSuccess } = useGetGroupQuery(uuid, { skip: !uuid });
   const owner = data?.owner;
 
   const { handleOnSubmit, args: { isLoading }, isSubmitDisabled } = useHandleOnSubmit();
@@ -138,7 +138,7 @@ function Actions() {
     );
   }
 
-  if (isGroupError) {
+  if (isError) {
     return (
       <Button onClick={hideModal} type="secondary-light">
         Close

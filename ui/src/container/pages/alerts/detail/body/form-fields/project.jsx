@@ -9,7 +9,7 @@ function Project() {
   const { data = [], isError, isLoading } = useGetProjectsQuery();
   const options = data.map(({ name, uuid }) => ({ label: name, value: uuid }));
 
-  const projectsErrorMessage = isError ? 'Unable to load projects, please retry later' : undefined;
+  const errorMessage = isError ? 'Unable to load projects, please retry later' : undefined;
 
   const handleOnChange = (value) => {
     write('project', value);
@@ -22,7 +22,7 @@ function Project() {
   }
 
   return (
-    <FormField label="Project" message={error('project') || projectsErrorMessage} required>
+    <FormField label="Project" message={error('project') || errorMessage} required>
       <Select
         disabled={isError}
         onChange={handleOnChange}

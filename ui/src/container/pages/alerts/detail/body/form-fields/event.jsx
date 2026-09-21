@@ -20,7 +20,7 @@ function Event() {
   );
   const options = toOptions(data);
 
-  const eventsErrorMessage = isError ? 'Unable to load events, please retry later' : undefined;
+  const errorMessage = isError ? 'Unable to load events, please retry later' : undefined;
 
   const handleOnChange = (value) => {
     write('event', value);
@@ -31,7 +31,7 @@ function Event() {
   }
 
   return (
-    <FormField label="Event" message={error('event') || eventsErrorMessage} required>
+    <FormField label="Event" message={error('event') || errorMessage} required>
       <Select
         disabled={isDisabled || isError}
         onChange={handleOnChange}
