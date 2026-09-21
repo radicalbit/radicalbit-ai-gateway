@@ -14,6 +14,7 @@ import CostsGraph from './costs-graph';
 import CostTable from './cost-table';
 import InvocationsGraph from './invocations-graph';
 import McpInvocationsGraph from './mcp-invocations-graph';
+import McpKeysTable from './mcp-keys-table';
 import ProjectFilter from '../project-filter';
 import RoutesFilter from '../routes-filter';
 import SummaryHeader from './summary-header';
@@ -62,6 +63,8 @@ function Consumptions() {
       <DataContent />
 
       <McpInvocationsGraph />
+
+      <McpKeysTable />
     </div>
   );
 }

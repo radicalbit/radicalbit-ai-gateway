@@ -1,6 +1,7 @@
 const GATEWAY_OWNER = 'gateway';
 const pageSize = 20;
 const tracesPageSize = 50;
+const mcpKeysPageSize = 20;
 const startPage = 1;
 const MAX_DECIMAL_ROUND = 3;
 const DEFAULT_POLLING_INTERVAL = 2000;
@@ -170,6 +171,7 @@ export {
   SortOrderEnum,
   startPage,
   STATUS_SELECTOR_MAX_LEN,
+  mcpKeysPageSize,
   tracesPageSize,
   TRUNCATE_LENGTH,
 };

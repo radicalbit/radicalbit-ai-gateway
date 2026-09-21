@@ -364,6 +364,32 @@ export const usageApiSlice = apiService.injectEndpoints({
       },
     }),
 
+    getMcpKeyUsage: builder.query({
+      query: ({
+        projectUuid, routes, tags, from, to, gte, page, limit,
+      }) => {
+        const init = {};
+
+        const params = timeFiltersQueryParamFactory({ from, to, gte, init });
+
+        if (routes && routes.length > 0) {
+          routes.forEach((route) => { params.append('routes', route); });
+        }
+
+        appendTagsToParams(params, tags);
+
+        if (page !== undefined) {
+          params.append('_page', page);
+        }
+
+        if (limit !== undefined) {
+          params.append('_limit', limit);
+        }
+
+        return { url: `/projects/${projectUuid}/usage/mcp/keys?${params.toString()}` };
+      },
+    }),
+
     getCostsModelBreakdown: builder.query({
       query: ({
         projectUuid, entityId, timestamp, granularity, routes, tags,
@@ -421,6 +447,7 @@ export const {
   useGetLimitsStreamQuery,
   useGetCostsChartStreamQuery,
   useGetMcpServersChartSseQuery,
+  useGetMcpKeyUsageQuery,
   useGetCostsByModelStreamQuery,
   useGetCostsByGroupStreamQuery,
   useGetCostsByKeyStreamQuery,
