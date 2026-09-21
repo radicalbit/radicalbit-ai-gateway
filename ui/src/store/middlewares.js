@@ -4,14 +4,7 @@ import { isFulfilled, isRejectedWithValue } from '@reduxjs/toolkit';
 
 const { setNotificationMessage } = notificationActions;
 
-const errorWhiteList = {
-  getKey: 404,
-  getGroup: 404,
-  getCostsModelBreakdown: 404,
-  getCostsGroupBreakdown: 404,
-  getCostsKeyBreakdown: 404,
-  verifyProject: 404,
-};
+const errorWhiteList = {};
 
 const successWhiteList = {};
 
@@ -26,10 +19,20 @@ export const rtkQueryErrorLogger = ({ dispatch }) => (next) => (action) => {
 
   const endpointName = action?.meta?.arg?.endpointName;
   const status = action?.payload?.status;
+  const isQuery = action?.meta?.arg?.type === 'query';
 
-  if (endpointName && status && (errorWhiteList[endpointName] || errorWhiteList[endpointName]?.[status])) {
+  // WHITELIST
+  if (isQuery && status === 404) {
     return next(action);
   }
+
+  const whiteListedEndpoint = errorWhiteList[endpointName];
+  const isWhiteListed = whiteListedEndpoint === true || whiteListedEndpoint?.[status] === true;
+
+  if (endpointName && status && isWhiteListed) {
+    return next(action);
+  }
+  // END WHITELIST
 
   const showNotification = action?.payload && status;
 
