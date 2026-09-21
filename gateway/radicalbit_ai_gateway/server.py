@@ -66,6 +66,7 @@ from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.routes.mcp_route import McpRoute
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
+from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.routes.tag_route import TagRoute
 from radicalbit_ai_gateway.routes.tracing_route import TracingRoute
 from radicalbit_ai_gateway.routes.usage_route import UsageRoute
@@ -81,6 +82,7 @@ from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.services.mcp_usage_service import McpUsageService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
+from radicalbit_ai_gateway.services.secret_service import SecretService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.dependencies import (
@@ -241,6 +243,7 @@ mcp_service = McpService(
     group_service=group_service,
 )
 mcp_usage_service = McpUsageService(event_dao=event_dao)
+secret_service = SecretService()
 
 alert_rule_dao = AlertRuleDAO(database)
 alert_rule_service = AlertRuleService(
@@ -405,6 +408,13 @@ app.include_router(
     TagRoute.get_tag_router(
         request_event_service=request_event_service,
         project_service=project_service,
+    ),
+    prefix=prefix,
+)
+app.include_router(
+    SecretsRoute.get_secrets_router(
+        secret_service,
+        config=getattr(app.state, 'secrets_route_config', SecretsRouteConfig()),
     ),
     prefix=prefix,
 )
