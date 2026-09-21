@@ -24,14 +24,18 @@ const sparklineWidthAndHeight = {
 };
 
 function MostRequested() {
-  const { data, isLoading, isError } = useGetMostRequestedRouteWithRange();
-  const name = data?.name;
+  const { data } = useGetMostRequestedRouteWithRange();
+  const route = data?.route;
+  const isSseLoading = data?.isSseLoading;
+  const isSseError = data?.isSseError;
+  const isSseSuccess = data?.isSseSuccess;
+  const name = route?.name;
 
-  if (isLoading) {
+  if (isSseLoading) {
     return <CounterSkeleton />;
   }
 
-  if (isError) {
+  if (isSseError) {
     return <IsError />;
   }
 
@@ -39,7 +43,11 @@ function MostRequested() {
     return <IsEmpty />;
   }
 
-  return <IsSuccess data={data} />;
+  if (!isSseSuccess) {
+    return false;
+  }
+
+  return <IsSuccess data={route} />;
 }
 
 function IsEmpty() {

@@ -75,18 +75,22 @@ function DataContent() {
     ? searchParams.get('routes').split(',')
     : [];
 
-  const { isError, isFetching, isSuccess, refetch } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
+  const { data, isFetching, refetch } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
+  const isSseLoading = data?.isSseLoading;
+  const isSseError = data?.isSseError;
+  const isSseSuccess = data?.isSseSuccess;
 
-  if (isFetching) {
+  console.debug(useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false }));
+  if (isSseLoading) {
     return <Skeleton.Node active style={{ height: '20rem', width: '100%' }} />;
   }
 
-  if (isError) {
+  if (isSseError) {
     return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
-  if (!isSuccess) {
-    return null;
+  if (!isSseSuccess) {
+    return false;
   }
 
   return (

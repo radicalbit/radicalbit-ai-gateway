@@ -3,6 +3,30 @@ import { API_TAGS, apiService } from '@Src/store/apis';
 import eventSourceWithBackoff from '@State/event-source-with-backoff';
 import timeFiltersQueryParamFactory from '@State/time-filter-query-params-factory';
 
+const DEFAULT_MOST_REQUESTED_ROUTE_STATE = {
+  route: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_TOP_ERROR_ROUTE_STATE = {
+  route: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_TOP_COST_ROUTE_STATE = {
+  route: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
 export const routesApiSlice = apiService.injectEndpoints({
   endpoints: (builder) => ({
     getRoutes: builder.query({
@@ -32,18 +56,6 @@ export const routesApiSlice = apiService.injectEndpoints({
 
         return {
           url: `/projects/${projectUuid}/routes/${name}?${params.toString()}`,
-          method: 'get',
-        };
-      },
-    }),
-
-    getMetricsByName: builder.query({
-      providesTags: () => [API_TAGS.ROUTES],
-      query: ({ projectUuid, name, from, to, gte }) => {
-        const params = timeFiltersQueryParamFactory({ from, to, gte });
-
-        return {
-          url: `/projects/${projectUuid}/routes/${name}/metrics?${params.toString()}`,
           method: 'get',
         };
       },
@@ -105,7 +117,7 @@ export const routesApiSlice = apiService.injectEndpoints({
 
     getMostRequestedRoute: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_MOST_REQUESTED_ROUTE_STATE }),
       async onCacheEntryAdded(
         { projectUuid, from, to, gte },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
@@ -117,20 +129,43 @@ export const routesApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/most-requested/stream?${params}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                route: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream the most requested route';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
 
     getTopErrorRoute: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_TOP_ERROR_ROUTE_STATE }),
       async onCacheEntryAdded(
         { projectUuid, from, to, gte },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
@@ -142,20 +177,43 @@ export const routesApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/most-requested-error/stream?${params}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                route: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream the top error route';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
 
     getTopCostRoute: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_TOP_COST_ROUTE_STATE }),
       async onCacheEntryAdded(
         { projectUuid, from, to, gte },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
@@ -167,13 +225,36 @@ export const routesApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/most-expensive/stream?${params}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                route: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream the most expensive route';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
@@ -184,7 +265,6 @@ export const {
   useGetRoutesQuery,
   useGetAssociableGroupsByRouteQuery,
   useGetRouteByNameQuery,
-  useGetMetricsByNameQuery,
   useGetMetricsQuery,
   useAddGroupsToRouteMutation,
   useGetEventsByRouteQuery,

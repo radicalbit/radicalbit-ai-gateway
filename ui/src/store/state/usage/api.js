@@ -12,11 +12,75 @@ const DEFAULT_MCP_SERVERS_CHART_STATE = {
   sseErrorMessage: null,
 };
 
+const DEFAULT_COSTS_SUMMARY_STATE = {
+  summary: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_LIMITS_STATE = {
+  limits: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_TOKENS_CHART_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_INVOCATIONS_CHART_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_COSTS_BY_MODEL_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_COSTS_BY_GROUP_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_COSTS_BY_KEY_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_COSTS_CHART_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
 export const usageApiSlice = apiService.injectEndpoints({
   endpoints: (builder) => ({
     getCostsSummaryStream: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_COSTS_SUMMARY_STATE }),
       async onCacheEntryAdded(
         {
           projectUuid, routes, tags, withSavedTokens, from, to, gte,
@@ -43,20 +107,43 @@ export const usageApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/summary/stream?${params.toString()}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                summary: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream costs summary';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
 
     getLimitsStream: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_LIMITS_STATE }),
       async onCacheEntryAdded(
         { projectUuid, routes, windowStatuses },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
@@ -78,20 +165,43 @@ export const usageApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/limits/stream?${params.toString()}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                limits: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream limits';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
 
     getTokensChartStream: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_TOKENS_CHART_STATE }),
       async onCacheEntryAdded(
         {
           projectUuid, routes, tags, from, to, gte,
@@ -114,20 +224,43 @@ export const usageApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/tokens/stream?${params.toString()}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream tokens';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
 
     getInvocationsChartStream: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_INVOCATIONS_CHART_STATE }),
       async onCacheEntryAdded(
         {
           projectUuid, routes, tags, from, to, gte,
@@ -150,20 +283,43 @@ export const usageApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/invocations/stream?${params.toString()}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream invocations';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
 
     getCostsChartStream: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: { loading: true, error: false, chart: null } }),
+      queryFn: () => ({ data: DEFAULT_COSTS_CHART_STATE }),
       async onCacheEntryAdded(
         {
           projectUuid, routes, tags, groupBy, from, to, gte,
@@ -186,11 +342,22 @@ export const usageApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/stream?${params.toString()}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => ({ loading: false, error: false, chart: parsed })); },
-            onStreamError: ({ isGivingUp }) => {
-              if (isGivingUp) {
-                updateCachedData((draft) => { draft.loading = false; draft.error = true; });
-              }
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream costs';
+              });
             },
           });
 
@@ -198,7 +365,13 @@ export const usageApiSlice = apiService.injectEndpoints({
           subscription.close();
         } catch (error) {
           console.error(error);
-          updateCachedData((draft) => { draft.loading = false; draft.error = true; });
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
@@ -264,7 +437,7 @@ export const usageApiSlice = apiService.injectEndpoints({
 
     getCostsByModelStream: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_COSTS_BY_MODEL_STATE }),
       async onCacheEntryAdded(
         {
           projectUuid, modelId, routes, tags, from, to, gte,
@@ -285,20 +458,43 @@ export const usageApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/model/${encodeURIComponent(modelId)}/stream?${params.toString()}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream costs by model';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
 
     getCostsByGroupStream: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_COSTS_BY_GROUP_STATE }),
       async onCacheEntryAdded(
         {
           projectUuid, groupUuid, routes, tags, from, to, gte,
@@ -319,20 +515,43 @@ export const usageApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/group/${encodeURIComponent(groupUuid)}/stream?${params.toString()}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream costs by group';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
 
     getCostsByKeyStream: builder.query({
       keepUnusedDataFor: 0,
-      queryFn: () => ({ data: null }),
+      queryFn: () => ({ data: DEFAULT_COSTS_BY_KEY_STATE }),
       async onCacheEntryAdded(
         {
           projectUuid, keyUuid, routes, tags, from, to, gte,
@@ -353,13 +572,36 @@ export const usageApiSlice = apiService.injectEndpoints({
           const url = `${API_BASE_URL}/projects/${projectUuid}/routes/costs/key/${encodeURIComponent(keyUuid)}/stream?${params.toString()}`;
           const subscription = eventSourceWithBackoff({
             url,
-            onMessage: (parsed) => { updateCachedData(() => parsed); },
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream costs by key';
+              });
+            },
           });
 
           await cacheEntryRemoved;
           subscription.close();
         } catch (error) {
           console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
         }
       },
     }),
