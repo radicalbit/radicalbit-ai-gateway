@@ -568,6 +568,8 @@ def get_sample_event(
     is_judge: bool = False,
     project_uuid: uuid.UUID | None = None,
     tags: list[str] | None = None,
+    mcp_method: str = '',
+    mcp_alias: str = '',
     **kwargs,
 ) -> Event:
     # Extract known attributes for dedicated columns (support both old and new names)
@@ -609,6 +611,8 @@ def get_sample_event(
         guardrail_params=guardrail_params,
         guardrail_behavior=guardrail_behavior,
         is_judge=is_judge,
+        mcp_method=mcp_method,
+        mcp_alias=mcp_alias,
     )
 
 
