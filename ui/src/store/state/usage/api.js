@@ -4,6 +4,14 @@ import eventSourceWithBackoff from '@State/event-source-with-backoff';
 import { appendTagsToParams } from '@State/tags-query-params-factory';
 import timeFiltersQueryParamFactory from '@State/time-filter-query-params-factory';
 
+const DEFAULT_MCP_SERVERS_CHART_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
 export const usageApiSlice = apiService.injectEndpoints({
   endpoints: (builder) => ({
     getCostsSummaryStream: builder.query({
@@ -195,6 +203,65 @@ export const usageApiSlice = apiService.injectEndpoints({
       },
     }),
 
+    getMcpServersChartSse: builder.query({
+      keepUnusedDataFor: 0,
+      queryFn: () => ({ data: DEFAULT_MCP_SERVERS_CHART_STATE }),
+      async onCacheEntryAdded(
+        {
+          projectUuid, routes, tags, groupBy, from, to, gte,
+        },
+        { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
+      ) {
+        try {
+          await cacheDataLoaded;
+
+          const init = { group_by: groupBy };
+
+          const params = timeFiltersQueryParamFactory({ from, to, gte, init });
+
+          if (routes && routes.length > 0) {
+            routes.forEach((route) => { params.append('routes', route); });
+          }
+
+          appendTagsToParams(params, tags);
+
+          const url = `${API_BASE_URL}/projects/${projectUuid}/routes/mcp/servers/stream?${params.toString()}`;
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream MCP server invocations';
+              });
+            },
+          });
+
+          await cacheEntryRemoved;
+          subscription.close();
+        } catch (error) {
+          console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
+        }
+      },
+    }),
+
     getCostsByModelStream: builder.query({
       keepUnusedDataFor: 0,
       queryFn: () => ({ data: null }),
@@ -353,6 +420,7 @@ export const {
   useGetInvocationsChartStreamQuery,
   useGetLimitsStreamQuery,
   useGetCostsChartStreamQuery,
+  useGetMcpServersChartSseQuery,
   useGetCostsByModelStreamQuery,
   useGetCostsByGroupStreamQuery,
   useGetCostsByKeyStreamQuery,

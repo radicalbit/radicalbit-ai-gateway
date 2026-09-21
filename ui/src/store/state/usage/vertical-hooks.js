@@ -8,6 +8,7 @@ import {
   useGetCostsSummaryStreamQuery,
   useGetInvocationsChartStreamQuery,
   useGetLimitsStreamQuery,
+  useGetMcpServersChartSseQuery,
   useGetTokensChartStreamQuery,
 } from '@State/usage/api';
 import { useMemo } from 'react';
@@ -64,6 +65,14 @@ const useGetCostsChartStreamWithRange = ({ routes, groupBy }, options) => {
   }, options);
 };
 
+const useGetMcpServersChartSseWithRange = ({ routes, groupBy, retryNonce }, options) => {
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
+
+  return useGetMcpServersChartSseQuery({
+    projectUuid, routes, tags, groupBy, gte, from, to, retryNonce,
+  }, options);
+};
+
 const useGetCostsByModelStreamWithRange = ({ modelId, routes }, options) => {
   const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
@@ -104,6 +113,7 @@ export {
   useGetCostsSummaryStreamWithRange,
   useGetInvocationsChartStreamWithRange,
   useGetLimitsStreamWithRange,
+  useGetMcpServersChartSseWithRange,
   useGetProjectRoutesWithRange,
   useGetTokensChartStreamWithRange,
 };
