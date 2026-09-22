@@ -1,0 +1,11 @@
+{{- if not .Values.gateway.assistant.apiKey.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ template "gateway.fullname" . }}-assistant-key
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+type: Opaque
+data:
+  apiKey: {{ .Values.gateway.assistant.apiKey.value | b64enc | quote }}
+{{- end }}

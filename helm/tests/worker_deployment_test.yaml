@@ -1,0 +1,95 @@
+suite: test worker deployment
+templates:
+  - worker/deployment.yaml
+tests:
+  - it: should build GOOSE_DBSTRING with default values
+    set:
+      clickhouse:
+        auth:
+          username:
+            value: "admin"
+          password:
+            value: "secret"
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[0].env
+          content:
+            name: GOOSE_DRIVER
+            value: clickhouse
+      - contains:
+          path: spec.template.spec.initContainers[0].env
+          content:
+            name: GOOSE_DBSTRING
+            value: "tcp://$(CLICKHOUSE_USER):$(CLICKHOUSE_PASSWORD)@clickhouse:9000/default"
+  - it: should build GOOSE_DBSTRING with custom host, port and database
+    set:
+      clickhouse:
+        host: "my-clickhouse"
+        port: 9100
+        database: "mydb"
+        auth:
+          username:
+            value: "admin"
+          password:
+            value: "secret"
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[0].env
+          content:
+            name: GOOSE_DRIVER
+            value: clickhouse
+      - contains:
+          path: spec.template.spec.initContainers[0].env
+          content:
+            name: GOOSE_DBSTRING
+            value: "tcp://$(CLICKHOUSE_USER):$(CLICKHOUSE_PASSWORD)@my-clickhouse:9100/mydb"
+  - it: should reference secrets for CLICKHOUSE_USER and CLICKHOUSE_PASSWORD
+    set:
+      clickhouse:
+        auth:
+          username:
+            value: "admin"
+          password:
+            value: "secret"
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[0].env
+          content:
+            name: CLICKHOUSE_USER
+            valueFrom:
+              secretKeyRef:
+                key: username
+                name: RELEASE-NAME-radicalbit-ai-gateway-ch-auth
+      - contains:
+          path: spec.template.spec.initContainers[0].env
+          content:
+            name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: password
+                name: RELEASE-NAME-radicalbit-ai-gateway-ch-auth
+  - it: should use existing secret when specified
+    set:
+      clickhouse:
+        auth:
+          username:
+            existingSecret: "my-secret"
+          password:
+            existingSecret: "my-secret"
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[0].env
+          content:
+            name: CLICKHOUSE_USER
+            valueFrom:
+              secretKeyRef:
+                key: username
+                name: my-secret
+      - contains:
+          path: spec.template.spec.initContainers[0].env
+          content:
+            name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: password
+                name: my-secret

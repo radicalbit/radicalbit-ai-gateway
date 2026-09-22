@@ -1,0 +1,117 @@
+suite: test gateway deployment with prompts
+templates:
+  - gateway/deployment.yaml
+tests:
+  - it: should not have prompts volume when disabled
+    set:
+      gateway:
+        prompts:
+          enabled: false
+        secrets:
+          fromSecret: false
+      postgresql:
+        auth:
+          username:
+            value: "user"
+          password:
+            value: "pass"
+      clickhouse:
+        auth:
+          username:
+            value: "user"
+          password:
+            value: "pass"
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: gateway-secrets
+            secret:
+              secretName: RELEASE-NAME-radicalbit-ai-gateway-gw-sec
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMPTS_DIR
+  - it: should have prompts volume, mount and env var when enabled
+    set:
+      gateway:
+        prompts:
+          enabled: true
+          fromConfigMap: false
+          source: "tests/fixtures/prompts"
+          mountPath: "/app/prompts"
+        secrets:
+          fromSecret: false
+      postgresql:
+        auth:
+          username:
+            value: "user"
+          password:
+            value: "pass"
+      clickhouse:
+        auth:
+          username:
+            value: "user"
+          password:
+            value: "pass"
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: prompts
+            configMap:
+              name: RELEASE-NAME-radicalbit-ai-gateway-gw-prompts
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: prompts
+            mountPath: "/app/prompts"
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMPTS_DIR
+            value: "/app/prompts"
+  - it: should use external ConfigMap when fromConfigMap is true
+    set:
+      gateway:
+        prompts:
+          enabled: true
+          fromConfigMap: true
+          externalConfigMap: "my-prompts-configmap"
+          source: "tests/fixtures/prompts"
+          mountPath: "/app/prompts"
+        configuration:
+          fromSecret: false
+        secrets:
+          fromSecret: false
+      postgresql:
+        auth:
+          username:
+            value: "user"
+          password:
+            value: "pass"
+      clickhouse:
+        auth:
+          username:
+            value: "user"
+          password:
+            value: "pass"
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: prompts
+            configMap:
+              name: my-prompts-configmap
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: prompts
+            mountPath: "/app/prompts"
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMPTS_DIR
+            value: "/app/prompts"

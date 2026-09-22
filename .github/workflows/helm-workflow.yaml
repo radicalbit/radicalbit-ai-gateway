@@ -1,0 +1,28 @@
+name: helm-wf
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - "helm/**"
+      - ".github/workflows/helm-**"
+  pull_request:
+    branches:
+      - "*"
+    paths:
+      - "helm/**"
+      - ".github/workflows/helm-**"
+
+env:
+  HELM_VERSION: "4.2.3"
+  HELM_UT_VERSION: "1.1.2"
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run helm-unittest
+        run: |
+          docker run --rm -v ${{ github.workspace }}/helm:/apps \
+            helmunittest/helm-unittest:${{ env.HELM_VERSION }}-${{ env.HELM_UT_VERSION }} .
