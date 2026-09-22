@@ -381,7 +381,7 @@ export const usageApiSlice = apiService.injectEndpoints({
       queryFn: () => ({ data: DEFAULT_MCP_SERVERS_CHART_STATE }),
       async onCacheEntryAdded(
         {
-          projectUuid, routes, tags, groupBy, from, to, gte,
+          projectUuid, routes, tags, groupBy, entity, from, to, gte,
         },
         { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
       ) {
@@ -391,6 +391,10 @@ export const usageApiSlice = apiService.injectEndpoints({
           const init = { group_by: groupBy };
 
           const params = timeFiltersQueryParamFactory({ from, to, gte, init });
+
+          if (entity) {
+            params.append('entity', entity);
+          }
 
           if (routes && routes.length > 0) {
             routes.forEach((route) => { params.append('routes', route); });

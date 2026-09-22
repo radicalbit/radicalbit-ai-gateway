@@ -75,11 +75,11 @@ const useGetMcpKeyUsageWithRange = ({ routes, page }, options) => {
   }, { skip: !projectUuid, ...options });
 };
 
-const useGetMcpServersChartSseWithRange = ({ routes, groupBy, retryNonce }, options) => {
+const useGetMcpServersChartSseWithRange = ({ routes, groupBy, entity, retryNonce }, options) => {
   const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
   return useGetMcpServersChartSseQuery({
-    projectUuid, routes, tags, groupBy, gte, from, to, retryNonce,
+    projectUuid, routes, tags, groupBy, entity, gte, from, to, retryNonce,
   }, options);
 };
 
