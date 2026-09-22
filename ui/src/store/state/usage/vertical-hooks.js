@@ -9,6 +9,9 @@ import {
   useGetCostsSummaryStreamQuery,
   useGetInvocationsChartStreamQuery,
   useGetLimitsStreamQuery,
+  useGetMcpInvocationsByGroupStreamQuery,
+  useGetMcpInvocationsByKeyStreamQuery,
+  useGetMcpInvocationsByServiceStreamQuery,
   useGetMcpKeyUsageQuery,
   useGetMcpServersChartSseQuery,
   useGetTokensChartStreamQuery,
@@ -75,11 +78,35 @@ const useGetMcpKeyUsageWithRange = ({ routes, page }, options) => {
   }, { skip: !projectUuid, ...options });
 };
 
-const useGetMcpServersChartSseWithRange = ({ routes, groupBy, entity, retryNonce }, options) => {
+const useGetMcpServersChartSseWithRange = ({ routes, groupBy, retryNonce }, options) => {
   const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
   return useGetMcpServersChartSseQuery({
-    projectUuid, routes, tags, groupBy, entity, gte, from, to, retryNonce,
+    projectUuid, routes, tags, groupBy, gte, from, to, retryNonce,
+  }, options);
+};
+
+const useGetMcpInvocationsByServiceStreamWithRange = ({ serviceAlias, routes, retryNonce }, options) => {
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
+
+  return useGetMcpInvocationsByServiceStreamQuery({
+    projectUuid, serviceAlias, routes, tags, gte, from, to, retryNonce,
+  }, options);
+};
+
+const useGetMcpInvocationsByGroupStreamWithRange = ({ groupUuid, routes, retryNonce }, options) => {
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
+
+  return useGetMcpInvocationsByGroupStreamQuery({
+    projectUuid, groupUuid, routes, tags, gte, from, to, retryNonce,
+  }, options);
+};
+
+const useGetMcpInvocationsByKeyStreamWithRange = ({ keyUuid, routes, retryNonce }, options) => {
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
+
+  return useGetMcpInvocationsByKeyStreamQuery({
+    projectUuid, keyUuid, routes, tags, gte, from, to, retryNonce,
   }, options);
 };
 
@@ -123,6 +150,9 @@ export {
   useGetCostsSummaryStreamWithRange,
   useGetInvocationsChartStreamWithRange,
   useGetLimitsStreamWithRange,
+  useGetMcpInvocationsByGroupStreamWithRange,
+  useGetMcpInvocationsByKeyStreamWithRange,
+  useGetMcpInvocationsByServiceStreamWithRange,
   useGetMcpKeyUsageWithRange,
   useGetMcpServersChartSseWithRange,
   useGetProjectRoutesWithRange,

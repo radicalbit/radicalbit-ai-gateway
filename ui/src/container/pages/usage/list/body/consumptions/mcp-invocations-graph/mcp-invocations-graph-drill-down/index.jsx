@@ -2,7 +2,11 @@ import Lucide from '@Components/lucide';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetGroupQuery } from '@State/groups/api';
 import { useGetKeyQuery } from '@State/keys/api';
-import { useGetMcpServersChartSseWithRange } from '@State/usage/vertical-hooks';
+import {
+  useGetMcpInvocationsByGroupStreamWithRange,
+  useGetMcpInvocationsByKeyStreamWithRange,
+  useGetMcpInvocationsByServiceStreamWithRange,
+} from '@State/usage/vertical-hooks';
 import {
   Board, Button, Spinner, Void,
 } from '@radicalbit/radicalbit-design-system';
@@ -229,15 +233,39 @@ function Label() {
 
 const useMcpDrillDownChart = (retryNonce) => {
   const [searchParams] = useSearchParams();
-  const groupBy = searchParams.get('mcpDrillDownEntity');
-  const entity = searchParams.get('mcpDrillDownId');
+  const mcpDrillDownEntity = searchParams.get('mcpDrillDownEntity');
+  const mcpDrillDownId = searchParams.get('mcpDrillDownId');
   const routes = searchParams.get('routes')
     ? searchParams.get('routes').split(',')
     : [];
 
-  return useGetMcpServersChartSseWithRange({
-    routes, groupBy, entity, retryNonce,
-  });
+  const isServices = mcpDrillDownEntity === MCP_GROUP_BY.services.key;
+  const isGroups = mcpDrillDownEntity === MCP_GROUP_BY.groups.key;
+  const isKeys = mcpDrillDownEntity === MCP_GROUP_BY.credentials.key;
+
+  const serviceResult = useGetMcpInvocationsByServiceStreamWithRange(
+    { serviceAlias: mcpDrillDownId, routes, retryNonce },
+    { skip: !isServices },
+  );
+
+  const groupResult = useGetMcpInvocationsByGroupStreamWithRange(
+    { groupUuid: mcpDrillDownId, routes, retryNonce },
+    { skip: !isGroups },
+  );
+
+  const keyResult = useGetMcpInvocationsByKeyStreamWithRange(
+    { keyUuid: mcpDrillDownId, routes, retryNonce },
+    { skip: !isKeys },
+  );
+
+  switch (mcpDrillDownEntity) {
+    case MCP_GROUP_BY.groups.key:
+      return groupResult;
+    case MCP_GROUP_BY.credentials.key:
+      return keyResult;
+    default:
+      return serviceResult;
+  }
 };
 
 export default McpInvocationsGraphDrillDown;
