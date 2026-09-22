@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 import datetime
+from typing import NamedTuple
 from uuid import UUID
 
 from sqlalchemy import func, select, update
@@ -10,6 +11,14 @@ from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 
 _UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+
+
+class ServedConfigWithProject(NamedTuple):
+    """A currently-served configuration paired with its project's identity."""
+
+    config_file: str | None
+    project_uuid: UUID
+    project_name: str
 
 
 class ProjectConfigDAO:
@@ -149,6 +158,26 @@ class ProjectConfigDAO:
                 .values(served_config_uuid=None, updated_at=now)
             )
             return 1
+
+    def list_served_with_project_name(self) -> Sequence[ServedConfigWithProject]:
+        """Every served configuration paired with its project's identity.
+
+        Skips soft-deleted configs and soft-deleted projects. Deletes here are
+        soft, so a foreign-key cascade never removes the row on its own.
+        """
+        with self.db.begin_session() as session:
+            stmt = (
+                select(ProjectConfig.config_file, Project.uuid, Project.name)
+                .join(Project, Project.uuid == ProjectConfig.project_uuid)
+                .where(
+                    ProjectConfig.config_status == ConfigStatus.SERVED.value,
+                    ProjectConfig.deleted_at.is_(None),
+                    Project.deleted_at.is_(None),
+                )
+            )
+            return [
+                ServedConfigWithProject(*row) for row in session.execute(stmt).all()
+            ]
 
     def soft_delete_by_project(self, project_uuid: UUID) -> int:
         now = datetime.datetime.now(tz=_UTC)
