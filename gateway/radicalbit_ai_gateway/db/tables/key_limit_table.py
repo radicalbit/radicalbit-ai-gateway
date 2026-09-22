@@ -13,6 +13,7 @@ from sqlalchemy.orm import relationship
 
 from radicalbit_ai_gateway.db.dao.base_dao import BaseDAO
 from radicalbit_ai_gateway.db.database import BaseTable, Reflected
+from radicalbit_ai_gateway.db.tables.group_limit_table import GroupLimit  # noqa: F401
 
 
 class KeyLimit(Reflected, BaseTable, BaseDAO):
