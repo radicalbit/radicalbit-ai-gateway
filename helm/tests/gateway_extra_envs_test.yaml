@@ -1,0 +1,34 @@
+suite: test gateway extra envs
+templates:
+  - gateway/deployment.yaml
+tests:
+  - it: should set a simple env variable
+    set:
+      gateway:
+        extraEnvVars:
+          - name: TEXT_ENV
+            value: test
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TEXT_ENV
+            value: test
+  - it: should set a env variable from secret
+    set:
+      gateway:
+        extraEnvVars:
+          - name: SECRET_ENV
+            valueFrom:
+              secretKeyRef:
+                name: my-secret
+                key: my-key
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SECRET_ENV
+            valueFrom:
+              secretKeyRef:
+                name: my-secret
+                key: my-key

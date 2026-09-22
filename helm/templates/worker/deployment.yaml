@@ -1,0 +1,158 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "worker.fullname" . }}
+  labels:
+    {{- include "worker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.metricsWorker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "worker.labels" . | nindent 8 }}
+    spec:
+      {{- if .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      initContainers:
+        - name: database-migrations
+          image: "{{ .Values.metricsWorker.migrations.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.clickhouse.auth.username.existingSecretKey }}
+                  key: {{ .Values.clickhouse.auth.username.existingSecretKey }}
+                  {{- else }}
+                  key: username
+                  {{- end }}
+                  {{- if .Values.clickhouse.auth.username.existingSecret }}
+                  name: {{ .Values.clickhouse.auth.username.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-ch-auth
+                  {{- end }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.clickhouse.auth.password.existingSecretKey }}
+                  key: {{ .Values.clickhouse.auth.password.existingSecretKey }}
+                  {{- else }}
+                  key: password
+                  {{- end }}
+                  {{- if .Values.clickhouse.auth.password.existingSecret }}
+                  name: {{ .Values.clickhouse.auth.password.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-ch-auth
+                  {{- end }}
+            - name: GOOSE_DRIVER
+              value: clickhouse
+            - name: GOOSE_DBSTRING
+              value: "tcp://$(CLICKHOUSE_USER):$(CLICKHOUSE_PASSWORD)@{{ .Values.clickhouse.host }}:{{ .Values.clickhouse.port }}/{{ .Values.clickhouse.database }}"
+      containers:
+        - name: metrics-worker
+          image: "{{ .Values.metricsWorker.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.metricsWorker.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: CELERY_BROKER_URL
+              value: redis://{{ .Values.valkey.host }}:{{ .Values.valkey.port }}/0
+            - name: CLICKHOUSE_HOST
+              value: {{ .Values.clickhouse.host }}
+            - name: CLICKHOUSE_PORT
+              value: {{ .Values.clickhouse.nativeProtocolPort | quote }}
+            - name: CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.clickhouse.auth.username.existingSecretKey }}
+                  key: {{ .Values.clickhouse.auth.username.existingSecretKey }}
+                  {{- else }}
+                  key: username
+                  {{- end }}
+                  {{- if .Values.clickhouse.auth.username.existingSecret }}
+                  name: {{ .Values.clickhouse.auth.username.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-ch-auth
+                  {{- end }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.clickhouse.auth.password.existingSecretKey }}
+                  key: {{ .Values.clickhouse.auth.password.existingSecretKey }}
+                  {{- else }}
+                  key: password
+                  {{- end }}
+                  {{- if .Values.clickhouse.auth.password.existingSecret }}
+                  name: {{ .Values.clickhouse.auth.password.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-ch-auth
+                  {{- end }}
+            - name: REDIS_HOST
+              value: {{ .Values.valkey.host }}
+            - name: REDIS_PORT
+              value: {{ .Values.valkey.port | quote }}
+            # Slack settings
+            - name: SLACK_ENABLED
+              value: {{ .Values.metricsWorker.notifications.slack.enabled | quote }}
+            - name: SLACK_WEBHOOK_MAPPINGS
+              value: {{ .Values.metricsWorker.notifications.slack.webhookMappings | quote }}
+            - name: SLACK_USER_MAPPINGS
+              value: {{ .Values.metricsWorker.notifications.slack.userMappings | quote }}
+            # SendGrid settings
+            - name: SENDGRID_ENABLED
+              value: {{ .Values.metricsWorker.notifications.sendgrid.enabled | quote }}
+            - name: SENDGRID_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.metricsWorker.notifications.sendgrid.apiKey.existingSecretKey }}
+                  key: {{ .Values.metricsWorker.notifications.sendgrid.apiKey.existingSecretKey }}
+                  {{- else }}
+                  key: sendgrid-api-key
+                  {{- end }}
+                  {{- if .Values.metricsWorker.notifications.sendgrid.apiKey.existingSecret }}
+                  name: {{ .Values.metricsWorker.notifications.sendgrid.apiKey.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-sendgrid
+                  {{- end }}
+            - name: SENDGRID_FROM_EMAIL
+              value: {{ .Values.metricsWorker.notifications.sendgrid.fromEmail | quote }}
+            - name: SENDGRID_TEMPLATE_ID
+              value: {{ .Values.metricsWorker.notifications.sendgrid.templateId | quote }}
+            - name: SENDGRID_EMAIL_MAPPINGS
+              value: {{ .Values.metricsWorker.notifications.sendgrid.emailMappings | quote }}
+            # Notification thresholds
+            - name: NOTIFICATION_THRESHOLDS
+              value: {{ .Values.metricsWorker.notifications.thresholds | quote }}
+          {{- with .Values.metricsWorker.resources }}
+          resources:
+{{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.metricsWorker.livenessProbe }}
+          livenessProbe:
+{{ toYaml . | indent 12 }}
+          {{- end }}
+          {{- with .Values.metricsWorker.readinessProbe }}
+          readinessProbe:
+{{ toYaml . | indent 12 }}
+          {{- end }}
+      {{- with .Values.metricsWorker.nodeSelector }}
+      nodeSelector:
+{{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metricsWorker.affinity }}
+      affinity:
+{{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metricsWorker.tolerations }}
+      tolerations:
+{{- toYaml . | nindent 8 }}
+      {{- end }}

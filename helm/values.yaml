@@ -1,0 +1,125 @@
+image:
+  tag: latest
+  pullPolicy: IfNotPresent
+  pullSecrets: [ ]
+
+nameOverride: ""
+fullnameOverride: ""
+
+commonLabels: {}
+commonAnnotations: {}
+
+postgresql:
+  host: postgres
+  port: 5432
+  database: gateway
+  schema: default
+  auth:
+    username:
+      value: ""
+      existingSecret:
+      existingSecretKey: username
+    password:
+      value: ""
+      existingSecret:
+      existingSecretKey: password
+
+clickhouse:
+  host: clickhouse
+  port: 9000
+  nativeProtocolPort: 8123
+  database: default
+  auth:
+    username:
+      value: ""
+      existingSecret:
+      existingSecretKey: username
+    password:
+      value: ""
+      existingSecret:
+      existingSecretKey: password
+
+valkey:
+  host: valkey
+  port: 6379
+
+otelCollector:
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: 0.143.1
+
+gateway:
+  image:
+    repository: radicalbit/radicalbit-ai-gateway
+  replicaCount: 1
+  resources: {}
+  service:
+    ports:
+      api: 9000
+      metrics: 8001
+  ingress:
+    enabled: false
+    annotations: {}
+    ingressClassName:
+    path: /
+    pathType: Prefix
+    hosts:
+      - chart-example.local
+    tls: []
+    #  - secretName: chart-example-tls
+    #    hosts:
+    #      - chart-example.local
+  plugins: ""
+  extraEnvVars: []
+  workers:
+    threadPool: ""
+    uvicorn: ""
+  secrets:
+    fromSecret: true
+    externalSecret: gateway-secrets
+    externalSecretKey: secrets.yaml
+    plainSecrets: {}
+  tracing:
+    otlpExporters:
+  prompts:
+    enabled: false
+    fromConfigMap: false
+    externalConfigMap: ""
+    source: "prompts"
+    mountPath: "/radicalbit_ai_gateway/radicalbit_ai_gateway/prompts"
+  assistant:
+    apiKey:
+      value: ""
+      existingSecret: assistant-key
+      existingSecretKey: apiKey
+  migrations:
+    image:
+      repository: radicalbit/radicalbit-ai-gateway-migrations
+  metrics:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 25s
+
+metricsWorker:
+  image:
+    repository: radicalbit/radicalbit-ai-gateway-metrics-worker
+  replicaCount: 1
+  resources: {}
+  migrations:
+    image:
+      repository: radicalbit/radicalbit-ai-gateway-clickhouse-migrations
+  notifications:
+    slack:
+      enabled: false
+      webhookMappings: "{}"
+      userMappings: "{}"
+    sendgrid:
+      enabled: false
+      apiKey:
+        value: ""
+        existingSecret:
+        existingSecretKey: sendgrid-api-key
+      fromEmail: ""
+      templateId: ""
+      emailMappings: "{}"
+    thresholds: "[75, 98]"
