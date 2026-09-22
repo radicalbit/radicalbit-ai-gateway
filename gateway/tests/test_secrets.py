@@ -6,6 +6,7 @@ from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.utils.exceptions import SecretNotFoundError
 from radicalbit_ai_gateway.utils.secrets import (
     FileSecretProvider,
+    SecretProvider,
     get_secret_provider,
     resolve_secrets_from_string,
 )
@@ -213,3 +214,39 @@ mcp_servers:
     resolved = resolve_secrets_from_string(config_yaml, provider=provider)
     assert resolved['mcp_servers'][0]['headers']['Authorization'] == 'sk-dummy-key'
     assert resolved['mcp_servers'][1]['env']['API_TOKEN'] == 'sk-dummy-key'
+
+
+# --- list_secret_keys tests ---
+
+
+def test_file_secret_provider_list_secret_keys(secrets_path):
+    provider = FileSecretProvider(secrets_path)
+    assert sorted(provider.list_secret_keys()) == [
+        'CACHE_REDIS_HOST',
+        'CACHE_REDIS_PORT',
+        'OPENAI_API_KEY',
+    ]
+
+
+def test_file_secret_provider_list_secret_keys_returns_no_values(secrets_path):
+    provider = FileSecretProvider(secrets_path)
+    names = provider.list_secret_keys()
+    values = {str(provider.get_secret(name)) for name in names}
+    assert values.isdisjoint(names)
+
+
+def test_file_secret_provider_list_secret_keys_empty_yaml():
+    with tempfile.NamedTemporaryFile('w+', suffix='.yaml', delete=False) as f:
+        f.write('')
+        f.flush()
+        provider = FileSecretProvider(f.name)
+        assert provider.list_secret_keys() == []
+
+
+def test_secret_provider_must_implement_list_secret_keys():
+    class IncompleteProvider(SecretProvider):
+        def get_secret(self, key: str) -> str:
+            return 'value'
+
+    with pytest.raises(TypeError, match='list_secret_keys'):
+        IncompleteProvider()

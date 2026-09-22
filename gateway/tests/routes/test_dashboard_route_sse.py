@@ -27,13 +27,21 @@ from radicalbit_ai_gateway.models.event_dto import (
     WindowProgressBarDTO,
     WindowStatus,
 )
+from radicalbit_ai_gateway.models.mcp_usage_dto import (
+    McpServerChartDataDTO,
+    McpServerChartDataSeriesDTO,
+)
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
 from radicalbit_ai_gateway.services.event_service import EventService
+from radicalbit_ai_gateway.services.mcp_usage_service import McpUsageService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.utils.exceptions import (
+    AuthRegistryError,
     GatewayBadRequest,
     GatewayError,
+    ProjectNotFoundError,
+    auth_registry_exception_handler,
     gateway_exception_handler,
 )
 from radicalbit_ai_gateway.utils.sse_params import compute_sse_time_range
@@ -53,6 +61,7 @@ def sse_test_app():
     request_event_service = MagicMock(spec_set=RequestEventService)
     event_service = MagicMock(spec_set=EventService)
     project_service = MagicMock(spec_set=ProjectService)
+    mcp_usage_service = MagicMock(spec_set=McpUsageService)
 
     project_mock = MagicMock()
     project_mock.name = PROJECT_NAME
@@ -65,15 +74,17 @@ def sse_test_app():
         event_service=event_service,
         request_event_service=request_event_service,
         project_service=project_service,
+        mcp_usage_service=mcp_usage_service,
     )
     app = FastAPI(title='AI Gateway', debug=True)
     app.add_exception_handler(GatewayError, gateway_exception_handler)
     app.add_exception_handler(GatewayBadRequest, gateway_exception_handler)
+    app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
     app.include_router(router, prefix='/public/api/v1')
     app.state.project_configs = {PROJECT_NAME: project_entry_mock}
     app.state.routes = {}
 
-    return app, request_event_service, event_service
+    return app, request_event_service, event_service, mcp_usage_service, project_service
 
 
 class TestStreamMostRequestedRoute:
@@ -82,7 +93,13 @@ class TestStreamMostRequestedRoute:
     @pytest.mark.asyncio
     async def test_stream_most_requested_route(self, sse_test_app):
         """Test SSE endpoint returns correct content type and streams data in SSE format."""
-        app, request_event_service, _event_service = sse_test_app
+        (
+            app,
+            request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto_1 = MostRequestedRouteDTO(
             name='route-A',
@@ -159,7 +176,13 @@ class TestStreamMostRequestedErrorRoute:
     @pytest.mark.asyncio
     async def test_stream_most_requested_error_route(self, sse_test_app):
         """Test SSE endpoint returns correct content type and streams error route data."""
-        app, request_event_service, _event_service = sse_test_app
+        (
+            app,
+            request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto_1 = MostRequestedErrorRouteDTO(
             name='error-route-A',
@@ -233,7 +256,13 @@ class TestStreamMostRequestedErrorRoute:
     @pytest.mark.asyncio
     async def test_stream_yields_empty_json_on_none(self, sse_test_app):
         """Test SSE endpoint yields empty JSON when service returns None."""
-        app, request_event_service, _event_service = sse_test_app
+        (
+            app,
+            request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = MostRequestedErrorRouteDTO(
             name='error-route-A',
@@ -292,7 +321,13 @@ class TestStreamMostExpensiveRoute:
     @pytest.mark.asyncio
     async def test_stream_most_expensive_route(self, sse_test_app):
         """Test SSE endpoint returns correct content type and streams data in SSE format."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto_1 = MostExpensiveRouteDTO(
             name='route-A',
@@ -368,7 +403,13 @@ class TestStreamMostExpensiveRoute:
     @pytest.mark.asyncio
     async def test_stream_yields_empty_json_on_none(self, sse_test_app):
         """Test SSE endpoint yields empty JSON when service returns None."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = MostExpensiveRouteDTO(
             name='route-A',
@@ -427,7 +468,13 @@ class TestStreamCostsChart:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_all_routes(self, sse_test_app):
         """Test SSE endpoint streams cost chart for all routes when no routes given."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto_1 = CostChartDataDTO(
             granularity='hours',
@@ -491,7 +538,13 @@ class TestStreamCostsChart:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_filtered_routes(self, sse_test_app):
         """Test SSE endpoint passes routes filter to service (prefixed with project name)."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = CostChartDataDTO(
             granularity='days',
@@ -544,7 +597,13 @@ class TestStreamCostsChart:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_filtered_tags(self, sse_test_app):
         """Test SSE endpoint passes the tags filter to the service on every tick."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = CostChartDataDTO(
             granularity='days',
@@ -593,7 +652,13 @@ class TestStreamCostsChart:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_bad_request_gte_and_from(self, sse_test_app):
         """Test that combining _gte with _from returns 400."""
-        app, _request_event_service, _event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -615,7 +680,13 @@ class TestStreamCostsSummary:
     @pytest.mark.asyncio
     async def test_stream_costs_summary_all_routes(self, sse_test_app):
         """Test SSE endpoint streams cost summary for all routes when no routes given."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto_1 = CostDataDTO(input_cost=10.0, output_cost=20.0, total_cost=30.0)
         mock_dto_2 = CostDataDTO(input_cost=15.0, output_cost=25.0, total_cost=40.0)
@@ -667,7 +738,13 @@ class TestStreamCostsSummary:
     @pytest.mark.asyncio
     async def test_stream_costs_summary_filtered_routes(self, sse_test_app):
         """Test SSE endpoint passes routes filter to service."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = CostDataDTO(input_cost=5.0, output_cost=10.0, total_cost=15.0)
         event_service.get_summary_costs = MagicMock(side_effect=cycle([mock_dto]))
@@ -709,7 +786,13 @@ class TestStreamCostsSummary:
     @pytest.mark.asyncio
     async def test_stream_costs_summary_bad_request_gte_and_from(self, sse_test_app):
         """Test that combining _gte with _from returns 400."""
-        app, _request_event_service, _event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -731,7 +814,13 @@ class TestSseParamsValidation:
     @pytest.mark.asyncio
     async def test_gte_with_from_returns_400(self, sse_test_app):
         """Test that _gte + _from returns 400 error."""
-        app, _request_event_service, _event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -749,7 +838,13 @@ class TestSseParamsValidation:
     @pytest.mark.asyncio
     async def test_gte_with_from_and_to_returns_400(self, sse_test_app):
         """Test that _gte + _from + _to returns 400 error."""
-        app, _request_event_service, _event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -764,7 +859,13 @@ class TestSseParamsValidation:
     @pytest.mark.asyncio
     async def test_gte_zero_or_negative_returns_400(self, sse_test_app):
         """Test that _gte <= 0 returns 400 error."""
-        app, _request_event_service, _event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -821,7 +922,13 @@ class TestSseGteFunctionality:
     @pytest.mark.asyncio
     async def test_gte_streams_data(self, sse_test_app):
         """Test that _gte parameter works and streams data."""
-        app, request_event_service, _event_service = sse_test_app
+        (
+            app,
+            request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = MostRequestedRouteDTO(
             name='route-A',
@@ -856,7 +963,13 @@ class TestSseGteFunctionality:
     @pytest.mark.asyncio
     async def test_gte_rolling_window_updates_datetime(self, sse_test_app):
         """Test that from_datetime changes between iterations when using _gte."""
-        app, request_event_service, _event_service = sse_test_app
+        (
+            app,
+            request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         captured_times: list = []
 
@@ -914,7 +1027,13 @@ class TestSseBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_from_to_still_works(self, sse_test_app):
         """Test that _from/_to parameters still work as before."""
-        app, request_event_service, _event_service = sse_test_app
+        (
+            app,
+            request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = MostRequestedRouteDTO(
             name='route-A',
@@ -949,7 +1068,13 @@ class TestSseBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_no_params_still_works(self, sse_test_app):
         """Test that no parameters still works (default behavior)."""
-        app, request_event_service, _event_service = sse_test_app
+        (
+            app,
+            request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = MostRequestedRouteDTO(
             name='route-A',
@@ -986,7 +1111,13 @@ class TestStreamLimitsProgress:
     @pytest.mark.asyncio
     async def test_returns_correct_sse_payload(self, sse_test_app):
         """Endpoint streams the payload returned by event_service.get_route_limits_progress."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = [
             RouteProgressBarDTO(
@@ -1063,7 +1194,13 @@ class TestStreamLimitsProgress:
     @pytest.mark.asyncio
     async def test_filters_by_routes(self, sse_test_app):
         """Endpoint passes routes query param to the service (prefixed with project name)."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         event_service.get_route_limits_progress = AsyncMock(return_value=[])
 
@@ -1090,7 +1227,13 @@ class TestStreamLimitsProgress:
     @pytest.mark.asyncio
     async def test_progress_bar_absent_when_none(self, sse_test_app):
         """ProgressBar key is absent in SSE payload when progress_bar is None."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         event_service.get_route_limits_progress = AsyncMock(
             return_value=[RouteProgressBarDTO(route_name='my-route', progress_bar=None)]
@@ -1128,7 +1271,13 @@ class TestStreamLimitsProgress:
     @pytest.mark.asyncio
     async def test_forwards_window_statuses_to_service(self, sse_test_app):
         """window_statuses query params are forwarded to get_route_limits_progress."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         event_service.get_route_limits_progress = AsyncMock(return_value=[])
 
@@ -1165,7 +1314,13 @@ class TestStreamInvocations:
     @pytest.mark.asyncio
     async def test_returns_correct_sse_payload(self, sse_test_app):
         """Endpoint streams InvocationChartDataDTO returned by event_service."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = InvocationChartDataDTO(
             granularity='hours',
@@ -1220,7 +1375,13 @@ class TestStreamInvocations:
     @pytest.mark.asyncio
     async def test_filters_by_routes(self, sse_test_app):
         """Endpoint passes routes query param to the service (prefixed with project name)."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = InvocationChartDataDTO(
             granularity='weeks', timestamp=[], data=[], total=0
@@ -1254,7 +1415,13 @@ class TestStreamInvocations:
     @pytest.mark.asyncio
     async def test_all_routes_when_no_filter(self, sse_test_app):
         """Service is called with routes=None when no routes param is provided."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = InvocationChartDataDTO(
             granularity='weeks', timestamp=[], data=[], total=0
@@ -1283,7 +1450,13 @@ class TestStreamInvocations:
     @pytest.mark.asyncio
     async def test_respects_from_to_params(self, sse_test_app):
         """Endpoint forwards _from and _to unix timestamps to the service as datetimes."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = InvocationChartDataDTO(
             granularity='hours', timestamp=[], data=[], total=0
@@ -1320,7 +1493,13 @@ class TestStreamInvocations:
     @pytest.mark.asyncio
     async def test_gte_streams_data(self, sse_test_app):
         """Endpoint accepts _gte as a rolling window and passes datetimes to the service."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = InvocationChartDataDTO(
             granularity='hours', timestamp=[], data=[], total=0
@@ -1352,7 +1531,13 @@ class TestStreamInvocations:
     @pytest.mark.asyncio
     async def test_gte_and_from_returns_400(self, sse_test_app):
         """Passing both _gte and _from returns 400 (mutually exclusive)."""
-        app, _request_event_service, _event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -1367,7 +1552,13 @@ class TestStreamInvocations:
     @pytest.mark.asyncio
     async def test_include_models_false_returns_flat_data(self, sse_test_app):
         """With include_models=False, payload data is a flat list of numbers."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = InvocationChartDataDTO(
             granularity='hours',
@@ -1401,7 +1592,13 @@ class TestStreamInvocations:
     @pytest.mark.asyncio
     async def test_include_models_true_returns_series_data(self, sse_test_app):
         """With include_models=True, payload data contains per-model series."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = InvocationChartDataDTO(
             granularity='hours',
@@ -1461,7 +1658,13 @@ class TestStreamTokens:
     @pytest.mark.asyncio
     async def test_returns_correct_sse_payload(self, sse_test_app):
         """Endpoint streams TokenChartDataDTO returned by event_service."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = TokenChartDataDTO(
             granularity='hours',
@@ -1518,7 +1721,13 @@ class TestStreamTokens:
     @pytest.mark.asyncio
     async def test_filters_by_routes(self, sse_test_app):
         """Endpoint passes routes query param to the service (prefixed with project name)."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = TokenChartDataDTO(
             granularity='weeks', timestamp=[], data=[], total=0
@@ -1552,7 +1761,13 @@ class TestStreamTokens:
     @pytest.mark.asyncio
     async def test_all_routes_when_no_filter(self, sse_test_app):
         """Service is called with routes=None when no routes param is provided."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = TokenChartDataDTO(
             granularity='weeks', timestamp=[], data=[], total=0
@@ -1581,7 +1796,13 @@ class TestStreamTokens:
     @pytest.mark.asyncio
     async def test_respects_from_to_params(self, sse_test_app):
         """Endpoint forwards _from and _to unix timestamps to the service as datetimes."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = TokenChartDataDTO(
             granularity='hours', timestamp=[], data=[], total=0
@@ -1618,7 +1839,13 @@ class TestStreamTokens:
     @pytest.mark.asyncio
     async def test_gte_streams_data(self, sse_test_app):
         """Endpoint accepts _gte as a rolling window and passes datetimes to the service."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_result = TokenChartDataDTO(
             granularity='hours', timestamp=[], data=[], total=0
@@ -1650,7 +1877,13 @@ class TestStreamTokens:
     @pytest.mark.asyncio
     async def test_gte_and_from_returns_400(self, sse_test_app):
         """Passing both _gte and _from returns 400 (mutually exclusive)."""
-        app, _request_event_service, _event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -1669,7 +1902,13 @@ class TestStreamCostsChartByEntity:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_by_key(self, sse_test_app):
         """Test /projects/{uuid}/routes/costs/key/{key_uuid}/stream streams cost chart."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
         key_uuid = '550e8400-e29b-41d4-a716-446655440001'
 
         mock_dto = CostChartDataDTO(
@@ -1730,7 +1969,13 @@ class TestStreamCostsChartByEntity:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_by_key_with_routes_filter(self, sse_test_app):
         """Test /projects/{uuid}/routes/costs/key/{key_uuid}/stream filters by routes."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
         key_uuid = '550e8400-e29b-41d4-a716-446655440001'
 
         mock_dto = CostChartDataDTO(
@@ -1772,7 +2017,13 @@ class TestStreamCostsChartByEntity:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_by_group(self, sse_test_app):
         """Test /projects/{uuid}/routes/costs/group/{group_uuid}/stream streams cost chart."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
         group_uuid = '550e8400-e29b-41d4-a716-446655440002'
 
         mock_dto = CostChartDataDTO(
@@ -1812,7 +2063,13 @@ class TestStreamCostsChartByEntity:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_by_group_with_routes_filter(self, sse_test_app):
         """Test /projects/{uuid}/routes/costs/group/{group_uuid}/stream filters by routes."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
         group_uuid = '550e8400-e29b-41d4-a716-446655440002'
 
         mock_dto = CostChartDataDTO(
@@ -1851,7 +2108,13 @@ class TestStreamCostsChartByEntity:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_by_model(self, sse_test_app):
         """Test /projects/{uuid}/routes/costs/model/{model_id}/stream streams cost chart."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = CostChartDataDTO(
             granularity='hours',
@@ -1890,7 +2153,13 @@ class TestStreamCostsChartByEntity:
     @pytest.mark.asyncio
     async def test_stream_costs_chart_by_model_with_routes_filter(self, sse_test_app):
         """Test /projects/{uuid}/routes/costs/model/{model_id}/stream filters by routes."""
-        app, _request_event_service, event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
 
         mock_dto = CostChartDataDTO(
             granularity='hours',
@@ -1933,7 +2202,13 @@ class TestStreamCostsChartByEntity:
         self, sse_test_app
     ):
         """Passing both _gte and _from returns 400 (mutually exclusive)."""
-        app, _request_event_service, _event_service = sse_test_app
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
         key_uuid = '550e8400-e29b-41d4-a716-446655440001'
 
         transport = ASGITransport(app=app)
@@ -1946,3 +2221,391 @@ class TestStreamCostsChartByEntity:
             )
             assert response.status_code == 400
             assert 'error' in response.json()
+
+
+class TestStreamMcpServersChart:
+    """Tests for the SSE /projects/{project_uuid}/routes/mcp/servers/stream endpoint."""
+
+    @staticmethod
+    async def _read_events(async_client, params, wanted: int = 1):
+        events = []
+        async with async_client.stream(
+            'GET',
+            f'{PROJECT_BASE}/routes/mcp/servers/stream',
+            params=params,
+        ) as response:
+            assert response.status_code == 200
+            assert 'text/event-stream' in response.headers['content-type']
+            current_event_lines = []
+            async for line in response.aiter_lines():
+                if line == '':
+                    if current_event_lines:
+                        events.append('\n'.join(current_event_lines))
+                        current_event_lines = []
+                        if len(events) == wanted:
+                            break
+                else:
+                    current_event_lines.append(line)
+        return events
+
+    @staticmethod
+    def _payload(event: str) -> dict:
+        return json.loads(event[event.find('{') : event.rfind('}') + 1])
+
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_all_routes(self, sse_test_app):
+        """Every tick carries a fresh chart for the whole project."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mock_dto_1 = McpServerChartDataDTO(
+            granularity='hours',
+            timestamp=[1736330400, 1736334000],
+            data=[McpServerChartDataSeriesDTO(name='files', data=[2, 3])],
+            total=5,
+        )
+        mock_dto_2 = McpServerChartDataDTO(
+            granularity='hours',
+            timestamp=[1736330400, 1736334000],
+            data=[McpServerChartDataSeriesDTO(name='files', data=[2, 6])],
+            total=8,
+        )
+        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
+            side_effect=cycle([mock_dto_1, mock_dto_2])
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(async_client, {}, wanted=2)
+
+                    assert len(events) == 2
+                    payload1 = self._payload(events[0])
+                    assert payload1['granularity'] == 'hours'
+                    assert payload1['timestamp'] == [1736330400, 1736334000]
+                    assert payload1['total'] == 5
+                    assert payload1['data'][0]['name'] == 'files'
+                    assert payload1['data'][0]['data'] == [2, 3]
+                    assert self._payload(events[1])['total'] == 8
+
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_defaults_to_services(self, sse_test_app):
+        """No group_by means one series per MCP service."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
+            side_effect=cycle(
+                [
+                    McpServerChartDataDTO(
+                        granularity='days', timestamp=[1736208000], data=[], total=0
+                    )
+                ]
+            )
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(async_client, {})
+
+                    assert len(events) == 1
+                    call_kwargs = (
+                        mcp_usage_service.get_mcp_server_chart_data.call_args.kwargs
+                    )
+                    assert call_kwargs['group_by'] == 'services'
+
+    @pytest.mark.parametrize('group_by', ['services', 'groups', 'keys'])
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_each_grouping(self, sse_test_app, group_by):
+        """Each grouping reaches the service as asked."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
+            side_effect=cycle(
+                [
+                    McpServerChartDataDTO(
+                        granularity='days',
+                        timestamp=[1736208000],
+                        data=[
+                            McpServerChartDataSeriesDTO(
+                                name='retail',
+                                uuid=UUID('550e8400-e29b-41d4-a716-446655440003'),
+                                data=[4],
+                            )
+                        ],
+                        total=4,
+                    )
+                ]
+            )
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(
+                        async_client, {'group_by': group_by}
+                    )
+
+                    assert len(events) == 1
+                    payload = self._payload(events[0])
+                    assert payload['data'][0]['uuid'] == (
+                        '550e8400-e29b-41d4-a716-446655440003'
+                    )
+                    call_kwargs = (
+                        mcp_usage_service.get_mcp_server_chart_data.call_args.kwargs
+                    )
+                    assert call_kwargs['group_by'] == group_by
+
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_filtered_routes(self, sse_test_app):
+        """The routes filter reaches the service on every tick."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
+            side_effect=cycle(
+                [
+                    McpServerChartDataDTO(
+                        granularity='days',
+                        timestamp=[1736208000],
+                        data=[McpServerChartDataSeriesDTO(name='files', data=[7])],
+                        total=7,
+                    )
+                ]
+            )
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(
+                        async_client, {'routes': ['route-A', 'route-B']}
+                    )
+
+                    assert len(events) == 1
+                    payload = self._payload(events[0])
+                    assert payload['total'] == 7
+                    assert payload['data'][0]['data'] == [7]
+                    call_kwargs = (
+                        mcp_usage_service.get_mcp_server_chart_data.call_args.kwargs
+                    )
+                    assert call_kwargs['route_names'] == ['route-A', 'route-B']
+
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_filtered_tags(self, sse_test_app):
+        """The tags filter reaches the service on every tick."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
+            side_effect=cycle(
+                [
+                    McpServerChartDataDTO(
+                        granularity='days',
+                        timestamp=[1736208000],
+                        data=[McpServerChartDataSeriesDTO(name='files', data=[3])],
+                        total=3,
+                    )
+                ]
+            )
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(
+                        async_client,
+                        {'tags': ['env=prod', 'cost_center=retail']},
+                    )
+
+                    assert len(events) == 1
+                    payload = self._payload(events[0])
+                    assert payload['total'] == 3
+                    assert payload['data'][0]['data'] == [3]
+                    call_kwargs = (
+                        mcp_usage_service.get_mcp_server_chart_data.call_args.kwargs
+                    )
+                    assert call_kwargs['tags'] == ['env=prod', 'cost_center=retail']
+
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_rolling_window_moves(self, sse_test_app):
+        """A look-back window is recomputed on every tick, not frozen."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
+            side_effect=cycle(
+                [
+                    McpServerChartDataDTO(
+                        granularity='hours', timestamp=[1736208000], data=[], total=0
+                    )
+                ]
+            )
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(
+                        async_client, {'_gte': 3600}, wanted=3
+                    )
+
+                    assert len(events) == 3
+                    froms = [
+                        call.kwargs['_from']
+                        for call in (
+                            mcp_usage_service.get_mcp_server_chart_data.call_args_list
+                        )
+                    ]
+                    assert all(f is not None for f in froms)
+                    assert froms == sorted(froms)
+                    assert len(set(froms)) > 1
+
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_bad_request_gte_and_from(self, sse_test_app):
+        """Combining a look-back with explicit bounds is rejected."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url='http://localhost:9000'
+        ) as async_client:
+            response = await async_client.get(
+                f'{PROJECT_BASE}/routes/mcp/servers/stream',
+                params={'_gte': 3600, '_from': 1700000000},
+            )
+            assert response.status_code == 400
+            assert '_gte' in response.json()['error']['message'].lower()
+
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_bad_request_non_positive_gte(self, sse_test_app):
+        """A non-positive look-back is rejected."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url='http://localhost:9000'
+        ) as async_client:
+            response = await async_client.get(
+                f'{PROJECT_BASE}/routes/mcp/servers/stream',
+                params={'_gte': 0},
+            )
+            assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_unknown_project(self, sse_test_app):
+        """An unknown project fails loudly."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            project_service,
+        ) = sse_test_app
+        project_service.validate_exists = MagicMock(
+            side_effect=ProjectNotFoundError('Project with UUID ... not found')
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url='http://localhost:9000'
+        ) as async_client:
+            response = await async_client.get(
+                f'{PROJECT_BASE}/routes/mcp/servers/stream',
+            )
+            assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_stream_mcp_servers_invalid_group_by(self, sse_test_app):
+        """A grouping the chart does not offer is rejected."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url='http://localhost:9000'
+        ) as async_client:
+            response = await async_client.get(
+                f'{PROJECT_BASE}/routes/mcp/servers/stream',
+                params={'group_by': 'models'},
+            )
+            assert response.status_code == 422

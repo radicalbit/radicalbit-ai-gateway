@@ -27,6 +27,8 @@ function ThreeDotsMenu() {
 
 const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and cannot be modified';
 
+const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
+
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { showModal } = useModals();
 
@@ -42,7 +44,16 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     return [];
   }
 
-  if (isLoading || !isSuccess || isError) {
+  if (isError) {
+    return [
+      {
+        label: <Tooltip title={UNAVAILABLE_TOOLTIP}>Unable to load credential</Tooltip>,
+        disabled: true,
+      },
+    ];
+  }
+
+  if (isLoading || !isSuccess) {
     return [];
   }
 

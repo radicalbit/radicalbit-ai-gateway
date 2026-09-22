@@ -58,10 +58,12 @@ function DataContent() {
     ? searchParams.get('windowStatuses').split(',')
     : [];
 
-  const { data, isLoading, isError, isFetching, refetch } = useGetLimitsStreamWithRange({ routes, windowStatuses });
-  const dataSource = data || [];
+  const { data, isFetching, refetch } = useGetLimitsStreamWithRange({ routes, windowStatuses });
+  const isSseLoading = data?.isSseLoading;
+  const isSseError = data?.isSseError;
+  const dataSource = data?.limits || [];
 
-  if (isError) {
+  if (isSseError) {
     return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
@@ -69,7 +71,7 @@ function DataContent() {
     <DataTable
       columns={columns}
       dataSource={dataSource}
-      loading={isLoading}
+      loading={isSseLoading}
       pagination={false}
       rowKey={({ routeName: key }) => key}
     />

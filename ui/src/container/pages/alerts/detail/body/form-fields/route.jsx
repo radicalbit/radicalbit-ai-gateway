@@ -7,8 +7,10 @@ function Route() {
   const projectUuid = form?.project;
   const route = form?.route;
 
-  const { data = [], isLoading } = useGetRoutesQuery({ projectUuid }, { skip: !projectUuid });
+  const { data = [], isError, isLoading } = useGetRoutesQuery({ projectUuid }, { skip: !projectUuid });
   const options = data.map(({ routeName }) => ({ label: routeName, value: routeName }));
+
+  const errorMessage = isError ? 'Unable to load routes, please retry later' : undefined;
 
   const handleOnChange = (value) => {
     write('route', value);
@@ -20,9 +22,9 @@ function Route() {
   }
 
   return (
-    <FormField label="Route" message={error('route')} required>
+    <FormField label="Route" message={error('route') || errorMessage} required>
       <Select
-        disabled={!projectUuid}
+        disabled={!projectUuid || isError}
         onChange={handleOnChange}
         options={options}
         placeholder="Select a route"

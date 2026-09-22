@@ -12,15 +12,16 @@ import { useEffect } from 'react';
 import Subtitle from './subtitle';
 
 function GroupsListHeader() {
-  const { data = [] } = useGetGroupsQuery();
+  const { data = [], isError } = useGetGroupsQuery();
   const count = data.length;
+  const hasCreateButton = count !== 0 || isError;
 
   useOpenModalWithKeyboard();
 
   return (
     <NewHeader
       details={{
-        one: count !== 0 && <CreateGroupButton />,
+        one: hasCreateButton && <CreateGroupButton />,
       }}
       title={(
         <SectionTitle

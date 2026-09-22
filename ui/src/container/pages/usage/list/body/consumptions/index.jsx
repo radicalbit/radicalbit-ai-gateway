@@ -13,6 +13,8 @@ import { useSearchParams } from 'react-router-dom';
 import CostsGraph from './costs-graph';
 import CostTable from './cost-table';
 import InvocationsGraph from './invocations-graph';
+import McpInvocationsGraph from './mcp-invocations-graph';
+import McpKeysTable from './mcp-keys-table';
 import ProjectFilter from '../project-filter';
 import RoutesFilter from '../routes-filter';
 import SummaryHeader from './summary-header';
@@ -59,6 +61,10 @@ function Consumptions() {
       </div>
 
       <DataContent />
+
+      <McpInvocationsGraph />
+
+      <McpKeysTable />
     </div>
   );
 }
@@ -69,18 +75,22 @@ function DataContent() {
     ? searchParams.get('routes').split(',')
     : [];
 
-  const { isError, isFetching, isSuccess, refetch } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
+  const { data, isFetching, refetch } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
+  const isSseLoading = data?.isSseLoading;
+  const isSseError = data?.isSseError;
+  const isSseSuccess = data?.isSseSuccess;
 
-  if (isFetching) {
+  console.debug(useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false }));
+  if (isSseLoading) {
     return <Skeleton.Node active style={{ height: '20rem', width: '100%' }} />;
   }
 
-  if (isError) {
+  if (isSseError) {
     return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
-  if (!isSuccess) {
-    return null;
+  if (!isSseSuccess) {
+    return false;
   }
 
   return (

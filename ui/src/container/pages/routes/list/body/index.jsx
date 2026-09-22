@@ -1,6 +1,6 @@
 import Lucide from '@Components/lucide';
 import { DETAIL_LAYOUT_CONFIGURATION, MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
-import usePersistQueryParams from '@Hooks/use-persistence-query-params';
+import usePersistProjectUuid from '@Hooks/use-persist-project-uuid';
 import { DEFAULT_POLLING_INTERVAL, SEARCH_PARAMS } from '@Src/constants';
 import {
   useGetEventsByRouteWithRange,
@@ -23,7 +23,7 @@ import VerticalResizableDivider from './vertical-resizable-divider';
 function RoutesList() {
   useInitLayoutConfigurations();
 
-  usePersistQueryParams(['projectUuid'], 'rbit-gw');
+  usePersistProjectUuid();
 
   const [searchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid');

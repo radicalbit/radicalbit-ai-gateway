@@ -13,15 +13,16 @@ import { useEffect } from 'react';
 import Subtitle from './subtitle';
 
 function KeysListHeader() {
-  const { data = [] } = useGetKeysQuery();
+  const { data = [], isError } = useGetKeysQuery();
   const count = data.length;
+  const hasCreateButton = count !== 0 || isError;
 
   useOpenModalWithKeyboard();
 
   return (
     <NewHeader
       details={{
-        one: count !== 0 && <CreateKeyButton />,
+        one: hasCreateButton && <CreateKeyButton />,
       }}
       title={(
         <SectionTitle

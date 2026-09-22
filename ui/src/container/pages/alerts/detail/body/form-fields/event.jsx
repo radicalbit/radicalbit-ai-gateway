@@ -14,11 +14,13 @@ function Event() {
 
   const isDisabled = !projectUuid || !routeName;
 
-  const { data, isLoading } = useGetAlertableEventsQuery(
+  const { data, isError, isLoading } = useGetAlertableEventsQuery(
     { projectUuid, routeName },
     { skip: isDisabled },
   );
   const options = toOptions(data);
+
+  const errorMessage = isError ? 'Unable to load events, please retry later' : undefined;
 
   const handleOnChange = (value) => {
     write('event', value);
@@ -29,9 +31,9 @@ function Event() {
   }
 
   return (
-    <FormField label="Event" message={error('event')} required>
+    <FormField label="Event" message={error('event') || errorMessage} required>
       <Select
-        disabled={isDisabled}
+        disabled={isDisabled || isError}
         onChange={handleOnChange}
         options={options}
         placeholder="Select an event"

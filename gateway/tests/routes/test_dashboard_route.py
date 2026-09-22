@@ -59,6 +59,7 @@ from radicalbit_ai_gateway.models.routing import (
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
 from radicalbit_ai_gateway.services.event_service import EventService
+from radicalbit_ai_gateway.services.mcp_usage_service import McpUsageService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
 from radicalbit_ai_gateway.utils.app_config import PromptManagerConfig
@@ -80,11 +81,13 @@ class TestDashboardRoute(unittest.TestCase):
             spec_set=RequestEventService
         )
         cls.project_service: ProjectService = MagicMock(spec_set=ProjectService)
+        cls.mcp_usage_service: McpUsageService = MagicMock(spec_set=McpUsageService)
         os.environ['ENABLED_PLUGINS'] = 'registry_oidc_auth,keycloak_idp'
         router = DashboardRoute.get_dashboard_router(
             event_service=cls.event_service,
             request_event_service=cls.request_event_service,
             project_service=cls.project_service,
+            mcp_usage_service=cls.mcp_usage_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
         app.add_exception_handler(GatewayError, gateway_exception_handler)
@@ -1441,11 +1444,13 @@ class TestDashboardRouteNoActiveConfig(unittest.TestCase):
             spec_set=RequestEventService
         )
         cls.project_service: ProjectService = MagicMock(spec_set=ProjectService)
+        cls.mcp_usage_service: McpUsageService = MagicMock(spec_set=McpUsageService)
         os.environ['ENABLED_PLUGINS'] = 'registry_oidc_auth,keycloak_idp'
         router = DashboardRoute.get_dashboard_router(
             event_service=cls.event_service,
             request_event_service=cls.request_event_service,
             project_service=cls.project_service,
+            mcp_usage_service=cls.mcp_usage_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
         app.add_exception_handler(GatewayError, gateway_exception_handler)
