@@ -40,19 +40,6 @@ const chartWidthAndHeight = {
 
 const UNRESOLVED_ALIAS_LABEL = 'Unresolved alias';
 
-const useMcpDrillDownChart = (retryNonce) => {
-  const [searchParams] = useSearchParams();
-  const groupBy = searchParams.get('mcpDrillDownEntity');
-  const entity = searchParams.get('mcpDrillDownId');
-  const routes = searchParams.get('routes')
-    ? searchParams.get('routes').split(',')
-    : [];
-
-  return useGetMcpServersChartSseWithRange({
-    routes, groupBy, entity, retryNonce,
-  });
-};
-
 function McpInvocationsGraphDrillDown() {
   const [retryNonce, setRetryNonce] = useState(0);
 
@@ -239,5 +226,18 @@ function Label() {
       return <span />;
   }
 }
+
+const useMcpDrillDownChart = (retryNonce) => {
+  const [searchParams] = useSearchParams();
+  const groupBy = searchParams.get('mcpDrillDownEntity');
+  const entity = searchParams.get('mcpDrillDownId');
+  const routes = searchParams.get('routes')
+    ? searchParams.get('routes').split(',')
+    : [];
+
+  return useGetMcpServersChartSseWithRange({
+    routes, groupBy, entity, retryNonce,
+  });
+};
 
 export default McpInvocationsGraphDrillDown;

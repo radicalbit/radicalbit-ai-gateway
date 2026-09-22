@@ -24,7 +24,7 @@ function SummaryHeader() {
   const transcriptionModelsTotal = transcriptionModels ? costFormatter({ cent: transcriptionModels?.total }) : '--';
 
   return (
-    <div className="flex gap-16 items-start">
+    <div className="flex gap-16 items-start pl-4">
       <SectionTitle
         reverse
         size="large"
