@@ -21,10 +21,17 @@ export default ({ xAxisData, series = [], granularity, total }) => {
     },
     grid: {
       top: 80,
-      right: 40,
+      right: '20%',
       bottom: 40,
       left: 40,
       containLabel: true,
+    },
+    legend: {
+      type: 'scroll',
+      orient: 'vertical',
+      right: '5%',
+      top: '20%',
+      formatter: (name) => name,
     },
     xAxis: {
       type: 'category',
@@ -41,7 +48,7 @@ export default ({ xAxisData, series = [], granularity, total }) => {
       type: 'value',
       minInterval: 1,
     },
-    series: series.map((s) => ({ type: 'bar', barMaxWidth: 35, barMinWidth: 8, ...s })),
+    series: series.map((s) => ({ type: 'bar', stack: 'total', barMaxWidth: 35, barMinWidth: 8, ...s })),
     tooltip: {
       enterable: false,
       confine: true,
