@@ -242,7 +242,11 @@ mcp_service = McpService(
     upstream_client=McpUpstreamClient(),
     group_service=group_service,
 )
-mcp_usage_service = McpUsageService(event_dao=event_dao)
+mcp_usage_service = McpUsageService(
+    event_dao=event_dao,
+    key_service=key_service,
+    group_service=group_service,
+)
 secret_service = SecretService()
 
 alert_rule_dao = AlertRuleDAO(database)
@@ -379,6 +383,7 @@ app.include_router(
         event_service=event_service,
         request_event_service=request_event_service,
         project_service=project_service,
+        mcp_usage_service=mcp_usage_service,
     ),
     prefix=prefix,
 )

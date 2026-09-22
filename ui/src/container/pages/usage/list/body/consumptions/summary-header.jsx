@@ -10,11 +10,18 @@ function SummaryHeader() {
     : [];
 
   const { data } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
-  const totalCosts = costFormatter({ cent: data?.total });
-  const saved = costFormatter({ cent: data?.totals?.saved || 0 });
-  const chatModelsTotal = data?.chatModels ? costFormatter({ cent: data?.chatModels?.total }) : '--';
-  const embeddingModelsTotal = data?.embeddingModels ? costFormatter({ cent: data?.embeddingModels?.total }) : '--';
-  const transcriptionModelsTotal = data?.transcriptionModels ? costFormatter({ cent: data?.transcriptionModels?.total }) : '--';
+  const summary = data?.summary;
+  const total = summary?.total;
+  const totals = summary?.totals;
+  const chatModels = summary?.chatModels;
+  const embeddingModels = summary?.embeddingModels;
+  const transcriptionModels = summary?.transcriptionModels;
+
+  const totalCosts = costFormatter({ cent: total });
+  const saved = costFormatter({ cent: totals?.saved || 0 });
+  const chatModelsTotal = chatModels ? costFormatter({ cent: chatModels?.total }) : '--';
+  const embeddingModelsTotal = embeddingModels ? costFormatter({ cent: embeddingModels?.total }) : '--';
+  const transcriptionModelsTotal = transcriptionModels ? costFormatter({ cent: transcriptionModels?.total }) : '--';
 
   return (
     <div className="flex gap-16 items-start">

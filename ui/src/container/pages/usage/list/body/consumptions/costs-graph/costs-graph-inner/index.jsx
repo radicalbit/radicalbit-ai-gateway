@@ -44,21 +44,25 @@ function CostsGraphInner() {
     ? searchParams.get('routes').split(',')
     : [];
 
-  const { data, isError, isSuccess } = useGetCostsChartStreamWithRange({ routes, groupBy });
+  const { data } = useGetCostsChartStreamWithRange({ routes, groupBy });
+  const chart = data?.chart;
+  const isSseLoading = data?.isSseLoading;
+  const isSseError = data?.isSseError;
+  const isSseSuccess = data?.isSseSuccess;
 
-  if (data?.loading) {
+  if (isSseLoading) {
     return <IsLoading />;
   }
 
-  if (isError || data?.error) {
+  if (isSseError) {
     return <SomethingWentWrong size="small" style={chartWidthAndHeight} />;
   }
 
-  if (!data?.chart?.data?.length) {
+  if (!chart?.data?.length) {
     return <IsEmpty />;
   }
 
-  if (!isSuccess) {
+  if (!isSseSuccess) {
     return false;
   }
 

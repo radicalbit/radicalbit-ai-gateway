@@ -2,7 +2,6 @@ import { useSearchParams } from 'react-router-dom';
 import {
   useGetRoutesQuery,
   useGetRouteByNameQuery,
-  useGetMetricsByNameQuery,
   useGetMetricsQuery,
   useGetEventsByRouteQuery,
   useGetMostRequestedRouteQuery,
@@ -30,13 +29,6 @@ const useGetRoutesWithRange = (options) => {
 const useGetRouteByNameWithRange = (name, options) => {
   const { gte, from, to, projectUuid } = useQueryRangeParams();
   return useGetRouteByNameQuery({
-    projectUuid, gte, name, from, to,
-  }, { skip: !projectUuid, ...options });
-};
-
-const useGetMetricsByNameWithRange = (name, options) => {
-  const { gte, from, to, projectUuid } = useQueryRangeParams();
-  return useGetMetricsByNameQuery({
     projectUuid, gte, name, from, to,
   }, { skip: !projectUuid, ...options });
 };
@@ -71,7 +63,6 @@ const useGetTopCostRouteWithRange = (options) => {
 export {
   useGetRoutesWithRange,
   useGetRouteByNameWithRange,
-  useGetMetricsByNameWithRange,
   useGetMetricsWithRange,
   useGetEventsByRouteWithRange,
   useGetMostRequestedRouteWithRange,

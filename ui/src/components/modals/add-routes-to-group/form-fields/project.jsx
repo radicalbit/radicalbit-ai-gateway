@@ -10,6 +10,8 @@ function Project() {
 
   const options = data.map((p) => ({ label: p.name, value: p.uuid }));
 
+  const placeholder = isError ? 'Unable to load projects' : 'Please select';
+
   const handleOnChange = (value) => {
     write('projectUuid', value);
     write('routes', []);
@@ -31,7 +33,7 @@ function Project() {
         onChange={handleOnChange}
         optionFilterProp="label"
         options={options}
-        placeholder="Please select"
+        placeholder={placeholder}
         showSearch
         value={projectUuid}
       />

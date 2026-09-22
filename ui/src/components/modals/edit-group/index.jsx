@@ -14,6 +14,8 @@ import useHandleOnSubmit from './useHandleOnSubmit';
 
 const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
 
+const UNAVAILABLE_MESSAGE = 'Unable to load this group, please close and retry later';
+
 function EditGroup() {
   return (
     <FormbitContextProvider initialValues={{}} schema={schema}>
@@ -50,13 +52,17 @@ function Body() {
 
   const { error } = useFormbitContext();
 
-  const { data, isLoading: isGroupLoading } = useGetGroupQuery(uuid, { skip: !uuid });
+  const { data, isError, isLoading: isGroupLoading } = useGetGroupQuery(uuid, { skip: !uuid });
   const isExternallyManaged = data ? data.owner !== GATEWAY_OWNER : false;
 
   const { isLoading: isInitializing } = useInitializeForm();
 
   if (isGroupLoading) {
     return <IsLoading />;
+  }
+
+  if (isError) {
+    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
   }
 
   if (isExternallyManaged) {
@@ -117,7 +123,7 @@ function Actions() {
   const { hideModal, modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data, isLoading: isGroupLoading, isSuccess } = useGetGroupQuery(uuid, { skip: !uuid });
+  const { data, isError, isLoading: isGroupLoading, isSuccess } = useGetGroupQuery(uuid, { skip: !uuid });
   const owner = data?.owner;
 
   const { handleOnSubmit, args: { isLoading }, isSubmitDisabled } = useHandleOnSubmit();
@@ -132,12 +138,20 @@ function Actions() {
     );
   }
 
+  if (isError) {
+    return (
+      <Button onClick={hideModal} type="secondary-light">
+        Close
+      </Button>
+    );
+  }
+
   if (!isSuccess) {
-    return null;
+    return false;
   }
 
   if (owner !== GATEWAY_OWNER) {
-    return null;
+    return false;
   }
 
   return (

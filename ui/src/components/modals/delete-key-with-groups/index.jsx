@@ -13,6 +13,8 @@ import useHandleOnSubmit from './useHandleOnSubmit';
 
 const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and cannot be modified';
 
+const UNAVAILABLE_MESSAGE = 'Unable to load this credential, please close and retry later';
+
 function DeleteKeyWithGroups() {
   return (
     <FormbitContextProvider schema={schema}>
@@ -50,13 +52,17 @@ function Body() {
 
   const { error } = useFormbitContext();
 
-  const { data, isLoading } = useGetKeyQuery(uuid, { skip: !uuid });
+  const { data, isError, isLoading } = useGetKeyQuery(uuid, { skip: !uuid });
   const isExternallyManaged = data ? data.owner !== GATEWAY_OWNER : false;
   const name = data?.name || [];
   const groupName = data?.group?.name;
 
   if (isLoading) {
     return <IsLoading />;
+  }
+
+  if (isError) {
+    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
   }
 
   if (isExternallyManaged) {
@@ -95,7 +101,7 @@ function Actions() {
   const { hideModal, modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data, isLoading, isSuccess } = useGetKeyQuery(uuid, { skip: !uuid });
+  const { data, isError, isLoading, isSuccess } = useGetKeyQuery(uuid, { skip: !uuid });
   const owner = data?.owner;
 
   const { handleOnSubmit, args: { isLoading: isSubmitting } } = useHandleOnSubmit();
@@ -110,12 +116,20 @@ function Actions() {
     );
   }
 
+  if (isError) {
+    return (
+      <Button onClick={hideModal} type="secondary-light">
+        Close
+      </Button>
+    );
+  }
+
   if (!isSuccess) {
-    return null;
+    return false;
   }
 
   if (owner !== GATEWAY_OWNER) {
-    return null;
+    return false;
   }
 
   return (

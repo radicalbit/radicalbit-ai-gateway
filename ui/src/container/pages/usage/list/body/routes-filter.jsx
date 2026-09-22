@@ -17,6 +17,8 @@ function RoutesFilter() {
     ? searchParams.get('routes').split(',')
     : [];
 
+  const placeholder = isError ? 'Unable to load routes' : 'Please select';
+
   const handleOnChange = (values) => {
     setSearchParams((prev) => {
       if (values.length === 0) {
@@ -36,7 +38,7 @@ function RoutesFilter() {
       mode="multiple"
       onChange={handleOnChange}
       options={options}
-      placeholder="Please select"
+      placeholder={placeholder}
       showSearch
       style={{ width: 400 }}
       value={selectedRoutes}
