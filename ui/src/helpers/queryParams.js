@@ -1,11 +1,5 @@
 const qs = (param) => new URLSearchParams(window.location.search).get(param);
 
-const qsContextConfiguration = () => {
-  const value = qs('configuration');
-
-  return value ? `configuration=${value}` : '';
-};
-
 const qsSetEncode64JSON = (param, json) => {
   const encode64 = btoa(JSON.stringify(json));
   const newQS = new URLSearchParams(window.location.search);
@@ -33,7 +27,6 @@ const qsEncode64JSON = (search, param) => {
 export default qs;
 
 export {
-  qsContextConfiguration,
   qsEncode64JSON,
   qsSetEncode64JSON,
 };
