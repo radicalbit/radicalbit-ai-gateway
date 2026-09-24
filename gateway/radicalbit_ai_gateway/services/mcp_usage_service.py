@@ -5,7 +5,8 @@ from uuid import UUID
 
 from fastapi_pagination import Page, Params
 
-from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
+from radicalbit_ai_gateway.db.dao.event_dao import MCP_ENTITY_COLUMNS, EventDAO
+from radicalbit_ai_gateway.db.models.event import InvocationChartDataPoint
 from radicalbit_ai_gateway.models.mcp_usage_dto import (
     McpKeyUsageDTO,
     McpServerChartDataDTO,
@@ -91,6 +92,81 @@ class McpUsageService:
             timezone_offset_seconds=timezone_offset_seconds,
             tags=tags,
         )
+        return self._build_chart(
+            chart_data_points,
+            group_by=group_by,
+            granularity=granularity,
+            _from_utc=_from_utc,
+            _to_utc=_to_utc,
+            timezone_offset_seconds=timezone_offset_seconds,
+        )
+
+    def get_mcp_server_chart_data_by_entity(
+        self,
+        project_uuid: UUID,
+        group_by: Literal['services', 'groups', 'keys'],
+        entity_value: str,
+        route_names: list[str] | None,
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None = None,
+    ) -> McpServerChartDataDTO:
+        """One entity's MCP invocations over time.
+
+        Same payload shape as the grouped chart, cut down to one server
+        alias, group or key. ``group_by`` names the kind of entity.
+        ``entity_value`` is the alias, or the uuid as text.
+
+        A group or key is one series, the entity itself. A server alias
+        splits into one series per target: the tool, prompt or resource its
+        calls addressed. Targets carry no uuid, the name is the identifier.
+        Invocations written before the target was recorded read as one
+        series with an empty name.
+
+        An entity with no rows in the window reads as an empty chart, not as
+        a 404. The alias has no registry to check against, and a quiet entity
+        and a missing one look the same from the events.
+        """
+        _from_utc, _to_utc, timezone_offset_seconds = prepare_chart_time_range(
+            _from, _to
+        )
+        granularity = determine_granularity(_from, _to)
+        chart_data_points = self.event_dao.get_mcp_server_chart_data_by_entity(
+            project_uuid=project_uuid,
+            entity_column=MCP_ENTITY_COLUMNS[group_by],
+            entity_value=entity_value,
+            route_names=route_names,
+            _from=_from_utc,
+            _to=_to_utc,
+            granularity=granularity,
+            timezone_offset_seconds=timezone_offset_seconds,
+            tags=tags,
+            series_column='MCP_TARGET' if group_by == 'services' else None,
+        )
+        return self._build_chart(
+            chart_data_points,
+            group_by=group_by,
+            granularity=granularity,
+            _from_utc=_from_utc,
+            _to_utc=_to_utc,
+            timezone_offset_seconds=timezone_offset_seconds,
+        )
+
+    def _build_chart(
+        self,
+        chart_data_points: list[InvocationChartDataPoint],
+        group_by: Literal['services', 'groups', 'keys'],
+        granularity: Literal['hours', 'days', 'weeks', 'months'],
+        _from_utc: datetime | None,
+        _to_utc: datetime | None,
+        timezone_offset_seconds: int,
+    ) -> McpServerChartDataDTO:
+        """Turn sparse bucket rows into zero-filled series on a shared axis.
+
+        No rows means an empty chart: the granularity, an empty axis, no
+        series and a zero total. The caller cannot tell a quiet window from
+        one that has nothing to show, and it does not need to.
+        """
         if not chart_data_points:
             return McpServerChartDataDTO(
                 granularity=granularity,
