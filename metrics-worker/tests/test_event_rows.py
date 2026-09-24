@@ -62,20 +62,25 @@ def _row(buffer: _FakeBuffer) -> dict:
     return dict(zip(COLUMN_NAMES, row, strict=True))
 
 
-def test_an_mcp_invocation_writes_its_method_and_alias(buffer):
+def test_an_mcp_invocation_writes_its_method_alias_and_target(buffer):
     insert_event_record_connect_async(
-        [_event(MCP_METHOD='tools/call', MCP_ALIAS='github')]
+        [_event(MCP_METHOD='tools/call', MCP_ALIAS='github', MCP_TARGET='get_issue')]
     )
 
     row = _row(buffer)
     assert row['MCP_METHOD'] == 'tools/call'
     assert row['MCP_ALIAS'] == 'github'
+    assert row['MCP_TARGET'] == 'get_issue'
 
 
-def test_an_unresolved_server_writes_an_empty_alias(buffer):
-    insert_event_record_connect_async([_event(MCP_METHOD='tools/call', MCP_ALIAS='')])
+def test_an_unresolved_server_writes_an_empty_alias_and_target(buffer):
+    insert_event_record_connect_async(
+        [_event(MCP_METHOD='tools/call', MCP_ALIAS='', MCP_TARGET='')]
+    )
 
-    assert _row(buffer)['MCP_ALIAS'] == ''
+    row = _row(buffer)
+    assert row['MCP_ALIAS'] == ''
+    assert row['MCP_TARGET'] == ''
 
 
 def test_an_event_without_the_mcp_fields_writes_the_empty_default(buffer):
@@ -85,6 +90,7 @@ def test_an_event_without_the_mcp_fields_writes_the_empty_default(buffer):
     row = _row(buffer)
     assert row['MCP_METHOD'] == ''
     assert row['MCP_ALIAS'] == ''
+    assert row['MCP_TARGET'] == ''
 
 
 def test_the_envelope_survives_the_round_trip(buffer):

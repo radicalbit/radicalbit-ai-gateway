@@ -570,6 +570,7 @@ def get_sample_event(
     tags: list[str] | None = None,
     mcp_method: str = '',
     mcp_alias: str = '',
+    mcp_target: str = '',
     **kwargs,
 ) -> Event:
     # Extract known attributes for dedicated columns (support both old and new names)
@@ -613,6 +614,7 @@ def get_sample_event(
         is_judge=is_judge,
         mcp_method=mcp_method,
         mcp_alias=mcp_alias,
+        mcp_target=mcp_target,
     )
 
 

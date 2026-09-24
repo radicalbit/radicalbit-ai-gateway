@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy import Float, Row, String, and_, desc, func as F, literal, select, text
+from sqlalchemy.sql import ColumnElement
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
@@ -32,6 +33,18 @@ from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
 )
+
+McpEntityColumn = Literal['MCP_ALIAS', 'GROUP_UUID', 'API_KEY_UUID']
+# A column a chart series can be keyed by. The target is the tool, prompt or
+# resource an invocation addressed inside one server.
+McpSeriesColumn = Literal['MCP_ALIAS', 'GROUP_UUID', 'API_KEY_UUID', 'MCP_TARGET']
+
+# The event column each MCP chart grouping reads its entity from.
+MCP_ENTITY_COLUMNS: dict[str, McpEntityColumn] = {
+    'services': 'MCP_ALIAS',
+    'groups': 'GROUP_UUID',
+    'keys': 'API_KEY_UUID',
+}
 
 
 class EventDAO:
@@ -1398,6 +1411,59 @@ class EventDAO:
             # unique=False: every row is one key, so there is nothing to dedup.
             return paginate(session, stmt, params, unique=False)
 
+    def _mcp_entity_column(self, entity_column: McpSeriesColumn) -> ColumnElement:
+        """Read an entity column as text, so it groups and compares as a string.
+
+        The alias and the target are already text. The two uuid columns are
+        cast, so a caller can pass the uuid it got back from the grouped chart
+        as it is.
+        """
+        column = self.T.c[entity_column]
+        if entity_column in ('MCP_ALIAS', 'MCP_TARGET'):
+            return column
+        return F.cast(column, String)
+
+    def _bucket_mcp_invocations(
+        self,
+        series_expr: ColumnElement,
+        conditions: list,
+        granularity: Literal['hours', 'days', 'weeks', 'months'],
+        timezone_offset_seconds: int,
+    ) -> list[InvocationChartDataPoint]:
+        """Count MCP invocations per bucket and series value.
+
+        The grouped chart and the per-entity drill-down both end here, so a
+        drilled-in series can never disagree with its bar on the chart.
+        """
+        FIELD_NAMES = ['bucket', 'group_by_value', 'value']
+
+        bucket_expr = with_timezone_offset(
+            get_bucket_function(granularity),
+            timezone_offset_seconds,
+            self.T.c['TIMESTAMP'],
+        )
+
+        stmt = (
+            select(
+                bucket_expr.label('bucket'),
+                series_expr.label('group_by_value'),
+                F.count().label('value'),
+            )
+            .select_from(Event)
+            .where(*conditions)
+            .group_by(text('bucket'), series_expr)
+            .order_by(text('bucket'), text('group_by_value'))
+        )
+
+        with self.db.begin_session() as session:
+            res = session.execute(stmt).all()
+            return [
+                InvocationChartDataPoint.model_validate(
+                    dict(zip(FIELD_NAMES, row_tuple))
+                )
+                for row_tuple in res
+            ]
+
     def get_mcp_server_chart_data(
         self,
         project_uuid: UUID,
@@ -1418,23 +1484,6 @@ class EventDAO:
         carries an empty alias. Those rows are kept, not dropped, so this
         count still agrees with the ranked key usage.
         """
-        T = self.T
-        FIELD_NAMES = ['bucket', 'group_by_value', 'value']
-
-        bucket_expr = with_timezone_offset(
-            get_bucket_function(granularity),
-            timezone_offset_seconds,
-            T.c['TIMESTAMP'],
-        )
-
-        group_by_column = (
-            F.cast(T.c['API_KEY_UUID'], String)
-            if group_by == 'keys'
-            else F.cast(T.c['GROUP_UUID'], String)
-            if group_by == 'groups'
-            else T.c['MCP_ALIAS']
-        )
-
         conditions = self._mcp_invocation_conditions(
             project_uuid=project_uuid,
             route_names=route_names,
@@ -1442,24 +1491,54 @@ class EventDAO:
             _to=_to,
             tags=tags,
         )
-
-        stmt = (
-            select(
-                bucket_expr.label('bucket'),
-                group_by_column.label('group_by_value'),
-                F.count().label('value'),
-            )
-            .select_from(Event)
-            .where(*conditions)
-            .group_by(text('bucket'), group_by_column)
-            .order_by(text('bucket'), text('group_by_value'))
+        return self._bucket_mcp_invocations(
+            series_expr=self._mcp_entity_column(MCP_ENTITY_COLUMNS[group_by]),
+            conditions=conditions,
+            granularity=granularity,
+            timezone_offset_seconds=timezone_offset_seconds,
         )
 
-        with self.db.begin_session() as session:
-            res = session.execute(stmt).all()
-            return [
-                InvocationChartDataPoint.model_validate(
-                    dict(zip(FIELD_NAMES, row_tuple))
-                )
-                for row_tuple in res
-            ]
+    def get_mcp_server_chart_data_by_entity(
+        self,
+        project_uuid: UUID,
+        entity_column: McpEntityColumn,
+        entity_value: str,
+        route_names: list[str] | None,
+        _from: datetime | None,
+        _to: datetime | None,
+        granularity: Literal['hours', 'days', 'weeks', 'months'],
+        timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
+        series_column: McpSeriesColumn | None = None,
+    ) -> list[InvocationChartDataPoint]:
+        """Bucket one entity's MCP invocations over time, one row per bucket.
+
+        One aggregate serves the server, group and key drill-downs. It takes
+        the column and the value, like the cost drill-down does. An entity
+        with no rows in the window comes back empty. No registry can tell an
+        unknown alias from a quiet one. A group or key lookup on every tick
+        is not worth its cost.
+
+        ``series_column`` is the column each row is keyed by. Left unset, it
+        is the entity column, so the entity is its own single series. The
+        server drill-down passes ``MCP_TARGET`` to get one series per tool,
+        prompt or resource inside that server.
+
+        Same membership rule as the grouped chart: the event type alone. No
+        method or outcome filter belongs here either.
+        """
+        entity_expr = self._mcp_entity_column(entity_column)
+        conditions = self._mcp_invocation_conditions(
+            project_uuid=project_uuid,
+            route_names=route_names,
+            _from=_from,
+            _to=_to,
+            tags=tags,
+        )
+        conditions.append(entity_expr == entity_value)
+        return self._bucket_mcp_invocations(
+            series_expr=self._mcp_entity_column(series_column or entity_column),
+            conditions=conditions,
+            granularity=granularity,
+            timezone_offset_seconds=timezone_offset_seconds,
+        )

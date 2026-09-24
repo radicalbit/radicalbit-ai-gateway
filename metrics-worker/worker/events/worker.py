@@ -46,6 +46,7 @@ COLUMN_NAMES = [
     'TAGS',
     'MCP_METHOD',
     'MCP_ALIAS',
+    'MCP_TARGET',
 ]
 
 
@@ -193,6 +194,7 @@ def insert_event_record_connect_async(event_payload):
             'TAGS': event_data.get('TAGS', []),
             'MCP_METHOD': event_data.get('MCP_METHOD', ''),
             'MCP_ALIAS': event_data.get('MCP_ALIAS', ''),
+            'MCP_TARGET': event_data.get('MCP_TARGET', ''),
         }
         buffer.append([values[column] for column in COLUMN_NAMES])
         processed_ids.append(str(request_uuid))

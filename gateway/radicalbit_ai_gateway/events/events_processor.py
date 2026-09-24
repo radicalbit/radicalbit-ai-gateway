@@ -117,6 +117,7 @@ def _create_event_dict(
     routing_selected_model_id = extra_attributes.get('selected_model_id', '')
     mcp_method = extra_attributes.pop('mcp_method', '')
     mcp_alias = extra_attributes.pop('mcp_alias', '')
+    mcp_target = extra_attributes.pop('mcp_target', '')
 
     # Convert to strings for ClickHouse Map(LowCardinality(String), String)
     extra_attributes_string = {
@@ -152,6 +153,7 @@ def _create_event_dict(
         'ROUTING_SELECTED_MODEL_ID': routing_selected_model_id,
         'MCP_METHOD': mcp_method,
         'MCP_ALIAS': mcp_alias,
+        'MCP_TARGET': mcp_target,
         'ATTRIBUTES': extra_attributes_string,
         'TAGS': tags,
     }

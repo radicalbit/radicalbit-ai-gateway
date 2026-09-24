@@ -12,6 +12,30 @@ const DEFAULT_MCP_SERVERS_CHART_STATE = {
   sseErrorMessage: null,
 };
 
+const DEFAULT_MCP_BY_SERVICE_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_MCP_BY_GROUP_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
+const DEFAULT_MCP_BY_KEY_STATE = {
+  chart: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
+
 const DEFAULT_COSTS_SUMMARY_STATE = {
   summary: null,
   isSseLoading: true,
@@ -435,6 +459,177 @@ export const usageApiSlice = apiService.injectEndpoints({
       },
     }),
 
+    getMcpInvocationsByServiceStream: builder.query({
+      keepUnusedDataFor: 0,
+      queryFn: () => ({ data: DEFAULT_MCP_BY_SERVICE_STATE }),
+      async onCacheEntryAdded(
+        {
+          projectUuid, serviceAlias, routes, tags, from, to, gte,
+        },
+        { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
+      ) {
+        try {
+          await cacheDataLoaded;
+
+          const params = timeFiltersQueryParamFactory({ from, to, gte, init: {} });
+
+          if (routes && routes.length > 0) {
+            routes.forEach((route) => { params.append('routes', route); });
+          }
+
+          appendTagsToParams(params, tags);
+
+          const url = `${API_BASE_URL}/projects/${projectUuid}/routes/mcp/servers/service/${encodeURIComponent(serviceAlias)}/stream?${params.toString()}`;
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream MCP invocations by service';
+              });
+            },
+          });
+
+          await cacheEntryRemoved;
+          subscription.close();
+        } catch (error) {
+          console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
+        }
+      },
+    }),
+
+    getMcpInvocationsByGroupStream: builder.query({
+      keepUnusedDataFor: 0,
+      queryFn: () => ({ data: DEFAULT_MCP_BY_GROUP_STATE }),
+      async onCacheEntryAdded(
+        {
+          projectUuid, groupUuid, routes, tags, from, to, gte,
+        },
+        { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
+      ) {
+        try {
+          await cacheDataLoaded;
+
+          const params = timeFiltersQueryParamFactory({ from, to, gte, init: {} });
+
+          if (routes && routes.length > 0) {
+            routes.forEach((route) => { params.append('routes', route); });
+          }
+
+          appendTagsToParams(params, tags);
+
+          const url = `${API_BASE_URL}/projects/${projectUuid}/routes/mcp/servers/group/${encodeURIComponent(groupUuid)}/stream?${params.toString()}`;
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream MCP invocations by group';
+              });
+            },
+          });
+
+          await cacheEntryRemoved;
+          subscription.close();
+        } catch (error) {
+          console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
+        }
+      },
+    }),
+
+    getMcpInvocationsByKeyStream: builder.query({
+      keepUnusedDataFor: 0,
+      queryFn: () => ({ data: DEFAULT_MCP_BY_KEY_STATE }),
+      async onCacheEntryAdded(
+        {
+          projectUuid, keyUuid, routes, tags, from, to, gte,
+        },
+        { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
+      ) {
+        try {
+          await cacheDataLoaded;
+
+          const params = timeFiltersQueryParamFactory({ from, to, gte, init: {} });
+
+          if (routes && routes.length > 0) {
+            routes.forEach((route) => { params.append('routes', route); });
+          }
+
+          appendTagsToParams(params, tags);
+
+          const url = `${API_BASE_URL}/projects/${projectUuid}/routes/mcp/servers/key/${encodeURIComponent(keyUuid)}/stream?${params.toString()}`;
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                chart: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream MCP invocations by key';
+              });
+            },
+          });
+
+          await cacheEntryRemoved;
+          subscription.close();
+        } catch (error) {
+          console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
+        }
+      },
+    }),
+
     getCostsByModelStream: builder.query({
       keepUnusedDataFor: 0,
       queryFn: () => ({ data: DEFAULT_COSTS_BY_MODEL_STATE }),
@@ -689,6 +884,9 @@ export const {
   useGetLimitsStreamQuery,
   useGetCostsChartStreamQuery,
   useGetMcpServersChartSseQuery,
+  useGetMcpInvocationsByServiceStreamQuery,
+  useGetMcpInvocationsByGroupStreamQuery,
+  useGetMcpInvocationsByKeyStreamQuery,
   useGetMcpKeyUsageQuery,
   useGetCostsByModelStreamQuery,
   useGetCostsByGroupStreamQuery,
