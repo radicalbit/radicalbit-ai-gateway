@@ -1,0 +1,295 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "gateway.fullname" . }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.gateway.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "gateway.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gateway.labels" . | nindent 8 }}
+    spec:
+      {{- if .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      volumes:
+        - name: otel-collector-config
+          configMap:
+            name: {{ template "gateway.fullname" . }}-otel
+        {{- if .Values.gateway.secrets.fromSecret }}
+        - name: gateway-secrets
+          secret:
+            secretName: {{ .Values.gateway.secrets.externalSecret }}
+            items:
+              - key: {{ .Values.gateway.secrets.externalSecretKey }}
+                path: secrets.yaml
+        {{- else }}
+        - name: gateway-secrets
+          secret:
+            secretName: {{ template "gateway.fullname" . }}-sec
+        {{- end }}
+        {{- if .Values.gateway.prompts.enabled }}
+        - name: prompts
+          configMap:
+            {{- if .Values.gateway.prompts.fromConfigMap }}
+            name: {{ .Values.gateway.prompts.externalConfigMap }}
+            {{- else }}
+            name: {{ template "gateway.fullname" . }}-prompts
+            {{- end }}
+        {{- end }}
+      initContainers:
+        - name: database-migrations
+          image: "{{ .Values.gateway.migrations.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: DB_TYPE
+              value: postgresql
+            - name: DB_HOST
+              value: {{ .Values.postgresql.host }}
+            - name: DB_PORT
+              value: {{ .Values.postgresql.port | quote }}
+            - name: DB_NAME
+              value: {{ .Values.postgresql.database }}
+            - name: DB_SCHEMA
+              value: {{ .Values.postgresql.schema }}
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.postgresql.auth.username.existingSecretKey }}
+                  key: {{ .Values.postgresql.auth.username.existingSecretKey }}
+                  {{- else }}
+                  key: username
+                  {{- end }}
+                  {{- if .Values.postgresql.auth.username.existingSecret }}
+                  name: {{ .Values.postgresql.auth.username.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-psql-auth
+                  {{- end }}
+            - name: DB_PWD
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.postgresql.auth.password.existingSecretKey }}
+                  key: {{ .Values.postgresql.auth.password.existingSecretKey }}
+                  {{- else }}
+                  key: password
+                  {{- end }}
+                  {{- if .Values.postgresql.auth.password.existingSecret }}
+                  name: {{ .Values.postgresql.auth.password.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-psql-auth
+                  {{- end }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.gateway.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: DB_TYPE
+              value: postgresql
+            - name: DB_HOST
+              value: {{ .Values.postgresql.host }}
+            - name: DB_PORT
+              value: {{ .Values.postgresql.port | quote }}
+            - name: DB_NAME
+              value: {{ .Values.postgresql.database }}
+            - name: DB_SCHEMA
+              value: {{ .Values.postgresql.schema }}
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.postgresql.auth.username.existingSecretKey }}
+                  key: {{ .Values.postgresql.auth.username.existingSecretKey }}
+                  {{- else }}
+                  key: username
+                  {{- end }}
+                  {{- if .Values.postgresql.auth.username.existingSecret }}
+                  name: {{ .Values.postgresql.auth.username.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-psql-auth
+                  {{- end }}
+            - name: DB_PWD
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.postgresql.auth.password.existingSecretKey }}
+                  key: {{ .Values.postgresql.auth.password.existingSecretKey }}
+                  {{- else }}
+                  key: password
+                  {{- end }}
+                  {{- if .Values.postgresql.auth.password.existingSecret }}
+                  name: {{ .Values.postgresql.auth.password.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-psql-auth
+                  {{- end }}
+            - name: CLICKHOUSE_DB_HOST
+              value: {{ .Values.clickhouse.host }}
+            - name: CLICKHOUSE_DB_PORT
+              value: {{ .Values.clickhouse.port | quote }}
+            - name: CLICKHOUSE_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.clickhouse.auth.username.existingSecretKey }}
+                  key: {{ .Values.clickhouse.auth.username.existingSecretKey }}
+                  {{- else }}
+                  key: username
+                  {{- end }}
+                  {{- if .Values.clickhouse.auth.username.existingSecret }}
+                  name: {{ .Values.clickhouse.auth.username.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-ch-auth
+                  {{- end }}
+            - name: CLICKHOUSE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.clickhouse.auth.password.existingSecretKey }}
+                  key: {{ .Values.clickhouse.auth.password.existingSecretKey }}
+                  {{- else }}
+                  key: password
+                  {{- end }}
+                  {{- if .Values.clickhouse.auth.password.existingSecret }}
+                  name: {{ .Values.clickhouse.auth.password.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-ch-auth
+                  {{- end }}
+            - name: CELERY_BROKER_URL
+              value: redis://{{ .Values.valkey.host }}:{{ .Values.valkey.port }}/0
+            - name: REDIS_HOST
+              value: {{ .Values.valkey.host }}
+            - name: REDIS_PORT
+              value: {{ .Values.valkey.port | quote }}
+            - name: CONFIG_GENERATOR_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.gateway.assistant.apiKey.existingSecretKey }}
+                  key: {{ .Values.gateway.assistant.apiKey.existingSecretKey }}
+                  {{- else }}
+                  key: apiKey
+                  {{- end }}
+                  {{- if .Values.gateway.assistant.apiKey.existingSecret }}
+                  name: {{ .Values.gateway.assistant.apiKey.existingSecret }}
+                  {{- else }}
+                  name: {{ template "gateway.fullname" . }}-assistant-key
+                  {{- end }}
+            - name: GATEWAY_DEBUG_MODE
+              value: "False"
+            - name: LOG_MODE
+              value: plain
+            - name: ENABLED_PLUGINS
+              value: {{ .Values.gateway.plugins }}
+            {{- if .Values.gateway.workers.threadPool }}
+            - name: THREAD_POOL_MAX_WORKERS
+              value : {{ .Values.gateway.workers.threadPool | quote }}
+            {{- end }}
+            {{- if .Values.gateway.workers.uvicorn }}
+            - name: UVICORN_WORKERS
+              value : {{ .Values.gateway.workers.uvicorn | quote }}
+            {{- end }}
+            - name: COLLECTOR_BASE_URL
+              value: http://localhost:4318/v1/traces
+            {{- if .Values.gateway.tracing.otlpExporters }}
+            - name: OTLP_EXPORTERS
+              value: {{ .Values.gateway.tracing.otlpExporters | toJson | quote }}
+            {{- end }}
+            {{- if .Values.gateway.prompts.enabled }}
+            - name: PROMPTS_DIR
+              value: {{ .Values.gateway.prompts.mountPath }}
+            {{- end }}
+            {{- with .Values.gateway.extraEnvVars }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.gateway.service.ports.api }}
+            - name: metrics
+              containerPort: {{ .Values.gateway.service.ports.metrics }}
+          volumeMounts:
+            - name: gateway-secrets
+              mountPath: /radicalbit_ai_gateway/secrets.yaml
+              subPath: secrets.yaml
+              readOnly: true
+            {{- if .Values.gateway.prompts.enabled }}
+            - name: prompts
+              mountPath: {{ .Values.gateway.prompts.mountPath }}
+              readOnly: true
+            {{- end }}
+          {{- with .Values.gateway.resources }}
+          resources:
+{{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.gateway.livenessProbe }}
+          livenessProbe:
+{{ toYaml . | indent 12 }}
+          {{- end }}
+          {{- with .Values.gateway.readinessProbe }}
+          readinessProbe:
+{{ toYaml . | indent 12 }}
+          {{- end }}
+        - name: otel-collector
+          image: "{{ .Values.otelCollector.image.repository }}:{{ .Values.otelCollector.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--config"
+            - "/etc/otel-collector-config.yaml"
+          env:
+            - name: CLICKHOUSE_DB_HOST
+              value: {{ .Values.clickhouse.host }}
+            - name: CLICKHOUSE_DB_PORT
+              value: {{ .Values.clickhouse.port | quote }}
+            - name: CLICKHOUSE_DB_NAME
+              value: {{ .Values.clickhouse.database }}
+            - name: CLICKHOUSE_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.clickhouse.auth.username.existingSecretKey }}
+                  key: {{ .Values.clickhouse.auth.username.existingSecretKey }}
+                  {{- else }}
+                  key: username
+                  {{- end }}
+                  {{- if .Values.clickhouse.auth.username.existingSecret }}
+                  name: {{ .Values.clickhouse.auth.username.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-ch-auth
+                  {{- end }}
+            - name: CLICKHOUSE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.clickhouse.auth.password.existingSecretKey }}
+                  key: {{ .Values.clickhouse.auth.password.existingSecretKey }}
+                  {{- else }}
+                  key: password
+                  {{- end }}
+                  {{- if .Values.clickhouse.auth.password.existingSecret }}
+                  name: {{ .Values.clickhouse.auth.password.existingSecret }}
+                  {{- else }}
+                  name: {{ include "common.fullname" . }}-ch-auth
+                  {{- end }}
+          ports:
+            - name: api
+              containerPort: 4318
+          volumeMounts:
+            - name: otel-collector-config
+              mountPath: /etc/otel-collector-config.yaml
+              subPath: otel-collector-config.yaml
+              readOnly: true
+      {{- with .Values.gateway.nodeSelector }}
+      nodeSelector:
+{{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.affinity }}
+      affinity:
+{{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.tolerations }}
+      tolerations:
+{{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,14 @@
+{{- if and .Values.gateway.prompts.enabled (not .Values.gateway.prompts.fromConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "gateway.fullname" . }}-prompts
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+data:
+  {{- $path := .Values.gateway.prompts.source }}
+  {{- range $path, $_ := .Files.Glob (printf "%s/*.md" $path) }}
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: radicalbit-ai-gateway
+description: The Radicalbit AI Gateway is a powerful and flexible service designed to act as a standardized, centralized, and intelligent entry point for all interactions with Large Language Models (LLMs).
+version: 0.0.1
