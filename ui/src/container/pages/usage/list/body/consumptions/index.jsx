@@ -80,7 +80,6 @@ function DataContent() {
   const isSseError = data?.isSseError;
   const isSseSuccess = data?.isSseSuccess;
 
-  console.debug(useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false }));
   if (isSseLoading) {
     return <Skeleton.Node active style={{ height: '20rem', width: '100%' }} />;
   }

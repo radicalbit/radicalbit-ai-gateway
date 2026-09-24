@@ -7,7 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 import Dashboard from './dashboard';
 import Tracing from './tracing';
 
-export const TRACING_LIST_TABS = {
+const TRACING_LIST_TABS = {
   dashboard: {
     key: 'dashboard',
     label: 'Dashboard',

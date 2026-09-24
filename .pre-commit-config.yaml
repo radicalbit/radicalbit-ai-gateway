@@ -30,3 +30,13 @@ repos:
         name: ruff-format (gateway)
         args: [--config=gateway/pyproject.toml]
         files: ^((gateway)/.+)?[^/]+\.(py)$
+
+  - repo: local
+    hooks:
+      - id: pytest-coverage-gateway
+        name: pytest & coverage (gateway)
+        entry: bash -c "cd gateway && uv run pytest"
+        language: system
+        pass_filenames: false
+        files: ^gateway/
+        stages: [pre-push]
