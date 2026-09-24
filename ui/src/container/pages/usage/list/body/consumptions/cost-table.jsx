@@ -26,10 +26,11 @@ const useGetDataSource = () => {
     : [];
 
   const { data } = useGetCostsSummaryStreamWithRange({ routes, withSavedTokens: false });
-  const chatModels = data?.chatModels;
-  const embeddingModels = data?.embeddingModels;
-  const transcriptionModels = data?.transcriptionModels;
-  const totals = data?.totals;
+  const summary = data?.summary;
+  const chatModels = summary?.chatModels;
+  const embeddingModels = summary?.embeddingModels;
+  const transcriptionModels = summary?.transcriptionModels;
+  const totals = summary?.totals;
 
   return useMemo(() => [
     {

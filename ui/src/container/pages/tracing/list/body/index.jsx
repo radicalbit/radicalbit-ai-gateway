@@ -1,5 +1,5 @@
 import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
-import usePersistQueryParams from '@Hooks/use-persistence-query-params';
+import usePersistProjectUuid from '@Hooks/use-persist-project-uuid';
 import { Tabs, Void } from '@radicalbit/radicalbit-design-system';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
@@ -7,7 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 import Dashboard from './dashboard';
 import Tracing from './tracing';
 
-export const TRACING_LIST_TABS = {
+const TRACING_LIST_TABS = {
   dashboard: {
     key: 'dashboard',
     label: 'Dashboard',
@@ -32,7 +32,7 @@ const items = [
 function TracingList() {
   useInitLayoutConfigurations();
 
-  usePersistQueryParams(['projectUuid'], 'rbit-gw');
+  usePersistProjectUuid();
 
   const [searchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid');

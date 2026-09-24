@@ -38,22 +38,26 @@ function TokensGraph() {
     ? searchParams.get('routes').split(',')
     : [];
 
-  const { data, isError, isLoading, isSuccess } = useGetTokensChartStreamWithRange({ routes });
+  const { data } = useGetTokensChartStreamWithRange({ routes });
+  const chart = data?.chart;
+  const isSseLoading = data?.isSseLoading;
+  const isSseError = data?.isSseError;
+  const isSseSuccess = data?.isSseSuccess;
 
-  if (isLoading) {
+  if (isSseLoading) {
     return (<Skeleton.Input active block style={chartWidthAndHeight} />);
   }
 
-  if (isError) {
+  if (isSseError) {
     return <IsError />;
   }
 
-  if (!data?.data?.length) {
+  if (!chart?.data?.length) {
     return <IsEmpty />;
   }
 
-  if (!isSuccess) {
-    return null;
+  if (!isSseSuccess) {
+    return false;
   }
 
   return <IsSuccess />;
@@ -96,12 +100,15 @@ function IsSuccess() {
 
   const chartRef = useRef(null);
   const { data } = useGetTokensChartStreamWithRange({ routes });
-  const total = data?.total;
+  const chart = data?.chart;
+  const total = chart?.total;
+  const timestamp = chart?.timestamp;
+  const granularity = chart?.granularity;
 
-  const series = useMemo(() => (data.data || []).map(({ name, data: d }) => ({
+  const series = useMemo(() => (chart?.data || []).map(({ name, data: d }) => ({
     name,
     data: d || [],
-  })), [data.data]);
+  })), [chart?.data]);
 
   useDarkModeChart(chartRef, series);
 
@@ -112,9 +119,9 @@ function IsSuccess() {
       notMerge={false}
       onChartReady={() => updateTheme(chartRef)}
       option={option({
-        xAxisData: data.timestamp || [],
+        xAxisData: timestamp || [],
         series,
-        granularity: data.granularity,
+        granularity,
         total,
       })}
       ref={chartRef}

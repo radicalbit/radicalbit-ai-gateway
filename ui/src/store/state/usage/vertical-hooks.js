@@ -1,3 +1,4 @@
+import { mcpKeysPageSize } from '@Src/constants';
 import { useGetRoutesQuery } from '@State/routes/api';
 import { parseTagsFromTagsKey } from '@State/tags-query-params-factory';
 import {
@@ -8,6 +9,8 @@ import {
   useGetCostsSummaryStreamQuery,
   useGetInvocationsChartStreamQuery,
   useGetLimitsStreamQuery,
+  useGetMcpKeyUsageQuery,
+  useGetMcpServersChartSseQuery,
   useGetTokensChartStreamQuery,
 } from '@State/usage/api';
 import { useMemo } from 'react';
@@ -64,6 +67,22 @@ const useGetCostsChartStreamWithRange = ({ routes, groupBy }, options) => {
   }, options);
 };
 
+const useGetMcpKeyUsageWithRange = ({ routes, page }, options) => {
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
+
+  return useGetMcpKeyUsageQuery({
+    projectUuid, routes, tags, gte, from, to, page, limit: mcpKeysPageSize,
+  }, { skip: !projectUuid, ...options });
+};
+
+const useGetMcpServersChartSseWithRange = ({ routes, groupBy, retryNonce }, options) => {
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
+
+  return useGetMcpServersChartSseQuery({
+    projectUuid, routes, tags, groupBy, gte, from, to, retryNonce,
+  }, options);
+};
+
 const useGetCostsByModelStreamWithRange = ({ modelId, routes }, options) => {
   const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
@@ -104,6 +123,8 @@ export {
   useGetCostsSummaryStreamWithRange,
   useGetInvocationsChartStreamWithRange,
   useGetLimitsStreamWithRange,
+  useGetMcpKeyUsageWithRange,
+  useGetMcpServersChartSseWithRange,
   useGetProjectRoutesWithRange,
   useGetTokensChartStreamWithRange,
 };

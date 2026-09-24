@@ -1,4 +1,4 @@
-import usePersistQueryParams from '@Hooks/use-persistence-query-params';
+import usePersistProjectUuid from '@Hooks/use-persist-project-uuid';
 import { Tabs } from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
 import Consumptions from './consumptions';
@@ -19,7 +19,7 @@ function Body() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('usageTab');
 
-  usePersistQueryParams(['projectUuid'], 'rbit-gw');
+  usePersistProjectUuid();
 
   const handleOnChange = (value) => {
     searchParams.set('usageTab', value);

@@ -1,0 +1,120 @@
+suite: test worker deployment with notifications
+templates:
+  - worker/deployment.yaml
+tests:
+  - it: should have all notification env vars with real config values
+    set:
+      clickhouse:
+        auth:
+          username:
+            value: "user"
+          password:
+            value: "pass"
+      metricsWorker:
+        notifications:
+          slack:
+            enabled: true
+            webhookMappings: '{"route1":"https://hooks.slack.com/services/xxx"}'
+            userMappings: '{"route1":"U12345"}'
+          sendgrid:
+            enabled: true
+            apiKey:
+              value: "SG.test-api-key"
+            fromEmail: "alerts@example.com"
+            templateId: "d-12345"
+            emailMappings: '{"route1":["to@example.com","cc@example.com"]}'
+          thresholds: "[75,90,98]"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SLACK_ENABLED
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SLACK_WEBHOOK_MAPPINGS
+            value: '{"route1":"https://hooks.slack.com/services/xxx"}'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SLACK_USER_MAPPINGS
+            value: '{"route1":"U12345"}'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SENDGRID_ENABLED
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SENDGRID_FROM_EMAIL
+            value: "alerts@example.com"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SENDGRID_TEMPLATE_ID
+            value: "d-12345"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SENDGRID_EMAIL_MAPPINGS
+            value: '{"route1":["to@example.com","cc@example.com"]}'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: NOTIFICATION_THRESHOLDS
+            value: "[75,90,98]"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SENDGRID_API_KEY
+            valueFrom:
+              secretKeyRef:
+                key: sendgrid-api-key
+                name: RELEASE-NAME-radicalbit-ai-gateway-sendgrid
+
+  - it: should use existing secret for SendGrid API key when configured
+    set:
+      clickhouse:
+        auth:
+          username:
+            value: "user"
+          password:
+            value: "pass"
+      metricsWorker:
+        notifications:
+          sendgrid:
+            enabled: true
+            apiKey:
+              existingSecret: "my-sendgrid-secret"
+              existingSecretKey: "api-key"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SENDGRID_API_KEY
+            valueFrom:
+              secretKeyRef:
+                key: api-key
+                name: my-sendgrid-secret
+
+  - it: should have disabled notification values by default
+    set:
+      clickhouse:
+        auth:
+          username:
+            value: "user"
+          password:
+            value: "pass"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SLACK_ENABLED
+            value: "false"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SENDGRID_ENABLED
+            value: "false"

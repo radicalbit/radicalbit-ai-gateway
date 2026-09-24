@@ -30,6 +30,8 @@ function TagRow({ index, rowId, tagKeys }) {
     { skip: !projectUuid || !row.key },
   );
 
+  const valuesPlaceholder = isError ? 'Unable to load values' : 'Select values';
+
   const valueOptions = (data?.tagValues ?? []).map((value) => ({ label: value, value }));
 
   const usedKeys = rows.map((item) => item.key).filter(Boolean);
@@ -102,7 +104,7 @@ function TagRow({ index, rowId, tagKeys }) {
           mode="multiple"
           onChange={handleOnValuesChange}
           options={valueOptions}
-          placeholder="Select values"
+          placeholder={valuesPlaceholder}
           style={{ width: VALUE_SELECT_WIDTH }}
           value={row.values}
         />

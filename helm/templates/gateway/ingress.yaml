@@ -1,0 +1,51 @@
+{{- if .Values.gateway.ingress.enabled -}}
+{{- $fullName := include "gateway.fullname" . -}}
+{{- $ingressPath := .Values.gateway.ingress.path -}}
+{{- $ingressPathType := .Values.gateway.ingress.pathType -}}
+{{- $servicePort := .Values.gateway.service.ports.api -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+  {{- with .Values.gateway.ingress.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.gateway.ingress.ingressClassName }}
+  ingressClassName: {{ .Values.gateway.ingress.ingressClassName | quote }}
+  {{- end }}
+  {{- with .Values.gateway.ingress.tls }}
+  tls:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+  rules:
+  {{- if .Values.gateway.ingress.hosts  }}
+  {{- range .Values.gateway.ingress.hosts }}
+    - host: {{ tpl . $ | quote }}
+      http:
+        paths:
+          - path: {{ $ingressPath }}
+            pathType: {{ $ingressPathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ $servicePort }}
+  {{- end }}
+  {{- else }}
+    - http:
+        paths:
+          - backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ $servicePort }}
+            {{- with $ingressPath }}
+            path: {{ . }}
+            {{- end }}
+            pathType: {{ $ingressPathType }}
+  {{- end -}}
+{{- end }}

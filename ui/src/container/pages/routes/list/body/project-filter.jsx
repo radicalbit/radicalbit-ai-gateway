@@ -25,6 +25,8 @@ function ProjectFilter() {
     }
   }, [isStaleProject, navigate, searchParams]);
 
+  const placeholder = isError ? 'Unable to load projects' : 'Please select';
+
   const handleOnChange = (value) => {
     const next = new URLSearchParams(searchParams);
 
@@ -50,7 +52,7 @@ function ProjectFilter() {
       onChange={handleOnChange}
       optionFilterProp="label"
       options={options}
-      placeholder="Please select"
+      placeholder={placeholder}
       showSearch
       style={{ width: 400 }}
       value={projectUuid}

@@ -42,7 +42,3 @@ export const EXPERIMENTAL_SET_LIGHT_MODE = [
   layoutActions.lightenSecondaryColumn,
   layoutActions.lightenSecondaryColumnHeader,
 ];
-
-export const NOT_FOUND_CONFIGURATION = [
-  layoutActions.hideHeader,
-];

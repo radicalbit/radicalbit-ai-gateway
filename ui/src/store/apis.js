@@ -3,7 +3,6 @@ import { createApi } from '@reduxjs/toolkit/query/react';
 
 export const API_TAGS = {
   ALERTS: 'ALERTS',
-  APP_CONFIG: 'APP_CONFIG',
   FEATURE_FLAGS: 'FEATURE_FLAGS',
   IDP_GROUPS: 'IDP_GROUPS',
   GROUPS: 'GROUPS',

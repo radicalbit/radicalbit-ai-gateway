@@ -2,7 +2,9 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import Float, String, and_, desc, func as F, literal, select, text
+from fastapi_pagination import Page, Params
+from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy import Float, Row, String, and_, desc, func as F, literal, select, text
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
@@ -224,6 +226,30 @@ class EventDAO:
     def _add_project_filter(self, conditions: list, project_uuid: UUID | None) -> None:
         if project_uuid is not None:
             conditions.append(self.T.c['PROJECT_UUID'] == str(project_uuid))
+
+    def _mcp_invocation_conditions(
+        self,
+        project_uuid: UUID,
+        route_names: list[str] | None,
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None,
+    ) -> list:
+        """Build the predicate both MCP usage reads share.
+
+        The chart and the ranked table start from the same rows, so a filter
+        can never narrow one of them and not the other.
+        """
+        conditions = [self.T.c['EVENT_TYPE'] == 'MCP_INVOCATION']
+        self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
+        if route_names is not None:
+            conditions.append(self.T.c['ROUTE_NAME'].in_(route_names))
+        if _from is not None:
+            conditions.append(self.T.c['TIMESTAMP'] >= _from)
+        if _to is not None:
+            conditions.append(self.T.c['TIMESTAMP'] <= _to)
+        return conditions
 
     def _add_tags_filter(self, conditions: list, tags: list[str] | None) -> None:
         add_tags_filter(conditions, self.T.c['TAGS'], tags=tags)
@@ -1313,5 +1339,127 @@ class EventDAO:
             res = session.execute(stmt).all()
             return [
                 MostExpensiveChartData.model_validate(dict(zip(FIELD_NAMES, row_tuple)))
+                for row_tuple in res
+            ]
+
+    def get_mcp_key_usage_paginated(
+        self,
+        project_uuid: UUID,
+        route_names: list[str] | None,
+        _from: datetime | None,
+        _to: datetime | None,
+        params: Params,
+        tags: list[str] | None = None,
+    ) -> Page[Row]:
+        """Rank the keys that made MCP invocations in a project.
+
+        Membership comes from the event type alone: the emission side already
+        decided what counts as an invocation, so no method or outcome filter
+        belongs here.
+        """
+        T = self.T
+        conditions = self._mcp_invocation_conditions(
+            project_uuid=project_uuid,
+            route_names=route_names,
+            _from=_from,
+            _to=_to,
+            tags=tags,
+        )
+
+        group_by_columns = [
+            T.c['API_KEY_UUID'],
+            T.c['API_KEY_NAME'],
+            T.c['GROUP_UUID'],
+            T.c['GROUP_NAME'],
+        ]
+        stmt = (
+            select(
+                T.c['API_KEY_UUID'].label('key_uuid'),
+                T.c['API_KEY_NAME'].label('key_name'),
+                T.c['GROUP_UUID'].label('group_uuid'),
+                T.c['GROUP_NAME'].label('group_name'),
+                F.count().label('counter'),
+                F.max(T.c['TIMESTAMP']).label('last_call'),
+            )
+            .select_from(Event)
+            .where(*conditions)
+            .group_by(*group_by_columns)
+            # A total order. Count alone would let a key show up on two pages.
+            # The key identifier breaks a full tie, read as text so the order
+            # is the one an operator sees on screen.
+            .order_by(
+                text('counter DESC'),
+                text('last_call DESC'),
+                F.toString(T.c['API_KEY_UUID']),
+            )
+        )
+
+        with self.db.begin_session() as session:
+            # unique=False: every row is one key, so there is nothing to dedup.
+            return paginate(session, stmt, params, unique=False)
+
+    def get_mcp_server_chart_data(
+        self,
+        project_uuid: UUID,
+        route_names: list[str] | None,
+        _from: datetime | None,
+        _to: datetime | None,
+        granularity: Literal['hours', 'days', 'weeks', 'months'],
+        group_by: Literal['services', 'groups', 'keys'],
+        timezone_offset_seconds: int = 0,
+        tags: list[str] | None = None,
+    ) -> list[InvocationChartDataPoint]:
+        """Bucket MCP invocations over time, one row per bucket and entity.
+
+        Membership comes from the event type alone. The emission side already
+        decided what counts. Deciding it again here would let the two drift.
+
+        An invocation naming a server that is not configured on the route
+        carries an empty alias. Those rows are kept, not dropped, so this
+        count still agrees with the ranked key usage.
+        """
+        T = self.T
+        FIELD_NAMES = ['bucket', 'group_by_value', 'value']
+
+        bucket_expr = with_timezone_offset(
+            get_bucket_function(granularity),
+            timezone_offset_seconds,
+            T.c['TIMESTAMP'],
+        )
+
+        group_by_column = (
+            F.cast(T.c['API_KEY_UUID'], String)
+            if group_by == 'keys'
+            else F.cast(T.c['GROUP_UUID'], String)
+            if group_by == 'groups'
+            else T.c['MCP_ALIAS']
+        )
+
+        conditions = self._mcp_invocation_conditions(
+            project_uuid=project_uuid,
+            route_names=route_names,
+            _from=_from,
+            _to=_to,
+            tags=tags,
+        )
+
+        stmt = (
+            select(
+                bucket_expr.label('bucket'),
+                group_by_column.label('group_by_value'),
+                F.count().label('value'),
+            )
+            .select_from(Event)
+            .where(*conditions)
+            .group_by(text('bucket'), group_by_column)
+            .order_by(text('bucket'), text('group_by_value'))
+        )
+
+        with self.db.begin_session() as session:
+            res = session.execute(stmt).all()
+            return [
+                InvocationChartDataPoint.model_validate(
+                    dict(zip(FIELD_NAMES, row_tuple))
+                )
                 for row_tuple in res
             ]

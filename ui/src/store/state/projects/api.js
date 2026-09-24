@@ -85,14 +85,6 @@ export const projectsApiSlice = apiService.injectEndpoints({
       },
     }),
 
-    getConfig: builder.query({
-      providesTags: (result, error, { configUuid }) => [{ type: API_TAGS.PROJECTS, id: `config-${configUuid}` }],
-      query: ({ projectUuid, configUuid }) => ({
-        url: `/projects/${projectUuid}/configs/${configUuid}`,
-        method: 'get',
-      }),
-    }),
-
     generateConfig: builder.mutation({
       query: ({ projectUuid, configUuid, data }) => ({
         url: `/projects/${projectUuid}/configs/${configUuid}/generate-config`,
@@ -250,7 +242,6 @@ export const {
   useGetTagValuesByProjectQuery,
   useCreateProjectMutation,
   useDeleteProjectMutation,
-  useGetConfigQuery,
   useGenerateConfigMutation,
   useUpdateConfigMutation,
   useApproveConfigMutation,
