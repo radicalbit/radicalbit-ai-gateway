@@ -4,6 +4,7 @@ import GroupsListHeader from '@Container/pages/groups/list/header/';
 import KeysListHeader from '@Container/pages/keys/list/header';
 import ProjectsListHeader from '@Container/pages/projects/list/header';
 import RoutesListHeader from '@Container/pages/routes/list/header';
+import SecretsListHeader from '@Container/pages/secrets/list/header';
 import TracingListHeader from '@Container/pages/tracing/list/header';
 import UsageListHeader from '@Container/pages/usage/list/header';
 import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
@@ -44,6 +45,8 @@ export default function MainHeaderContentSwitch() {
       <Route element={<ProjectsListHeader />} path={`/${PathsEnum.PROJECTS}`} />
 
       <Route element={<ConfigurationsListHeader />} path={`/${PathsEnum.CONFIGURATIONS}`} />
+
+      <Route element={<SecretsListHeader />} path={`/${PathsEnum.SECRETS}`} />
 
       {alertsRoutes}
     </Routes>
