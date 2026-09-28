@@ -375,10 +375,6 @@ class GroupService:
         group = self.group_dao.get_by_uuid(group_uuid)
         if not group:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
-        if group.owner != 'gateway':
-            raise GroupOperationNotAllowedError(
-                f'Group {group_uuid} cannot have limits configured because owner is "{group.owner}"'
-            )
         # The last limit applied always wins here too: re-submitting a
         # category/algorithm/window the group already has updates it in
         # place instead of colliding with the unique constraint.

@@ -912,16 +912,23 @@ class TestAddLimitsToGroup(_AsyncGroupServiceTestBase):
             )
         group_limit_dao.insert_many.assert_not_called()
 
-    def test_keycloak_group_raises(self):
-        service, group_dao, _, group_limit_dao = self._make_service()
-        group = db_mock.get_sample_group_plain()
-        group.owner = 'keycloak'
+    def test_non_gateway_owned_group_ok(self):
+        service, group_dao, key_service, group_limit_dao = self._make_service()
+        group_uuid = uuid.uuid4()
+        group = db_mock.get_sample_group(uuid=group_uuid)
+        group.owner = 'some-other-idp'
+        limit = db_mock.get_sample_group_limit(group_uuid=group_uuid)
         group_dao.get_by_uuid = MagicMock(return_value=group)
-        with pytest.raises(GroupOperationNotAllowedError):
-            service.add_limits_to_group(
-                group.uuid, db_mock.get_sample_group_limits_in()
-            )
-        group_limit_dao.insert_many.assert_not_called()
+        group_limit_dao.insert_many = MagicMock(return_value=[limit])
+        key_service.propagate_group_limits = MagicMock(return_value=([], []))
+
+        res = service.add_limits_to_group(
+            group_uuid, db_mock.get_sample_group_limits_in()
+        )
+
+        group_limit_dao.insert_many.assert_called_once()
+        assert isinstance(res, GroupLimitsApplyOut)
+        assert len(res.limits) == 1
 
     def test_duplicate_limit_raises(self):
         """Only a concurrent-insert race can still hit the DB constraint —
