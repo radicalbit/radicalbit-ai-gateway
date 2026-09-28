@@ -23,8 +23,12 @@ class SecretService:
         self._project_config_dao = project_config_dao
         self._secret_provider_factory = secret_provider_factory
 
-    def get_secrets(self) -> list[SecretOut]:
+    def get_secrets(self, search: str | None = None) -> list[SecretOut]:
         """Return a row per secret key the page lists, unavailable first.
+
+        ``search`` keeps only the rows whose secret key contains it, ignoring
+        case. The whole filtered list is returned, so the caller paginates the
+        filtered set rather than filtering a page.
 
         Rows are the union of the keys the backend holds and the keys
         referenced by published configurations: a key removed upstream only
@@ -39,6 +43,10 @@ class SecretService:
         provider = self._secret_provider_factory()
         backend_keys = set(provider.list_secret_keys())
         used_in = self._usage_by_key()
+        keys = backend_keys | used_in.keys()
+        if search:
+            term = search.casefold()
+            keys = {key for key in keys if term in key.casefold()}
         # Unavailable first, so unavailable keys always land on page one; by key
         # within each group, so paging is stable.
         return [
@@ -47,10 +55,7 @@ class SecretService:
                 used_in=used_in.get(key, []),
                 status=None if key in backend_keys else SecretStatus.UNAVAILABLE,
             )
-            for key in sorted(
-                backend_keys | used_in.keys(),
-                key=lambda k: (k in backend_keys, k),
-            )
+            for key in sorted(keys, key=lambda k: (k in backend_keys, k))
         ]
 
     def _usage_by_key(self) -> dict[str, list[ProjectRef]]:
