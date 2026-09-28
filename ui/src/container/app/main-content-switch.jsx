@@ -4,6 +4,7 @@ import GroupsList from '@Container/pages/groups/list/body';
 import KeysList from '@Container/pages/keys/list/body';
 import ProjectsList from '@Container/pages/projects/list/body';
 import RoutesList from '@Container/pages/routes/list/body';
+import SecretsList from '@Container/pages/secrets/list/body';
 import TracingList from '@Container/pages/tracing/list/body';
 import UsageList from '@Container/pages/usage/list/body';
 import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
@@ -76,6 +77,11 @@ export default function MainHeaderContentSwitch() {
       <Route
         element={<ConfigurationsList />}
         path={`/${PathsEnum.CONFIGURATIONS}`}
+      />
+
+      <Route
+        element={<SecretsList />}
+        path={`/${PathsEnum.SECRETS}`}
       />
 
       {alertsRoutes}

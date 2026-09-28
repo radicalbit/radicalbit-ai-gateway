@@ -2,7 +2,7 @@ import Lucide from '@Components/lucide';
 import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
 import { Button } from '@radicalbit/radicalbit-design-system';
 import {
-  FolderOpen, Gauge, Key, Route, Settings2, Signpost, Users,
+  FolderOpen, Gauge, Key, Lock, Route, Settings2, Signpost, Users,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -49,8 +49,8 @@ const groupHeader = (key, label, position, hasLeftColumnCollapsed) => {
 };
 
 const setupHeader = (hasLeftColumnCollapsed) => groupHeader('setup-header', 'Setup', 1, hasLeftColumnCollapsed);
-const monitorHeader = (hasLeftColumnCollapsed) => groupHeader('monitor-header', 'Monitor', 5, hasLeftColumnCollapsed);
-const manageHeader = (hasLeftColumnCollapsed) => groupHeader('manage-header', 'Manage', 10, hasLeftColumnCollapsed);
+const monitorHeader = (hasLeftColumnCollapsed) => groupHeader('monitor-header', 'Monitor', 6, hasLeftColumnCollapsed);
+const manageHeader = (hasLeftColumnCollapsed) => groupHeader('manage-header', 'Manage', 11, hasLeftColumnCollapsed);
 
 // GROUPS SEPARATOR
 const separator = (key, position) => ({
@@ -58,8 +58,8 @@ const separator = (key, position) => ({
   key,
   className: 'c-menu-item--separator pointer-events-none !h-[1rem]',
 });
-const separator1 = separator('separator1', 4);
-const separator2 = separator('separator2', 9);
+const separator1 = separator('separator1', 5);
+const separator2 = separator('separator2', 10);
 
 // GROUPS ITEMS
 const projects = (hasLeftColumnCollapsed) => ({
@@ -78,48 +78,56 @@ const configurations = (hasLeftColumnCollapsed) => ({
   link: getLink(PathsEnum.CONFIGURATIONS),
 });
 
+const secrets = (hasLeftColumnCollapsed) => ({
+  position: 4,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Secrets</CollapsedTitle> : 'Secrets',
+  icon: <Lucide icon={Lock} size="md" />,
+  key: PathsEnum.SECRETS,
+  link: getLink(PathsEnum.SECRETS),
+});
+
 const routes = (hasLeftColumnCollapsed) => ({
-  position: 6,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
+  position: 7,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
   icon: <Lucide icon={Gauge} size="md" />,
   key: PathsEnum.ROUTES,
   link: getLink(PathsEnum.ROUTES),
 });
 
 const usage = (hasLeftColumnCollapsed) => ({
-  position: 7,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
+  position: 8,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
   icon: <Lucide icon={Signpost} size="md" />,
   key: PathsEnum.USAGE,
   link: getLink(PathsEnum.USAGE),
 });
 
 const tracing = (hasLeftColumnCollapsed) => ({
-  position: 8,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
+  position: 9,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
   icon: <Lucide icon={Route} size="md" />,
   key: PathsEnum.TRACING,
   link: getLink(PathsEnum.TRACING),
 });
 
 const groups = (hasLeftColumnCollapsed) => ({
-  position: 11,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
+  position: 12,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '7', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
   icon: <Lucide icon={Users} size="md" />,
   key: PathsEnum.GROUPS,
   link: getLink(PathsEnum.GROUPS),
 });
 
 const keys = (hasLeftColumnCollapsed) => ({
-  position: 12,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '7', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
+  position: 13,
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '8', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
   icon: <Lucide icon={Key} size="md" />,
   key: PathsEnum.CREDENTIALS,
   link: getLink(PathsEnum.CREDENTIALS),
 });
 
 const alerts = (hasLeftColumnCollapsed) => ({
-  position: 13,
+  position: 14,
   title: hasLeftColumnCollapsed ? <CollapsedTitle>Alert</CollapsedTitle> : 'Alert',
   icon: <Lucide icon={Settings2} size="md" />,
   key: PathsEnum.ALERTS,
@@ -131,6 +139,7 @@ const allRoutes = (hasLeftColumnCollapsed) => [
   setupHeader(hasLeftColumnCollapsed),
   projects(hasLeftColumnCollapsed),
   configurations(hasLeftColumnCollapsed),
+  secrets(hasLeftColumnCollapsed),
 
   separator1,
   monitorHeader(hasLeftColumnCollapsed),
