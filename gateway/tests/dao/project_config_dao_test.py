@@ -1,6 +1,8 @@
 import datetime
 import uuid
 
+from sqlalchemy import update
+
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
 
@@ -146,3 +148,42 @@ class ProjectConfigDAOTest(DatabaseIntegration):
         self._seed_two(p.uuid)
         assert self.dao.soft_delete_by_project(p.uuid) == 2
         assert list(self.dao.list_by_project(p.uuid)) == []
+
+    def _rows_for(self, project_uuid):
+        return [
+            r
+            for r in self.dao.list_served_with_project_name()
+            if r.project_uuid == project_uuid
+        ]
+
+    def test_list_served_with_project_name_returns_the_served_config(self):
+        p = self._project()
+        a_id, _ = self._seed_two(p.uuid)
+        self.dao.serve(a_id)
+        rows = self._rows_for(p.uuid)
+        assert [(r.project_uuid, r.project_name, r.config_file) for r in rows] == [
+            (p.uuid, p.name, '# a')
+        ]
+
+    def test_list_served_with_project_name_excludes_drafts(self):
+        p = self._project()
+        self._seed_two(p.uuid)
+        assert self._rows_for(p.uuid) == []
+
+    def test_list_served_with_project_name_excludes_soft_deleted_project(self):
+        p = self._project()
+        a_id, _ = self._seed_two(p.uuid)
+        self.dao.serve(a_id)
+        now = datetime.datetime.now(tz=_UTC)
+        with self.db.begin_session() as session:
+            session.execute(
+                update(Project).where(Project.uuid == p.uuid).values(deleted_at=now)
+            )
+        assert self._rows_for(p.uuid) == []
+
+    def test_list_served_with_project_name_excludes_soft_deleted_config(self):
+        p = self._project()
+        a_id, _ = self._seed_two(p.uuid)
+        self.dao.serve(a_id)
+        self.dao.soft_delete_by_project(p.uuid)
+        assert self._rows_for(p.uuid) == []

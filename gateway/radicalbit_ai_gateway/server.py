@@ -247,7 +247,7 @@ mcp_usage_service = McpUsageService(
     key_service=key_service,
     group_service=group_service,
 )
-secret_service = SecretService()
+secret_service = SecretService(project_config_dao=project_config_dao)
 
 alert_rule_dao = AlertRuleDAO(database)
 alert_rule_service = AlertRuleService(
