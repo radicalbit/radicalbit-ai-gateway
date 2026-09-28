@@ -358,10 +358,6 @@ class KeyService:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
-        if key.owner not in ('gateway', 'keycloak'):
-            raise KeyOperationNotAllowedError(
-                f'Key {key_uuid} cannot have limits configured because owner is "{key.owner}"'
-            )
         existing_signatures = {
             (limit.category, limit.algorithm, limit.window_size)
             for limit in self.key_limit_dao.get_by_key_uuid(key_uuid)

@@ -424,19 +424,19 @@ class KeyServiceTest(unittest.TestCase):
         self.key_limit_dao.insert_many.assert_called_once()
         assert res == KeyFullOut.from_key_obscured(key, include_limits=True)
 
-    def test_add_limits_to_key_unknown_owner_raises(self):
+    def test_add_limits_to_key_any_owner_ok(self):
         key_uuid = uuid.uuid4()
         key = db_mock.get_sample_key(uuid=key_uuid)
         key.owner = 'some-other-idp'
+        limit = db_mock.get_sample_key_limit(key_uuid=key_uuid)
+        key.limits = [limit]
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
-        self.key_limit_dao.insert_many = MagicMock()
-        pytest.raises(
-            KeyOperationNotAllowedError,
-            self.key_service.add_limits_to_key,
-            key_uuid,
-            db_mock.get_sample_credential_limits_in(),
+        self.key_limit_dao.insert_many = MagicMock(return_value=[limit])
+        res = self.key_service.add_limits_to_key(
+            key_uuid, db_mock.get_sample_credential_limits_in()
         )
-        self.key_limit_dao.insert_many.assert_not_called()
+        self.key_limit_dao.insert_many.assert_called_once()
+        assert res == KeyFullOut.from_key_obscured(key, include_limits=True)
 
     def test_add_limits_to_key_duplicate_individual_limit_raises(self):
         key_uuid = uuid.uuid4()
