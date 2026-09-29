@@ -5,6 +5,9 @@ import uuid
 from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
 
+from tests.common.fake_secret_provider import FakeSecretProvider
+
+from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut, SecretStatus
 from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.services.secret_service import SecretService
@@ -37,7 +40,43 @@ class TestSecretsRoute(unittest.TestCase):
             'size': 50,
             'pages': 1,
         }
-        self.secret_service.get_secrets.assert_called_once_with()
+        self.secret_service.get_secrets.assert_called_once_with(None)
+
+    def test_get_secrets_passes_search_to_the_service_as_given(self):
+        self.secret_service.get_secrets = MagicMock(return_value=[])
+
+        res = self.client.get(f'{self.prefix}/secrets', params={'search': ' OpenAI '})
+
+        assert res.status_code == 200
+        self.secret_service.get_secrets.assert_called_once_with(' OpenAI ')
+
+    def test_get_secrets_paginates_the_filtered_set(self):
+        # A real service behind the route: total and pages must describe the
+        # rows matching the search, not the whole backend.
+        secrets = {f'OPENAI_KEY_{i}': 'o' for i in range(3)} | {
+            f'OTHER_KEY_{i}': 'x' for i in range(5)
+        }
+        dao = MagicMock(spec_set=ProjectConfigDAO)
+        dao.list_served_with_project_name.return_value = []
+        service = SecretService(
+            project_config_dao=dao,
+            secret_provider_factory=lambda: FakeSecretProvider(secrets),
+        )
+        app = FastAPI(debug=True)
+        app.include_router(SecretsRoute.get_secrets_router(service), prefix=self.prefix)
+
+        body = (
+            TestClient(app)
+            .get(
+                f'{self.prefix}/secrets',
+                params={'search': 'openai', '_page': 2, '_limit': 2},
+            )
+            .json()
+        )
+
+        assert [row['key'] for row in body['items']] == ['OPENAI_KEY_2']
+        assert body['total'] == 3
+        assert body['pages'] == 2
 
     def test_get_secrets_never_returns_a_value(self):
         self.secret_service.get_secrets = MagicMock(
@@ -169,12 +208,12 @@ class TestSecretsRoute(unittest.TestCase):
         app.include_router(router, prefix=self.prefix)
         client = TestClient(app)
 
-        res = client.get(f'{self.prefix}/secrets')
+        res = client.get(f'{self.prefix}/secrets', params={'search': 'FROM'})
 
         assert res.status_code == 200
         assert res.json()['items'] == [
             {'key': 'FROM_OVERRIDE', 'usedIn': [], 'status': None}
         ]
         assert captured['is_request'] is True
-        assert captured['search'] is None
+        assert captured['search'] == 'FROM'
         service.get_secrets.assert_not_called()

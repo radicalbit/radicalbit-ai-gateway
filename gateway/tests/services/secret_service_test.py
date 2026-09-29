@@ -1,11 +1,13 @@
 import datetime
 import unittest
+from unittest.mock import MagicMock
 import uuid
 
 from sqlalchemy import update
 
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
+from tests.common.fake_secret_provider import FakeSecretProvider
 
 from radicalbit_ai_gateway.db.dao.project_config_dao import (
     ProjectConfigDAO,
@@ -15,8 +17,6 @@ from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut, SecretStatus
 from radicalbit_ai_gateway.services.secret_service import SecretService
-from radicalbit_ai_gateway.utils.exceptions import SecretNotFoundError
-from radicalbit_ai_gateway.utils.secrets import SecretProvider
 
 _UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
 
@@ -37,33 +37,14 @@ _MCP_CONFIG_WITH_SECRET = (
 )
 
 
-class FakeSecretProvider(SecretProvider):
-    """A secrets backend holding the given key/value mapping."""
-
-    def __init__(self, secrets: dict[str, str]):
-        self._secrets = secrets
-
-    def get_secret(self, key: str) -> str:
-        value = self._secrets.get(key)
-        if value is None:
-            raise SecretNotFoundError(key, 'fake')
-        return value
-
-    def list_secret_keys(self) -> list[str]:
-        return list(self._secrets.keys())
-
-
-class _ServedConfigsDAO:
-    """A stand-in serving the given (project, config_file) pairs as published."""
-
-    def __init__(self, served: list[tuple[ProjectRef, str]]):
-        self._served = served
-
-    def list_served_with_project_name(self):
-        return [
-            ServedConfigWithProject(config_file, project.uuid, project.name)
-            for project, config_file in self._served
-        ]
+def _served_configs_dao(served: list[tuple[ProjectRef, str]]) -> ProjectConfigDAO:
+    """Return a DAO stand-in serving the given (project, config) pairs as published."""
+    dao = MagicMock(spec_set=ProjectConfigDAO)
+    dao.list_served_with_project_name.return_value = [
+        ServedConfigWithProject(config_file, project.uuid, project.name)
+        for project, config_file in served
+    ]
+    return dao
 
 
 class SecretServiceBackendKeysTest(unittest.TestCase):
@@ -71,7 +52,7 @@ class SecretServiceBackendKeysTest(unittest.TestCase):
 
     def _service(self, secrets: dict[str, str]) -> SecretService:
         return SecretService(
-            project_config_dao=_ServedConfigsDAO([]),
+            project_config_dao=_served_configs_dao([]),
             secret_provider_factory=lambda: FakeSecretProvider(secrets),
         )
 
@@ -97,7 +78,7 @@ class SecretServiceBackendKeysTest(unittest.TestCase):
         # second.
         secrets = {'ALPHA': 'a'}
         service = SecretService(
-            project_config_dao=_ServedConfigsDAO([]),
+            project_config_dao=_served_configs_dao([]),
             secret_provider_factory=lambda: FakeSecretProvider(dict(secrets)),
         )
         assert [row.key for row in service.get_secrets()] == ['ALPHA']
@@ -114,7 +95,7 @@ def _config_referencing(*keys: str) -> str:
 
 
 class SecretServiceUnavailableTest(unittest.TestCase):
-    """Row set is the union of backend keys and published references (AG-972)."""
+    """Row set is the union of backend keys and published references."""
 
     def setUp(self):
         self.project = ProjectRef(uuid=uuid.uuid4(), name='project-a')
@@ -126,7 +107,7 @@ class SecretServiceUnavailableTest(unittest.TestCase):
             else []
         )
         return SecretService(
-            project_config_dao=_ServedConfigsDAO(served),
+            project_config_dao=_served_configs_dao(served),
             secret_provider_factory=lambda: FakeSecretProvider(secrets),
         )
 
@@ -170,7 +151,7 @@ class SecretServiceUnavailableTest(unittest.TestCase):
     def test_status_clears_once_the_key_is_back_in_the_backend(self):
         secrets: dict[str, str] = {}
         service = SecretService(
-            project_config_dao=_ServedConfigsDAO(
+            project_config_dao=_served_configs_dao(
                 [(self.project, _config_referencing('DEAD_TOKEN'))]
             ),
             secret_provider_factory=lambda: FakeSecretProvider(dict(secrets)),
@@ -184,8 +165,64 @@ class SecretServiceUnavailableTest(unittest.TestCase):
         ]
 
 
+class SecretServiceSearchTest(unittest.TestCase):
+    """Server-side search on the secret key."""
+
+    def setUp(self):
+        self.project = ProjectRef(uuid=uuid.uuid4(), name='openai-project')
+
+    def _service(self, secrets: dict[str, str], *referenced_keys: str) -> SecretService:
+        served = (
+            [(self.project, _config_referencing(*referenced_keys))]
+            if referenced_keys
+            else []
+        )
+        return SecretService(
+            project_config_dao=_served_configs_dao(served),
+            secret_provider_factory=lambda: FakeSecretProvider(secrets),
+        )
+
+    def test_search_keeps_only_keys_containing_the_term(self):
+        service = self._service(
+            {'OPENAI_API_KEY': 'o', 'ANTHROPIC_API_KEY': 'a', 'GITHUB_TOKEN': 'g'}
+        )
+
+        assert [row.key for row in service.get_secrets(search='API')] == [
+            'ANTHROPIC_API_KEY',
+            'OPENAI_API_KEY',
+        ]
+
+    def test_search_ignores_case(self):
+        service = self._service({'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'})
+
+        assert [row.key for row in service.get_secrets(search='openai')] == [
+            'OPENAI_API_KEY'
+        ]
+
+    def test_search_matches_the_key_not_the_projects_using_it(self):
+        # The project is named 'openai-project'; only the key is searched.
+        service = self._service({'ANTHROPIC_API_KEY': 'a'}, 'ANTHROPIC_API_KEY')
+
+        assert service.get_secrets(search='openai') == []
+
+    def test_search_covers_unavailable_keys_and_keeps_them_first(self):
+        service = self._service(
+            {'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'}, 'OPENAI_ORG_KEY'
+        )
+
+        assert [(row.key, row.status) for row in service.get_secrets('OPENAI')] == [
+            ('OPENAI_ORG_KEY', SecretStatus.UNAVAILABLE),
+            ('OPENAI_API_KEY', None),
+        ]
+
+    def test_empty_search_filters_nothing(self):
+        service = self._service({'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'})
+
+        assert service.get_secrets(search='') == service.get_secrets()
+
+
 class SecretServiceUsedInTest(DatabaseIntegration):
-    """Derived per-key project usage (AG-971) — needs real served configs."""
+    """Derived per-key project usage — needs real served configs."""
 
     @classmethod
     def setUpClass(cls):

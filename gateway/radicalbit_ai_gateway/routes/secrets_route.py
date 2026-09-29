@@ -11,8 +11,8 @@ from radicalbit_ai_gateway.services.secret_service import SecretService
 
 @dataclass
 class SecretsRouteConfig:
-    # The search argument is always None here. AG-968 adds the query parameter
-    # that fills it. The signature ships now so Enterprise can build against it.
+    # Receives the request and the raw ``search`` query parameter, and returns
+    # the full filtered row list; the route paginates it.
     get_secrets_fn: Callable[[Request, str | None], Any] | None = None
 
 
@@ -24,7 +24,7 @@ class SecretsRoute:
     ) -> APIRouter:
         config = config or SecretsRouteConfig()
         get_secrets_fn = config.get_secrets_fn or (
-            lambda _request, _search: secret_service.get_secrets()
+            lambda _request, search: secret_service.get_secrets(search)
         )
         router = APIRouter(tags=['secrets_api'])
 
@@ -35,10 +35,11 @@ class SecretsRoute:
         )
         def get_secrets(
             request: Request,
+            search: Annotated[str | None, Query()] = None,
             _page: Annotated[int, Query(ge=1)] = 1,
             _limit: Annotated[int, Query(ge=1, le=100)] = 50,
         ):
-            rows = get_secrets_fn(request, None)
+            rows = get_secrets_fn(request, search)
             offset = (_page - 1) * _limit
             return Page.create(
                 items=rows[offset : offset + _limit],
