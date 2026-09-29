@@ -5,7 +5,7 @@ import uuid
 from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
 
-from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut
+from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut, SecretStatus
 from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.services.secret_service import SecretService
 
@@ -29,8 +29,8 @@ class TestSecretsRoute(unittest.TestCase):
         assert res.status_code == 200
         assert res.json() == {
             'items': [
-                {'key': 'ALPHA', 'usedIn': []},
-                {'key': 'BRAVO', 'usedIn': []},
+                {'key': 'ALPHA', 'usedIn': [], 'status': None},
+                {'key': 'BRAVO', 'usedIn': [], 'status': None},
             ],
             'total': 2,
             'page': 1,
@@ -47,7 +47,9 @@ class TestSecretsRoute(unittest.TestCase):
         res = self.client.get(f'{self.prefix}/secrets')
 
         assert res.status_code == 200
-        assert res.json()['items'] == [{'key': 'OPENAI_API_KEY', 'usedIn': []}]
+        assert res.json()['items'] == [
+            {'key': 'OPENAI_API_KEY', 'usedIn': [], 'status': None}
+        ]
 
     def test_get_secrets_includes_used_in_projects(self):
         project_uuid = uuid.uuid4()
@@ -67,7 +69,33 @@ class TestSecretsRoute(unittest.TestCase):
             {
                 'key': 'OPENAI_API_KEY',
                 'usedIn': [{'uuid': str(project_uuid), 'name': 'project-a'}],
+                'status': None,
             }
+        ]
+
+    def test_get_secrets_marks_an_unavailable_key(self):
+        project_uuid = uuid.uuid4()
+        self.secret_service.get_secrets = MagicMock(
+            return_value=[
+                SecretOut(
+                    key='DEAD_TOKEN',
+                    used_in=[ProjectRef(uuid=project_uuid, name='project-c')],
+                    status=SecretStatus.UNAVAILABLE,
+                ),
+                SecretOut(key='OPENAI_API_KEY'),
+            ]
+        )
+
+        res = self.client.get(f'{self.prefix}/secrets')
+
+        assert res.status_code == 200
+        assert res.json()['items'] == [
+            {
+                'key': 'DEAD_TOKEN',
+                'usedIn': [{'uuid': str(project_uuid), 'name': 'project-c'}],
+                'status': 'unavailable',
+            },
+            {'key': 'OPENAI_API_KEY', 'usedIn': [], 'status': None},
         ]
 
     def test_get_secrets_applies_page_and_limit(self):
@@ -81,11 +109,34 @@ class TestSecretsRoute(unittest.TestCase):
 
         assert res.status_code == 200
         body = res.json()
-        assert body['items'] == [{'key': 'CHARLIE', 'usedIn': []}]
+        assert body['items'] == [{'key': 'CHARLIE', 'usedIn': [], 'status': None}]
         assert body['total'] == 3
         assert body['page'] == 2
         assert body['size'] == 2
         assert body['pages'] == 2
+
+    def test_get_secrets_keeps_order_across_page_turns(self):
+        dead = [
+            SecretOut(key=k, status=SecretStatus.UNAVAILABLE)
+            for k in ['BRAVO_DEAD', 'ZULU_DEAD']
+        ]
+        self.secret_service.get_secrets = MagicMock(
+            return_value=[*dead, SecretOut(key='ALPHA'), SecretOut(key='MIKE')]
+        )
+
+        pages = [
+            self.client.get(
+                f'{self.prefix}/secrets', params={'_page': page, '_limit': 3}
+            ).json()['items']
+            for page in (1, 2)
+        ]
+
+        assert [(row['key'], row['status']) for row in pages[0]] == [
+            ('BRAVO_DEAD', 'unavailable'),
+            ('ZULU_DEAD', 'unavailable'),
+            ('ALPHA', None),
+        ]
+        assert [(row['key'], row['status']) for row in pages[1]] == [('MIKE', None)]
 
     def test_get_secrets_page_below_bound(self):
         res = self.client.get(f'{self.prefix}/secrets', params={'_page': 0})
@@ -121,7 +172,9 @@ class TestSecretsRoute(unittest.TestCase):
         res = client.get(f'{self.prefix}/secrets')
 
         assert res.status_code == 200
-        assert res.json()['items'] == [{'key': 'FROM_OVERRIDE', 'usedIn': []}]
+        assert res.json()['items'] == [
+            {'key': 'FROM_OVERRIDE', 'usedIn': [], 'status': None}
+        ]
         assert captured['is_request'] is True
         assert captured['search'] is None
         service.get_secrets.assert_not_called()
