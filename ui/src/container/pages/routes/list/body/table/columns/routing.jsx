@@ -1,7 +1,8 @@
+import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
 import { numberFormatterInt } from '@Src/constants';
 import {
-  Button, Divider, Popover,
+  Divider, Popover,
 } from '@radicalbit/radicalbit-design-system';
 import { AlignLeft } from 'lucide-react';
 
@@ -10,9 +11,9 @@ function Routing({ routing }) {
 
   if (value === undefined) {
     return (
-      <Button disabled shape="circle">
+      <IconBadge aria-label="Advanced Routing" disabled>
         <Lucide icon={AlignLeft} />
-      </Button>
+      </IconBadge>
     );
   }
 
@@ -20,9 +21,9 @@ function Routing({ routing }) {
 
   return (
     <Popover content={<PopoverContent routing={routing} />} minWidth="250" title={<strong>Total invocations</strong>}>
-      <Button shape="circle" {...btnType}>
+      <IconBadge aria-label="Advanced Routing" {...btnType}>
         <Lucide icon={AlignLeft} />
-      </Button>
+      </IconBadge>
     </Popover>
   );
 }

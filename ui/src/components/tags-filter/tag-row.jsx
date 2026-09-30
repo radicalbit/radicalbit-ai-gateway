@@ -1,8 +1,11 @@
 import Lucide from '@Components/lucide';
 import { useGetTagValuesByProjectQuery } from '@State/projects/api';
 import { appendTagsToParams } from '@State/tags-query-params-factory';
-import { Button, FormField, Select } from '@radicalbit/radicalbit-design-system';
+import {
+  Button, FormField, Select, Tooltip,
+} from '@radicalbit/radicalbit-design-system';
 import { CircleMinus } from 'lucide-react';
+import { useId } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTagsFilterContext } from './context';
 
@@ -18,6 +21,8 @@ const writeRowsToSearchParams = (prev, rows) => {
 };
 
 function TagRow({ index, rowId, tagKeys }) {
+  const id = useId();
+
   const [searchParams, setSearchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid');
 
@@ -86,9 +91,10 @@ function TagRow({ index, rowId, tagKeys }) {
   };
 
   return (
-    <FormField label={`Tag ${index + 1}`}>
+    <FormField htmlFor={id} label={`Tag ${index + 1}`}>
       <div className="flex flex-row items-center gap-2">
         <Select
+          id={id}
           onChange={handleOnKeyChange}
           options={keyOptions}
           placeholder="Select key"
@@ -98,6 +104,7 @@ function TagRow({ index, rowId, tagKeys }) {
 
         <Select
           allowClear
+          aria-label={`Tag ${index + 1} values`}
           disabled={!row.key || isError}
           loading={isFetching}
           maxTagCount="responsive"
@@ -109,14 +116,18 @@ function TagRow({ index, rowId, tagKeys }) {
           value={row.values}
         />
 
-        <Button
-          disabled={rows.length === 1}
-          onClick={handleOnRemove}
-          prefix={<Lucide icon={CircleMinus} />}
-          shape="circle"
-          title="Remove"
-          type="ghost"
-        />
+        <Tooltip title="Remove">
+          <div>
+            <Button
+              aria-label="Remove"
+              disabled={rows.length === 1}
+              onClick={handleOnRemove}
+              prefix={<Lucide icon={CircleMinus} />}
+              shape="circle"
+              type="ghost"
+            />
+          </div>
+        </Tooltip>
       </div>
     </FormField>
   );

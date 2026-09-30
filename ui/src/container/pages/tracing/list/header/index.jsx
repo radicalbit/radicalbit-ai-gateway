@@ -4,6 +4,7 @@ import { TimeFilterCustomOnly } from '@Components/time-filter';
 import { FormField, NewHeader, SectionTitle, Select } from '@radicalbit/radicalbit-design-system';
 import { useGetRoutesWithRange } from '@Src/store/state/routes/vertical-hooks';
 import { Route } from 'lucide-react';
+import { useId } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ProjectFilter from './project-filter';
 
@@ -11,21 +12,25 @@ const keys = ['routes', 'preset', 'from', 'to'];
 const storageKey = 'rbit-gw-tracing';
 
 function TracingListHeader() {
+  const projectId = useId();
+  const tagsId = useId();
+  const routesId = useId();
+
   return (
     <NewHeader
       details={{
         one: (
           <div className="flex flex-row items-center gap-4">
-            <FormField label="Project">
-              <ProjectFilter />
+            <FormField htmlFor={projectId} label="Project">
+              <ProjectFilter id={projectId} />
             </FormField>
 
-            <FormField label="Tags">
-              <TagsFilter />
+            <FormField htmlFor={tagsId} label="Tags">
+              <TagsFilter id={tagsId} />
             </FormField>
 
-            <FormField label="Routes">
-              <RouteSelector />
+            <FormField htmlFor={routesId} label="Routes">
+              <RouteSelector id={routesId} />
             </FormField>
           </div>
         ),
@@ -45,7 +50,7 @@ function TracingListHeader() {
   );
 }
 
-function RouteSelector() {
+function RouteSelector({ id }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid');
 
@@ -71,6 +76,7 @@ function RouteSelector() {
     return (
       <Select
         disabled
+        id={id}
         placeholder="Select a project first"
         style={{ width: 250 }}
       />
@@ -81,6 +87,7 @@ function RouteSelector() {
     return (
       <Select
         disabled
+        id={id}
         placeholder="Unable to load routes"
         style={{ width: 250 }}
       />
@@ -90,6 +97,7 @@ function RouteSelector() {
   return (
     <Select
       allowClear
+      id={id}
       maxTagCount="responsive"
       mode="multiple"
       onChange={handleChange}

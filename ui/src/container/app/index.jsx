@@ -21,7 +21,7 @@ import '@Styles/tailwind.css';
 import { Board, Layout } from '@radicalbit/radicalbit-design-system';
 import { useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 function App() {
   const { isLoading, isSuccess, isError, error } = useGetFeatureFlagsQuery();
@@ -55,7 +55,6 @@ function App() {
 
 function AppInner() {
   const dispatch = useDispatch();
-  const navigate = useNavigate();
   const { pathname } = useLocation();
 
   useNotification();
@@ -113,10 +112,6 @@ function AppInner() {
     dispatch(layoutActions.toggleCollapseSecondaryColumn());
   };
 
-  const goToHomePage = () => {
-    navigate('/');
-  };
-
   useNavigateNavBarWithKeyboard();
   useSwitchLightAndDarkModeWithKeyboard();
 
@@ -134,7 +129,9 @@ function AppInner() {
           hasLeftColumnCollapsed,
           hasLeftContentDark,
           leftColumnHeaderAltContent: (
-            <Logo onClick={goToHomePage} title="Radicalbit" />
+            <Link aria-label="Home" className="block p-4" title="Radicalbit" to="/">
+              <Logo />
+            </Link>
           ),
           mainMenu: createRoutes({ hasLeftColumnCollapsed, currentPath: pathname }),
           onLeftColumnCollapse: handleToggleCollapseLeftColumn,

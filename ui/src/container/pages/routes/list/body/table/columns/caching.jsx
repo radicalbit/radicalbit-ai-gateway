@@ -1,7 +1,8 @@
+import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
 import { numberFormatterFloat, numberFormatterInt } from '@Src/constants';
 import {
-  Button, Divider, Popover,
+  Divider, Popover,
 } from '@radicalbit/radicalbit-design-system';
 import { CircleCheck } from 'lucide-react';
 
@@ -11,9 +12,9 @@ function Caching({ metrics, configuration }) {
 
   if (caching === undefined) {
     return (
-      <Button disabled shape="circle">
+      <IconBadge aria-label="Caching" disabled>
         <Lucide icon={CircleCheck} />
-      </Button>
+      </IconBadge>
     );
   }
 
@@ -21,9 +22,9 @@ function Caching({ metrics, configuration }) {
 
   return (
     <Popover content={<PopoverContent configuration={configuration} metrics={metrics} />} minWidth="250" title={<strong>Caching</strong>}>
-      <Button shape="circle" {...btnType}>
+      <IconBadge aria-label="Caching" {...btnType}>
         <Lucide icon={CircleCheck} />
-      </Button>
+      </IconBadge>
     </Popover>
   );
 }

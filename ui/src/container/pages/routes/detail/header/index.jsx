@@ -30,7 +30,7 @@ function RouteDetailHeader() {
   if (isError) {
     return (
       <NewHeader
-        prefix={<Lucide icon={ArrowLeft} onClick={handleOnClick} />}
+        prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={handleOnClick} />}
       />
     );
   }
@@ -42,7 +42,7 @@ function RouteDetailHeader() {
   return (
     <NewHeader
       details={{ one: <ThreeDotsMenu /> }}
-      prefix={<Lucide icon={ArrowLeft} onClick={handleOnClick} />}
+      prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={handleOnClick} />}
       title={(
         <SectionTitle
           icon={<CopyToClipboard link={routeName} tooltip={{ mouseEnterDelay: 0 }} />}
@@ -64,7 +64,7 @@ function IsLoading() {
 
   return (
     <NewHeader
-      prefix={<Lucide icon={ArrowLeft} onClick={handleOnClick} />}
+      prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={handleOnClick} />}
       title={<Skeleton active block paragraph={0} />}
     />
   );

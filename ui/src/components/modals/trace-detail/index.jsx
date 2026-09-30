@@ -13,7 +13,7 @@ function TraceDetail() {
 
   if (isLoading) {
     return (
-      <RbitModal defaultMaximize onCancel={hideModal} open>
+      <RbitModal aria-label="Trace detail" defaultMaximize onCancel={hideModal} open>
         <IsLoading />
       </RbitModal>
     );
@@ -21,7 +21,7 @@ function TraceDetail() {
 
   if (isError) {
     return (
-      <RbitModal defaultMaximize onCancel={hideModal} open>
+      <RbitModal aria-label="Trace detail" defaultMaximize onCancel={hideModal} open>
         <IsError />
       </RbitModal>
     );
@@ -33,6 +33,7 @@ function TraceDetail() {
 
   return (
     <RbitModal
+      aria-label="Trace detail"
       closable={false}
       defaultMaximize
       header={<Header />}

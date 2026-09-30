@@ -10,7 +10,7 @@ import {
   FormField, Search, Void,
 } from '@radicalbit/radicalbit-design-system';
 import { CircleX } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useDispatch } from 'react-redux';
 import {
   useParams, useSearchParams,
@@ -36,11 +36,13 @@ function RoutesList() {
 }
 
 function NoProjectSelected() {
+  const projectId = useId();
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-row items-center gap-4">
-        <FormField label="Project">
-          <ProjectFilter />
+        <FormField htmlFor={projectId} label="Project">
+          <ProjectFilter id={projectId} />
         </FormField>
       </div>
 
@@ -50,6 +52,8 @@ function NoProjectSelected() {
 }
 
 function ProjectSelected() {
+  const projectId = useId();
+
   const [searchParams, setSearchParams] = useSearchParams();
   const searchValue = searchParams.get(SEARCH_PARAMS.routes) || '';
 
@@ -76,8 +80,8 @@ function ProjectSelected() {
         <Metrics />
 
         <div className="flex flex-row items-end gap-4">
-          <FormField label="Project">
-            <ProjectFilter />
+          <FormField htmlFor={projectId} label="Project">
+            <ProjectFilter id={projectId} />
           </FormField>
 
           <Search

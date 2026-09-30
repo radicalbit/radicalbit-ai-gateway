@@ -8,7 +8,7 @@ import {
   useServeConfigMutation,
   useUnserveConfigMutation,
 } from '@State/projects/api';
-import { Button, Dropdown } from '@radicalbit/radicalbit-design-system';
+import { Button, Dropdown, Tooltip } from '@radicalbit/radicalbit-design-system';
 import {
   CircleStop,
   EllipsisVertical,
@@ -30,11 +30,13 @@ function SlotActions({ projectUuid, projectName, config }) {
   }
 
   return (
-    <Dropdown className="c-project-config-menu" menu={{ items }}>
-      <Button onClick={handleOnClick} type="text">
-        <Lucide icon={EllipsisVertical} />
-      </Button>
-    </Dropdown>
+    <Tooltip title="More actions">
+      <Dropdown className="c-project-config-menu" menu={{ items }}>
+        <Button aria-label="More actions" onClick={handleOnClick} type="text">
+          <Lucide icon={EllipsisVertical} />
+        </Button>
+      </Dropdown>
+    </Tooltip>
   );
 }
 

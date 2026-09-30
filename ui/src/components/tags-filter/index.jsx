@@ -13,15 +13,15 @@ const OVERLAY_SELECTORS = '.c-popover, .ant-select-dropdown';
 
 const TRIGGER_WIDTH = 150;
 
-function TagsFilter() {
+function TagsFilter({ id }) {
   return (
     <TagsFilterContextProvider>
-      <TagsFilterInner />
+      <TagsFilterInner id={id} />
     </TagsFilterContextProvider>
   );
 }
 
-function TagsFilterInner() {
+function TagsFilterInner({ id }) {
   const [searchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid');
 
@@ -36,6 +36,7 @@ function TagsFilterInner() {
     return (
       <Select
         disabled
+        id={id}
         minWidth={TRIGGER_WIDTH}
         placeholder="Select a project first"
       />
@@ -52,6 +53,7 @@ function TagsFilterInner() {
     >
       <div ref={wrapperRef}>
         <Select
+          id={id}
           minWidth={TRIGGER_WIDTH}
           onClick={handleOnTriggerClick}
           open={false}

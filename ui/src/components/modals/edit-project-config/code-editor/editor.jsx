@@ -10,6 +10,7 @@ import 'ace-builds/src-noconflict/ext-language_tools';
 const EDITOR_OPTIONS = {
   showLineNumbers: true,
   tabSize: 2,
+  textInputAriaLabel: 'YAML configuration',
   useWorker: false,
 };
 

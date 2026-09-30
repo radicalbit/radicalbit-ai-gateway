@@ -134,7 +134,7 @@ function ActionAssociateGroup({ uuid }) {
     return (
       <Tooltip title={UNAVAILABLE_TOOLTIP}>
         <div>
-          <Button disabled size="small" type="text">
+          <Button aria-label="Associate group" disabled size="small" type="text">
             <Lucide icon={Plus} />
           </Button>
         </div>
@@ -150,7 +150,7 @@ function ActionAssociateGroup({ uuid }) {
     return (
       <Tooltip title={NO_GROUPS_TOOLTIP}>
         <div>
-          <Button disabled size="small" type="text">
+          <Button aria-label="Associate group" disabled size="small" type="text">
             <Lucide icon={Plus} />
           </Button>
         </div>
@@ -162,7 +162,7 @@ function ActionAssociateGroup({ uuid }) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
         <div>
-          <Button disabled size="small" type="text">
+          <Button aria-label="Associate group" disabled size="small" type="text">
             <Lucide icon={Plus} />
           </Button>
         </div>
@@ -172,7 +172,7 @@ function ActionAssociateGroup({ uuid }) {
 
   return (
     <Tooltip title="Associate group">
-      <Button onClick={handleOnAdd} size="small" type="text">
+      <Button aria-label="Associate group" onClick={handleOnAdd} size="small" type="text">
         <Lucide icon={Plus} />
       </Button>
     </Tooltip>
@@ -202,6 +202,9 @@ function ActionRemoveGroup({ uuid }) {
 
   const handleOnCancel = (e) => { e.stopPropagation(); };
 
+  // The click is handled by the wrapping Popconfirm: the handler only keeps the Button clickable
+  const handleOnTriggerClick = () => {};
+
   if (isLoading) {
     return <IsLoadingAction />;
   }
@@ -214,7 +217,7 @@ function ActionRemoveGroup({ uuid }) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
         <div>
-          <Button disabled size="small" type="text">
+          <Button aria-label="Remove group" disabled size="small" type="text">
             <Lucide icon={X} />
           </Button>
         </div>
@@ -228,7 +231,7 @@ function ActionRemoveGroup({ uuid }) {
         cancelButtonProps={{ type: 'secondary-light' }}
         description={<TextWithBold bold={groupName} isQuestion text="Are you sure you want to remove the credential from the group" />}
         label={(
-          <Button size="small" type="text">
+          <Button aria-label="Remove group" onClick={handleOnTriggerClick} size="small" type="text">
             <Lucide icon={X} />
           </Button>
           )}
@@ -261,7 +264,7 @@ function ActionEditKey({ uuid }) {
     return (
       <Tooltip title={UNAVAILABLE_TOOLTIP}>
         <div>
-          <Button disabled size="small" type="text">
+          <Button aria-label="Edit credential" disabled size="small" type="text">
             <Lucide icon={PencilLine} />
           </Button>
         </div>
@@ -277,7 +280,7 @@ function ActionEditKey({ uuid }) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
         <div>
-          <Button disabled size="small" type="text">
+          <Button aria-label="Edit credential" disabled size="small" type="text">
             <Lucide icon={PencilLine} />
           </Button>
         </div>
@@ -287,7 +290,7 @@ function ActionEditKey({ uuid }) {
 
   return (
     <Tooltip title="Edit credential">
-      <Button onClick={handleOnEditKey} size="small" type="text">
+      <Button aria-label="Edit credential" onClick={handleOnEditKey} size="small" type="text">
         <Lucide icon={PencilLine} />
       </Button>
     </Tooltip>
@@ -299,6 +302,9 @@ function ActionDeleteKey({ uuid }) {
   const owner = data?.owner;
   const isExternallyManaged = owner !== GATEWAY_OWNER;
 
+  // The click is handled by the wrapping DeleteKey (Popconfirm or modal): the handler only keeps the Button clickable
+  const handleOnTriggerClick = () => {};
+
   if (isLoading) {
     return <IsLoadingAction />;
   }
@@ -307,7 +313,7 @@ function ActionDeleteKey({ uuid }) {
     return (
       <Tooltip title={UNAVAILABLE_TOOLTIP}>
         <div>
-          <Button disabled size="small" type="text">
+          <Button aria-label="Delete credential" disabled size="small" type="text">
             <Lucide icon={Trash} />
           </Button>
         </div>
@@ -323,7 +329,7 @@ function ActionDeleteKey({ uuid }) {
     return (
       <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
         <div>
-          <Button disabled size="small" type="text">
+          <Button aria-label="Delete credential" disabled size="small" type="text">
             <Lucide icon={Trash} />
           </Button>
         </div>
@@ -334,7 +340,7 @@ function ActionDeleteKey({ uuid }) {
   return (
     <DeleteKey uuid={uuid}>
       <Tooltip title="Delete credential">
-        <Button size="small" type="text">
+        <Button aria-label="Delete credential" onClick={handleOnTriggerClick} size="small" type="text">
           <Lucide icon={Trash} type="error" />
         </Button>
       </Tooltip>

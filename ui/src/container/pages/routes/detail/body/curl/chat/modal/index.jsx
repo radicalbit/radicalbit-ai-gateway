@@ -15,6 +15,7 @@ function Modal({ onClose, open }) {
   return (
     <RbitModal
       actions={<Actions onClose={onClose} />}
+      aria-label="Fill credential"
       closable
       header={(
         <SectionTitle

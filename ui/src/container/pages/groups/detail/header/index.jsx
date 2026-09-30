@@ -36,7 +36,7 @@ function GroupDetailHeader() {
   return (
     <NewHeader
       details={{ one: <ThreeDotsMenu /> }}
-      prefix={<Lucide icon={ArrowLeft} onClick={handleOnClick} />}
+      prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={handleOnClick} />}
       title={(
         <SectionTitle
           subtitle={<Subtitle />}
@@ -67,7 +67,7 @@ function IsError({ error }) {
   if (status === 404) {
     return (
       <NewHeader
-        prefix={<Lucide icon={ArrowLeft} onClick={handleOnBack} />}
+        prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={handleOnBack} />}
         title={(
           <SectionTitle
             subtitle="--"

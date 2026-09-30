@@ -1,7 +1,8 @@
+import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
 import { numberFormatterInt } from '@Src/constants';
 import {
-  Button, Divider, Popover,
+  Divider, Popover,
 } from '@radicalbit/radicalbit-design-system';
 import { SlidersHorizontal } from 'lucide-react';
 
@@ -13,9 +14,9 @@ function Limits({ metrics, configuration }) {
 
   if (rateLimitTriggered === undefined && tokenInputLimitTriggered === undefined && tokenOutputLimitTriggered === undefined && durationLimitTriggered === undefined) {
     return (
-      <Button disabled shape="circle">
+      <IconBadge aria-label="Limits" disabled>
         <Lucide icon={SlidersHorizontal} />
-      </Button>
+      </IconBadge>
     );
   }
 
@@ -24,9 +25,9 @@ function Limits({ metrics, configuration }) {
 
   return (
     <Popover content={<PopoverContent configuration={configuration} metrics={metrics} />} minWidth="250" title={<strong>Limits</strong>}>
-      <Button shape="circle" {...btnType}>
+      <IconBadge aria-label="Limits" {...btnType}>
         <Lucide icon={SlidersHorizontal} />
-      </Button>
+      </IconBadge>
     </Popover>
   );
 }

@@ -3,7 +3,7 @@ import { getMessageFromQueryError } from '@Helpers/errors';
 import { useGenerateConfigMutation } from '@State/projects/api';
 import {
   Board,
-  Button, NewHeader, Spin, TextArea,
+  Button, NewHeader, Spin, TextArea, Tooltip,
 } from '@radicalbit/radicalbit-design-system';
 import { Send } from 'lucide-react';
 
@@ -65,13 +65,18 @@ function PromptInput({
                 {isLoading && <Spin spinning />}
 
                 {!isLoading && (
-                  <Button
-                    disabled={!canGenerate}
-                    onClick={handleOnGenerate}
-                    type="primary"
-                  >
-                    <Lucide icon={Send} />
-                  </Button>
+                  <Tooltip title="Send">
+                    <div>
+                      <Button
+                        aria-label="Send"
+                        disabled={!canGenerate}
+                        onClick={handleOnGenerate}
+                        type="primary"
+                      >
+                        <Lucide icon={Send} />
+                      </Button>
+                    </div>
+                  </Tooltip>
                 )}
               </>
             ),
@@ -90,6 +95,7 @@ function PromptInput({
       )}
       main={(
         <TextArea
+          aria-label="Prompt"
           disabled={isLoading}
           onChange={handleOnChangeDescription}
           onKeyDown={handleOnKeyDown}

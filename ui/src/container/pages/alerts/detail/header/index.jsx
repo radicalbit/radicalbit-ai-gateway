@@ -35,7 +35,7 @@ function AlertDetailHeader() {
   return (
     <NewHeader
       details={{ one: <EnabledToggle /> }}
-      prefix={<Lucide icon={ArrowLeft} onClick={handleOnBack} />}
+      prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={handleOnBack} />}
       title={(
         <SectionTitle
           subtitle={description ?? '--'}
@@ -61,7 +61,7 @@ function EnabledToggle() {
 
   return (
     <div className="flex items-center gap-2">
-      <Switch checked={enabled} loading={isLoading} onChange={handleOnChange} />
+      <Switch aria-label="Enable alert" checked={enabled} loading={isLoading} onChange={handleOnChange} />
 
       <div>{label}</div>
     </div>
@@ -82,7 +82,7 @@ function IsError({ error, onBack }) {
   if (status === 404) {
     return (
       <NewHeader
-        prefix={<Lucide icon={ArrowLeft} onClick={onBack} />}
+        prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={onBack} />}
         title={<SectionTitle subtitle="--" title="--" />}
       />
     );

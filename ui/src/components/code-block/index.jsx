@@ -88,11 +88,11 @@ function CodeBlock({
         {isFontResizable && (
           <div className="c-code-block__actions__resize">
             <Tooltip title="Increase font size">
-              <Button onClick={handleOnIncreaseFontSize} size="small" type="secondary"><Lucide icon={Plus} /></Button>
+              <Button aria-label="Increase font size" onClick={handleOnIncreaseFontSize} size="small" type="secondary"><Lucide icon={Plus} /></Button>
             </Tooltip>
 
             <Tooltip title="Decrease font size">
-              <Button onClick={handleOnDecreaseFontSize} size="small" type="secondary"><Lucide icon={Minus} /></Button>
+              <Button aria-label="Decrease font size" onClick={handleOnDecreaseFontSize} size="small" type="secondary"><Lucide icon={Minus} /></Button>
             </Tooltip>
           </div>
         )}

@@ -7,7 +7,7 @@ const OPTIONS = [
   { label: 'Critical (91-100%)', value: 'critical' },
 ];
 
-function LimitStatusFilter() {
+function LimitStatusFilter({ id }) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const selectedStatuses = searchParams.get('windowStatuses')
@@ -28,6 +28,7 @@ function LimitStatusFilter() {
   return (
     <Select
       allowClear
+      id={id}
       maxTagCount="responsive"
       mode="multiple"
       onChange={handleOnChange}

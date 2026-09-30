@@ -10,6 +10,7 @@ import {
   Skeleton,
 } from '@radicalbit/radicalbit-design-system';
 import { Search } from 'lucide-react';
+import { useId } from 'react';
 import { Link } from 'react-router-dom';
 
 function Routes() {
@@ -53,10 +54,13 @@ function RoutesData({ groupUuid, projectUuid }) {
 }
 
 function DisabledRoutesSelect() {
+  const id = useId();
+
   return (
-    <FormField label="Routes">
+    <FormField htmlFor={id} label="Routes">
       <Select
         disabled
+        id={id}
         mode="multiple"
         placeholder="Select a project first"
       />
@@ -65,6 +69,8 @@ function DisabledRoutesSelect() {
 }
 
 function RoutesInner({ routes }) {
+  const id = useId();
+
   const { form, write, error } = useFormbitContext();
   const selected = form?.routes ?? [];
 
@@ -73,9 +79,10 @@ function RoutesInner({ routes }) {
   };
 
   return (
-    <FormField label="Routes" message={error('routes')}>
+    <FormField htmlFor={id} label="Routes" message={error('routes')}>
       <Select
         filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+        id={id}
         mode="multiple"
         onChange={handleOnSelect}
         options={routes}
