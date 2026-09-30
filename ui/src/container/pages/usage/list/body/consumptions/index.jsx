@@ -121,7 +121,7 @@ function DataContent() {
 
 function IsError({ isFetching, refetch }) {
   return (
-    <div className="flex justify-center h-full">
+    <div className="flex justify-center">
       <Board
         main={(
           <Void
