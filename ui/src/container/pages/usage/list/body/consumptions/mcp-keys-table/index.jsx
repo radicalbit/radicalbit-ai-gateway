@@ -1,7 +1,7 @@
 import Lucide from '@Components/lucide';
 import { useGetMcpKeyUsageWithRange } from '@State/usage/vertical-hooks';
 import {
-  Board, Button, DataTable, Skeleton, Void,
+  Board, Button, DataTable, SectionTitle, Skeleton, Void,
 } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
@@ -10,6 +10,8 @@ import columns from './columns';
 const PAGE_SEARCH_PARAM = 'mcpKeysTablePage';
 
 const tableHeight = { height: '20rem', width: '100%' };
+
+const BOARD_TITLE = 'MCP Key Usage';
 
 const useMcpKeyUsage = () => {
   const [searchParams] = useSearchParams();
@@ -48,8 +50,8 @@ function McpKeysTable() {
 function IsLoading() {
   return (
     <Board
+      header={<SectionTitle modifier="pl-4" size="medium" title={BOARD_TITLE} />}
       main={<Skeleton.Node active style={tableHeight} />}
-      size="xsmall"
     />
   );
 }
@@ -57,6 +59,7 @@ function IsLoading() {
 function IsError({ isFetching, refetch }) {
   return (
     <Board
+      header={<SectionTitle modifier="pl-4" size="medium" title={BOARD_TITLE} />}
       main={(
         <Void
           actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
@@ -72,7 +75,6 @@ function IsError({ isFetching, refetch }) {
           title="Unable to load MCP key usage"
         />
       )}
-      size="xsmall"
     />
   );
 }
@@ -80,6 +82,7 @@ function IsError({ isFetching, refetch }) {
 function IsEmpty() {
   return (
     <Board
+      header={<SectionTitle modifier="pl-4" size="medium" title={BOARD_TITLE} />}
       main={(
         <Void
           description="No MCP key usage data available yet. Table will appear automatically when some data arrived."
@@ -87,7 +90,6 @@ function IsEmpty() {
           title="MCP Key Usage Overview"
         />
       )}
-      size="xsmall"
     />
   );
 }
@@ -104,6 +106,7 @@ function IsSuccess({ data }) {
 
   return (
     <Board
+      header={<SectionTitle modifier="pl-4" size="medium" title={BOARD_TITLE} />}
       main={(
         <DataTable
           columns={columns}
@@ -118,7 +121,6 @@ function IsSuccess({ data }) {
           size="small"
         />
       )}
-      size="xsmall"
     />
   );
 }
