@@ -1,0 +1,74 @@
+name: e2e-tests
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or tag of radicalbit/utestai to run the E2E tests from"
+        required: false
+        default: "main"
+      wait:
+        description: "Wait for the E2E run to finish and report its result"
+        type: boolean
+        required: false
+        default: true
+
+concurrency:
+  group: e2e-tests
+  cancel-in-progress: false
+
+env:
+  TARGET_REPO: radicalbit/utestai
+  TARGET_WORKFLOW: Post-Deploy E2E Tests
+
+jobs:
+  trigger-e2e:
+    runs-on: ubuntu-22.04
+    permissions: {}
+    steps:
+      # GITHUB_TOKEN cannot dispatch workflows in other repositories:
+      # mint a short-lived GitHub App token with actions:write on radicalbit/utestai
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.UTESTAI_APP_ID }}
+          private-key: ${{ secrets.UTESTAI_APP_PRIVATE_KEY }}
+          owner: radicalbit
+          repositories: utestai
+
+      - name: Dispatch Post-Deploy E2E Tests
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REF: ${{ inputs.ref }}
+        run: |
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "started_at=${started_at}" >> "$GITHUB_OUTPUT"
+          gh workflow run "${TARGET_WORKFLOW}" --repo "${TARGET_REPO}" --ref "${REF}"
+          echo "Dispatched '${TARGET_WORKFLOW}' on ${TARGET_REPO}@${REF}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for E2E run to complete
+        if: inputs.wait
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REF: ${{ inputs.ref }}
+          STARTED_AT: ${{ steps.dispatch.outputs.started_at }}
+        run: |
+          # The dispatch API does not return the run id: poll for the run created after the dispatch
+          run_id=""
+          for _ in $(seq 1 30); do
+            run_id="$(gh run list --repo "${TARGET_REPO}" --workflow "${TARGET_WORKFLOW}" \
+              --event workflow_dispatch --branch "${REF}" --limit 10 \
+              --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"${STARTED_AT}\")] | sort_by(.createdAt) | .[0].databaseId // empty")"
+            [ -n "${run_id}" ] && break
+            sleep 10
+          done
+          if [ -z "${run_id}" ]; then
+            echo "::error::Could not find the dispatched run of '${TARGET_WORKFLOW}' on ${TARGET_REPO}"
+            exit 1
+          fi
+          run_url="https://github.com/${TARGET_REPO}/actions/runs/${run_id}"
+          echo "E2E run: ${run_url}"
+          echo "E2E run: ${run_url}" >> "$GITHUB_STEP_SUMMARY"
+          gh run watch "${run_id}" --repo "${TARGET_REPO}" --interval 30 --exit-status
