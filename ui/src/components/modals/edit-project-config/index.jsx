@@ -52,6 +52,7 @@ function EditProjectConfigOuter() {
 
   return (
     <RbitModal
+      aria-label="Edit project configuration"
       backgroundLevel={0}
       closable={false}
       defaultMaximize
@@ -76,7 +77,7 @@ function Header() {
   if (isLoading) {
     return (
       <NewHeader
-        prefix={<Lucide icon={ArrowLeft} onClick={hideModal} />}
+        prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={hideModal} />}
         title={<Skeleton.Input active />}
       />
     );
@@ -90,7 +91,7 @@ function Header() {
           two: <ExportButton />,
         }
       }
-      prefix={<Lucide icon={ArrowLeft} onClick={hideModal} />}
+      prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={hideModal} />}
       title={<SectionTitle subtitle={subtitle} title={title} titlePrefix={<Lucide icon={FolderOpen} />} />}
     />
   );

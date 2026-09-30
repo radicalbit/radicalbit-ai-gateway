@@ -16,11 +16,13 @@ function ThreeDotsMenu() {
   const items = useGetThreeDotsMenuItems(uuid);
 
   return (
-    <Dropdown menu={{ items }}>
-      <Button type="text">
-        <Lucide icon={EllipsisVertical} />
-      </Button>
-    </Dropdown>
+    <Tooltip title="More actions">
+      <Dropdown menu={{ items }}>
+        <Button aria-label="More actions" type="text">
+          <Lucide icon={EllipsisVertical} />
+        </Button>
+      </Dropdown>
+    </Tooltip>
 
   );
 }

@@ -946,4 +946,130 @@ class DashboardRoute:
                 yield result.model_dump(by_alias=True)
                 sleep(10)
 
+        def mcp_entity_ticks(
+            project_uuid: UUID,
+            group_by: Literal['services', 'groups', 'keys'],
+            entity_value: str,
+            routes: list[str] | None,
+            _gte: int | None,
+            _from: int | None,
+            _to: int | None,
+            tags: list[str] | None,
+        ) -> Iterator[dict]:
+            """One entity's chart, refreshed every tick.
+
+            Shared by the three drill-down streams so they cannot drift on
+            the window or the polling interval.
+            """
+            while True:
+                # Recomputed every tick, so a rolling look-back really rolls.
+                from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
+                result = mcp_usage_service.get_mcp_server_chart_data_by_entity(
+                    project_uuid=project_uuid,
+                    group_by=group_by,
+                    entity_value=entity_value,
+                    route_names=routes,
+                    _from=from_datetime,
+                    _to=to_datetime,
+                    tags=tags,
+                )
+                yield result.model_dump(by_alias=True)
+                sleep(10)
+
+        @router.get(
+            '/projects/{project_uuid}/routes/mcp/servers/service/{alias}/stream',
+            status_code=200,
+            response_class=EventSourceResponse,
+        )
+        def stream_mcp_servers_chart_by_service(
+            project_uuid: UUID,
+            alias: str,
+            routes: Annotated[list[str] | None, Query()] = None,
+            _gte: Annotated[
+                int | None,
+                Query(
+                    description='Seconds to look back from now (mutually exclusive with _from/_to)'
+                ),
+            ] = None,
+            _from: Annotated[int | None, Query()] = None,
+            _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
+            _: None = Depends(validate_sse_params),
+            __: None = Depends(validate_project_exists),
+        ) -> Iterator[dict]:
+            yield from mcp_entity_ticks(
+                project_uuid=project_uuid,
+                group_by='services',
+                entity_value=alias,
+                routes=routes,
+                _gte=_gte,
+                _from=_from,
+                _to=_to,
+                tags=tags,
+            )
+
+        @router.get(
+            '/projects/{project_uuid}/routes/mcp/servers/group/{group_uuid}/stream',
+            status_code=200,
+            response_class=EventSourceResponse,
+        )
+        def stream_mcp_servers_chart_by_group(
+            project_uuid: UUID,
+            group_uuid: UUID,
+            routes: Annotated[list[str] | None, Query()] = None,
+            _gte: Annotated[
+                int | None,
+                Query(
+                    description='Seconds to look back from now (mutually exclusive with _from/_to)'
+                ),
+            ] = None,
+            _from: Annotated[int | None, Query()] = None,
+            _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
+            _: None = Depends(validate_sse_params),
+            __: None = Depends(validate_project_exists),
+        ) -> Iterator[dict]:
+            yield from mcp_entity_ticks(
+                project_uuid=project_uuid,
+                group_by='groups',
+                entity_value=str(group_uuid),
+                routes=routes,
+                _gte=_gte,
+                _from=_from,
+                _to=_to,
+                tags=tags,
+            )
+
+        @router.get(
+            '/projects/{project_uuid}/routes/mcp/servers/key/{key_uuid}/stream',
+            status_code=200,
+            response_class=EventSourceResponse,
+        )
+        def stream_mcp_servers_chart_by_key(
+            project_uuid: UUID,
+            key_uuid: UUID,
+            routes: Annotated[list[str] | None, Query()] = None,
+            _gte: Annotated[
+                int | None,
+                Query(
+                    description='Seconds to look back from now (mutually exclusive with _from/_to)'
+                ),
+            ] = None,
+            _from: Annotated[int | None, Query()] = None,
+            _to: Annotated[int | None, Query()] = None,
+            tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
+            _: None = Depends(validate_sse_params),
+            __: None = Depends(validate_project_exists),
+        ) -> Iterator[dict]:
+            yield from mcp_entity_ticks(
+                project_uuid=project_uuid,
+                group_by='keys',
+                entity_value=str(key_uuid),
+                routes=routes,
+                _gte=_gte,
+                _from=_from,
+                _to=_to,
+                tags=tags,
+            )
+
         return router

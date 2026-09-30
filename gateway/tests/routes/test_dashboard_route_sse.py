@@ -2609,3 +2609,363 @@ class TestStreamMcpServersChart:
                 params={'group_by': 'models'},
             )
             assert response.status_code == 422
+
+
+GROUP_UUID = '550e8400-e29b-41d4-a716-446655440003'
+KEY_UUID = '660e8400-e29b-41d4-a716-446655440003'
+
+# (path under the project, the grouping the route stands for, the entity value)
+MCP_ENTITY_ENDPOINTS = [
+    pytest.param(
+        '/routes/mcp/servers/service/files/stream', 'services', 'files', id='service'
+    ),
+    pytest.param(
+        f'/routes/mcp/servers/group/{GROUP_UUID}/stream',
+        'groups',
+        GROUP_UUID,
+        id='group',
+    ),
+    pytest.param(
+        f'/routes/mcp/servers/key/{KEY_UUID}/stream', 'keys', KEY_UUID, id='key'
+    ),
+]
+
+
+class TestStreamMcpServersChartByEntity:
+    """The per-entity drill-down streams: service alias, group uuid, key uuid."""
+
+    @staticmethod
+    async def _read_events(async_client, path, params, wanted: int = 1):
+        events = []
+        async with async_client.stream(
+            'GET', f'{PROJECT_BASE}{path}', params=params
+        ) as response:
+            assert response.status_code == 200
+            assert 'text/event-stream' in response.headers['content-type']
+            current_event_lines = []
+            async for line in response.aiter_lines():
+                if line == '':
+                    if current_event_lines:
+                        events.append('\n'.join(current_event_lines))
+                        current_event_lines = []
+                        if len(events) == wanted:
+                            break
+                else:
+                    current_event_lines.append(line)
+        return events
+
+    @staticmethod
+    def _payload(event: str) -> dict:
+        return json.loads(event[event.find('{') : event.rfind('}') + 1])
+
+    @staticmethod
+    def _single_series(group_by: str, entity_value: str, data: list[int]):
+        return McpServerChartDataDTO(
+            granularity='hours',
+            timestamp=[1736330400 + 3600 * i for i in range(len(data))],
+            data=[
+                McpServerChartDataSeriesDTO(
+                    name='files' if group_by == 'services' else 'retail',
+                    uuid=None if group_by == 'services' else UUID(entity_value),
+                    data=data,
+                )
+            ],
+            total=sum(data),
+        )
+
+    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
+    @pytest.mark.asyncio
+    async def test_stream_all_routes(self, sse_test_app, path, group_by, entity_value):
+        """Every tick carries the one entity's series for the whole project."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
+            side_effect=cycle(
+                [
+                    self._single_series(group_by, entity_value, [2, 3]),
+                    self._single_series(group_by, entity_value, [2, 6]),
+                ]
+            )
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(async_client, path, {}, wanted=2)
+
+                    assert len(events) == 2
+                    payload = self._payload(events[0])
+                    assert payload['granularity'] == 'hours'
+                    assert payload['timestamp'] == [1736330400, 1736334000]
+                    assert payload['total'] == 5
+                    assert len(payload['data']) == 1
+                    assert payload['data'][0]['data'] == [2, 3]
+                    assert payload['data'][0]['uuid'] == (
+                        None if group_by == 'services' else entity_value
+                    )
+                    assert self._payload(events[1])['total'] == 8
+
+                    call_kwargs = mcp_usage_service.get_mcp_server_chart_data_by_entity.call_args.kwargs
+                    assert call_kwargs['project_uuid'] == PROJECT_UUID
+                    assert call_kwargs['group_by'] == group_by
+                    assert call_kwargs['entity_value'] == entity_value
+                    assert call_kwargs['route_names'] is None
+                    assert call_kwargs['tags'] is None
+
+    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
+    @pytest.mark.asyncio
+    async def test_stream_filtered_routes(
+        self, sse_test_app, path, group_by, entity_value
+    ):
+        """The routes filter reaches the service on every tick."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
+            side_effect=cycle([self._single_series(group_by, entity_value, [7])])
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(
+                        async_client, path, {'routes': ['route-A', 'route-B']}
+                    )
+
+                    assert len(events) == 1
+                    payload = self._payload(events[0])
+                    assert payload['total'] == 7
+                    assert payload['data'][0]['data'] == [7]
+                    call_kwargs = mcp_usage_service.get_mcp_server_chart_data_by_entity.call_args.kwargs
+                    assert call_kwargs['route_names'] == ['route-A', 'route-B']
+
+    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
+    @pytest.mark.asyncio
+    async def test_stream_filtered_tags(
+        self, sse_test_app, path, group_by, entity_value
+    ):
+        """The tags filter reaches the service on every tick."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
+            side_effect=cycle([self._single_series(group_by, entity_value, [3])])
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(
+                        async_client,
+                        path,
+                        {'tags': ['env=prod', 'cost_center=retail']},
+                    )
+
+                    assert len(events) == 1
+                    payload = self._payload(events[0])
+                    assert payload['total'] == 3
+                    call_kwargs = mcp_usage_service.get_mcp_server_chart_data_by_entity.call_args.kwargs
+                    assert call_kwargs['tags'] == ['env=prod', 'cost_center=retail']
+
+    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
+    @pytest.mark.asyncio
+    async def test_stream_empty_entity_is_an_empty_chart(
+        self, sse_test_app, path, group_by, entity_value
+    ):
+        """An unknown or quiet entity streams an empty chart, not a 404."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
+            side_effect=cycle(
+                [
+                    McpServerChartDataDTO(
+                        granularity='days', timestamp=[], data=[], total=0
+                    )
+                ]
+            )
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(async_client, path, {})
+
+                    assert len(events) == 1
+                    assert self._payload(events[0]) == {
+                        'granularity': 'days',
+                        'timestamp': [],
+                        'data': [],
+                        'total': 0,
+                    }
+
+    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
+    @pytest.mark.asyncio
+    async def test_stream_rolling_window_moves(
+        self, sse_test_app, path, group_by, entity_value
+    ):
+        """A look-back window is recomputed on every tick, not frozen."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
+            side_effect=cycle([self._single_series(group_by, entity_value, [1])])
+        )
+
+        with patch(
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url='http://localhost:9000'
+            ) as async_client:
+                with anyio.move_on_after(2):
+                    events = await self._read_events(
+                        async_client, path, {'_gte': 3600}, wanted=3
+                    )
+
+                    assert len(events) == 3
+                    calls = mcp_usage_service.get_mcp_server_chart_data_by_entity.call_args_list
+                    froms = [call.kwargs['_from'] for call in calls]
+                    assert all(f is not None for f in froms)
+                    assert all(call.kwargs['_to'] is None for call in calls)
+                    assert froms == sorted(froms)
+                    assert len(set(froms)) > 1
+
+    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
+    @pytest.mark.asyncio
+    async def test_stream_bad_request_gte_and_from(
+        self, sse_test_app, path, group_by, entity_value
+    ):
+        """Combining a look-back with explicit bounds is rejected."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url='http://localhost:9000'
+        ) as async_client:
+            response = await async_client.get(
+                f'{PROJECT_BASE}{path}', params={'_gte': 3600, '_from': 1700000000}
+            )
+            assert response.status_code == 400
+            assert '_gte' in response.json()['error']['message'].lower()
+
+    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
+    @pytest.mark.asyncio
+    async def test_stream_bad_request_non_positive_gte(
+        self, sse_test_app, path, group_by, entity_value
+    ):
+        """A non-positive look-back is rejected."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url='http://localhost:9000'
+        ) as async_client:
+            response = await async_client.get(
+                f'{PROJECT_BASE}{path}', params={'_gte': 0}
+            )
+            assert response.status_code == 400
+
+    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
+    @pytest.mark.asyncio
+    async def test_stream_unknown_project(
+        self, sse_test_app, path, group_by, entity_value
+    ):
+        """An unknown project fails loudly before the stream opens."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            project_service,
+        ) = sse_test_app
+        project_service.validate_exists = MagicMock(
+            side_effect=ProjectNotFoundError('Project with UUID ... not found')
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url='http://localhost:9000'
+        ) as async_client:
+            response = await async_client.get(f'{PROJECT_BASE}{path}')
+            assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_group_or_key_uuid_is_rejected(self, sse_test_app):
+        """The group and key routes take a uuid, and say so."""
+        (
+            app,
+            _request_event_service,
+            _event_service,
+            _mcp_usage_service,
+            _project_service,
+        ) = sse_test_app
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url='http://localhost:9000'
+        ) as async_client:
+            for kind in ('group', 'key'):
+                response = await async_client.get(
+                    f'{PROJECT_BASE}/routes/mcp/servers/{kind}/not-a-uuid/stream'
+                )
+                assert response.status_code == 422, kind

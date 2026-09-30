@@ -1,12 +1,14 @@
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select } from '@radicalbit/radicalbit-design-system';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const isValidEmail = (email) => EMAIL_REGEX.test(email);
 
 function Recipient() {
+  const id = useId();
+
   const { error, form, write } = useFormbitContext();
   const recipients = form?.recipients ?? [];
   const [invalidMessage, setInvalidMessage] = useState('');
@@ -23,8 +25,9 @@ function Recipient() {
   const message = invalidMessage || error('recipients');
 
   return (
-    <FormField label="Recipient" message={message} required>
+    <FormField htmlFor={id} label="Recipient" message={message} required>
       <Select
+        id={id}
         mode="tags"
         onChange={handleOnChange}
         open={false}

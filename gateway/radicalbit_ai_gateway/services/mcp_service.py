@@ -452,13 +452,18 @@ class McpService:
 
     @staticmethod
     def _record_invocation(
-        authorized: McpAuthorizedRequest, method: str, alias: str
+        authorized: McpAuthorizedRequest, method: str, target: dict
     ) -> None:
         """Report an addressed MCP invocation to the events pipeline.
 
-        ``alias`` is empty when the client named a server this route does not
-        configure. The event is emitted anyway. Misdirected traffic stays
-        visible, and the per-server chart still totals to the per-key table.
+        ``target`` is what :func:`target_attributes` resolved: the alias and
+        the tool, prompt or resource uri the call addressed. It is empty when
+        the client named a server this route does not configure. The event is
+        emitted anyway. Misdirected traffic stays visible, and the per-server
+        chart still totals to the per-key table.
+
+        The target follows the alias rule, so a name that resolves to no
+        configured server is never written. See ``target_attributes`` for why.
 
         Never raises. Recording usage must not be able to fail an MCP call.
         """
@@ -472,7 +477,8 @@ class McpService:
                     value=1.0,
                     cost=0.0,
                     mcp_method=method,
-                    mcp_alias=alias,
+                    mcp_alias=target.get('alias', ''),
+                    mcp_target=target.get('target', ''),
                 )
             )
         except Exception:
@@ -540,7 +546,7 @@ class McpService:
         # Before the method runs. The outcome must not change what is counted.
         # A failed call is still an invocation. So is one an allowlist denied,
         # and one that named a tool the upstream does not have.
-        self._record_invocation(authorized, method, target.get('alias', ''))
+        self._record_invocation(authorized, method, target)
 
         try:
             if method == 'initialize':

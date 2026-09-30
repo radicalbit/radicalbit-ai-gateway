@@ -3,7 +3,7 @@ from collections.abc import Callable
 import logging
 
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
-from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut
+from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut, SecretStatus
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.secrets import SecretProvider, get_secret_provider
 from radicalbit_ai_gateway.utils.yaml_utils import extract_secret_references
@@ -23,8 +23,17 @@ class SecretService:
         self._project_config_dao = project_config_dao
         self._secret_provider_factory = secret_provider_factory
 
-    def get_secrets(self) -> list[SecretOut]:
-        """Return a row per secret key the backend holds, sorted by key.
+    def get_secrets(self, search: str | None = None) -> list[SecretOut]:
+        """Return a row per secret key the page lists, unavailable first.
+
+        ``search`` keeps only the rows whose secret key contains it, ignoring
+        case. The whole filtered list is returned, so the caller paginates the
+        filtered set rather than filtering a page.
+
+        Rows are the union of the keys the backend holds and the keys
+        referenced by published configurations: a key removed upstream only
+        survives by name in the configuration, and those are exactly the
+        routes failing right now. A row with no backend half is unavailable.
 
         The provider is built on every call, so the result reflects the
         backend at read time rather than a snapshot. Each row's ``used_in``
@@ -32,10 +41,21 @@ class SecretService:
         served.
         """
         provider = self._secret_provider_factory()
+        backend_keys = set(provider.list_secret_keys())
         used_in = self._usage_by_key()
+        keys = backend_keys | used_in.keys()
+        if search:
+            term = search.casefold()
+            keys = {key for key in keys if term in key.casefold()}
+        # Unavailable first, so unavailable keys always land on page one; by key
+        # within each group, so paging is stable.
         return [
-            SecretOut(key=key, used_in=used_in.get(key, []))
-            for key in sorted(provider.list_secret_keys())
+            SecretOut(
+                key=key,
+                used_in=used_in.get(key, []),
+                status=None if key in backend_keys else SecretStatus.UNAVAILABLE,
+            )
+            for key in sorted(keys, key=lambda k: (k in backend_keys, k))
         ]
 
     def _usage_by_key(self) -> dict[str, list[ProjectRef]]:

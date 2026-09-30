@@ -7,7 +7,7 @@ import CustomRange from './custom-range';
 import Presets from './presets';
 
 const defaultKeys = ['from', 'to', 'gte', 'preset'];
-export default function TimeFilter({ keys = defaultKeys, reverse = false, storageKey }) {
+export default function TimeFilter({ id, keys = defaultKeys, reverse = false, storageKey }) {
   const [searchParams] = useSearchParams();
   const isCustom = searchParams.get('preset') === 'custom';
 
@@ -16,8 +16,8 @@ export default function TimeFilter({ keys = defaultKeys, reverse = false, storag
   const css = classNames('c-time-filter', { 'c-time-filter--reverse': reverse });
 
   const customOrPresets = isCustom
-    ? <CustomRange />
-    : <Presets />;
+    ? <CustomRange id={id} />
+    : <Presets id={id} />;
 
   return (
     <div className={css}>

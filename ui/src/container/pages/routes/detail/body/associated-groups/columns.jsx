@@ -64,13 +64,16 @@ function Actions({ record: { uuid } }) {
 
   const handleOnCancel = (e) => { e.stopPropagation(); };
 
+  // The click is handled by the wrapping Popconfirm: the handler only keeps the Button clickable
+  const handleOnTriggerClick = () => {};
+
   return (
     <Tooltip title="Remove">
       <Popconfirm
         cancelButtonProps={{ type: 'secondary-light' }}
         description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove from the route the group" />}
         label={(
-          <Button size="small" type="text">
+          <Button aria-label="Remove" onClick={handleOnTriggerClick} size="small" type="text">
             <Lucide icon={Trash} type="error" />
           </Button>
           )}

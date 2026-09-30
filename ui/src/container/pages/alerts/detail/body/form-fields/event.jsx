@@ -1,12 +1,15 @@
 import { useGetAlertableEventsQuery } from '@State/alerts/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
+import { useId } from 'react';
 
 const toOptions = (alertableEvents = {}) => Object.values(alertableEvents)
   .flat()
   .map(({ event, label }) => ({ label, value: event }));
 
 function Event() {
+  const id = useId();
+
   const { error, form, write } = useFormbitContext();
   const projectUuid = form?.project;
   const routeName = form?.route;
@@ -31,9 +34,10 @@ function Event() {
   }
 
   return (
-    <FormField label="Event" message={error('event') || errorMessage} required>
+    <FormField htmlFor={id} label="Event" message={error('event') || errorMessage} required>
       <Select
         disabled={isDisabled || isError}
+        id={id}
         onChange={handleOnChange}
         options={options}
         placeholder="Select an event"

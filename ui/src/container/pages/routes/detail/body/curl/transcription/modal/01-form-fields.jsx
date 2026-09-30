@@ -3,10 +3,11 @@ import useAutoFocus from '@Hooks/use-auto-focus';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Input } from '@radicalbit/radicalbit-design-system';
 import { FileAudio, KeyRound } from 'lucide-react';
-import { useRef } from 'react';
+import { useId, useRef } from 'react';
 
 export function ApiKey() {
   const ref = useRef();
+  const id = useId();
 
   const { error, form, write } = useFormbitContext();
   const apiKey = form?.apiKey;
@@ -17,11 +18,13 @@ export function ApiKey() {
 
   return (
     <FormField
+      htmlFor={id}
       label="Credential"
       message={error('apiKey')}
       required
     >
       <Input
+        id={id}
         onChange={handleOnChange}
         placeholder="Paste your credential"
         prefix={<Lucide icon={KeyRound} />}
@@ -33,6 +36,8 @@ export function ApiKey() {
 }
 
 export function AudioPath() {
+  const id = useId();
+
   const { error, form, write } = useFormbitContext();
   const audioPath = form?.audioPath;
 
@@ -40,11 +45,13 @@ export function AudioPath() {
 
   return (
     <FormField
+      htmlFor={id}
       label="Audio file path"
       message={error('audioPath')}
       required
     >
       <Input
+        id={id}
         onChange={handleOnChange}
         placeholder="/Users/me/audio.mp3"
         prefix={<Lucide icon={FileAudio} />}

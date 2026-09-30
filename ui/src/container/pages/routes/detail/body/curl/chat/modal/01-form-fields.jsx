@@ -3,10 +3,11 @@ import useAutoFocus from '@Hooks/use-auto-focus';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Input } from '@radicalbit/radicalbit-design-system';
 import { KeyRound } from 'lucide-react';
-import { useRef } from 'react';
+import { useId, useRef } from 'react';
 
 export function ApiKey() {
   const ref = useRef();
+  const id = useId();
 
   const { error, form, write } = useFormbitContext();
   const apiKey = form?.apiKey;
@@ -17,11 +18,13 @@ export function ApiKey() {
 
   return (
     <FormField
+      htmlFor={id}
       label="Credential"
       message={error('apiKey')}
       required
     >
       <Input
+        id={id}
         onChange={handleOnChange}
         placeholder="Paste your credential"
         prefix={<Lucide icon={KeyRound} />}

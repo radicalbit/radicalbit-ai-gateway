@@ -6,7 +6,7 @@ function RedirectingToLogin() {
   return (
     <Void
       description="You will be redirected to the login page shortly."
-      image={<img alt="login" src={Logo} />}
+      image={<img alt="" src={Logo} />}
       title="Redirecting to login..."
     />
   );

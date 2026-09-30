@@ -23,6 +23,7 @@ function Header({ activeConfigUuid, configs, onSelectConfig }) {
 
   return (
     <Segmented
+      aria-label="Configuration slot"
       block
       onChange={handleOnChange}
       options={options}

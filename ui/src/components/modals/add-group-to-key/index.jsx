@@ -31,6 +31,7 @@ function AddGroupToKeyOuter() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Associate group"
       closable
       header={<Header />}
       onCancel={hideModal}

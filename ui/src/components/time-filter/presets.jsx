@@ -14,7 +14,7 @@ const presets = [
   { label: 'Last 2 days', seconds: 3600 * 24 * 2 },
 ];
 
-function Presets() {
+function Presets({ id }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const curr = searchParams.get('preset');
 
@@ -49,6 +49,7 @@ function Presets() {
   return (
     <Select
       allowClear
+      id={id}
       onChange={handleSelectChange}
       options={[
         ...presets.map((p) => ({ label: p.label, value: p.label })),

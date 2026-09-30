@@ -2,7 +2,7 @@ import Lucide from '@Components/lucide';
 import {
   Board,
   Button,
-  NewHeader, SectionTitle, TextArea,
+  NewHeader, SectionTitle, TextArea, Tooltip,
 } from '@radicalbit/radicalbit-design-system';
 import { Send, WandSparkles } from 'lucide-react';
 
@@ -28,12 +28,17 @@ function ChatbotServed() {
             <NewHeader
               details={{
                 one: (
-                  <Button
-                    disabled
-                    type="primary"
-                  >
-                    <Lucide icon={Send} />
-                  </Button>
+                  <Tooltip title="Send">
+                    <div>
+                      <Button
+                        aria-label="Send"
+                        disabled
+                        type="primary"
+                      >
+                        <Lucide icon={Send} />
+                      </Button>
+                    </div>
+                  </Tooltip>
                 ),
               }}
               padding="vertical"
@@ -50,6 +55,7 @@ function ChatbotServed() {
           )}
           main={(
             <TextArea
+              aria-label="Prompt"
               placeholder="Type here..."
               rows={TEXTAREA_ROWS}
             />

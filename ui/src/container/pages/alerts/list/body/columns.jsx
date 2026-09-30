@@ -101,13 +101,18 @@ function Actions({ uuid, name }) {
     e.stopPropagation();
   };
 
+  // The click is handled by the wrapping Popconfirm: the handler only keeps the Button clickable
+  const handleOnTriggerClick = () => {};
+
   return (
     <DataTableAction noHide>
       <span onClick={handleOnClick} role="presentation">
         <DeleteAlert name={name} uuid={uuid}>
-          <Button size="small" type="text">
-            <Lucide icon={Trash} type="error" />
-          </Button>
+          <Tooltip title="Delete alert rule">
+            <Button aria-label="Delete alert rule" onClick={handleOnTriggerClick} size="small" type="text">
+              <Lucide icon={Trash} type="error" />
+            </Button>
+          </Tooltip>
         </DeleteAlert>
       </span>
     </DataTableAction>

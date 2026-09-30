@@ -29,6 +29,7 @@ function DeleteKeyWithGroupsOuter() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Delete credential"
       closable
       header={(
         <SectionTitle

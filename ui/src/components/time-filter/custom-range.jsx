@@ -10,7 +10,7 @@ import { useSearchParams } from 'react-router-dom';
 dayjs.extend(weekday);
 dayjs.extend(localeData);
 
-function CustomRange() {
+function CustomRange({ id }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const rangeValue = useGetRangeValue();
 
@@ -37,6 +37,7 @@ function CustomRange() {
     <RangePicker
       allowClear={false}
       format="YYYY-MMM-DD HH:mm"
+      id={id}
       onChange={handleRangeChange}
       placeholder={['Start date (no limit)', 'End date (no limit)']}
       showTime
@@ -60,6 +61,7 @@ function SuffixIcon() {
 
   return (
     <Lucide
+      aria-label="Clear date range"
       className="anticon anticon-close-circle"
       icon={CircleX}
       onClick={handleOnClick}

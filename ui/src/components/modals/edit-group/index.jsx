@@ -6,7 +6,7 @@ import {
   Button,
   FormField, Input, RbitModal, SectionTitle, Skeleton, Spinner,
 } from '@radicalbit/radicalbit-design-system';
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { GATEWAY_OWNER } from '@Src/constants';
 import { useGetGroupQuery } from '@State/groups/api';
 import { schema } from './schema';
@@ -30,6 +30,7 @@ function EditGroupOuter() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Edit Group"
       closable
       header={(
         <SectionTitle
@@ -88,6 +89,7 @@ function IsLoading() {
 
 function Name() {
   const ref = useRef();
+  const id = useId();
 
   const { error, form, write } = useFormbitContext();
   const name = form?.name;
@@ -103,12 +105,14 @@ function Name() {
 
   return (
     <FormField
+      htmlFor={id}
       label="Name"
       message={error('name')}
       modifier="w-[200px]"
       required
     >
       <Input
+        id={id}
         onChange={handleOnChange}
         onPressEnter={handleOnPressEnter}
         readOnly={isLoading}

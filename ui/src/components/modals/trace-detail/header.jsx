@@ -58,7 +58,7 @@ function Header() {
         <SectionTitle
           subtitle={subtitle}
           title={routeName}
-          titlePrefix={<Lucide className="cursor-pointer" icon={ArrowLeft} onClick={handleOnClickBack} />}
+          titlePrefix={<Lucide aria-label="Back" className="cursor-pointer" icon={ArrowLeft} onClick={handleOnClickBack} />}
         />
       )}
     />

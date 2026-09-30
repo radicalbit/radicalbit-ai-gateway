@@ -1,6 +1,6 @@
 import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
-import { Button, Dropdown } from '@radicalbit/radicalbit-design-system';
+import { Button, Dropdown, Tooltip } from '@radicalbit/radicalbit-design-system';
 import { EllipsisVertical } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
@@ -9,11 +9,13 @@ function ThreeDotsMenu() {
   const items = useGetThreeDotsMenuItems(name);
 
   return (
-    <Dropdown menu={{ items }}>
-      <Button type="text">
-        <Lucide icon={EllipsisVertical} />
-      </Button>
-    </Dropdown>
+    <Tooltip title="More actions">
+      <Dropdown menu={{ items }}>
+        <Button aria-label="More actions" type="text">
+          <Lucide icon={EllipsisVertical} />
+        </Button>
+      </Dropdown>
+    </Tooltip>
 
   );
 }

@@ -5,7 +5,7 @@ import {
   Button,
   FormField, Input, RbitModal, SectionTitle, Spinner,
 } from '@radicalbit/radicalbit-design-system';
-import { useRef } from 'react';
+import { useId, useRef } from 'react';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
 function CreateModal() {
@@ -15,6 +15,7 @@ function CreateModal() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Create credential"
       closable
       header={(
         <SectionTitle
@@ -43,6 +44,7 @@ function CreateModal() {
 
 function Name() {
   const ref = useRef();
+  const id = useId();
 
   const { error, form, write } = useFormbitContext();
   const name = form?.name;
@@ -54,11 +56,13 @@ function Name() {
 
   return (
     <FormField
+      htmlFor={id}
       label="Credential name"
       message={error('name')}
       required
     >
       <Input
+        id={id}
         onChange={handleOnChange}
         onPressEnter={handleOnSubmit}
         readOnly={isLoading}

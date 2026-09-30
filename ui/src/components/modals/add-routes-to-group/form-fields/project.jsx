@@ -1,8 +1,11 @@
 import { useGetProjectsQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
+import { useId } from 'react';
 
 function Project() {
+  const id = useId();
+
   const { form, write } = useFormbitContext();
   const projectUuid = form?.projectUuid;
 
@@ -26,10 +29,11 @@ function Project() {
   }
 
   return (
-    <FormField label="Project">
+    <FormField htmlFor={id} label="Project">
       <Select
         allowClear
         disabled={isError}
+        id={id}
         onChange={handleOnChange}
         optionFilterProp="label"
         options={options}

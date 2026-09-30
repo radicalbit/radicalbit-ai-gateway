@@ -77,14 +77,17 @@ class RoutingEventPayload(EventBase):
 
 
 class McpInvocationEventPayload(EventBase):
-    """One addressed MCP invocation, with the server it addressed.
+    """One addressed MCP invocation, with the server and object it addressed.
 
-    ``mcp_alias`` is empty when the route does not configure that server.
+    ``mcp_target`` is the tool for ``tools/call``, the prompt for
+    ``prompts/get`` and the upstream uri for ``resources/read``. Both it and
+    ``mcp_alias`` are empty when the route does not configure that server.
     """
 
     event_type: Literal[EventType.MCP_INVOCATION]
     mcp_method: str
     mcp_alias: str = ''
+    mcp_target: str = ''
 
 
 class LimitEventPayload(EventBase):

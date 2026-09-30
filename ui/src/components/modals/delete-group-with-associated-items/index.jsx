@@ -29,6 +29,7 @@ function DeleteGroupWithAssociatedItemsOuter() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Delete group"
       closable
       header={(
         <SectionTitle
