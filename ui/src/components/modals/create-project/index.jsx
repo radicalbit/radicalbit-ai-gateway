@@ -25,6 +25,7 @@ function CreateProjectInner() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Create project"
       closable
       header={(
         <SectionTitle

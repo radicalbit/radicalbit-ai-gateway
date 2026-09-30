@@ -64,7 +64,7 @@ function IsError({ refetch, error }) {
                 might be deleted
               </>
             )}
-            image={<img alt="Logo" src={Logo} />}
+            image={<img alt="" src={Logo} />}
             title="Group not found"
           />
         )}
@@ -90,7 +90,7 @@ function IsError({ refetch, error }) {
               please retry later
             </>
           )}
-          image={<img alt="Logo" src={Logo} />}
+          image={<img alt="" src={Logo} />}
           title="Unable to load groups"
         />
       )}

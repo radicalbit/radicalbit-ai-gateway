@@ -16,7 +16,7 @@ function Analytics({ record }) {
   return (
     <DataTableAction noHide>
       <Tooltip title="Open route analytics">
-        <Lucide icon={ChartLine} onClick={handleOnClick} />
+        <Lucide aria-label="Open route analytics" icon={ChartLine} onClick={handleOnClick} />
       </Tooltip>
     </DataTableAction>
   );

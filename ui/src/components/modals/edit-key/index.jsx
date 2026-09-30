@@ -6,7 +6,7 @@ import {
   Button,
   FormField, Input, RbitModal, SectionTitle, Skeleton, Spinner,
 } from '@radicalbit/radicalbit-design-system';
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { GATEWAY_OWNER } from '@Src/constants';
 import { useGetKeyQuery } from '@State/keys/api';
 import { schema } from './schema';
@@ -30,6 +30,7 @@ function EditKeyOuter() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Edit credential"
       closable
       header={(
         <SectionTitle
@@ -88,6 +89,7 @@ function IsLoading() {
 
 function Name() {
   const ref = useRef();
+  const id = useId();
 
   const { error, form, write } = useFormbitContext();
   const name = form?.name;
@@ -103,11 +105,13 @@ function Name() {
 
   return (
     <FormField
+      htmlFor={id}
       label="Credential name"
       message={error('name')}
       required
     >
       <Input
+        id={id}
         onChange={handleOnChange}
         onPressEnter={handleOnPressEnter}
         readOnly={isLoading}

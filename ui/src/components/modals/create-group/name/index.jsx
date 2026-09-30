@@ -1,11 +1,12 @@
 import useAutoFocus from '@Hooks/use-auto-focus';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Input } from '@radicalbit/radicalbit-design-system';
-import { useRef } from 'react';
+import { useId, useRef } from 'react';
 import useHandleOnSubmit from '../useHandleOnSubmit';
 
 function NameWithoutIdp() {
   const ref = useRef();
+  const id = useId();
 
   const { error, form, write } = useFormbitContext();
   const name = form?.name;
@@ -21,11 +22,13 @@ function NameWithoutIdp() {
 
   return (
     <FormField
+      htmlFor={id}
       label="Name"
       message={error('name')}
       required
     >
       <Input
+        id={id}
         onChange={handleOnChange}
         onPressEnter={handleOnPressEnter}
         readOnly={isLoading}

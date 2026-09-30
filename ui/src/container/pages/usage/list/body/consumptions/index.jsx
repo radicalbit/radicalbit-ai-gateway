@@ -7,7 +7,7 @@ import {
   Board, Button, FormField, Skeleton, Void,
 } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useId } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
 import CostsGraph from './costs-graph';
@@ -21,6 +21,11 @@ import SummaryHeader from './summary-header';
 import TokensGraph from './tokens-graph';
 
 function Consumptions() {
+  const projectId = useId();
+  const routesId = useId();
+  const tagsId = useId();
+  const timeRangeId = useId();
+
   useInitLayoutConfigurations();
 
   const [searchParams] = useSearchParams();
@@ -30,8 +35,8 @@ function Consumptions() {
     return (
       <div className="flex flex-col gap-4 h-full p-4">
         <div className="flex flex-row items-center gap-4">
-          <FormField label="Project">
-            <ProjectFilter />
+          <FormField htmlFor={projectId} label="Project">
+            <ProjectFilter id={projectId} />
           </FormField>
         </div>
 
@@ -43,20 +48,20 @@ function Consumptions() {
   return (
     <div className="flex flex-col gap-4 h-full p-4">
       <div className="flex flex-row items-center gap-4">
-        <FormField label="Project">
-          <ProjectFilter />
+        <FormField htmlFor={projectId} label="Project">
+          <ProjectFilter id={projectId} />
         </FormField>
 
-        <FormField label="Tags">
-          <TagsFilter />
+        <FormField htmlFor={tagsId} label="Tags">
+          <TagsFilter id={tagsId} />
         </FormField>
 
-        <FormField label="Routes">
-          <RoutesFilter />
+        <FormField htmlFor={routesId} label="Routes">
+          <RoutesFilter id={routesId} />
         </FormField>
 
-        <FormField label="Time range">
-          <TimeFilter reverse />
+        <FormField htmlFor={timeRangeId} label="Time range">
+          <TimeFilter id={timeRangeId} reverse />
         </FormField>
       </div>
 

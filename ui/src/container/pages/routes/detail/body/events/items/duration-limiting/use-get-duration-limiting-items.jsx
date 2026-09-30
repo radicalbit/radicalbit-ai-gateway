@@ -1,6 +1,6 @@
+import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
 import { useGetEventsByRouteWithRange, useGetRouteByNameWithRange } from '@Src/store/state/routes/vertical-hooks';
-import { Button } from '@radicalbit/radicalbit-design-system';
 import isEmpty from 'lodash/isEmpty';
 import { Hourglass } from 'lucide-react';
 import { useParams } from 'react-router-dom';
@@ -36,7 +36,7 @@ const useGetDurationLimitingItem = () => {
     ...collapseProps,
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><Lucide icon={Hourglass} /></Button>
+        <IconBadge aria-label="Duration Limiting" {...type}><Lucide icon={Hourglass} /></IconBadge>
 
         <div>Duration Limiting</div>
       </div>

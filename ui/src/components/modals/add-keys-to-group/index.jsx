@@ -31,6 +31,7 @@ function AddKeysToGroupsOuter() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Associate credentials"
       closable
       header={<Header />}
       onCancel={hideModal}

@@ -4,6 +4,7 @@ import {
   Board, Button, DataTable, FormField, Void,
 } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
+import { useId } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ProjectFilter from '../project-filter';
 import RoutesFilter from '../routes-filter';
@@ -11,6 +12,10 @@ import columns from './columns';
 import LimitStatusFilter from './limit-status-filter';
 
 function Limits() {
+  const projectId = useId();
+  const routesId = useId();
+  const statusId = useId();
+
   const [searchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid');
 
@@ -18,8 +23,8 @@ function Limits() {
     return (
       <div className="flex flex-col gap-4 h-full p-4">
         <div className="flex flex-row items-center gap-4">
-          <FormField label="Project">
-            <ProjectFilter />
+          <FormField htmlFor={projectId} label="Project">
+            <ProjectFilter id={projectId} />
           </FormField>
         </div>
 
@@ -31,16 +36,16 @@ function Limits() {
   return (
     <div className="flex flex-col gap-4 h-full p-4">
       <div className="flex flex-row items-center gap-4">
-        <FormField label="Project">
-          <ProjectFilter />
+        <FormField htmlFor={projectId} label="Project">
+          <ProjectFilter id={projectId} />
         </FormField>
 
-        <FormField label="Routes">
-          <RoutesFilter />
+        <FormField htmlFor={routesId} label="Routes">
+          <RoutesFilter id={routesId} />
         </FormField>
 
-        <FormField label="Limit status">
-          <LimitStatusFilter />
+        <FormField htmlFor={statusId} label="Limit status">
+          <LimitStatusFilter id={statusId} />
         </FormField>
       </div>
 

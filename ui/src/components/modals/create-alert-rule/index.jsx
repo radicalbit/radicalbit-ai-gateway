@@ -43,6 +43,7 @@ function CreateAlertRuleInner() {
   return (
     <RbitModal
       actions={stepActions}
+      aria-label="Create Alert"
       closable
       header={(
         <SectionTitle

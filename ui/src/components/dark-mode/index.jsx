@@ -13,14 +13,14 @@ function DarkMode({ darkActions, lightActions }) {
   if (isDarkMode) {
     return (
       <Tooltip placement="bottomLeft" title={<TooltipTitle title="Light mode" />}>
-        <Lucide icon={Sun} onClick={enableDarkMode} />
+        <Lucide aria-label="Light mode" icon={Sun} onClick={enableDarkMode} />
       </Tooltip>
     );
   }
 
   return (
     <Tooltip placement="bottomLeft" title={<TooltipTitle title="Dark mode" />}>
-      <Lucide icon={Moon} onClick={enableLightMode} />
+      <Lucide aria-label="Dark mode" icon={Moon} onClick={enableLightMode} />
     </Tooltip>
 
   );

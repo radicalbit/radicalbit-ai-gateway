@@ -1,4 +1,5 @@
 import HtmlAnchor from '@Components/html-anchor';
+import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import {
@@ -8,7 +9,7 @@ import {
   formatText,
   formatTimestamp,
 } from '@Src/helpers/column-formatters';
-import { Button, Tooltip } from '@radicalbit/radicalbit-design-system';
+import { Tooltip } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import TagsCell from './tags-cell';
@@ -124,15 +125,15 @@ function StatusTooltip({ traceStatus, children }) {
 function Status({ traceStatus }) {
   switch (traceStatus) {
     case 'error': return (
-      <Button className="capitalize" shape="circle" size="small" type="error">
+      <IconBadge aria-label="Status: error" className="capitalize" size="small" type="error">
         <Lucide icon={TriangleAlert} />
-      </Button>
+      </IconBadge>
     );
 
     case 'warning': return (
-      <Button className="capitalize" shape="circle" size="small" type="warning-light">
+      <IconBadge aria-label="Status: warning" className="capitalize" size="small" type="warning-light">
         <Lucide icon={TriangleAlert} />
-      </Button>
+      </IconBadge>
     );
 
     default: return '';

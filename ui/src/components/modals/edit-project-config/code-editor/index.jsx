@@ -27,7 +27,7 @@ function CodeEditor() {
         className="flex-1 min-h-0"
         main={(
           <div className="flex flex-col h-full">
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0" data-testid={`yaml-editor-slot-${activeConfig.slot?.toLowerCase()}`}>
               <Editor config={activeConfig} />
             </div>
           </div>

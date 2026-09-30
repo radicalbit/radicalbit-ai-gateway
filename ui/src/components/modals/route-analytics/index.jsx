@@ -17,12 +17,13 @@ function RouteAnalytics() {
 
   return (
     <RbitModal
+      aria-label="Drill-down"
       closable={false}
       defaultMaximize
       header={(
         <NewHeader
           details={{ one: <TimeFilter /> }}
-          prefix={<Lucide icon={ArrowLeft} onClick={hideModal} />}
+          prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={hideModal} />}
           title={(
             <SectionTitle
               subtitle={routeName}

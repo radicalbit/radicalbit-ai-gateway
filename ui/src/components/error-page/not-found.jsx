@@ -13,7 +13,7 @@ export default function NotFound() {
     <Void
       actions={<Button onClick={handleOnClick} type="primary">Go To Home</Button>}
       description="We are sorry, the URL may be misspelled or the page you are looking for is no longer available"
-      image={<img alt="Logo" src={Logo} />}
+      image={<img alt="" src={Logo} />}
       title="Oh no, page not found"
     />
   );

@@ -1,7 +1,8 @@
+import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
 import { useGetRouteByNameWithRange } from '@Src/store/state/routes/vertical-hooks';
 import {
-  Button, Json, Popover,
+  Json, Popover,
 } from '@radicalbit/radicalbit-design-system';
 import isEmpty from 'lodash/isEmpty';
 import {
@@ -25,7 +26,7 @@ export function useGetModelItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button shape="circle" type="text"><Lucide icon={Bot} /></Button>
+            <IconBadge aria-label="Models" type="text"><Lucide icon={Bot} /></IconBadge>
 
             <div>Models</div>
           </div>
@@ -37,7 +38,7 @@ export function useGetModelItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" type="text"><Lucide icon={Bot} /></Button>
+        <IconBadge aria-label="Models" type="text"><Lucide icon={Bot} /></IconBadge>
 
         <div>Models</div>
       </div>
@@ -70,7 +71,7 @@ export function useGetFallbackItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle" type="secondary-light"><Lucide icon={CornerDownRight} /></Button>
+            <IconBadge aria-label="Fallback" disabled type="secondary-light"><Lucide icon={CornerDownRight} /></IconBadge>
 
             <div>Fallback</div>
           </div>
@@ -94,7 +95,7 @@ export function useGetFallbackItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><Lucide icon={CornerDownRight} /></Button>
+        <IconBadge aria-label="Fallback" {...type}><Lucide icon={CornerDownRight} /></IconBadge>
 
         <div>Fallback</div>
       </div>
@@ -125,7 +126,7 @@ export function useGetGuardrailsItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle" type="secondary-light"><Lucide icon={Shield} /></Button>
+            <IconBadge aria-label="Guardrails" disabled type="secondary-light"><Lucide icon={Shield} /></IconBadge>
 
             <div>Guardrails</div>
           </div>
@@ -148,7 +149,7 @@ export function useGetGuardrailsItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><Lucide icon={Shield} /></Button>
+        <IconBadge aria-label="Guardrails" {...type}><Lucide icon={Shield} /></IconBadge>
 
         <div>Guardrails</div>
       </div>
@@ -179,7 +180,7 @@ export function useGetRateLimitingItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle"><Lucide icon={Timer} /></Button>
+            <IconBadge aria-label="Rate Limiting" disabled><Lucide icon={Timer} /></IconBadge>
 
             <div>Rate Limiting</div>
           </div>
@@ -201,7 +202,7 @@ export function useGetRateLimitingItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><Lucide icon={Timer} /></Button>
+        <IconBadge aria-label="Rate Limiting" {...type}><Lucide icon={Timer} /></IconBadge>
 
         <div>Rate Limiting</div>
       </div>
@@ -240,7 +241,7 @@ export function useGetTokenLimitingItem() {
       label: (
         <Popover content={tooltip} placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle" type="secondary-light"><Lucide icon={TableColumnsSplit} /></Button>
+            <IconBadge aria-label="Token Limiting" disabled type="secondary-light"><Lucide icon={TableColumnsSplit} /></IconBadge>
 
             <div>Token Limiting</div>
           </div>
@@ -261,7 +262,7 @@ export function useGetTokenLimitingItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><Lucide icon={TableColumnsSplit} /></Button>
+        <IconBadge aria-label="Token Limiting" {...type}><Lucide icon={TableColumnsSplit} /></IconBadge>
 
         <div>Token Limiting</div>
       </div>
@@ -297,7 +298,7 @@ export function useGetDurationLimitingItem() {
       label: (
         <Popover content={tooltip} placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle"><Lucide icon={Hourglass} /></Button>
+            <IconBadge aria-label="Duration Limiting" disabled><Lucide icon={Hourglass} /></IconBadge>
 
             <div>Duration Limiting</div>
           </div>
@@ -319,7 +320,7 @@ export function useGetDurationLimitingItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><Lucide icon={Hourglass} /></Button>
+        <IconBadge aria-label="Duration Limiting" {...type}><Lucide icon={Hourglass} /></IconBadge>
 
         <div>Duration Limiting</div>
       </div>
@@ -361,9 +362,9 @@ export function useGetCacheItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button shape="circle" {...type}>
+            <IconBadge aria-label="Caching" {...type}>
               <Lucide icon={CircleCheck} />
-            </Button>
+            </IconBadge>
 
             <div>Caching</div>
           </div>
@@ -375,9 +376,9 @@ export function useGetCacheItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}>
+        <IconBadge aria-label="Caching" {...type}>
           <Lucide icon={CircleCheck} />
-        </Button>
+        </IconBadge>
 
         <div>Caching</div>
       </div>
@@ -408,7 +409,7 @@ export function useGetAdvancedRoutingItem() {
       label: (
         <Popover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
-            <Button disabled shape="circle" type="secondary-light"><Lucide icon={Route} /></Button>
+            <IconBadge aria-label="Advanced Routing" disabled type="secondary-light"><Lucide icon={Route} /></IconBadge>
 
             <div>Advanced Routing</div>
           </div>
@@ -420,7 +421,7 @@ export function useGetAdvancedRoutingItem() {
   return {
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" type="text"><Lucide icon={Route} /></Button>
+        <IconBadge aria-label="Advanced Routing" type="text"><Lucide icon={Route} /></IconBadge>
 
         <div>Advanced Routing</div>
       </div>

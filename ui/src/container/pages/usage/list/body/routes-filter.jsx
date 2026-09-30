@@ -2,7 +2,7 @@ import { useGetProjectRoutesWithRange } from '@State/usage/vertical-hooks';
 import { Select, Skeleton } from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
 
-function RoutesFilter() {
+function RoutesFilter({ id }) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data = [], isError, isLoading } = useGetProjectRoutesWithRange();
@@ -34,6 +34,7 @@ function RoutesFilter() {
     <Select
       allowClear
       disabled={isError}
+      id={id}
       maxTagCount="responsive"
       mode="multiple"
       onChange={handleOnChange}
