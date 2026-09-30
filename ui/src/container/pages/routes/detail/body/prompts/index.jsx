@@ -163,7 +163,7 @@ function IsError({ refetch }) {
               please retry later
             </>
           )}
-          image={<img alt="Logo" src={Logo} />}
+          image={<img alt="" src={Logo} />}
           style={{ height: '80vh' }}
           title="Unable to load Prompts"
         />

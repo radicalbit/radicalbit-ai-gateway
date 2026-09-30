@@ -10,6 +10,7 @@ import {
   Dropdown,
   RelativeDateTime,
   SectionTitle,
+  Tooltip,
   Truncate,
 } from '@radicalbit/radicalbit-design-system';
 import { EllipsisVertical } from 'lucide-react';
@@ -113,11 +114,13 @@ function Actions({ uuid }) {
   }
 
   return (
-    <Dropdown className="c-project-config-menu" menu={{ items }}>
-      <Button onClick={handleOnClick} type="text">
-        <Lucide icon={EllipsisVertical} />
-      </Button>
-    </Dropdown>
+    <Tooltip title="More actions">
+      <Dropdown className="c-project-config-menu" menu={{ items }}>
+        <Button aria-label="More actions" onClick={handleOnClick} type="text">
+          <Lucide icon={EllipsisVertical} />
+        </Button>
+      </Dropdown>
+    </Tooltip>
   );
 }
 

@@ -4,7 +4,7 @@ import { Select, Skeleton } from '@radicalbit/radicalbit-design-system';
 import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
-function ProjectFilter() {
+function ProjectFilter({ id }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid') || undefined;
@@ -49,6 +49,7 @@ function ProjectFilter() {
     <Select
       allowClear
       disabled={isError}
+      id={id}
       onChange={handleOnChange}
       optionFilterProp="label"
       options={options}

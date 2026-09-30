@@ -16,6 +16,7 @@ function SuccessModal() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Credential"
       header={(
         <SectionTitle
           subtitle="Please note that we do not display your credentials again after you generate them."

@@ -1767,6 +1767,32 @@ async def test_an_addressed_invocation_is_recorded(recorded_events, method, para
 
 
 @pytest.mark.parametrize(
+    ('method', 'params', 'target'),
+    [
+        ('tools/call', {'name': 'github__get_issue'}, 'get_issue'),
+        ('prompts/get', {'name': 'github__summarize'}, 'summarize'),
+        (
+            'resources/read',
+            {'uri': encode_resource_uri('github', RESOURCE_A)},
+            strip_uri_credentials(RESOURCE_A),
+        ),
+    ],
+)
+async def test_an_addressed_invocation_records_its_target(
+    recorded_events, method, params, target
+):
+    """The tool, prompt or resource, without the alias prefix. Same value the
+    trace carries as ``rb.gateway.mcp_target``.
+    """
+    await _service(_invoking_client())._dispatch(
+        _request(method, params=params), SERVERS, None, authorized=_authorized()
+    )
+
+    (event,) = _mcp_events(recorded_events)
+    assert event['MCP_TARGET'] == target
+
+
+@pytest.mark.parametrize(
     'method',
     ['initialize', 'ping', 'tools/list', 'prompts/list', 'resources/list'],
 )
@@ -1835,6 +1861,7 @@ async def test_a_call_denied_by_an_allowlist_is_still_recorded(recorded_events):
     client.call_tool.assert_not_awaited()
     (event,) = _mcp_events(recorded_events)
     assert event['MCP_ALIAS'] == 'github'
+    assert event['MCP_TARGET'] == 'get_issue'
 
 
 async def test_a_call_naming_an_unconfigured_server_is_recorded_without_an_alias(
@@ -1851,6 +1878,8 @@ async def test_a_call_naming_an_unconfigured_server_is_recorded_without_an_alias
     (event,) = _mcp_events(recorded_events)
     assert event['MCP_METHOD'] == 'tools/call'
     assert event['MCP_ALIAS'] == ''
+    # The name after an unknown alias is never written. Anyone could mint it.
+    assert event['MCP_TARGET'] == ''
 
 
 async def test_an_invocation_carries_the_request_envelope(recorded_events):

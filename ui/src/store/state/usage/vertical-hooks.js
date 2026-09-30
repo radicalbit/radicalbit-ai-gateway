@@ -9,6 +9,9 @@ import {
   useGetCostsSummaryStreamQuery,
   useGetInvocationsChartStreamQuery,
   useGetLimitsStreamQuery,
+  useGetMcpInvocationsByGroupStreamQuery,
+  useGetMcpInvocationsByKeyStreamQuery,
+  useGetMcpInvocationsByServiceStreamQuery,
   useGetMcpKeyUsageQuery,
   useGetMcpServersChartSseQuery,
   useGetTokensChartStreamQuery,
@@ -83,6 +86,30 @@ const useGetMcpServersChartSseWithRange = ({ routes, groupBy, retryNonce }, opti
   }, options);
 };
 
+const useGetMcpInvocationsByServiceStreamWithRange = ({ serviceAlias, routes, retryNonce }, options) => {
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
+
+  return useGetMcpInvocationsByServiceStreamQuery({
+    projectUuid, serviceAlias, routes, tags, gte, from, to, retryNonce,
+  }, options);
+};
+
+const useGetMcpInvocationsByGroupStreamWithRange = ({ groupUuid, routes, retryNonce }, options) => {
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
+
+  return useGetMcpInvocationsByGroupStreamQuery({
+    projectUuid, groupUuid, routes, tags, gte, from, to, retryNonce,
+  }, options);
+};
+
+const useGetMcpInvocationsByKeyStreamWithRange = ({ keyUuid, routes, retryNonce }, options) => {
+  const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
+
+  return useGetMcpInvocationsByKeyStreamQuery({
+    projectUuid, keyUuid, routes, tags, gte, from, to, retryNonce,
+  }, options);
+};
+
 const useGetCostsByModelStreamWithRange = ({ modelId, routes }, options) => {
   const { gte, from, to, tags, projectUuid } = useQueryRangeParams();
 
@@ -123,6 +150,9 @@ export {
   useGetCostsSummaryStreamWithRange,
   useGetInvocationsChartStreamWithRange,
   useGetLimitsStreamWithRange,
+  useGetMcpInvocationsByGroupStreamWithRange,
+  useGetMcpInvocationsByKeyStreamWithRange,
+  useGetMcpInvocationsByServiceStreamWithRange,
   useGetMcpKeyUsageWithRange,
   useGetMcpServersChartSseWithRange,
   useGetProjectRoutesWithRange,

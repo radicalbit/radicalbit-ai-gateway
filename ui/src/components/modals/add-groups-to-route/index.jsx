@@ -28,6 +28,7 @@ function AddGroupsToRouteInner() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Associate groups"
       closable
       header={<Header />}
       onCancel={hideModal}

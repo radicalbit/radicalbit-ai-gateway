@@ -1,8 +1,11 @@
 import { useGetRoutesQuery } from '@State/routes/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
+import { useId } from 'react';
 
 function Route() {
+  const id = useId();
+
   const { error, form, write } = useFormbitContext();
   const projectUuid = form?.project;
   const route = form?.route;
@@ -22,9 +25,10 @@ function Route() {
   }
 
   return (
-    <FormField label="Route" message={error('route') || errorMessage} required>
+    <FormField htmlFor={id} label="Route" message={error('route') || errorMessage} required>
       <Select
         disabled={!projectUuid || isError}
+        id={id}
         onChange={handleOnChange}
         options={options}
         placeholder="Select a route"

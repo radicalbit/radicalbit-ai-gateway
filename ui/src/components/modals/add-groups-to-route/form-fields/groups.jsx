@@ -54,6 +54,7 @@ function GroupsInner({ groups }) {
   return (
     <FormField>
       <Select
+        aria-label="Groups"
         filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
         mode="multiple"
         onChange={handleOnSelect}

@@ -1,5 +1,6 @@
+import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
-import { Button, Popover } from '@radicalbit/radicalbit-design-system';
+import { Popover } from '@radicalbit/radicalbit-design-system';
 import { CircleAlert, CircleCheck, TriangleAlert } from 'lucide-react';
 
 function Risk({ level }) {
@@ -10,26 +11,26 @@ function Risk({ level }) {
           content="AI-enabled video games, spam filters"
           title={(
             <div className="flex items-center gap-4">
-              <Button
-                shape="circle"
+              <IconBadge
+                aria-label="Minimal Risk"
                 size="small"
                 style={{ '--coo-primary': '#38A88E' }}
                 type="primary"
               >
                 <Lucide icon={CircleCheck} />
-              </Button>
+              </IconBadge>
 
               <div>Minimal Risk</div>
             </div>
             )}
         >
-          <Button
-            shape="circle"
+          <IconBadge
+            aria-label="Minimal Risk"
             style={{ '--coo-primary': '#38A88E' }}
             type="primary"
           >
             <Lucide icon={CircleCheck} />
-          </Button>
+          </IconBadge>
         </Popover>
       );
     }
@@ -46,26 +47,26 @@ function Risk({ level }) {
             )}
           title={(
             <div className="flex items-center gap-4">
-              <Button
-                shape="circle"
+              <IconBadge
+                aria-label="Limited Risk"
                 size="small"
                 style={{ '--coo-primary': '#EEBB1F' }}
                 type="primary"
               >
                 <Lucide icon={CircleAlert} />
-              </Button>
+              </IconBadge>
 
               <div>Limited Risk</div>
             </div>
             )}
         >
-          <Button
-            shape="circle"
+          <IconBadge
+            aria-label="Limited Risk"
             style={{ '--coo-primary': '#EEBB1F' }}
             type="primary"
           >
             <Lucide icon={CircleAlert} />
-          </Button>
+          </IconBadge>
         </Popover>
       );
     }
@@ -86,26 +87,26 @@ function Risk({ level }) {
             )}
           title={(
             <div className="flex items-center gap-4">
-              <Button
-                shape="circle"
+              <IconBadge
+                aria-label="High Risk"
                 size="small"
                 style={{ '--coo-primary': '#F86B02' }}
                 type="primary"
               >
                 <Lucide icon={TriangleAlert} />
-              </Button>
+              </IconBadge>
 
               <div>High Risk</div>
             </div>
             )}
         >
-          <Button
-            shape="circle"
+          <IconBadge
+            aria-label="High Risk"
             style={{ '--coo-primary': '#F86B02' }}
             type="primary"
           >
             <Lucide icon={TriangleAlert} />
-          </Button>
+          </IconBadge>
         </Popover>
       );
     }

@@ -8,7 +8,7 @@ import { useSelector } from 'react-redux';
 const { selectHasLeftColumnCollapsed,
   selectHasHeaderLeftContentDark } = layoutSelectors;
 
-export default function Logo({ className = '', onClick, title }) {
+export default function Logo({ className = '' }) {
   const hasLeftColumnCollapsed = useSelector(selectHasLeftColumnCollapsed);
   const hasHeaderLeftContentDark = useSelector(selectHasHeaderLeftContentDark);
 
@@ -28,14 +28,5 @@ export default function Logo({ className = '', onClick, title }) {
 
   const svg = logos[shape][color];
 
-  return (
-    <div
-      className={`${className} p-4 cursor-pointer`}
-      onClick={onClick}
-      role="presentation"
-      title={title}
-    >
-      {svg}
-    </div>
-  );
+  return <div className={className}>{svg}</div>;
 }

@@ -1,6 +1,6 @@
+import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
 import { useGetEventsByRouteWithRange } from '@Src/store/state/routes/vertical-hooks';
-import { Button } from '@radicalbit/radicalbit-design-system';
 import { CornerDownRight } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
@@ -28,7 +28,7 @@ const useGetFallbacksItem = () => {
     ...collapseProps,
     label: (
       <div className="flex justify-start items-center gap-4">
-        <Button shape="circle" {...type}><Lucide icon={CornerDownRight} /></Button>
+        <IconBadge aria-label="Fallback" {...type}><Lucide icon={CornerDownRight} /></IconBadge>
 
         <div>Fallback</div>
       </div>

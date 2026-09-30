@@ -24,6 +24,7 @@ function CreateGroupInner() {
   return (
     <RbitModal
       actions={<Actions />}
+      aria-label="Create group"
       closable
       header={(
         <SectionTitle

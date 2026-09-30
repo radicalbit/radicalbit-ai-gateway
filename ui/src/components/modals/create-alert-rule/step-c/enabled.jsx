@@ -1,7 +1,10 @@
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Switch } from '@radicalbit/radicalbit-design-system';
+import { useId } from 'react';
 
 function Enabled() {
+  const id = useId();
+
   const { form, write } = useFormbitContext();
   const enabled = form?.enabled ?? false;
 
@@ -12,9 +15,9 @@ function Enabled() {
   const label = enabled ? 'Alert enabled' : 'Alert disabled';
 
   return (
-    <FormField label="Enable alert">
+    <FormField htmlFor={id} label="Enable alert">
       <div className="flex items-center gap-2">
-        <Switch checked={enabled} onChange={handleOnChange} />
+        <Switch checked={enabled} id={id} onChange={handleOnChange} />
 
         <div>{label}</div>
       </div>
