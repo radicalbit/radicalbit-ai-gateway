@@ -4,7 +4,10 @@ from pathlib import Path
 import yaml
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.exceptions import SecretNotFoundError
+from radicalbit_ai_gateway.utils.exceptions import (
+    SecretNotFoundError,
+    SecretsBackendError,
+)
 
 
 class SecretProvider(ABC):
@@ -43,8 +46,13 @@ class FileSecretProvider(SecretProvider):
 
     def _load(self) -> dict:
         if self._secrets is None:
-            with open(self._secrets_path) as f:
-                self._secrets = yaml.safe_load(f) or {}
+            try:
+                with open(self._secrets_path) as f:
+                    self._secrets = yaml.safe_load(f) or {}
+            except (OSError, yaml.YAMLError) as e:
+                raise SecretsBackendError(
+                    f'Could not read the secrets file {self._secrets_path}: {e}'
+                ) from e
         return self._secrets
 
     def get_secret(self, key: str) -> str:

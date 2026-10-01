@@ -705,6 +705,16 @@ class SecretNotFoundError(AppError):
         self.source = source
 
 
+class SecretsBackendError(AppError):
+    def __init__(self, message: str | None = None):
+        super().__init__(
+            client_message='The secrets backend could not be reached',
+            log_message=message,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code='secrets_backend_unavailable',
+        )
+
+
 class BudgetLimitExceeded(AppError):
     def __init__(self, message: str, code: str, *, log_message: str | None = None):
         super().__init__(
@@ -851,6 +861,11 @@ async def audio_duration_limit_exceeded_handler(
 ):
     set_request_error_info(request, exc)
     return _log_and_json_response(exc, 'rate_limit_error')
+
+
+def secrets_backend_exception_handler(request: Request, err: SecretsBackendError):
+    set_request_error_info(request, err)
+    return _log_and_json_response(err, 'secrets_backend_error')
 
 
 def budget_limiter_exception_handler(request: Request, err: BudgetLimitExceeded):

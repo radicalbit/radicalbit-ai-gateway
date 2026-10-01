@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock
 import uuid
 
+import pytest
 from sqlalchemy import update
 
 from tests.common import db_mock
@@ -17,6 +18,7 @@ from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut, SecretStatus
 from radicalbit_ai_gateway.services.secret_service import SecretService
+from radicalbit_ai_gateway.utils.exceptions import SecretsBackendError
 
 _UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
 
@@ -219,6 +221,45 @@ class SecretServiceSearchTest(unittest.TestCase):
         service = self._service({'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'})
 
         assert service.get_secrets(search='') == service.get_secrets()
+
+
+class _UnreachableSecretProvider(FakeSecretProvider):
+    """A secrets backend whose listing fails, as an unreachable one does."""
+
+    def __init__(self):
+        super().__init__({})
+
+    def list_secret_keys(self) -> list[str]:
+        raise SecretsBackendError('connection refused')
+
+
+class SecretServiceBackendFailureTest(unittest.TestCase):
+    """A backend that cannot be listed fails the read instead of degrading."""
+
+    def _service(self, secret_provider_factory) -> SecretService:
+        project = ProjectRef(uuid=uuid.uuid4(), name='healthy-project')
+        return SecretService(
+            project_config_dao=_served_configs_dao(
+                [(project, _config_referencing('OPENAI_API_KEY'))]
+            ),
+            secret_provider_factory=secret_provider_factory,
+        )
+
+    def test_listing_failure_propagates(self):
+        # Not an empty list, and not every referenced key reported unavailable.
+        service = self._service(_UnreachableSecretProvider)
+
+        with pytest.raises(SecretsBackendError):
+            service.get_secrets()
+
+    def test_provider_construction_failure_propagates(self):
+        def failing_factory():
+            raise SecretsBackendError('authentication failed')
+
+        service = self._service(failing_factory)
+
+        with pytest.raises(SecretsBackendError):
+            service.get_secrets()
 
 
 class SecretServiceUsedInTest(DatabaseIntegration):

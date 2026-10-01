@@ -33,7 +33,12 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.event_dto import WindowStatus
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import app, group_service, key_service
+from radicalbit_ai_gateway.server import (
+    app,
+    group_service,
+    key_service,
+    secret_service as server_secret_service,
+)
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -44,6 +49,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerInternalError,
     OutputTokenLimitExceeded,
     RequestRateLimitExceeded,
+    SecretsBackendError,
 )
 
 key = db_mock.get_sample_key_full_out()
@@ -824,3 +830,16 @@ class TestServer(unittest.TestCase):
         forwarded = repr(self.gateways_mock['rb-gateway'].invoke.call_args.kwargs)
         assert 'X-RB-Tags' not in forwarded
         assert 'cost_center' not in forwarded
+
+
+class TestSecretsBackendUnavailable(unittest.TestCase):
+    def test_unreachable_secrets_backend_answers_503(self):
+        with patch.object(
+            server_secret_service,
+            'get_secrets',
+            side_effect=SecretsBackendError('connection refused'),
+        ):
+            res = TestClient(app).get('/public/api/v1/secrets')
+
+        assert res.status_code == 503
+        assert res.json()['error']['code'] == 'secrets_backend_unavailable'

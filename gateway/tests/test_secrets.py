@@ -3,7 +3,10 @@ import tempfile
 import pytest
 
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.utils.exceptions import SecretNotFoundError
+from radicalbit_ai_gateway.utils.exceptions import (
+    SecretNotFoundError,
+    SecretsBackendError,
+)
 from radicalbit_ai_gateway.utils.secrets import (
     FileSecretProvider,
     SecretProvider,
@@ -80,6 +83,20 @@ def test_file_secret_provider_empty_yaml():
         provider = FileSecretProvider(f.name)
         with pytest.raises(SecretNotFoundError):
             provider.get_secret('ANY_KEY')
+
+
+def test_file_secret_provider_missing_file_is_a_backend_error(tmp_path):
+    provider = FileSecretProvider(tmp_path / 'absent.yaml')
+    with pytest.raises(SecretsBackendError):
+        provider.list_secret_keys()
+
+
+def test_file_secret_provider_invalid_yaml_is_a_backend_error(tmp_path):
+    secrets_file = tmp_path / 'secrets.yaml'
+    secrets_file.write_text('KEY: [unclosed\n')
+    provider = FileSecretProvider(secrets_file)
+    with pytest.raises(SecretsBackendError):
+        provider.list_secret_keys()
 
 
 def test_get_secret_provider_returns_file_provider(secrets_path):
