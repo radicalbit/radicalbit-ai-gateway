@@ -6,6 +6,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from radicalbit_ai_gateway.models.request_event_type import RequestType
+
 T = TypeVar('T')
 
 
@@ -51,6 +53,8 @@ class TraceDTO(BaseModel):
     group_uuid: UUID | None = None
     group_name: str | None = None
     tags: list[str] = Field(default_factory=list)
+    # None when the root span is not a known endpoint workflow
+    request_type: RequestType | None = None
     tree: TreeNodeDTO | None = None  # Optional - only for detail view
 
     model_config = ConfigDict(

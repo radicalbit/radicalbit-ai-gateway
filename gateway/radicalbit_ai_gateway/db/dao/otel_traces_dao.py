@@ -18,6 +18,7 @@ from radicalbit_ai_gateway.db.models.trace import (
     TracesChartDataPoint,
 )
 from radicalbit_ai_gateway.db.tables.otel_traces_table import OtelTraces
+from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
@@ -42,6 +43,35 @@ _TAGS_ATTR = "SpanAttributes['traceloop.association.properties.tags']"
 # set_trace_attributes) since SpanAttributes values are scalar - splitByChar
 # turns it back into the Array(String) shape `add_tags_filter` expects.
 _TAGS_EXPR = f"if({_TAGS_ATTR} = '', [], splitByChar(',', {_TAGS_ATTR}))"
+
+# The root span of a trace is the @workflow span of the endpoint that served
+# it, so its SpanName tells the request type. Deriving it here, not from a
+# stamped attribute, also covers traces written before this field existed.
+_ROOT_SPAN_NAMES_BY_REQUEST_TYPE: dict[RequestType, list[str]] = {
+    RequestType.CHAT_COMPLETIONS: [
+        'chat_completions.workflow',
+        'responses.workflow',
+    ],
+    RequestType.EMBEDDINGS: ['embeddings.workflow'],
+    RequestType.TRANSCRIPTIONS: ['audio_transcriptions.workflow'],
+    RequestType.MCP: ['mcp_request.workflow'],
+}
+# Empty string for an unknown root span name, like the other string columns.
+_REQUEST_TYPE_BRANCHES = ', '.join(
+    f"SpanName = '{name}', '{request_type.value}'"
+    for request_type, names in _ROOT_SPAN_NAMES_BY_REQUEST_TYPE.items()
+    for name in names
+)
+_REQUEST_TYPE_EXPR = f"multiIf({_REQUEST_TYPE_BRANCHES}, '')"
+
+
+def request_type_of_root_span(span_name: str) -> RequestType | None:
+    """Python twin of _REQUEST_TYPE_EXPR, for spans already loaded."""
+    for request_type, names in _ROOT_SPAN_NAMES_BY_REQUEST_TYPE.items():
+        if span_name in names:
+            return request_type
+    return None
+
 
 _FIELD_NAMES = ['span_name', 'p50', 'p90', 'p95', 'p99']
 _SPAN_FIELD_NAMES = [
@@ -565,6 +595,7 @@ class OtelTracesDAO:
         _to: datetime | None,
         params: Params,
         tags: list[str] | None = None,
+        request_types: list[RequestType] | None = None,
     ) -> Page[Row]:
         """Get paginated root spans with metadata."""
         T = self.T
@@ -587,6 +618,7 @@ class OtelTracesDAO:
                 literal_column('Duration / 1000000').label('duration_ms'),
                 T.c['Timestamp'].label('created_at'),
                 literal_column(_TAGS_EXPR).label('tags'),
+                literal_column(_REQUEST_TYPE_EXPR).label('request_type'),
             )
             .select_from(OtelTraces)
             .where(
@@ -598,6 +630,18 @@ class OtelTracesDAO:
 
         if route_names:
             stmt = stmt.where(route_name_attr.in_(route_names))
+        if request_types:
+            # Filter on SpanName, not on the derived label, so ClickHouse
+            # compares a plain column.
+            stmt = stmt.where(
+                T.c['SpanName'].in_(
+                    [
+                        name
+                        for request_type in request_types
+                        for name in _ROOT_SPAN_NAMES_BY_REQUEST_TYPE[request_type]
+                    ]
+                )
+            )
         if group_uuids:
             stmt = stmt.where(group_uuid_attr.in_([str(g) for g in group_uuids]))
         if key_uuids:

@@ -16,6 +16,7 @@ from radicalbit_ai_gateway.db.models.trace import (
     TraceLatencies,
     TracesChartDataPoint,
 )
+from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
     GroupedSpanLatenciesDTO,
     LatenciesDTO,
@@ -469,6 +470,36 @@ class TracingServiceTest(unittest.TestCase):
 
         assert result.tags == ['env=prod', 'cost_center=retail']
 
+    def test_get_trace_by_id_includes_request_type(self):
+        """TraceDTO.request_type comes from the root span name."""
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
+            return_value=[
+                SpanRecord(
+                    timestamp=base_time,
+                    trace_id='trace-mcp',
+                    request_uuid='',
+                    span_id='span-1',
+                    span_name='mcp_request.workflow',
+                    service_name='ai-gateway',
+                    duration=100_000_000,
+                    status_code='Unset',
+                    parent_span_id='',
+                    route_name='test-route',
+                    api_key_uuid='',
+                    api_key_name='',
+                    group_uuid='',
+                    group_name='',
+                )
+            ]
+        )
+
+        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-mcp')
+
+        assert result.request_type == RequestType.MCP
+
     def test_get_trace_by_id_single_span_no_request_uuid(self):
         """Test retrieving a trace without request_uuid."""
         base_time = datetime.datetime(
@@ -874,6 +905,56 @@ class TracingServiceTest(unittest.TestCase):
         assert res.items[0].tags == ['env=prod']
         call_args = self.otel_traces_dao.get_root_traces_paginated.call_args
         assert call_args.kwargs['tags'] == ['env=prod']
+
+    def test_get_traces_includes_request_type(self):
+        """TraceDTO.request_type comes from the row; unknown or empty is None."""
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        def make_row(trace_id: str, request_type: str) -> MagicMock:
+            row = MagicMock()
+            row.trace_id = trace_id
+            row.request_uuid = ''
+            row.route_name = 'my-route'
+            row.group_uuid = ''
+            row.api_key_uuid = ''
+            row.duration_ms = 10.0
+            row.created_at = base_time
+            row.tags = []
+            row.request_type = request_type
+            return row
+
+        mock_page = MagicMock(spec=Page)
+        mock_page.items = [
+            make_row('t-embed', 'embeddings'),
+            make_row('t-unknown', ''),
+        ]
+        mock_page.total = 2
+
+        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
+            return_value=mock_page
+        )
+        self.otel_traces_dao.get_spans_stats_by_trace_ids = MagicMock(return_value={})
+        self.otel_traces_dao.get_root_span_error_by_trace_ids = MagicMock(
+            return_value=set()
+        )
+
+        res = self.tracing_service.get_traces(
+            project_uuid=PROJECT_UUID,
+            route_names=None,
+            group_uuids=None,
+            key_uuids=None,
+            _from=None,
+            _to=None,
+            params=Params(page=1, size=50),
+            request_types=[RequestType.EMBEDDINGS],
+        )
+
+        by_trace_id = {item.trace_id: item.request_type for item in res.items}
+        assert by_trace_id == {'t-embed': RequestType.EMBEDDINGS, 't-unknown': None}
+        call_args = self.otel_traces_dao.get_root_traces_paginated.call_args
+        assert call_args.kwargs['request_types'] == [RequestType.EMBEDDINGS]
 
     def test_get_traces_page_offset_conversion(self):
         """Test that params are passed correctly to the paginated DAO method."""
