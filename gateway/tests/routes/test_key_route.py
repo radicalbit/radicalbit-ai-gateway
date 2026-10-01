@@ -8,7 +8,11 @@ from starlette.testclient import TestClient
 
 from tests.common import db_mock
 
-from radicalbit_ai_gateway.models.auth_dto import GroupFullOut, KeyFullOut
+from radicalbit_ai_gateway.models.auth_dto import (
+    GroupFullOut,
+    KeyFullOut,
+    KeyLimitsApplyOut,
+)
 from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.services.key_service import KeyService
@@ -28,6 +32,7 @@ class TestKeyRoute(unittest.TestCase):
         self.key_service = MagicMock(spec_set=KeyService)
         router = KeyRoute.get_key_router(self.key_service)
         app = FastAPI(title='AI Gateway', debug=True)
+        app.state.routes = {}
         app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
         app.include_router(router, prefix=self.prefix)
 
@@ -276,15 +281,16 @@ class TestKeyRoute(unittest.TestCase):
         key = db_mock.get_sample_key()
         limits_in = db_mock.get_sample_credential_limits_in()
         key_out = db_mock.get_sample_key_full_out()
-        self.key_service.add_limits_to_key = MagicMock(return_value=key_out)
+        apply_out = KeyLimitsApplyOut(key=key_out, warnings=[])
+        self.key_service.add_limits_to_key = MagicMock(return_value=apply_out)
         res = self.client.post(
             f'{self.prefix}/keys/{key.uuid}/limits',
             json=jsonable_encoder(limits_in),
         )
         assert res.status_code == 201
-        assert res.json() == jsonable_encoder(key_out)
+        assert res.json() == jsonable_encoder(apply_out)
         self.key_service.add_limits_to_key.assert_called_once_with(
-            key.uuid, limits_in, False
+            key.uuid, limits_in, False, {}
         )
 
     def test_add_limits_to_key_not_found(self):
