@@ -2,19 +2,33 @@ import Lucide from '@Components/lucide';
 import TagsFilter from '@Components/tags-filter';
 import { TimeFilterCustomOnly } from '@Components/time-filter';
 import { FormField, NewHeader, SectionTitle, Select } from '@radicalbit/radicalbit-design-system';
+import { REQUEST_TYPE_LABELS, RequestTypeEnum } from '@Src/constants';
 import { useGetRoutesWithRange } from '@Src/store/state/routes/vertical-hooks';
 import { Route } from 'lucide-react';
 import { useId } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ProjectFilter from './project-filter';
 
-const keys = ['routes', 'preset', 'from', 'to'];
+const keys = ['routes', 'requestType', 'preset', 'from', 'to'];
 const storageKey = 'rbit-gw-tracing';
+
+const REQUEST_TYPE_OPTIONS = Object.values(RequestTypeEnum)
+  .map((value) => ({ label: REQUEST_TYPE_LABELS[value], value }));
 
 function TracingListHeader() {
   const projectId = useId();
   const tagsId = useId();
   const routesId = useId();
+  const requestTypeId = useId();
+
+  const [searchParams] = useSearchParams();
+  const isTracingTab = searchParams.get('tab') === 'tracing';
+
+  const requestTypeFilter = isTracingTab ? (
+    <FormField htmlFor={requestTypeId} label="Type">
+      <RequestTypeSelector id={requestTypeId} />
+    </FormField>
+  ) : false;
 
   return (
     <NewHeader
@@ -28,6 +42,8 @@ function TracingListHeader() {
             <FormField htmlFor={tagsId} label="Tags">
               <TagsFilter id={tagsId} />
             </FormField>
+
+            {requestTypeFilter}
 
             <FormField htmlFor={routesId} label="Routes">
               <RouteSelector id={routesId} />
@@ -106,6 +122,39 @@ function RouteSelector({ id }) {
       showSearch
       style={{ width: 250 }}
       value={selectedRoutes}
+    />
+  );
+}
+
+function RequestTypeSelector({ id }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const selectedRequestTypes = searchParams.get('requestType')
+    ? searchParams.get('requestType').split(',')
+    : [];
+
+  const handleOnChange = (values) => {
+    setSearchParams((prev) => {
+      if (values.length === 0) {
+        prev.delete('requestType');
+      } else {
+        prev.set('requestType', values.join(','));
+      }
+      return prev;
+    });
+  };
+
+  return (
+    <Select
+      allowClear
+      id={id}
+      maxTagCount="responsive"
+      mode="multiple"
+      onChange={handleOnChange}
+      options={REQUEST_TYPE_OPTIONS}
+      placeholder="All types"
+      style={{ width: 250 }}
+      value={selectedRequestTypes}
     />
   );
 }

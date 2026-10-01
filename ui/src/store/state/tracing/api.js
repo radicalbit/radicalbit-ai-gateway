@@ -94,7 +94,7 @@ export const tracingApiSlice = apiService.injectEndpoints({
     getTraces: builder.query({
       providesTags: () => [API_TAGS.TRACING],
       query: ({
-        projectUuid, from, to, routes, tags, page, limit,
+        projectUuid, from, to, routes, tags, requestTypes, page, limit,
       }) => {
         const init = {};
 
@@ -103,6 +103,12 @@ export const tracingApiSlice = apiService.injectEndpoints({
         if (routes && routes.length > 0) {
           routes.forEach((route) => {
             params.append('routes', route);
+          });
+        }
+
+        if (requestTypes && requestTypes.length > 0) {
+          requestTypes.forEach((requestType) => {
+            params.append('requestType', requestType);
           });
         }
 

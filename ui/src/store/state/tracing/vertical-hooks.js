@@ -21,11 +21,14 @@ const useQueryRangeParams = () => {
   const routesParam = searchParams.get('routes');
   const routes = routesParam ? routesParam.split(',') : [];
 
+  const requestTypeParam = searchParams.get('requestType');
+  const requestTypes = requestTypeParam ? requestTypeParam.split(',') : [];
+
   const tagsKey = searchParams.getAll('tags').join('&');
   const tags = useMemo(() => parseTagsFromTagsKey(tagsKey), [tagsKey]);
 
   return {
-    from, to, routes, tags, projectUuid,
+    from, to, routes, tags, requestTypes, projectUuid,
   };
 };
 
@@ -54,11 +57,13 @@ const useGetSpanLatenciesWithRange = ({ includeOthers, grouped }, options) => {
 };
 
 const useGetTracesWithRange = (args, options) => {
-  const { from, to, routes, tags, projectUuid } = useQueryRangeParams();
+  const {
+    from, to, routes, tags, requestTypes, projectUuid,
+  } = useQueryRangeParams();
   const page = args?.page;
 
   return useGetTracesQuery({
-    projectUuid, from, to, routes, tags, page, limit: tracesPageSize,
+    projectUuid, from, to, routes, tags, requestTypes, page, limit: tracesPageSize,
   }, { skip: !projectUuid, ...options });
 };
 
