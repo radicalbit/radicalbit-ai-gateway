@@ -11,6 +11,10 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.models.secret_dto import ProjectRef, SecretOut, SecretStatus
 from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.services.secret_service import SecretService
+from radicalbit_ai_gateway.utils.exceptions import (
+    SecretsBackendError,
+    secrets_backend_exception_handler,
+)
 
 
 class TestSecretsRoute(unittest.TestCase):
@@ -20,6 +24,9 @@ class TestSecretsRoute(unittest.TestCase):
         router = SecretsRoute.get_secrets_router(self.secret_service)
         app = FastAPI(title='AI Gateway', debug=True)
         app.include_router(router, prefix=self.prefix)
+        app.add_exception_handler(
+            SecretsBackendError, secrets_backend_exception_handler
+        )
         self.client = TestClient(app)
 
     def test_get_secrets_returns_paginated_envelope(self):
@@ -41,6 +48,22 @@ class TestSecretsRoute(unittest.TestCase):
             'pages': 1,
         }
         self.secret_service.get_secrets.assert_called_once_with(None)
+
+    def test_unreachable_backend_answers_503_with_a_dedicated_code(self):
+        self.secret_service.get_secrets = MagicMock(
+            side_effect=SecretsBackendError(
+                'vault.internal:8200 refused the connection'
+            )
+        )
+
+        res = self.client.get(f'{self.prefix}/secrets')
+
+        assert res.status_code == 503
+        error = res.json()['error']
+        assert error['code'] == 'secrets_backend_unavailable'
+        assert error['type'] == 'secrets_backend_error'
+        # The diagnostic stays in the logs; the client only learns it could not be reached.
+        assert 'vault.internal' not in error['message']
 
     def test_get_secrets_passes_search_to_the_service_as_given(self):
         self.secret_service.get_secrets = MagicMock(return_value=[])

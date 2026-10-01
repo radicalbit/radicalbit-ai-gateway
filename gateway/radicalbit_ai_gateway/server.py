@@ -107,6 +107,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     McpTransportError,
     ModelInvokerError,
     RequestRateLimitExceeded,
+    SecretsBackendError,
     TokenLimitExceeded,
     alert_rule_exception_handler,
     api_key_exception_handler,
@@ -119,6 +120,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     mcp_transport_exception_handler,
     model_invoker_exception_handler,
     rate_limit_exceeded_handler,
+    secrets_backend_exception_handler,
     token_limiter_exception_handler,
     unhandled_exception_handler,
 )
@@ -445,6 +447,7 @@ app.add_exception_handler(
     AlertRuleUnsupportedTimeAggregationError, alert_rule_exception_handler
 )
 app.add_exception_handler(AlertRuleInternalError, alert_rule_exception_handler)
+app.add_exception_handler(SecretsBackendError, secrets_backend_exception_handler)
 app.include_router(KeyRoute.get_key_router(key_service), prefix=prefix)
 app.include_router(
     AlertRuleRoute.get_alert_rule_router(alert_rule_service), prefix=prefix
