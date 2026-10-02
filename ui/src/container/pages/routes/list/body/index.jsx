@@ -9,7 +9,7 @@ import {
 import {
   FormField, Search, Void,
 } from '@radicalbit/radicalbit-design-system';
-import { CircleX } from 'lucide-react';
+import { CircleX, FolderOpen } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import { useDispatch } from 'react-redux';
 import {
@@ -39,14 +39,13 @@ function NoProjectSelected() {
   const projectId = useId();
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-row items-center gap-4">
-        <FormField htmlFor={projectId} label="Project">
-          <ProjectFilter id={projectId} />
-        </FormField>
-      </div>
-
-      <Void description="Select a project to view routes" />
+    <div className="flex justify-center items-center h-full">
+      <Void
+        actions={<ProjectFilter id={projectId} />}
+        description="Select a project to view routes"
+        image={<Lucide icon={FolderOpen} />}
+        title="No project selected"
+      />
     </div>
   );
 }

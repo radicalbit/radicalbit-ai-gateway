@@ -1,14 +1,12 @@
 import Lucide from '@Components/lucide';
 import TagsFilter from '@Components/tags-filter';
 import TimeFilter from '@Components/time-filter';
-import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetCostsSummaryStreamWithRange } from '@State/usage/vertical-hooks';
 import {
   Board, Button, FormField, Skeleton, Void,
 } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
-import { useEffect, useId } from 'react';
-import { useDispatch } from 'react-redux';
+import { useId } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import CostsGraph from './costs-graph';
 import CostTable from './cost-table';
@@ -25,25 +23,6 @@ function Consumptions() {
   const routesId = useId();
   const tagsId = useId();
   const timeRangeId = useId();
-
-  useInitLayoutConfigurations();
-
-  const [searchParams] = useSearchParams();
-  const projectUuid = searchParams.get('projectUuid');
-
-  if (!projectUuid) {
-    return (
-      <div className="flex flex-col gap-4 h-full p-4">
-        <div className="flex flex-row items-center gap-4">
-          <FormField htmlFor={projectId} label="Project">
-            <ProjectFilter id={projectId} />
-          </FormField>
-        </div>
-
-        <Void description="Select a project to view usage data" />
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col gap-4 h-full p-4">
@@ -142,13 +121,5 @@ function IsError({ isFetching, refetch }) {
     </div>
   );
 }
-
-const useInitLayoutConfigurations = () => {
-  const dispatch = useDispatch();
-
-  useEffect(() => {
-    WIDE_MAIN_LAYOUT_CONFIGURATION.forEach((action) => dispatch(action()));
-  }, [dispatch]);
-};
 
 export default Consumptions;
