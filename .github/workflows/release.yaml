@@ -3,6 +3,10 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+  packages: read
+
 concurrency:
   group: docker-tag-${{ github.event.release.tag_name }}
   cancel-in-progress: true
