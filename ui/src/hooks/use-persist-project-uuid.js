@@ -1,6 +1,6 @@
 import { useVerifyProjectQuery } from '@State/projects/api';
 import { skipToken } from '@reduxjs/toolkit/query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 const STORAGE_KEY = 'rbit-gw-projectUuid';
@@ -45,9 +45,15 @@ const useDropStaleUuid = ({ candidate, isError, setCandidate }) => {
 };
 
 const usePersistSelectedUuid = (projectUuid) => {
+  const previousUuid = useRef(projectUuid);
+
   useEffect(() => {
     if (projectUuid) {
       localStorage.setItem(STORAGE_KEY, projectUuid);
+    } else if (previousUuid.current) {
+      localStorage.removeItem(STORAGE_KEY);
     }
+
+    previousUuid.current = projectUuid;
   }, [projectUuid]);
 };
