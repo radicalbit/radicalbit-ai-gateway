@@ -13,6 +13,9 @@ on:
       - "helm/**"
       - ".github/workflows/helm-**"
 
+permissions:
+  contents: read
+
 env:
   HELM_VERSION: "4.2.3"
   HELM_UT_VERSION: "1.1.2"
