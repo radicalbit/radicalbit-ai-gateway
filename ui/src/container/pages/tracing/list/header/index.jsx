@@ -1,44 +1,10 @@
 import Lucide from '@Components/lucide';
-import TagsFilter from '@Components/tags-filter';
-import { TimeFilterCustomOnly } from '@Components/time-filter';
-import { FormField, NewHeader, SectionTitle, Select } from '@radicalbit/radicalbit-design-system';
-import { useGetRoutesWithRange } from '@Src/store/state/routes/vertical-hooks';
+import { NewHeader, SectionTitle } from '@radicalbit/radicalbit-design-system';
 import { Route } from 'lucide-react';
-import { useId } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import ProjectFilter from './project-filter';
-
-const keys = ['routes', 'preset', 'from', 'to'];
-const storageKey = 'rbit-gw-tracing';
 
 function TracingListHeader() {
-  const projectId = useId();
-  const tagsId = useId();
-  const routesId = useId();
-
   return (
     <NewHeader
-      details={{
-        one: (
-          <div className="flex flex-row items-center gap-4">
-            <FormField htmlFor={projectId} label="Project">
-              <ProjectFilter id={projectId} />
-            </FormField>
-
-            <FormField htmlFor={tagsId} label="Tags">
-              <TagsFilter id={tagsId} />
-            </FormField>
-
-            <FormField htmlFor={routesId} label="Routes">
-              <RouteSelector id={routesId} />
-            </FormField>
-          </div>
-        ),
-        two: (
-          <div className="flex items-end h-full">
-            <TimeFilterCustomOnly keys={keys} storageKey={storageKey} />
-          </div>),
-      }}
       title={(
         <SectionTitle
           subtitle="Inspect individual requests processed by the gateway."
@@ -46,66 +12,6 @@ function TracingListHeader() {
           titlePrefix={<Lucide icon={Route} />}
         />
       )}
-    />
-  );
-}
-
-function RouteSelector({ id }) {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const projectUuid = searchParams.get('projectUuid');
-
-  const { data = [], isError } = useGetRoutesWithRange();
-  const routeNames = data.map((r) => r.routeName);
-
-  const selectedRoutes = searchParams.get('routes')
-    ? searchParams.get('routes').split(',')
-    : [];
-
-  const handleChange = (values) => {
-    setSearchParams((prev) => {
-      if (values.length === 0) {
-        prev.delete('routes');
-      } else {
-        prev.set('routes', values.join(','));
-      }
-      return prev;
-    });
-  };
-
-  if (!projectUuid) {
-    return (
-      <Select
-        disabled
-        id={id}
-        placeholder="Select a project first"
-        style={{ width: 250 }}
-      />
-    );
-  }
-
-  if (isError) {
-    return (
-      <Select
-        disabled
-        id={id}
-        placeholder="Unable to load routes"
-        style={{ width: 250 }}
-      />
-    );
-  }
-
-  return (
-    <Select
-      allowClear
-      id={id}
-      maxTagCount="responsive"
-      mode="multiple"
-      onChange={handleChange}
-      options={routeNames.map((name) => ({ label: name, value: name }))}
-      placeholder="All routes"
-      showSearch
-      style={{ width: 250 }}
-      value={selectedRoutes}
     />
   );
 }

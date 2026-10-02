@@ -16,23 +16,6 @@ function Limits() {
   const routesId = useId();
   const statusId = useId();
 
-  const [searchParams] = useSearchParams();
-  const projectUuid = searchParams.get('projectUuid');
-
-  if (!projectUuid) {
-    return (
-      <div className="flex flex-col gap-4 h-full p-4">
-        <div className="flex flex-row items-center gap-4">
-          <FormField htmlFor={projectId} label="Project">
-            <ProjectFilter id={projectId} />
-          </FormField>
-        </div>
-
-        <Void description="Select a project to view usage data" />
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-4 h-full p-4">
       <div className="flex flex-row items-center gap-4">

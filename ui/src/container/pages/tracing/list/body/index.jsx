@@ -1,11 +1,19 @@
+import Lucide from '@Components/lucide';
 import { WIDE_MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import usePersistProjectUuid from '@Hooks/use-persist-project-uuid';
+import usePersistQueryParams from '@Hooks/use-persistence-query-params';
 import { Tabs, Void } from '@radicalbit/radicalbit-design-system';
-import { useEffect } from 'react';
+import { FolderOpen } from 'lucide-react';
+import { useEffect, useId } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
 import Dashboard from './dashboard';
+import Filters from './filters';
+import ProjectFilter from './project-filter';
 import Tracing from './tracing';
+
+const PERSISTED_KEYS = ['routes', 'requestType', 'preset', 'from', 'to'];
+const STORAGE_KEY = 'rbit-gw-tracing';
 
 const TRACING_LIST_TABS = {
   dashboard: {
@@ -34,6 +42,8 @@ function TracingList() {
 
   usePersistProjectUuid();
 
+  usePersistQueryParams(PERSISTED_KEYS, STORAGE_KEY);
+
   const [searchParams] = useSearchParams();
   const projectUuid = searchParams.get('projectUuid');
 
@@ -45,9 +55,16 @@ function TracingList() {
 }
 
 function NoProjectSelected() {
+  const projectId = useId();
+
   return (
-    <div className="flex flex-col gap-4 py-4">
-      <Void description="Select a project to view tracing data" />
+    <div className="flex justify-center items-center h-full">
+      <Void
+        actions={<ProjectFilter id={projectId} />}
+        description="Select a project to view tracing data"
+        image={<Lucide icon={FolderOpen} />}
+        title="No project selected"
+      />
     </div>
   );
 }
@@ -69,6 +86,8 @@ function ProjectSelected() {
         onChange={handleOnChange}
         sticky
       />
+
+      <Filters />
 
       {activeKey === 'dashboard' && <Dashboard />}
 

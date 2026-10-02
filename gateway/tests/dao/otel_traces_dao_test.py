@@ -10,6 +10,7 @@ from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 from tests.common.db_mock import TEST_PROJECT_UUID
 
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
+from radicalbit_ai_gateway.models.request_event_type import RequestType
 
 
 class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
@@ -1657,6 +1658,92 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         by_trace_id = {row.trace_id: row.tags for row in res.items}
         assert by_trace_id['t1'] == ['env=prod', 'cost_center=retail']
         assert by_trace_id['t2'] == []
+
+    def test_get_root_traces_returns_request_type(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        root_names = {
+            't-chat': 'chat_completions.workflow',
+            't-responses': 'responses.workflow',
+            't-embed': 'embeddings.workflow',
+            't-audio': 'audio_transcriptions.workflow',
+            't-mcp': 'mcp_request.workflow',
+            't-other': 'something_else',
+        }
+        self.insert(
+            [
+                db_mock.get_sample_otel_span(
+                    timestamp=base_time,
+                    trace_id=trace_id,
+                    span_name=span_name,
+                    parent_span_id='',
+                )
+                for trace_id, span_name in root_names.items()
+            ]
+        )
+
+        res = self.otel_traces_dao.get_root_traces_paginated(
+            project_uuid=TEST_PROJECT_UUID,
+            route_names=None,
+            group_uuids=None,
+            key_uuids=None,
+            _from=None,
+            _to=None,
+            params=Params(page=1, size=10),
+        )
+
+        by_trace_id = {row.trace_id: row.request_type for row in res.items}
+        assert by_trace_id == {
+            't-chat': 'chat_completions',
+            't-responses': 'chat_completions',
+            't-embed': 'embeddings',
+            't-audio': 'transcriptions',
+            't-mcp': 'mcp',
+            't-other': '',
+        }
+
+    def test_get_root_traces_filters_by_request_type(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        root_names = {
+            't-chat': 'chat_completions.workflow',
+            't-responses': 'responses.workflow',
+            't-embed': 'embeddings.workflow',
+            't-mcp': 'mcp_request.workflow',
+        }
+        self.insert(
+            [
+                db_mock.get_sample_otel_span(
+                    timestamp=base_time,
+                    trace_id=trace_id,
+                    span_name=span_name,
+                    parent_span_id='',
+                )
+                for trace_id, span_name in root_names.items()
+            ]
+        )
+
+        res = self.otel_traces_dao.get_root_traces_paginated(
+            project_uuid=TEST_PROJECT_UUID,
+            route_names=None,
+            group_uuids=None,
+            key_uuids=None,
+            _from=None,
+            _to=None,
+            params=Params(page=1, size=10),
+            request_types=[RequestType.CHAT_COMPLETIONS, RequestType.MCP],
+        )
+
+        assert {row.trace_id for row in res.items} == {
+            't-chat',
+            't-responses',
+            't-mcp',
+        }
+        assert res.total == 3
 
     def test_get_root_traces_filters_by_tags(self):
         """Same key OR's, different keys AND (mirrors dashboard/usage semantics)."""

@@ -115,6 +115,20 @@ const ALERT_CHANNEL_LABELS = {
   [AlertChannelEnum.EMAIL]: 'Email',
 };
 
+const RequestTypeEnum = {
+  CHAT_COMPLETIONS: 'chat_completions',
+  EMBEDDINGS: 'embeddings',
+  TRANSCRIPTIONS: 'transcriptions',
+  MCP: 'mcp',
+};
+
+const REQUEST_TYPE_LABELS = {
+  [RequestTypeEnum.CHAT_COMPLETIONS]: 'Chat',
+  [RequestTypeEnum.EMBEDDINGS]: 'Embeddings',
+  [RequestTypeEnum.TRANSCRIPTIONS]: 'Transcription',
+  [RequestTypeEnum.MCP]: 'MCP',
+};
+
 export {
   AlertScopeEnum,
   ALERT_SCOPE_LABELS,
@@ -138,6 +152,8 @@ export {
   pageSize,
   PathsEnum,
   ProjectStatusEnum,
+  RequestTypeEnum,
+  REQUEST_TYPE_LABELS,
   SortOrderEnum,
   startPage,
   mcpKeysPageSize,

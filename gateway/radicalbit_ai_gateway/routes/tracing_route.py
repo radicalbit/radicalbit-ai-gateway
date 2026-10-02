@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from fastapi_pagination import Page, Params
 
+from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
     GroupedSpanLatenciesDTO,
     LatenciesDTO,
@@ -125,6 +126,9 @@ class TracingRoute:
             routes: Annotated[list[str] | None, Query()] = None,
             groups: Annotated[list[UUID] | None, Query()] = None,
             keys: Annotated[list[UUID] | None, Query()] = None,
+            request_types: Annotated[
+                list[RequestType] | None, Query(alias='requestType')
+            ] = None,
             _page: Annotated[int, Query(ge=1)] = 1,
             _limit: Annotated[int, Query(ge=1, le=100)] = 50,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
@@ -142,6 +146,7 @@ class TracingRoute:
                 _to=to_dt,
                 params=params,
                 tags=tags,
+                request_types=request_types,
             )
 
         @router.get(

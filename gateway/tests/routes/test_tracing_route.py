@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi_pagination import Page, Params
 from starlette.testclient import TestClient
 
+from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
     ErrorEvents,
     GroupedSpanLatenciesDTO,
@@ -939,6 +940,50 @@ class TestTracingRoute(unittest.TestCase):
         assert response.status_code == 200
         call_kwargs = self.tracing_service.get_traces.call_args.kwargs
         assert call_kwargs['tags'] == ['env=prod', 'cost_center=retail']
+
+    def test_get_traces_with_request_types_filter(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        mock_result = Page.create(
+            items=[
+                TraceDTO(
+                    trace_id='trace-mcp',
+                    duration_ms=10.0,
+                    total_spans=1,
+                    created_at=int(base_time.timestamp()),
+                    latest_span_ts=int(base_time.timestamp()),
+                    request_type=RequestType.MCP,
+                )
+            ],
+            params=Params(page=1, size=50),
+            total=1,
+        )
+        self.tracing_service.get_traces = MagicMock(return_value=mock_result)
+
+        response = self.client.get(
+            f'{self.project_path}/traces',
+            params={'requestType': ['mcp', 'embeddings']},
+        )
+
+        assert response.status_code == 200
+        assert response.json()['items'][0]['requestType'] == 'mcp'
+        call_kwargs = self.tracing_service.get_traces.call_args.kwargs
+        assert call_kwargs['request_types'] == [
+            RequestType.MCP,
+            RequestType.EMBEDDINGS,
+        ]
+
+    def test_get_traces_rejects_unknown_request_type(self):
+        self.tracing_service.get_traces = MagicMock()
+
+        response = self.client.get(
+            f'{self.project_path}/traces',
+            params={'requestType': ['llm']},
+        )
+
+        assert response.status_code == 422
+        self.tracing_service.get_traces.assert_not_called()
 
     def test_get_span_by_id_success(self):
         base_time = datetime.datetime(

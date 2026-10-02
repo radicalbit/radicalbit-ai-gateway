@@ -55,7 +55,7 @@ function ProjectFilter({ id }) {
       options={options}
       placeholder={placeholder}
       showSearch
-      style={{ width: 400 }}
+      style={{ width: 250 }}
       value={projectUuid}
     />
   );

@@ -4,7 +4,11 @@ from uuid import UUID
 
 from fastapi_pagination import Page, Params
 
-from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
+from radicalbit_ai_gateway.db.dao.otel_traces_dao import (
+    OtelTracesDAO,
+    request_type_of_root_span,
+)
+from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
     ErrorEvents,
     GroupedSpanLatenciesDTO,
@@ -40,6 +44,16 @@ def _parse_uuid(value: str | None) -> UUID | None:
         return None
     try:
         return UUID(value)
+    except ValueError:
+        return None
+
+
+def _parse_request_type(value: str | None) -> RequestType | None:
+    """Parse a request type string to RequestType or None."""
+    if not value:
+        return None
+    try:
+        return RequestType(value)
     except ValueError:
         return None
 
@@ -312,6 +326,7 @@ class TracingService:
             group_uuid=resolved_group_uuid,
             group_name=group_name,
             tags=root_span.tags,
+            request_type=request_type_of_root_span(root_span.span_name),
             tree=tree,
         )
 
@@ -325,6 +340,7 @@ class TracingService:
         _to: datetime | None,
         params: Params,
         tags: list[str] | None = None,
+        request_types: list[RequestType] | None = None,
     ) -> Page[TraceDTO]:
         # Get paginated traces - paginate() handles count query automatically
         traces_page = self.otel_traces_dao.get_root_traces_paginated(
@@ -336,6 +352,7 @@ class TracingService:
             _to,
             params,
             tags=tags,
+            request_types=request_types,
         )
 
         if not traces_page.items:
@@ -392,6 +409,7 @@ class TracingService:
                     if resolved_group_uuid
                     else None,
                     tags=row.tags,
+                    request_type=_parse_request_type(row.request_type),
                     duration_ms=row.duration_ms,
                     total_spans=stats.span_count if stats else 0,
                     error_count=error_count,

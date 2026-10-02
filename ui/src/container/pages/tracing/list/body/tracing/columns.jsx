@@ -12,6 +12,7 @@ import {
 import { Tooltip } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import RequestTypeCell from './request-type-cell';
 import TagsCell from './tags-cell';
 
 function AssociatedGroup({ groupName, groupUuid }) {
@@ -43,6 +44,12 @@ const columns = [
         </div>
       </StatusTooltip>
     ),
+  },
+  {
+    title: 'Type',
+    dataIndex: 'requestType',
+    align: 'left',
+    render: (requestType) => <RequestTypeCell requestType={requestType} />,
   },
   {
     title: 'Tags',
