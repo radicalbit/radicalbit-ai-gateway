@@ -7,6 +7,8 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import RequestTypeTag from './request-type-tag';
+import TraceTags from './trace-tags';
 
 function Header() {
   const { modalPayload } = useModals();
@@ -36,16 +38,18 @@ function Header() {
     <NewHeader
       details={{
         one: (
-          <SectionTitle align="center" reverse size="small" subtitle="Duration" title={duration} />
+          <div className="pr-6 border-r border-gray-200">
+            <TraceTags />
+          </div>
         ),
         two: (
-          <SectionTitle align="center" reverse size="small" subtitle="Spans" title={totalSpans} />
-        ),
-        three: (
-          <SectionTitle align="center" reverse size="small" subtitle="Errors" title={errorCount} />
-        ),
-        four: (
           <div className="flex flex-row gap-4">
+            <SectionTitle align="center" reverse size="small" subtitle="Duration" title={duration} />
+
+            <SectionTitle align="center" reverse size="small" subtitle="Spans" title={totalSpans} />
+
+            <SectionTitle align="center" reverse size="small" subtitle="Errors" title={errorCount} />
+
             <SectionTitle align="center" reverse size="small" subtitle="Output" title={outputTokens} />
 
             <SectionTitle align="center" reverse size="small" subtitle="Input" title={inputTokens} />
@@ -59,6 +63,7 @@ function Header() {
           subtitle={subtitle}
           title={routeName}
           titlePrefix={<Lucide aria-label="Back" className="cursor-pointer" icon={ArrowLeft} onClick={handleOnClickBack} />}
+          titleSuffix={<RequestTypeTag />}
         />
       )}
     />

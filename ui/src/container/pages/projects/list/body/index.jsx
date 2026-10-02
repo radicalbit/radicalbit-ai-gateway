@@ -1,4 +1,5 @@
 import Lucide from '@Components/lucide';
+import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { CreateProjectButton } from '@Container/pages/projects/list/header';
 import { SEARCH_PARAMS } from '@Src/constants';
 import {
@@ -18,7 +19,8 @@ import {
   Void,
 } from '@radicalbit/radicalbit-design-system';
 import { CircleX, Inbox, TriangleAlert } from 'lucide-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
 import getColumns from './columns';
 import DeployStatusTabs, { DEPLOY_STATUS_ALL, DEPLOY_STATUS_QP } from './deploy-status-tabs';
@@ -31,6 +33,8 @@ const filterProjects = (data, { searchValue, deployStatus }) => data.filter((pro
 });
 
 function ProjectsList() {
+  useInitLayoutConfigurations();
+
   const [searchParams, setSearchParams] = useSearchParams();
   const searchValue = searchParams.get(SEARCH_PARAMS.projects) || '';
 
@@ -225,6 +229,14 @@ const useIsConfigBusy = (configUuid) => {
   const [, { isLoading: isUnserving }] = useUnserveConfigMutation({ fixedCacheKey: `unserve-config-${configUuid}` });
 
   return isApproving || isCancelling || isServing || isUnserving;
+};
+
+const useInitLayoutConfigurations = () => {
+  const dispatch = useDispatch();
+
+  useEffect(() => {
+    MAIN_LAYOUT_CONFIGURATION.forEach((action) => dispatch(action()));
+  }, [dispatch]);
 };
 
 export default ProjectsList;
