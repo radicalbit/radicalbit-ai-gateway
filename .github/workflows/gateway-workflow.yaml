@@ -15,6 +15,9 @@ on:
       - ".github/workflows/gateway-**"
       - ".github/workflows/tests.yaml"
 
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: "3.11"
   UV_VERSION: "0.7.13"
