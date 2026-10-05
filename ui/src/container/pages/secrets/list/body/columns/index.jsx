@@ -1,8 +1,17 @@
 import Lucide from '@Components/lucide';
 import { CopyToClipboard } from '@radicalbit/radicalbit-design-system';
 import { Copy } from 'lucide-react';
+import Status from './status';
+import UsedIn from './used-in';
 
 const columns = [
+  {
+    title: '',
+    dataIndex: 'status',
+    key: 'status',
+    width: '48px',
+    render: (status) => <Status status={status} />,
+  },
   {
     title: 'Secret key',
     dataIndex: 'key',
@@ -14,6 +23,12 @@ const columns = [
         <Lucide icon={Copy} />
       </CopyToClipboard>
     ),
+  },
+  {
+    title: 'Used in projects',
+    dataIndex: 'usedIn',
+    key: 'usedIn',
+    render: (usedIn) => <UsedIn usedIn={usedIn} />,
   },
 ];
 
