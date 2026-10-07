@@ -153,7 +153,7 @@ def test_route_without_any_model_category_rejected():
     with pytest.raises(
         ValueError,
         match='must reference at least one of chat_models, embedding_models, '
-        'or transcription_models',
+        'transcription_models, or decision_models',
     ):
         GatewayConfig.model_validate(raw)
 

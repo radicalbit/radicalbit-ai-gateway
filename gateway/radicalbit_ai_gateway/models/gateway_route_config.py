@@ -34,6 +34,10 @@ class GatewayRouteConfig(BaseModel):
         default=None,
         description='List of transcription model IDs for the route.',
     )
+    decision_models: list[str] | None = Field(
+        default=None,
+        description='List of decision model IDs for the route. The first one serves its traffic.',
+    )
     rate_limiting: RateLimiting | None = Field(
         default=None,
         description='Rate limiting configuration for the route.',

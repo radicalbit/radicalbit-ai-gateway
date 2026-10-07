@@ -454,6 +454,18 @@ class ModelInvokerInternalError(ModelInvokerError):
         )
 
 
+class ModelInvokerBadGateway(ModelInvokerError):
+    """No upstream attempt got a response: every call errored or timed out."""
+
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_502_BAD_GATEWAY,
+            log_message=log_message,
+            code='model_invoker_bad_gateway',
+        )
+
+
 class ModelInvokerBadRequest(ModelInvokerError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(

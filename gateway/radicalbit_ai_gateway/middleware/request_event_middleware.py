@@ -41,6 +41,7 @@ class RequestEventMiddleware:
         '/v1/embeddings',
         '/v1/responses',
         '/v1/audio/transcriptions',
+        '/v1/systemone',
     }
 
     def __init__(self, app: ASGIApp) -> None:
@@ -157,6 +158,8 @@ class RequestEventMiddleware:
                     return
             elif '/audio/transcriptions' in request.url.path:
                 request_type = RequestType.TRANSCRIPTIONS
+            elif request.url.path == '/v1/systemone':
+                request_type = RequestType.DECISION_MODEL
             elif '/embeddings' in request.url.path:
                 request_type = RequestType.EMBEDDINGS
             else:

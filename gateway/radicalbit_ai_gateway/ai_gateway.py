@@ -24,6 +24,10 @@ from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
+from radicalbit_ai_gateway.invocation.decision_model_invoker import (
+    DecisionModelInvoker,
+    DecisionResponse,
+)
 from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EmbeddingModelInvoker,
 )
@@ -112,6 +116,7 @@ class GatewayRoute:
         budget_limiter: BudgetLimiter | None = None,
         duration_limiter: DurationLimiter | None = None,
         transcription_models: list[Model] | None = None,
+        decision_models: list[Model] | None = None,
         project_uuid: str = '',
         project_name: str = '',
     ):
@@ -121,6 +126,7 @@ class GatewayRoute:
         self._chat_models = chat_models or []
         self._embedding_models = embedding_models or []
         self._transcription_models = transcription_models or []
+        self._decision_models = decision_models or []
         self.router = router
         self.guardrail_engine = guardrail_engine
         self.gateway_cache = gateway_cache
@@ -175,6 +181,20 @@ class GatewayRoute:
             self.transcription_invoker = TranscriptionModelInvoker(
                 models=transcription_models,
                 fallbacks=transcription_fallbacks,
+                cost_service=self.cost_service,
+                httpx_client=httpx_client,
+            )
+
+        self.decision_invoker: DecisionModelInvoker | None = None
+        if self._decision_models:
+            decision_fallbacks = [
+                fb
+                for fb in (fallback_models or [])
+                if fb.type == FallbackModelType.DECISION
+            ]
+            self.decision_invoker = DecisionModelInvoker(
+                models=self._decision_models,
+                fallbacks=decision_fallbacks,
                 cost_service=self.cost_service,
                 httpx_client=httpx_client,
             )
@@ -905,6 +925,42 @@ class GatewayRoute:
             await self._count_transcription_usage(
                 getattr(final_event, 'usage', None), model_selected
             )
+
+    async def invoke_decision(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        body: dict,
+    ) -> DecisionResponse:
+        if route_name != self.gateway_route_config.route_name:
+            raise GatewayBadRequest(f'{route_name} must be the route name')
+
+        if not self.decision_invoker:
+            raise GatewayBadRequest(
+                f'Route {route_name} has no decision models defined'
+            )
+
+        # The first decision model listed on the route serves its traffic.
+        set_operation_category(OperationCategory.ROUTING)
+        model_selected = self._decision_models[0]
+
+        set_operation_category(OperationCategory.INVOCATION)
+        return await self.decision_invoker.decide(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            body=body,
+            model_id=model_selected.model_id,
+            project_uuid=self.project_uuid,
+            project_name=self.project_name,
+        )
 
     # ============================================================================
     # Pre Process Request

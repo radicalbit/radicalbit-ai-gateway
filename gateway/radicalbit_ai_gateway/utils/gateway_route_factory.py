@@ -109,6 +109,7 @@ def build_gateway_routes_from_config(
     chat_by_id = gateway_config.chat_models_by_id
     emb_by_id = gateway_config.embedding_models_by_id
     transcription_by_id = gateway_config.transcription_models_by_id
+    decision_by_id = gateway_config.decision_models_by_id
 
     for route_name, route_config in gateway_config.routes.items():
         chat_models = (
@@ -127,6 +128,11 @@ def build_gateway_routes_from_config(
                 for mid in (route_config.transcription_models or [])
             ]
             if route_config.transcription_models
+            else None
+        )
+        decision_models = (
+            [decision_by_id[mid] for mid in route_config.decision_models]
+            if route_config.decision_models
             else None
         )
         cache_client = get_proper_cache(route_config, redis_client)
@@ -184,6 +190,7 @@ def build_gateway_routes_from_config(
             chat_models=chat_models,
             embedding_models=embedding_models,
             transcription_models=transcription_models,
+            decision_models=decision_models,
             guardrail_engine=guardrail_engine,
             gateway_cache=gateway_cache,
             cost_service=cost_service,
@@ -231,6 +238,7 @@ def build_project_route_registrar(
             chat_models_by_id=project_gateway_config.chat_models_by_id,
             embedding_models_by_id=project_gateway_config.embedding_models_by_id,
             transcription_models_by_id=project_gateway_config.transcription_models_by_id,
+            decision_models_by_id=project_gateway_config.decision_models_by_id,
         )
         project_guardrail_engine = GuardrailEngine(
             presidio_engine=presidio_engine,
