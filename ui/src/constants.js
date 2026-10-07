@@ -119,6 +119,7 @@ const RequestTypeEnum = {
   CHAT_COMPLETIONS: 'chat_completions',
   EMBEDDINGS: 'embeddings',
   TRANSCRIPTIONS: 'transcriptions',
+  DECISION_MODEL: 'decision_model',
   MCP: 'mcp',
 };
 
@@ -126,6 +127,7 @@ const REQUEST_TYPE_LABELS = {
   [RequestTypeEnum.CHAT_COMPLETIONS]: 'Chat',
   [RequestTypeEnum.EMBEDDINGS]: 'Embeddings',
   [RequestTypeEnum.TRANSCRIPTIONS]: 'Transcription',
+  [RequestTypeEnum.DECISION_MODEL]: 'Decision model',
   [RequestTypeEnum.MCP]: 'MCP',
 };
 
