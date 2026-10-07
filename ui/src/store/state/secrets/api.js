@@ -4,8 +4,12 @@ export const secretsApiSlice = apiService.injectEndpoints({
   endpoints: (builder) => ({
     getSecrets: builder.query({
       providesTags: () => [API_TAGS.SECRETS],
-      query: ({ page, limit } = {}) => {
+      query: ({ page, limit, search } = {}) => {
         const params = new URLSearchParams();
+
+        if (search) {
+          params.append('search', search);
+        }
 
         if (page !== undefined) {
           params.append('_page', page);

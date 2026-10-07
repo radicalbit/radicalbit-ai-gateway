@@ -29,6 +29,7 @@ const SEARCH_PARAMS = {
   credentials: 'searchCredential',
   projects: 'searchProject',
   configurations: 'searchConfiguration',
+  secrets: 'searchSecret',
 };
 
 const SortOrderEnum = {
@@ -89,6 +90,10 @@ const CONFIG_LIST_FILTER_LABELS = {
 const ProjectStatusEnum = {
   DEV: 'DEV',
   PROD: 'PROD',
+};
+
+const SecretStatusEnum = {
+  UNAVAILABLE: 'unavailable',
 };
 
 const AlertScopeEnum = {
@@ -156,6 +161,7 @@ export {
   ProjectStatusEnum,
   RequestTypeEnum,
   REQUEST_TYPE_LABELS,
+  SecretStatusEnum,
   SortOrderEnum,
   startPage,
   mcpKeysPageSize,
