@@ -11,7 +11,10 @@ from tests.common.mocked_gateway_config import (
 
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.model import Model
-from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.services.cost_service import (
+    CostService,
+    logger as cost_service_logger,
+)
 
 WHISPER_MODEL = Model(
     model_id='whisper',
@@ -200,10 +203,20 @@ class CostServiceTest(unittest.TestCase):
         )
         assert cost == Decimal('0')
 
-    def test_compute_cost_unknown_model_raises_unbound_local_error(self):
-        with pytest.raises(UnboundLocalError):
-            self.cost_service.compute_cost(
+    def test_compute_cost_unknown_model_costs_zero_and_warns(self):
+        with self.assertLogs(cost_service_logger, level='WARNING') as logs:
+            cost = self.cost_service.compute_cost(
                 token_processed=100,
                 where='input',
                 model_id='unknown-model',
+            )
+        assert cost == Decimal('0')
+        assert any('unknown-model' in line for line in logs.output)
+
+    def test_compute_cost_invalid_where_still_raises(self):
+        with pytest.raises(ValueError):
+            self.cost_service.compute_cost(
+                token_processed=100,
+                where='bogus',
+                model_id='openai',
             )
