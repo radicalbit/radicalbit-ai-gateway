@@ -11,10 +11,12 @@ const columns = [
     key: 'key',
     render: (value, { status }) => (
       <div className="flex items-center gap-2">
-        <CopyToClipboard link={value} modifier="inline-flex w-fit gap-2 items-center" tooltip={{ mouseEnterDelay: 0 }}>
-          <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        <CopyToClipboard link={value} tooltip={{ mouseEnterDelay: 0 }}>
+          <div className="flex items-center gap-2">
+            <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
 
-          <Lucide icon={Copy} />
+            <Lucide icon={Copy} />
+          </div>
         </CopyToClipboard>
 
         <Status status={status} />

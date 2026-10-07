@@ -5,13 +5,8 @@ import { useNavigate } from 'react-router-dom';
 
 const VISIBLE_PROJECTS = 3;
 
-function UsedIn({ usedIn }) {
-  if (!usedIn?.length) {
-    return false;
-  }
-
+function UsedIn({ usedIn = [] }) {
   const visibleProjects = usedIn.slice(0, VISIBLE_PROJECTS);
-  const hiddenCount = usedIn.length - visibleProjects.length;
 
   return (
     <div className="flex flex-wrap gap-2 items-center">
@@ -19,13 +14,33 @@ function UsedIn({ usedIn }) {
         <ProjectLink key={project.uuid} project={project} />
       ))}
 
-      <HiddenProjects count={hiddenCount} usedIn={usedIn} />
+      <HiddenProjects usedIn={usedIn} />
     </div>
   );
 }
 
-function HiddenProjects({ count, usedIn }) {
-  if (count <= 0) {
+function ProjectLink({ project }) {
+  const navigate = useNavigate();
+
+  const name = project?.name;
+
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+    navigate(`/${PathsEnum.PROJECTS}?${SEARCH_PARAMS.projects}=${encodeURIComponent(name)}`);
+  };
+
+  return (
+    <HtmlAnchor onClick={handleOnClick}>
+      {name}
+    </HtmlAnchor>
+  );
+}
+
+function HiddenProjects({ usedIn }) {
+  const visibleProjects = usedIn.slice(0, VISIBLE_PROJECTS);
+  const hiddenCount = usedIn.length - visibleProjects.length;
+
+  if (hiddenCount <= 0) {
     return false;
   }
 
@@ -46,25 +61,8 @@ function HiddenProjects({ count, usedIn }) {
       placement="topRight"
       title={<strong>Projects</strong>}
     >
-      <Tag onClick={handleOnClick} rounded type="secondary">{`+${count}`}</Tag>
+      <Tag onClick={handleOnClick} rounded type="secondary">{`+${hiddenCount}`}</Tag>
     </Popover>
-  );
-}
-
-function ProjectLink({ project }) {
-  const navigate = useNavigate();
-
-  const name = project?.name;
-
-  const handleOnClick = (e) => {
-    e.stopPropagation();
-    navigate(`/${PathsEnum.PROJECTS}?${SEARCH_PARAMS.projects}=${encodeURIComponent(name)}`);
-  };
-
-  return (
-    <HtmlAnchor onClick={handleOnClick}>
-      {name}
-    </HtmlAnchor>
   );
 }
 
