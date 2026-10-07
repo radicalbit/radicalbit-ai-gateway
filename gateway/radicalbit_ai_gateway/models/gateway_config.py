@@ -287,11 +287,24 @@ class GatewayConfig(BaseModel):
 
             # Limiting-type/model-type compatibility validation
             if route.token_limiting is not None and not (
-                route_chat_ids or route_emb_ids
+                route_chat_ids or route_emb_ids or route_decision_ids
             ):
                 raise ValueError(
                     f'Route {route_name}: token_limiting requires at least one '
-                    'chat or embedding model to be referenced.'
+                    'chat, embedding or decision model to be referenced.'
+                )
+            decision_only = route_decision_ids and not (
+                route_chat_ids or route_emb_ids or route_transcription_ids
+            )
+            if (
+                decision_only
+                and route.token_limiting is not None
+                and route.token_limiting.output is not None
+            ):
+                raise ValueError(
+                    f'Route {route_name}: token_limiting.output is not allowed on '
+                    'a route with only decision models. Decision models produce no '
+                    'output tokens. The limit would never be reached.'
                 )
             if route.duration_limiting is not None and not route_transcription_ids:
                 raise ValueError(

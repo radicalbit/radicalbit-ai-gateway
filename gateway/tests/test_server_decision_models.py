@@ -1,6 +1,7 @@
 """POST /v1/systemone: Jev proxied through the gateway, Typesafe mocked with pook."""
 
 import json
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,9 +13,15 @@ from starlette.requests import Request
 
 from tests.common import db_mock
 
+from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.limiter import InMemoryStorage
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitCategory,
+    CredentialLimitOut,
+)
 from radicalbit_ai_gateway.models.event_payload import (
     FallbackEventPayload,
     InputTokenProcessedPayload,
@@ -24,7 +31,12 @@ from radicalbit_ai_gateway.models.event_payload import (
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import app, group_service, key_service
+from radicalbit_ai_gateway.server import (
+    app,
+    group_service,
+    key_service,
+    project_budget_limit_dao,
+)
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import KeyNotFoundError
@@ -41,6 +53,12 @@ REQUEST_EVENT_EMIT = (
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
 )
 SPAN = 'radicalbit_ai_gateway.invocation.decision_model_invoker.trace.get_current_span'
+# Credential and project limiters are built per request. Redis shares their
+# counters in production: one shared in-memory storage does it here.
+CREDENTIAL_STORAGE = 'radicalbit_ai_gateway.limiting.credential_limiter.InMemoryStorage'
+PROJECT_STORAGE = (
+    'radicalbit_ai_gateway.limiting.project_budget_limiter.InMemoryStorage'
+)
 BACKOFF_SLEEP = 'radicalbit_ai_gateway.invocation.decision_model_invoker.asyncio.sleep'
 
 STATE = {'ticket': 'My card was charged twice', 'customer': {'tier': 'gold'}}
@@ -134,6 +152,12 @@ class TestDecisionModelEndpoint(unittest.TestCase):
 
     def setUp(self):
         app.state.routes = _build_routes(JEV)
+        # Other test modules swap the validator: use the real one, which reads
+        # the credential's limits from the key.
+        self.addCleanup(
+            setattr, app.state, 'token_validator', app.state.token_validator
+        )
+        app.state.token_validator = ApiKeyValidator(key_service=key_service)
         self.api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
         key_service.get_key_by_hashed_key = MagicMock(return_value=self.api_key)
         group_service.check_key_uuid_for_route = MagicMock(return_value=True)
@@ -147,6 +171,8 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             patch(REQUEST_EVENT_EMIT, side_effect=self.request_events.append),
             patch(SPAN, return_value=self.span),
             patch(BACKOFF_SLEEP, new=AsyncMock()),
+            patch(CREDENTIAL_STORAGE, return_value=InMemoryStorage()),
+            patch(PROJECT_STORAGE, return_value=InMemoryStorage()),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -427,6 +453,124 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         attributes = self._span_attributes()
         assert attributes['decision.response.fallback_triggered'] is True
         assert attributes['decision.response.model_id'] == 'jev-eu'
+
+    # Limits (AG-1000)
+
+    def test_route_rate_limit_applies(self):
+        app.state.routes = _build_routes(
+            JEV, rate_limiting={'max_requests': 1, 'window_size': '1 minute'}
+        )
+        self._mock_typesafe()
+
+        first = self._post()
+        second = self._post()
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+
+    def _limit_credential(self, category: CredentialLimitCategory, value: float):
+        # A plain record: the ORM `limits` relationship only takes KeyLimit rows.
+        limit = db_mock.get_sample_key_limit(
+            category=category.value, window_size='1 minute', max_value=value
+        )
+        key_record = SimpleNamespace(
+            uuid=self.api_key.uuid,
+            name=self.api_key.name,
+            group=self.api_key.group,
+            limits=[CredentialLimitOut.from_key_limit(limit)],
+        )
+        key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
+
+    def test_credential_rate_limit_applies(self):
+        self._limit_credential(CredentialLimitCategory.RATE, 1)
+        self._mock_typesafe()
+
+        first = self._post()
+        second = self._post()
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+
+    def _assert_second_request_blocked_before_typesafe(self):
+        # The first call passes though its 312 input tokens (or their cost)
+        # exceed the limit: nothing is estimated. Its usage fills the counter,
+        # so the second call is rejected without reaching Typesafe.
+        self._mock_typesafe()
+
+        first = self._post()
+        second = self._post()
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+        assert pook.isdone()
+
+    def test_route_input_token_limit_counts_usage_and_blocks_when_full(self):
+        app.state.routes = _build_routes(
+            JEV, token_limiting={'input': {'max_tokens': 100}}
+        )
+
+        self._assert_second_request_blocked_before_typesafe()
+
+    def test_credential_input_token_limit_counts_usage_and_blocks_when_full(self):
+        self._limit_credential(CredentialLimitCategory.TOKEN_INPUT, 100)
+
+        self._assert_second_request_blocked_before_typesafe()
+
+    # 312 tokens at 1000 per million cost 0.312, over a 0.1 budget.
+    PRICEY_JEV = {**JEV, 'input_cost_per_million_tokens': 1000}
+
+    def test_route_budget_counts_input_cost_and_blocks_when_spent(self):
+        app.state.routes = _build_routes(
+            self.PRICEY_JEV, budget_limiting={'max_budget': 0.1}
+        )
+
+        self._assert_second_request_blocked_before_typesafe()
+
+    def test_credential_budget_counts_input_cost_and_blocks_when_spent(self):
+        app.state.routes = _build_routes(self.PRICEY_JEV)
+        self._limit_credential(CredentialLimitCategory.BUDGET, 0.1)
+
+        self._assert_second_request_blocked_before_typesafe()
+
+    def test_project_budget_counts_input_cost_and_blocks_when_spent(self):
+        app.state.routes = _build_routes(self.PRICEY_JEV)
+        route = app.state.routes[ROUTE_KEY]
+        route.project_uuid = str(db_mock.RANDOM_UUID)
+        dao = MagicMock(
+            return_value=[
+                db_mock.get_sample_project_budget_limit(
+                    window_size='1 minute', max_value=0.1
+                )
+            ]
+        )
+        with patch.object(project_budget_limit_dao, 'get_by_project_uuid', dao):
+            self._assert_second_request_blocked_before_typesafe()
+
+    def test_output_token_limits_get_nothing(self):
+        # Typesafe's usage reports 20 output tokens. Counting them would fill
+        # these limits of 10 and block the second call.
+        config = GatewayConfig.model_validate(
+            {
+                'chat_models': [{'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}],
+                'decision_models': [JEV],
+                'routes': {
+                    'agent': {
+                        'chat_models': ['gpt'],
+                        'decision_models': ['jev'],
+                        'token_limiting': {'output': {'max_tokens': 10}},
+                    }
+                },
+            }
+        )
+        route = app.state.routes[ROUTE_KEY]
+        route.token_limiter = config.routes['agent'].get_token_limiter('')
+        self._limit_credential(CredentialLimitCategory.TOKEN_OUTPUT, 10)
+        self._mock_typesafe().times(2)
+
+        first = self._post()
+        second = self._post()
+
+        assert (first.status_code, second.status_code) == (200, 200)
 
     def test_span_names_the_model_whose_response_is_returned(self):
         self._route_with_fallback()
