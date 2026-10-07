@@ -35,6 +35,7 @@ function Group() {
             </small>
           </Tooltip>
         </div>),
+      title: i.name,
       value: i.uuid,
     });
   });
@@ -73,7 +74,7 @@ function GroupInner({ groups }) {
     <FormField>
       <Select
         aria-label="Group"
-        filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+        filterOption={(input, option) => (option?.title ?? '').toLowerCase().includes(input.toLowerCase())}
         onChange={handleOnSelect}
         options={groups}
         placeholder={(
