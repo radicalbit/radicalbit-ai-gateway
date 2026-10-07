@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 from dataclasses import dataclass
 import json
 import logging
@@ -13,8 +15,8 @@ from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
+    ModelInvokerBadGateway,
     ModelInvokerBadRequest,
-    ModelInvokerInternalError,
 )
 from radicalbit_ai_gateway.utils.parse_provider_and_model import (
     parse_provider_and_model,
@@ -26,6 +28,8 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 DECISION_MODEL_TYPE = 'decision_model'
 TYPESAFE_DEFAULT_BASE_URL = 'https://api.typesafe.ai'
 SYSTEMONE_PATH = '/v1/systemone'
+BACKOFF_BASE_SECONDS = 0.2
+BACKOFF_CAP_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -44,25 +48,35 @@ class DecisionResponse:
     media_type: str | None
 
 
-def _set_decision_request_attributes(forwarded_body: dict, model_id: str) -> None:
+def _set_decision_request_attributes(body: dict, model_id: str) -> None:
     try:
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attribute(
-                'decision.request.state', json.dumps(forwarded_body.get('state'))
-            )
+            span.set_attribute('decision.request.state', json.dumps(body.get('state')))
             span.set_attribute(
                 'decision.request.questions',
-                json.dumps(forwarded_body.get('questions')),
+                json.dumps(body.get('questions')),
             )
             span.set_attribute('decision.request.model_id', model_id)
     except Exception:
         pass
 
 
-def _set_decision_response_attributes(
-    payload: dict, model_id_invoked: str, fallback_triggered: bool
+def _set_decision_fallback_attributes(
+    model_id_invoked: str, fallback_triggered: bool
 ) -> None:
+    try:
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute('decision.response.model_id', model_id_invoked)
+            span.set_attribute(
+                'decision.response.fallback_triggered', fallback_triggered
+            )
+    except Exception:
+        pass
+
+
+def _set_decision_response_attributes(payload: dict) -> None:
     try:
         span = trace.get_current_span()
         if span.is_recording():
@@ -72,12 +86,22 @@ def _set_decision_response_attributes(
             span.set_attribute(
                 'decision.response.usage', json.dumps(payload.get('usage'))
             )
-            span.set_attribute('decision.response.model_id', model_id_invoked)
-            span.set_attribute(
-                'decision.response.fallback_triggered', fallback_triggered
-            )
     except Exception:
         pass
+
+
+def _is_transient(response: httpx.Response) -> bool:
+    """429 and 5xx may pass on retry. Other 4xx are the client's mistake."""
+    return response.status_code == 429 or response.status_code >= 500
+
+
+def _backoff_seconds(attempt: int, last_response: httpx.Response | None) -> float:
+    """Exponential backoff, capped. A small Retry-After on a 429 wins."""
+    delay = BACKOFF_BASE_SECONDS * 2 ** (attempt - 1)
+    if last_response is not None and last_response.status_code == 429:
+        with contextlib.suppress(ValueError):
+            delay = float(last_response.headers.get('retry-after', ''))
+    return max(0.0, min(delay, BACKOFF_CAP_SECONDS))
 
 
 class DecisionModelInvoker(ModelInvoker):
@@ -126,30 +150,44 @@ class DecisionModelInvoker(ModelInvoker):
     ) -> DecisionResponse:
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Decision model {model_id} not defined')
-        model, upstream, _ = self.model_map[model_id]
-
-        # The configured upstream model and credential replace the client's.
-        forwarded_body = {**body, 'model': upstream.model_name}
-        headers = (
-            {'Authorization': f'Bearer {upstream.api_key}'} if upstream.api_key else {}
-        )
-        _set_decision_request_attributes(forwarded_body, model_id)
+        model, upstream, fallbacks = self.model_map[model_id]
+        _set_decision_request_attributes(body, model_id)
 
         start_time = time.monotonic()
-        try:
-            response = await self._post(upstream.url, forwarded_body, headers)
-        except httpx.HTTPError as e:
-            raise ModelInvokerInternalError(
-                f'Decision upstream call failed: {e}'
-            ) from e
+        # The target first, then its fallbacks, each with its own retries.
+        response: httpx.Response | None = None
+        model_invoked = model
+        fallback_triggered = False
+        previous = model
+        for candidate, candidate_upstream in [(model, upstream), *fallbacks]:
+            if candidate is not model:
+                logger.warning(
+                    'Decision model %s failed. Falling back to %s',
+                    previous.model_id,
+                    candidate.model_id,
+                )
+                fallback_triggered = True
+            previous = candidate
+            candidate_response = await self._call_with_retries(
+                candidate, candidate_upstream, body
+            )
+            if candidate_response is None:
+                continue
+            # Keep the last real response: it is returned if the chain runs out.
+            response, model_invoked = candidate_response, candidate
+            if not _is_transient(candidate_response):
+                break
+        _set_decision_fallback_attributes(model_invoked.model_id, fallback_triggered)
+        if response is None:
+            raise ModelInvokerBadGateway(
+                f'No decision model answered for route {route_name}'
+            )
         latency_ms = (time.monotonic() - start_time) * 1000
 
         if response.is_success:
             payload = self._parse_json(response, model_id)
             input_tokens = (payload.get('usage') or {}).get('input_tokens') or 0
-            _set_decision_response_attributes(
-                payload, model_id_invoked=model.model_id, fallback_triggered=False
-            )
+            _set_decision_response_attributes(payload)
             # Typesafe bills input tokens only: output is recorded as 0.
             self._record_metrics(
                 request_uuid=request_uuid,
@@ -159,11 +197,12 @@ class DecisionModelInvoker(ModelInvoker):
                 group_uuid=group_uuid,
                 route_name=route_name,
                 target_model_id=model.model_id,
-                model=model,
+                model=model_invoked,
                 latency_ms=latency_ms,
                 model_type=DECISION_MODEL_TYPE,
                 token_input_count=input_tokens,
                 token_output_count=0,
+                fallback_triggered=fallback_triggered,
                 project_uuid=project_uuid,
                 project_name=project_name,
             )
@@ -173,6 +212,36 @@ class DecisionModelInvoker(ModelInvoker):
             content=response.content,
             media_type=response.headers.get('content-type'),
         )
+
+    async def _call_with_retries(
+        self, model: Model, upstream: DecisionUpstream, body: dict
+    ) -> httpx.Response | None:
+        """Call one decision model, retrying transient failures.
+
+        Return the first non-transient response. When every attempt fails,
+        return the last response received, or None if no attempt got one.
+        """
+        # The configured upstream model and credential replace the client's.
+        forwarded_body = {**body, 'model': upstream.model_name}
+        headers = (
+            {'Authorization': f'Bearer {upstream.api_key}'} if upstream.api_key else {}
+        )
+        last_response: httpx.Response | None = None
+        for attempt in range((model.retry_attempts or 0) + 1):
+            if attempt:
+                await asyncio.sleep(_backoff_seconds(attempt, last_response))
+            try:
+                response = await self._post(upstream.url, forwarded_body, headers)
+            except httpx.HTTPError as e:
+                logger.warning('Decision model %s call failed: %r', model.model_id, e)
+                continue
+            if not _is_transient(response):
+                return response
+            logger.warning(
+                'Decision model %s returned %s', model.model_id, response.status_code
+            )
+            last_response = response
+        return last_response
 
     async def _post(self, url: str, body: dict, headers: dict) -> httpx.Response:
         if self.httpx_client is not None:

@@ -136,3 +136,50 @@ def test_jev_input_price_can_be_overridden_and_output_price_is_forced_to_zero():
     jev = config.decision_models_by_id['jev']
     assert jev.input_cost_per_million_tokens == Decimal('0.05')
     assert jev.output_cost_per_million_tokens == Decimal('0')
+
+
+JEV_EU = {**JEV, 'model_id': 'jev-eu'}
+
+
+def test_decision_fallback_between_decision_models_is_accepted():
+    config = GatewayConfig.model_validate(
+        {
+            'decision_models': [JEV, JEV_EU],
+            'routes': {
+                'agent': {
+                    'decision_models': ['jev', 'jev-eu'],
+                    'fallback': [
+                        {'target': 'jev', 'fallbacks': ['jev-eu'], 'type': 'decision'}
+                    ],
+                }
+            },
+        }
+    )
+
+    [fallback] = config.routes['agent'].fallback
+    assert fallback.type.value == 'DECISION'
+
+
+@pytest.mark.parametrize(
+    ('fallback', 'label'),
+    [
+        ({'target': 'jev', 'fallbacks': ['gpt'], 'type': 'decision'}, 'decision'),
+        ({'target': 'gpt', 'fallbacks': ['jev'], 'type': 'chat'}, 'chat'),
+        ({'target': 'jev', 'fallbacks': ['jev-eu'], 'type': 'chat'}, 'chat'),
+    ],
+)
+def test_fallback_mixing_decision_and_chat_models_is_rejected(fallback, label):
+    with pytest.raises(ValueError, match=f'must be present in the {label} models'):
+        GatewayConfig.model_validate(
+            {
+                'chat_models': [{'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}],
+                'decision_models': [JEV, JEV_EU],
+                'routes': {
+                    'agent': {
+                        'chat_models': ['gpt'],
+                        'decision_models': ['jev', 'jev-eu'],
+                        'fallback': [fallback],
+                    }
+                },
+            }
+        )

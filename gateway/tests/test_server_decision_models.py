@@ -2,9 +2,10 @@
 
 import json
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
+import httpx
 import pook
 import pytest
 from starlette.requests import Request
@@ -15,6 +16,7 @@ from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.event_payload import (
+    FallbackEventPayload,
     InputTokenProcessedPayload,
     ModelInvocationPayload,
     OutputTokenProcessedPayload,
@@ -39,6 +41,7 @@ REQUEST_EVENT_EMIT = (
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
 )
 SPAN = 'radicalbit_ai_gateway.invocation.decision_model_invoker.trace.get_current_span'
+BACKOFF_SLEEP = 'radicalbit_ai_gateway.invocation.decision_model_invoker.asyncio.sleep'
 
 STATE = {'ticket': 'My card was charged twice', 'customer': {'tier': 'gold'}}
 QUESTIONS = {
@@ -69,11 +72,16 @@ def _mock_request_uuid(request: Request):
     return str(db_mock.REQUEST_UUID)
 
 
-def _build_routes(decision_model: dict) -> dict:
+def _build_routes(*decision_models: dict, **route_config) -> dict:
     config = GatewayConfig.model_validate(
         {
-            'decision_models': [decision_model],
-            'routes': {'agent': {'decision_models': [decision_model['model_id']]}},
+            'decision_models': list(decision_models),
+            'routes': {
+                'agent': {
+                    'decision_models': [m['model_id'] for m in decision_models],
+                    **route_config,
+                }
+            },
         }
     )
     cost_service = CostService(decision_models_by_id=config.decision_models_by_id)
@@ -101,6 +109,16 @@ JEV = {
     'model': 'typesafe/jev-latest',
     'credentials': {'api_key': TYPESAFE_KEY},
 }
+TYPESAFE_EU_URL = 'https://typesafe.eu.example.com/v1/systemone'
+JEV_EU = {
+    'model_id': 'jev-eu',
+    'model': 'typesafe/jev-latest',
+    'credentials': {
+        'api_key': TYPESAFE_KEY,
+        'base_url': 'https://typesafe.eu.example.com',
+    },
+}
+JEV_TO_JEV_EU = [{'target': 'jev', 'fallbacks': ['jev-eu'], 'type': 'decision'}]
 
 
 class TestDecisionModelEndpoint(unittest.TestCase):
@@ -128,6 +146,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             patch(MODEL_INVOKER_EMIT, side_effect=self.emitted.append),
             patch(REQUEST_EVENT_EMIT, side_effect=self.request_events.append),
             patch(SPAN, return_value=self.span),
+            patch(BACKOFF_SLEEP, new=AsyncMock()),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -145,14 +164,14 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         )
 
     def _mock_typesafe(self, url: str = TYPESAFE_URL, status: int = 200, body=None):
-        return (
+        mock = (
             pook.post(url)
             .header('Authorization', f'Bearer {TYPESAFE_KEY}')
             .json({'state': STATE, 'model': 'jev-latest', 'questions': QUESTIONS})
             .times(1)
-            .reply(status)
-            .json(TYPESAFE_BODY if body is None else body)
         )
+        mock.reply(status).json(TYPESAFE_BODY if body is None else body)
+        return mock
 
     def test_success_body_and_status_reach_the_client_unchanged(self):
         self._mock_typesafe()
@@ -263,4 +282,161 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert (
             json.loads(attributes['decision.response.usage']) == TYPESAFE_BODY['usage']
         )
+        assert attributes['decision.response.model_id'] == 'jev'
+
+    def test_server_error_is_retried_and_the_later_success_is_returned(self):
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        self._mock_typesafe()
+
+        response = self._post()
+
+        assert response.status_code == 200
+        assert response.json() == TYPESAFE_BODY
+        assert pook.isdone()
+
+    def test_rate_limited_response_is_retried(self):
+        self._mock_typesafe(status=429, body={'detail': 'slow down'})
+        self._mock_typesafe()
+
+        response = self._post()
+
+        assert response.status_code == 200
+        assert pook.isdone()
+
+    def test_network_error_is_retried(self):
+        pook.post(TYPESAFE_URL).times(1).error(httpx.ConnectError('refused'))
+        self._mock_typesafe()
+
+        response = self._post()
+
+        assert response.status_code == 200
+        assert pook.isdone()
+
+    def test_client_error_is_not_retried(self):
+        error = {'detail': 'bad question'}
+        self._mock_typesafe(status=400, body=error)
+        retry = self._mock_typesafe()
+
+        response = self._post()
+
+        assert response.status_code == 400
+        assert response.json() == error
+        assert not retry.isdone()
+
+    def test_timeout_is_retried(self):
+        pook.post(TYPESAFE_URL).times(1).error(httpx.ReadTimeout('too slow'))
+        self._mock_typesafe()
+
+        response = self._post()
+
+        assert response.status_code == 200
+        assert pook.isdone()
+
+    def _route_with_fallback(self):
+        app.state.routes = _build_routes(
+            {**JEV, 'retry_attempts': 1},
+            {**JEV_EU, 'retry_attempts': 0},
+            fallback=JEV_TO_JEV_EU,
+        )
+
+    def _span_attributes(self) -> dict:
+        return {c.args[0]: c.args[1] for c in self.span.set_attribute.call_args_list}
+
+    def test_exhausted_retries_fall_back_to_the_next_decision_model(self):
+        self._route_with_fallback()
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        self._mock_typesafe(url=TYPESAFE_EU_URL)
+
+        response = self._post()
+
+        assert response.status_code == 200
+        assert response.json() == TYPESAFE_BODY
+        assert pook.isdone()
+
+    def test_client_error_does_not_fall_back(self):
+        self._route_with_fallback()
+        error = {'detail': 'bad question'}
+        self._mock_typesafe(status=400, body=error)
+        fallback = self._mock_typesafe(url=TYPESAFE_EU_URL)
+
+        response = self._post()
+
+        assert response.status_code == 400
+        assert response.json() == error
+        assert not fallback.isdone()
+
+    def test_exhausted_chain_returns_the_last_upstream_status_and_body(self):
+        self._route_with_fallback()
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        self._mock_typesafe(status=500, body={'detail': 'broken'})
+        self._mock_typesafe(
+            url=TYPESAFE_EU_URL, status=429, body={'detail': 'slow down'}
+        )
+
+        response = self._post()
+
+        assert response.status_code == 429
+        assert response.json() == {'detail': 'slow down'}
+        assert pook.isdone()
+
+    def test_exhausted_chain_with_no_upstream_response_returns_502(self):
+        app.state.routes = _build_routes(
+            {**JEV, 'retry_attempts': 0},
+            {**JEV_EU, 'retry_attempts': 0},
+            fallback=JEV_TO_JEV_EU,
+        )
+        pook.post(TYPESAFE_URL).times(1).error(httpx.ConnectError('refused'))
+        pook.post(TYPESAFE_EU_URL).times(1).error(httpx.ReadTimeout('too slow'))
+
+        response = self._post()
+
+        assert response.status_code == 502
+        assert pook.isdone()
+
+    def test_span_records_the_fallback_that_served_the_request(self):
+        self._route_with_fallback()
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        self._mock_typesafe(url=TYPESAFE_EU_URL)
+
+        self._post()
+
+        attributes = self._span_attributes()
+        assert attributes['decision.response.fallback_triggered'] is True
+        assert attributes['decision.response.model_id'] == 'jev-eu'
+        [fallback] = [e for e in self.emitted if isinstance(e, FallbackEventPayload)]
+        assert (fallback.target, fallback.fallback) == ('jev', 'jev-eu')
+
+    def test_span_records_no_fallback_when_the_target_answers(self):
+        self._route_with_fallback()
+        self._mock_typesafe()
+
+        self._post()
+
+        assert self._span_attributes()['decision.response.fallback_triggered'] is False
+
+    def test_span_records_the_fallback_on_an_exhausted_chain(self):
+        self._route_with_fallback()
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        self._mock_typesafe(url=TYPESAFE_EU_URL, status=503, body={'detail': 'busy'})
+
+        self._post()
+
+        attributes = self._span_attributes()
+        assert attributes['decision.response.fallback_triggered'] is True
+        assert attributes['decision.response.model_id'] == 'jev-eu'
+
+    def test_span_names_the_model_whose_response_is_returned(self):
+        self._route_with_fallback()
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        self._mock_typesafe(status=503, body={'detail': 'busy'})
+        pook.post(TYPESAFE_EU_URL).times(1).error(httpx.ConnectError('refused'))
+
+        response = self._post()
+
+        assert response.status_code == 503
+        attributes = self._span_attributes()
+        assert attributes['decision.response.fallback_triggered'] is True
         assert attributes['decision.response.model_id'] == 'jev'
