@@ -82,8 +82,10 @@ class CostService:
                 case _:
                     raise ValueError(f'Invalid where value: {where}')
         except KeyError:
+            # A missing price must never fail the request: cost it at 0.
             logger.warning(
-                'Failed to compute cost for %s',
+                'No price entry for model %s, costing it at 0',
                 model_id,
             )
+            return Decimal('0')
         return Decimal(str(token_processed)) * cost_per_token
