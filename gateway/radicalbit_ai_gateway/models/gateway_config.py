@@ -253,6 +253,9 @@ class GatewayConfig(BaseModel):
                     elif fb.type == FallbackModelType.TRANSCRIPTION:
                         valid_ids = set(route_transcription_ids)
                         label = 'transcription'
+                    elif fb.type == FallbackModelType.DECISION:
+                        valid_ids = set(route_decision_ids)
+                        label = 'decision'
                     else:
                         raise ValueError(
                             f'Route {route_name}: Unknown fallback type {fb.type.value}'

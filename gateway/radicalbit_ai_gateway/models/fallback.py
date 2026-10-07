@@ -7,6 +7,7 @@ class FallbackModelType(str, Enum):
     CHAT = 'CHAT'
     EMBEDDING = 'EMBEDDING'
     TRANSCRIPTION = 'TRANSCRIPTION'
+    DECISION = 'DECISION'
 
 
 class Fallback(BaseModel):
@@ -24,6 +25,7 @@ class Fallback(BaseModel):
             'CHAT',
             'EMBEDDING',
             'TRANSCRIPTION',
+            'DECISION',
         ],
     )
 

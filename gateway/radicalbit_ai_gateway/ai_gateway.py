@@ -187,8 +187,14 @@ class GatewayRoute:
 
         self.decision_invoker: DecisionModelInvoker | None = None
         if self._decision_models:
+            decision_fallbacks = [
+                fb
+                for fb in (fallback_models or [])
+                if fb.type == FallbackModelType.DECISION
+            ]
             self.decision_invoker = DecisionModelInvoker(
                 models=self._decision_models,
+                fallbacks=decision_fallbacks,
                 cost_service=self.cost_service,
                 httpx_client=httpx_client,
             )
