@@ -1669,6 +1669,7 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
             't-responses': 'responses.workflow',
             't-embed': 'embeddings.workflow',
             't-audio': 'audio_transcriptions.workflow',
+            't-decision': 'decision_model.workflow',
             't-mcp': 'mcp_request.workflow',
             't-other': 'something_else',
         }
@@ -1700,6 +1701,7 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
             't-responses': 'chat_completions',
             't-embed': 'embeddings',
             't-audio': 'transcriptions',
+            't-decision': 'decision_model',
             't-mcp': 'mcp',
             't-other': '',
         }

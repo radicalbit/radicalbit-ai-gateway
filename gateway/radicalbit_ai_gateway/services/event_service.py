@@ -536,6 +536,7 @@ class EventService:
         transcription_by_id = {
             m.model_id: m for m in (config.transcription_models or [])
         }
+        decision_by_id = config.decision_models_by_id
 
         chat_ids: list[str] | None = route_dict.get('chat_models')
         if chat_ids is None:
@@ -587,6 +588,23 @@ class EventService:
                     continue
                 resolved_transcription.append(transcription_model.model_dump())
             route_dict['transcription_models'] = resolved_transcription
+
+        decision_ids: list[str] | None = route_dict.get('decision_models')
+        if decision_ids is None:
+            route_dict['decision_models'] = None
+        else:
+            resolved_decision: list[dict] = []
+            for mid in decision_ids:
+                decision_model = decision_by_id.get(mid)
+                if decision_model is None:
+                    logger.warning(
+                        'Decision model_id %s referenced by route %s not found in top-level decision_models registry',
+                        mid,
+                        route_config.route_name,
+                    )
+                    continue
+                resolved_decision.append(decision_model.model_dump())
+            route_dict['decision_models'] = resolved_decision
 
         routing_name: str | None = route_dict.get('routing')
         if routing_name:

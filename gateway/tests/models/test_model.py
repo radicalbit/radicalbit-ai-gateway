@@ -23,10 +23,10 @@ def test_costs_from_file():
     model = get_chat_models(third_model='deepseek/deepseek-r1')[2]
     assert model.input_cost_per_million_tokens == Decimal('0.55')
     assert model.output_cost_per_million_tokens == Decimal('0.4')
-    assert model.input_cached_cost_per_million_tokens == Decimal('0.0')
+    assert model.input_cached_cost_per_million_tokens == Decimal('0.14')
     assert model.input_cost_per_token == Decimal('5.5e-07')
     assert model.output_cost_per_token == Decimal('4e-07')
-    assert model.input_cached_cost_per_token == Decimal('0.0')
+    assert model.input_cached_cost_per_token == Decimal('1.4e-07')
 
 
 def test_costs_file_and_config():

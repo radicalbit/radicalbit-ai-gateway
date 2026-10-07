@@ -54,6 +54,7 @@ _ROOT_SPAN_NAMES_BY_REQUEST_TYPE: dict[RequestType, list[str]] = {
     ],
     RequestType.EMBEDDINGS: ['embeddings.workflow'],
     RequestType.TRANSCRIPTIONS: ['audio_transcriptions.workflow'],
+    RequestType.DECISION_MODEL: ['decision_model.workflow'],
     RequestType.MCP: ['mcp_request.workflow'],
 }
 # Empty string for an unknown root span name, like the other string columns.
