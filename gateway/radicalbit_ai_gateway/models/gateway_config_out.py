@@ -232,6 +232,7 @@ class GatewayRouteConfigOut(GatewayRouteConfig):
     chat_models: list[ModelOut] | None
     embedding_models: list[ModelOut] | None
     transcription_models: list[ModelOut] | None
+    decision_models: list[ModelOut] | None
     rate_limiting: RateLimitingOut | None
     token_limiting: TokenLimitingOut | None
     duration_limiting: DurationLimitingOut | None

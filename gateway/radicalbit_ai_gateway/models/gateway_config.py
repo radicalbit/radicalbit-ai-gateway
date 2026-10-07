@@ -1,4 +1,5 @@
 from collections import Counter
+from decimal import Decimal
 from typing import Any
 
 from radicalbit_ai_gateway.models.model import Model
@@ -26,6 +27,8 @@ from radicalbit_ai_gateway.utils.config_hooks import (
     get_known_plugin_keys,
     get_plugins_validators,
 )
+
+DECISION_MODEL_PROVIDER = 'typesafe'
 
 
 def get_model_from_model_id(
@@ -74,6 +77,7 @@ class GatewayConfig(BaseModel):
     chat_models: list[Model] | None = None
     embedding_models: list[Model] | None = None
     transcription_models: list[Model] | None = None
+    decision_models: list[Model] | None = None
     cache: CacheConfig | None = None
     guardrails: list[Guardrail] | None = None
     routing: list[AnyRoutingConfig] | None = None
@@ -90,6 +94,10 @@ class GatewayConfig(BaseModel):
     @property
     def transcription_models_by_id(self) -> dict[str, Model]:
         return {m.model_id: m for m in (self.transcription_models or [])}
+
+    @property
+    def decision_models_by_id(self) -> dict[str, Model]:
+        return {m.model_id: m for m in (self.decision_models or [])}
 
     @property
     def routing_by_name(self) -> dict[str, AnyRoutingConfig]:
@@ -165,43 +173,55 @@ class GatewayConfig(BaseModel):
         chat_ids = [m.model_id for m in (self.chat_models or [])]
         emb_ids = [m.model_id for m in (self.embedding_models or [])]
         transcription_ids = [m.model_id for m in (self.transcription_models or [])]
+        decision_ids = [m.model_id for m in (self.decision_models or [])]
 
         _check_unique_ids(chat_ids, 'chat_models')
         _check_unique_ids(emb_ids, 'embedding_models')
         _check_unique_ids(transcription_ids, 'transcription_models')
+        _check_unique_ids(decision_ids, 'decision_models')
         _check_disjoint_ids(
             [
                 ('chat_models', chat_ids),
                 ('embedding_models', emb_ids),
                 ('transcription_models', transcription_ids),
+                ('decision_models', decision_ids),
             ]
         )
 
         chat_defined = set(self.chat_models_by_id.keys())
         emb_defined = set(self.embedding_models_by_id.keys())
         transcription_defined = set(self.transcription_models_by_id.keys())
+        decision_defined = set(self.decision_models_by_id.keys())
 
         # Route-level reference validation
         for route_name, route in self.routes.items():
             route_chat_ids = list(route.chat_models or [])
             route_emb_ids = list(route.embedding_models or [])
             route_transcription_ids = list(route.transcription_models or [])
+            route_decision_ids = list(route.decision_models or [])
             scope = f'Route {route_name}: '
 
-            if not (route_chat_ids or route_emb_ids or route_transcription_ids):
+            if not (
+                route_chat_ids
+                or route_emb_ids
+                or route_transcription_ids
+                or route_decision_ids
+            ):
                 raise ValueError(
                     f'{scope}must reference at least one of chat_models, '
-                    'embedding_models, or transcription_models.'
+                    'embedding_models, transcription_models, or decision_models.'
                 )
 
             _check_unique_ids(route_chat_ids, 'chat_models', scope)
             _check_unique_ids(route_emb_ids, 'embedding_models', scope)
             _check_unique_ids(route_transcription_ids, 'transcription_models', scope)
+            _check_unique_ids(route_decision_ids, 'decision_models', scope)
             _check_disjoint_ids(
                 [
                     ('chat_models', route_chat_ids),
                     ('embedding_models', route_emb_ids),
                     ('transcription_models', route_transcription_ids),
+                    ('decision_models', route_decision_ids),
                 ],
                 scope,
             )
@@ -216,6 +236,9 @@ class GatewayConfig(BaseModel):
                 transcription_defined,
                 'transcription_models',
                 scope,
+            )
+            _check_missing_references(
+                route_decision_ids, decision_defined, 'decision_models', scope
             )
 
             # Fallback validation
@@ -273,6 +296,20 @@ class GatewayConfig(BaseModel):
                     'transcription model to be referenced.'
                 )
 
+        return self
+
+    @model_validator(mode='after')
+    def validate_decision_models(self) -> Self:
+        """Decision models are Typesafe models, billed on input tokens only."""
+        for model in self.decision_models or []:
+            provider = model.model.split('/', 1)[0]
+            if provider != DECISION_MODEL_PROVIDER:
+                raise ValueError(
+                    f"decision model '{model.model_id}': provider '{provider}' is "
+                    f"not supported, use '{DECISION_MODEL_PROVIDER}/<model>'."
+                )
+            # Typesafe bills input only, so any configured output price is ignored.
+            model.output_cost_per_million_tokens = Decimal()
         return self
 
     @model_validator(mode='after')
@@ -364,6 +401,17 @@ class GatewayConfig(BaseModel):
 
             routing_config = routing_by_name[route.routing]
             route_model_ids = set(route.chat_models or [])
+
+            # Decision routing does not exist yet: keep decision models out.
+            referenced_ids = [routing_config.default_model_id] + [
+                entry.model_id for entry in routing_config.output_mapping
+            ]
+            for model_id in referenced_ids:
+                if model_id in self.decision_models_by_id:
+                    raise ValueError(
+                        f"Route '{route_name}': routing cannot reference decision "
+                        f"model '{model_id}'. Routing supports chat models only."
+                    )
 
             if isinstance(routing_config, SemanticRoutingConfig):
                 if routing_config.embedding_model_id not in set(

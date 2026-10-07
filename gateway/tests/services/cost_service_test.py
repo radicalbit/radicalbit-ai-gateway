@@ -111,7 +111,8 @@ class CostServiceTest(unittest.TestCase):
                 Decimal('0'),
                 Decimal('0'),
                 Decimal('0'),
-                Decimal('0'),
+                # From the price list. Unused: gpt-4o-transcribe is billed on tokens.
+                Decimal('0.0001'),
                 Decimal('0.000006'),
             ),
         }

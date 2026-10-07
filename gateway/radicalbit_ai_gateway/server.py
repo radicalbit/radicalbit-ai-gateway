@@ -1,9 +1,7 @@
 from contextlib import asynccontextmanager
-from functools import wraps
 import json
 import logging.config
 import os
-import time
 from typing import Annotated
 from urllib.parse import urlparse
 from uuid import UUID
@@ -22,11 +20,10 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_client import start_http_server
 from starlette.middleware.cors import CORSMiddleware
 from traceloop.sdk import Instruments, Traceloop
-from traceloop.sdk.decorators import task, workflow
+from traceloop.sdk.decorators import workflow
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
@@ -46,15 +43,10 @@ from radicalbit_ai_gateway.limiting.project_budget_limiter import (
     load_project_budget_limiter,
 )
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
-from radicalbit_ai_gateway.metrics.define_metrics import (
-    request_latency_histogram,
-    total_requests_counter,
-)
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
-from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
@@ -62,6 +54,7 @@ from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
+from radicalbit_ai_gateway.routes.decision_route import DecisionRoute
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.routes.mcp_route import McpRoute
@@ -88,6 +81,11 @@ from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.dependencies import (
     get_gateway_routes,
     get_request_uuid,
+)
+from radicalbit_ai_gateway.utils.endpoint_helpers import (
+    otel_metrics_decorator,
+    set_api_key_uuid,
+    set_early_project_trace_attributes,
 )
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
@@ -454,6 +452,8 @@ app.include_router(
 )
 # Root-level like /v1/... (NOT under /public/api/v1): inbound MCP proxy.
 app.include_router(McpRoute.get_mcp_router(mcp_service))
+# Root-level like /v1/...: Typesafe's decision endpoint, passed through.
+app.include_router(DecisionRoute.get_decision_router(group_service))
 app.include_router(
     GroupRoute.get_group_router(group_service, project_service),
     prefix=prefix,
@@ -492,47 +492,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
-@task(name='auth_api_key')
-async def set_api_key_uuid(
-    request: Request, project_uuid: str, project_name: str
-) -> KeyDetails:
-    return await authenticate_bearer_request(request, project_uuid, project_name)
-
-
 async def get_ai_gateway_dependency(request: Request):
     return await get_gateway_routes(request)
-
-
-def _set_early_project_trace_attributes(
-    route_key: str | None,
-    route: GatewayRoute | None,
-) -> None:
-    """Set project identity on the span before route validation and auth.
-
-    Ensures traces from failed requests (unknown route, bad API key) remain
-    visible in project-scoped queries.
-    """
-    if route is not None:
-        set_trace_attributes(
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-            tags=list(get_current_request_tags()),
-        )
-        return
-    project_name, _, route_name_part = (route_key or '').partition('/')
-    entry = getattr(app.state, 'project_configs', {}).get(project_name)
-    if entry:
-        set_trace_attributes(
-            project_uuid=str(entry.uuid),
-            project_name=project_name,
-            route_name=route_name_part or route_key,
-            tags=list(get_current_request_tags()),
-        )
-    else:
-        set_trace_attributes(
-            route_name=route_name_part or route_key,
-            tags=list(get_current_request_tags()),
-        )
 
 
 @app.get('/health')
@@ -543,56 +504,6 @@ async def health_check():
         'version': '0.1.0',
         'gateway_initialized': app.state.routes is not None,
     }
-
-
-def record_metrics(
-    method: str,
-    path: str,
-    status_code: int,
-    route_name: str,
-    latency_ms: float,
-    model_name: str | None = None,
-):
-    attributes = {
-        'http.method': method,
-        'http.route': path,
-        'http.status_code': status_code,
-        'route.name': route_name,
-        'model_name': model_name,
-    }
-    request_latency_histogram.record(latency_ms, attributes=attributes)
-    total_requests_counter.add(1, attributes=attributes)
-    log_message = 'Metrics recorded for {} {}: status={}, route={}, latency={:.2f}ms'
-    logger.debug(log_message.format(method, path, status_code, route_name, latency_ms))
-
-
-def otel_metrics_decorator(func):
-    @wraps(func)
-    async def wrapper(request: Request, *args, **kwargs):
-        start_time = time.monotonic()
-        status_code = 200
-
-        try:
-            return await func(request, *args, **kwargs)
-        except Exception:
-            status_code = 500
-            raise
-        finally:
-            # Get metrics data from request state (set by the decorated function)
-            route_name = getattr(request.state, 'otel_route_name', 'unknown')
-            model_name = getattr(request.state, 'otel_model_name', None)
-
-            latency_ms = (time.monotonic() - start_time) * 1000
-            record_metrics(
-                request.method,
-                request.url.path,
-                status_code,
-                route_name,
-                latency_ms,
-                model_name,
-            )
-
-    return wrapper
 
 
 # This endpoint must follow the openai standard
@@ -613,7 +524,7 @@ async def chat_completions(
     route_key = completion_create_params.get('model', 'unknown')
     route = gateway_routes.get(route_key)
 
-    _set_early_project_trace_attributes(route_key, route)
+    set_early_project_trace_attributes(request, route_key, route)
 
     if route is None:
         raise GatewayBadRequest(
@@ -870,7 +781,7 @@ async def embeddings(
     route_key = embedding_create_params.get('model')
     route = gateway_routes.get(route_key)
 
-    _set_early_project_trace_attributes(route_key, route)
+    set_early_project_trace_attributes(request, route_key, route)
 
     if route is None:
         raise GatewayBadRequest(
@@ -976,7 +887,7 @@ async def audio_transcriptions(
     route_key = transcription_params.model
     route = gateway_routes.get(route_key)
 
-    _set_early_project_trace_attributes(route_key, route)
+    set_early_project_trace_attributes(request, route_key, route)
 
     if route is None:
         raise GatewayBadRequest(
@@ -1155,7 +1066,7 @@ async def responses(
     route_key = response_create_params.get('model', 'unknown')
     route = gateway_routes.get(route_key)
 
-    _set_early_project_trace_attributes(route_key, route)
+    set_early_project_trace_attributes(request, route_key, route)
 
     if route is None:
         raise GatewayBadRequest(
