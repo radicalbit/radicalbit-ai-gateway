@@ -38,6 +38,10 @@ jobs:
   pipeline:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     uses: ./.github/workflows/worker-pipeline.yaml
     with:
       image-tag: main
