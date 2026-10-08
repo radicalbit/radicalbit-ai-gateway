@@ -39,7 +39,7 @@ const chartWidthAndHeight = {
 
 function CostsGraphInner() {
   const [searchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
+  const groupBy = searchParams.get('costGroupBy') || DEFAULT_GROUP_BY;
   const routes = searchParams.get('routes')
     ? searchParams.get('routes').split(',')
     : [];
@@ -114,7 +114,7 @@ function IsEmpty() {
 
 function IsSuccess() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
+  const groupBy = searchParams.get('costGroupBy') || DEFAULT_GROUP_BY;
   const routes = searchParams.get('routes')
     ? searchParams.get('routes').split(',')
     : [];
@@ -176,7 +176,7 @@ function IsSuccess() {
 
 function GroupByTabs() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
+  const groupBy = searchParams.get('costGroupBy') || DEFAULT_GROUP_BY;
 
   const options = [
     { value: GROUP_BY.groups.key, label: GROUP_BY.groups.label },
@@ -186,7 +186,7 @@ function GroupByTabs() {
 
   const handleOnChangeGroupBy = (value) => {
     setSearchParams((prev) => {
-      prev.set('groupBy', value);
+      prev.set('costGroupBy', value);
       return prev;
     });
   };
@@ -213,7 +213,7 @@ const useRouteBreakdownTooltip = (chartRef) => {
   const [triggerRouteBreakdown] = useLazyGetBreakdownByGroupBy();
 
   const [searchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
+  const groupBy = searchParams.get('costGroupBy') || DEFAULT_GROUP_BY;
   const routes = searchParams.get('routes')?.split(',') ?? [];
 
   const { data } = useGetCostsChartStreamWithRange({ routes, groupBy });
