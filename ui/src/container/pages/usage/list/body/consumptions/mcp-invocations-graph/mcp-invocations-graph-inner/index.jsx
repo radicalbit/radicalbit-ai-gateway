@@ -8,6 +8,7 @@ import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
   DataZoomComponent,
+  GraphicComponent,
   GridComponent,
   LegendComponent,
   TitleComponent,
@@ -27,6 +28,7 @@ echarts.use([
   GridComponent,
   TooltipComponent,
   DataZoomComponent,
+  GraphicComponent,
   LegendComponent,
   CanvasRenderer,
   TitleComponent,

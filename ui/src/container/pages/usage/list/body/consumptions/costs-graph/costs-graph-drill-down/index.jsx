@@ -12,6 +12,7 @@ import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
   DataZoomComponent,
+  GraphicComponent,
   GridComponent,
   LegendComponent,
   TitleComponent,
@@ -32,6 +33,7 @@ echarts.use([
   GridComponent,
   TooltipComponent,
   DataZoomComponent,
+  GraphicComponent,
   LegendComponent,
   CanvasRenderer,
   TitleComponent,
@@ -90,6 +92,8 @@ function IsEmpty() {
 }
 
 function IsSuccess() {
+  const [searchParams] = useSearchParams();
+  const drillDownEntity = searchParams.get('drillDownEntity');
   const chartRef = useRef(null);
 
   const { data } = useDrillDownData();
@@ -117,6 +121,7 @@ function IsSuccess() {
           series,
           granularity,
           total,
+          drillDownEntity,
         })}
         ref={chartRef}
         style={{
