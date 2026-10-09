@@ -1,13 +1,15 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     KeyFullOut,
     KeyGroupIn,
     KeyIn,
+    KeyLimitsApplyOut,
 )
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitOut,
@@ -16,6 +18,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
 from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.dependencies import get_gateway_routes
 
 app_config = get_app_config()
 
@@ -88,17 +91,22 @@ class KeyRoute:
             )
 
         @router.post(
-            '/keys/{key_uuid}/limits', status_code=201, response_model=KeyFullOut
+            '/keys/{key_uuid}/limits',
+            status_code=201,
+            response_model=KeyLimitsApplyOut,
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid', action='ADD_LIMIT')
         def add_limits_to_key(
             key_uuid: UUID,
             limits_in: CredentialLimitsIn,
             include_groups: bool = Query(False),
+            gateway_routes: dict[str, GatewayRoute] = Depends(get_gateway_routes),
         ):
-            key = key_service.add_limits_to_key(key_uuid, limits_in, include_groups)
+            result = key_service.add_limits_to_key(
+                key_uuid, limits_in, include_groups, gateway_routes
+            )
             logger.info('Added %s limit(s) to key %s', len(limits_in.limits), key_uuid)
-            return key
+            return result
 
         @router.get(
             '/keys/{key_uuid}/limits',
