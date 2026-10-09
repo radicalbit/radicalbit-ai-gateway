@@ -14,6 +14,7 @@ import {
   DurationLimiting,
   Fallback,
   Guardrails,
+  McpServers,
   Models,
   RateLimiting,
   TokenLimit,
@@ -22,6 +23,7 @@ import {
   useGetDurationLimitingItem,
   useGetFallbackItem,
   useGetGuardrailsItem,
+  useGetMcpServersItem,
   useGetModelItem,
   useGetRateLimitingItem,
   useGetTokenLimitingItem,
@@ -38,6 +40,7 @@ function Configurations() {
   const durationLimitingItem = useGetDurationLimitingItem();
   const cacheItem = useGetCacheItem();
   const advancedRoutingItem = useGetAdvancedRoutingItem();
+  const mcpServersItem = useGetMcpServersItem();
 
   const { isLoading, isError, isSuccess, refetch } = useGetRouteByNameWithRange(name);
 
@@ -68,6 +71,11 @@ function Configurations() {
       key: 3,
       children: <Cache />,
       ...cacheItem,
+    },
+    {
+      key: 4,
+      children: <McpServers />,
+      ...mcpServersItem,
     },
   ];
 
