@@ -320,7 +320,7 @@ def test_token_limiting_rejected_on_transcription_only_route():
     }
     with pytest.raises(
         ValueError,
-        match='token_limiting requires at least one chat or embedding model',
+        match='token_limiting requires at least one chat, embedding or decision model',
     ):
         GatewayConfig.model_validate(raw)
 
