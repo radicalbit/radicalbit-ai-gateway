@@ -677,7 +677,13 @@ class TestDecisionModelEndpoint(unittest.TestCase):
                 'refunded': False,
                 'customer': {'contacts': ['<EMAIL_ADDRESS>', 3, None]},
             },
-            questions=questions,
+            questions={
+                'mail': {
+                    'type': 'choice',
+                    'instructions': 'Is <EMAIL_ADDRESS> the sender?',
+                    'criteria': {'yes': 'Yes', 'no': 'No'},
+                }
+            },
         )
 
         response = self._post_state(state, questions=questions)
@@ -721,15 +727,28 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert not typesafe.calls
         assert [e.behavior for e in self.guardrail_events] == ['SOFT_BLOCK']
 
-    def test_questions_are_not_checked(self):
+    def test_questions_are_checked(self):
+        # 'customer want' is only in the question's instructions.
         app.state.routes = _build_routes(
             JEV, guardrails=[_check_guardrail('block', 'customer want')]
         )
-        self._mock_typesafe()
+        typesafe = self._spy_on_typesafe()
 
         response = self._post()
 
+        assert response.status_code == 400
+        assert not typesafe.calls
+
+    def test_criterion_names_are_keys_and_never_checked(self):
+        app.state.routes = _build_routes(
+            JEV, guardrails=[_check_guardrail('block', 'refund')]
+        )
+        typesafe = self._spy_on_typesafe()
+
+        response = self._post_state({'ticket': 'Hello'})
+
         assert response.status_code == 200
+        assert typesafe.calls == 1
 
     # Exact cache (AG-1002)
 
