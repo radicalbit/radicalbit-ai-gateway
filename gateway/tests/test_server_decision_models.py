@@ -14,6 +14,8 @@ from starlette.requests import Request
 from tests.common import db_mock
 
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
+from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
+from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
@@ -23,11 +25,13 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitOut,
 )
 from radicalbit_ai_gateway.models.event_payload import (
+    CacheEventPayload,
     FallbackEventPayload,
     InputTokenProcessedPayload,
     ModelInvocationPayload,
     OutputTokenProcessedPayload,
 )
+from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.prompt_manager import PromptManager
@@ -91,7 +95,10 @@ def _mock_request_uuid(request: Request):
 
 
 def _build_routes(
-    *decision_models: dict, guardrails: list[dict] | None = None, **route_config
+    *decision_models: dict,
+    guardrails: list[dict] | None = None,
+    top_level: dict | None = None,
+    **route_config,
 ) -> dict:
     config = GatewayConfig.model_validate(
         {
@@ -104,6 +111,7 @@ def _build_routes(
                     **route_config,
                 }
             },
+            **(top_level or {}),
         }
     )
     cost_service = CostService(decision_models_by_id=config.decision_models_by_id)
@@ -142,6 +150,13 @@ JEV_EU = {
 }
 JEV_TO_JEV_EU = [{'target': 'jev', 'fallbacks': ['jev-eu'], 'type': 'decision'}]
 
+
+CACHE_EMIT = 'radicalbit_ai_gateway.ai_gateway.emit_event'
+# No Redis client in these tests: an exact cache falls back to in-memory.
+EXACT_CACHE = {
+    'caching': {'type': 'exact'},
+    'top_level': {'cache': {'redis_host': 'localhost', 'redis_port': 6379}},
+}
 
 GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
 REDACT_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_redact.emit_event'
@@ -192,6 +207,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         self.emitted = []
         self.request_events = []
         self.guardrail_events = []
+        self.cache_events = []
         self.span = MagicMock()
         self.span.is_recording.return_value = True
         for patcher in (
@@ -203,6 +219,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             patch(PROJECT_STORAGE, return_value=InMemoryStorage()),
             patch(GUARDRAIL_EMIT, side_effect=self.guardrail_events.append),
             patch(REDACT_EMIT, side_effect=self.guardrail_events.append),
+            patch(CACHE_EMIT, side_effect=self.cache_events.append),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -713,3 +730,158 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         response = self._post()
 
         assert response.status_code == 200
+
+    # Exact cache (AG-1002)
+
+    def test_identical_request_is_served_from_cache_without_calling_typesafe(self):
+        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
+        typesafe = self._spy_on_typesafe()
+
+        first = self._post()
+        second = self._post()
+
+        assert typesafe.calls == 1
+        assert second.status_code == 200
+        assert second.content == first.content
+        assert second.headers['content-type'] == first.headers['content-type']
+
+    def test_key_order_does_not_matter(self):
+        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
+        typesafe = self._spy_on_typesafe()
+        reordered_state = dict(reversed(list(STATE.items())))
+        reordered_questions = {
+            'intent': dict(reversed(list(QUESTIONS['intent'].items())))
+        }
+
+        self._post_state(STATE)
+        response = self._post_state(reordered_state, questions=reordered_questions)
+
+        assert response.status_code == 200
+        assert typesafe.calls == 1
+
+    def _changed_question(self, field: str, value) -> dict:
+        return {'intent': {**QUESTIONS['intent'], field: value}}
+
+    def test_changed_instruction_misses(self):
+        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
+        typesafe = self._spy_on_typesafe().times(2)
+
+        self._post_state(STATE)
+        self._post_state(
+            STATE, questions=self._changed_question('instructions', 'Why?')
+        )
+
+        assert typesafe.calls == 2
+
+    def test_changed_criterion_misses(self):
+        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
+        typesafe = self._spy_on_typesafe().times(2)
+        criteria = {**QUESTIONS['intent']['criteria'], 'refund': 'Wants a refund'}
+
+        self._post_state(STATE)
+        self._post_state(STATE, questions=self._changed_question('criteria', criteria))
+
+        assert typesafe.calls == 2
+
+    def test_changed_state_misses(self):
+        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
+        typesafe = self._spy_on_typesafe().times(2)
+
+        self._post_state(STATE)
+        self._post_state({**STATE, 'ticket': 'Where is my parcel?'})
+
+        assert typesafe.calls == 2
+
+    def test_key_uses_the_outbound_state_after_redaction(self):
+        app.state.routes = _build_routes(JEV, guardrails=[REDACT_EMAIL], **EXACT_CACHE)
+        typesafe = self._spy_on_typesafe()
+
+        # Both redact to the same outbound state.
+        self._post_state({'ticket': 'Write to ada@example.com'})
+        response = self._post_state({'ticket': 'Write to bob@example.com'})
+
+        assert response.status_code == 200
+        assert typesafe.calls == 1
+
+    def test_upstream_error_is_not_cached(self):
+        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
+        self._mock_typesafe(status=400, body={'detail': 'bad question'})
+        self._mock_typesafe()
+
+        first = self._post()
+        second = self._post()
+
+        assert (first.status_code, second.status_code) == (400, 200)
+        assert pook.isdone()
+
+    def test_hit_is_recorded_as_cache_hit_with_cached_tokens_at_zero_cost(self):
+        app.state.routes = _build_routes(self.PRICEY_JEV, **EXACT_CACHE)
+        self._spy_on_typesafe()
+
+        self._post()
+        assert self.cache_events == []
+        self._post()
+
+        assert all(isinstance(e, CacheEventPayload) for e in self.cache_events)
+        by_type = {e.event_type: e for e in self.cache_events}
+        hit = by_type[EventType.CACHE_HIT]
+        cached_input = by_type[EventType.CACHE_INPUT_TOKENS]
+        assert (hit.model_id, hit.cost) == ('jev', 0)
+        assert (cached_input.model_id, cached_input.value) == ('jev', 312)
+        assert cached_input.cost == 0
+        assert EventType.CACHE_OUTPUT_TOKENS not in by_type
+
+    def test_hit_touches_no_token_or_budget_counter(self):
+        # One call uses 312 tokens costing 0.312. A counted hit would push
+        # both counters over their limit and block the next miss.
+        app.state.routes = _build_routes(
+            self.PRICEY_JEV,
+            token_limiting={'input': {'max_tokens': 400}},
+            budget_limiting={'max_budget': 0.5},
+            **EXACT_CACHE,
+        )
+        self._spy_on_typesafe().times(2)
+
+        first = self._post()
+        hit = self._post()
+        miss = self._post_state({**STATE, 'ticket': 'Where is my parcel?'})
+
+        assert (first.status_code, hit.status_code, miss.status_code) == (200,) * 3
+
+    def test_hit_is_served_even_when_limits_are_full(self):
+        app.state.routes = _build_routes(
+            JEV, token_limiting={'input': {'max_tokens': 100}}, **EXACT_CACHE
+        )
+        self._spy_on_typesafe()
+
+        first = self._post()
+        hit = self._post()
+
+        assert (first.status_code, hit.status_code) == (200, 200)
+
+    def test_semantic_cache_route_leaves_decision_requests_uncached(self):
+        app.state.routes = _build_routes(
+            JEV,
+            embedding_models=['emb'],
+            caching={'type': 'semantic', 'embedding_model_id': 'emb'},
+            top_level={
+                'embedding_models': [
+                    {
+                        'model_id': 'emb',
+                        'model': 'openai/text-embedding-3-small',
+                        'credentials': {'api_key': 'sk-test'},
+                    }
+                ],
+                'cache': {'redis_host': 'localhost', 'redis_port': 6379},
+            },
+        )
+        semantic_cache = MagicMock(spec=SemanticCache)
+        app.state.routes[ROUTE_KEY].gateway_cache = GatewayCache(semantic_cache)
+        typesafe = self._spy_on_typesafe().times(2)
+
+        self._post()
+        self._post()
+
+        assert typesafe.calls == 2
+        semantic_cache.get.assert_not_called()
+        semantic_cache.set.assert_not_called()

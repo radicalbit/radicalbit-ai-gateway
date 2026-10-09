@@ -963,6 +963,41 @@ class GatewayRoute:
                 ),
             }
 
+        use_cache = self.gateway_cache and self.gateway_cache.cache_type in (
+            CacheType.EXACT,
+            CacheType.IN_MEMORY,
+        )
+        cache_key = ''
+        if use_cache:
+            set_operation_category(OperationCategory.CACHE)
+            cache_key = self.gateway_cache.generate_decision_cache_key(
+                project_uuid=self.project_uuid,
+                route_name=route_name,
+                key_uuid=api_key_uuid,
+                state=body.get('state'),
+                questions=body.get('questions'),
+                model_id=model_selected.model_id,
+            )
+            raw_cached_response = await self.gateway_cache.get(cache_key)
+            if raw_cached_response:
+                logger.debug('Decision cache hit. Key: %s', cache_key)
+                cached = json.loads(raw_cached_response)
+                self._emit_decision_cache_hit(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    group_uuid=group_uuid,
+                    api_key_name=api_key_name,
+                    group_name=group_name,
+                    route_name=route_name,
+                    model_id=cached['model_id'],
+                    input_tokens=cached['input_tokens'],
+                )
+                return DecisionResponse(
+                    status_code=cached['status_code'],
+                    content=cached['content'].encode('utf-8'),
+                    media_type=cached['media_type'],
+                )
+
         await self._check_decision_limits(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
@@ -989,7 +1024,67 @@ class GatewayRoute:
             await self._count_decision_usage(
                 response.input_tokens, response.model_invoked
             )
+            if use_cache and cache_key:
+                await self.gateway_cache.set(
+                    cache_key=cache_key,
+                    response=json.dumps(
+                        {
+                            'status_code': response.status_code,
+                            'content': response.content.decode('utf-8'),
+                            'media_type': response.media_type,
+                            'model_id': response.model_invoked.model_id,
+                            'input_tokens': response.input_tokens,
+                        }
+                    ),
+                    ttl=self.ttl,
+                )
         return response
+
+    def _emit_decision_cache_hit(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        model_id: str,
+        input_tokens: int,
+    ) -> None:
+        """Record a hit. It costs nothing: cached input tokens are at $0."""
+        self._emit_cache_events_and_metrics(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            model_id=model_id,
+            usage=None,
+            cache_type=self.gateway_cache.cache_type,
+        )
+        if input_tokens <= 0:
+            return
+        emit_event(
+            CacheEventPayload(
+                value=input_tokens,
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                event_type=EventType.CACHE_INPUT_TOKENS,
+                route_name=route_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+                cost=0.0,
+                cache_type=str(self.gateway_cache.cache_type.value),
+                model_id=model_id,
+            )
+        )
+        cache_input_tokens.add(
+            input_tokens, {'route_name': route_name, 'model_name': model_id}
+        )
 
     async def _check_decision_limits(
         self,

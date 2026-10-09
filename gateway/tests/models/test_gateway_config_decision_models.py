@@ -232,3 +232,41 @@ def test_output_token_limit_is_accepted_when_the_route_also_has_chat_models():
     )
 
     assert config.routes['agent'].token_limiting.output.max_tokens == 1000
+
+
+CACHE = {'redis_host': 'localhost', 'redis_port': 6379}
+
+
+def test_semantic_caching_on_a_decision_only_route_is_rejected():
+    with pytest.raises(
+        ValueError, match='semantic caching is not allowed on a route with only'
+    ):
+        GatewayConfig.model_validate(
+            {
+                'decision_models': [JEV],
+                'cache': CACHE,
+                'routes': {
+                    'agent': {
+                        'decision_models': ['jev'],
+                        'caching': {
+                            'type': 'semantic',
+                            'embedding_model_id': 'emb',
+                        },
+                    }
+                },
+            }
+        )
+
+
+def test_exact_caching_is_accepted_on_a_decision_only_route():
+    config = GatewayConfig.model_validate(
+        {
+            'decision_models': [JEV],
+            'cache': CACHE,
+            'routes': {
+                'agent': {'decision_models': ['jev'], 'caching': {'type': 'exact'}}
+            },
+        }
+    )
+
+    assert config.routes['agent'].caching.type == 'exact'
