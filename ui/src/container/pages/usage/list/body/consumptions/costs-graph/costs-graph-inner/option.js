@@ -1,6 +1,14 @@
 import chartTsToDate from '@Helpers/chart-ts-to-date';
 import { CHART_COLORS } from '@Src/constants';
 import costFormatter from '@Helpers/cost-formatter';
+import * as echarts from 'echarts/core';
+
+const DRILL_DOWN_ICON_ID = 'drill-down-icon';
+const DRILL_DOWN_ICON_TYPE = 'drillDownIcon';
+const DRILL_DOWN_SUBTEXT = 'Click a bar to see its breakdown';
+const DRILL_DOWN_ICON_PATH = 'M14 4.1 12 6M5.1 8l-2.9-.8M6 12l-1.9 2M7.2 2.2 8 5.1M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z';
+
+echarts.graphic.registerShape(DRILL_DOWN_ICON_TYPE, echarts.graphic.extendPath(DRILL_DOWN_ICON_PATH));
 
 const GRANULARITY_TITLE = {
   hours: 'Hourly',
@@ -16,13 +24,26 @@ export default ({ xAxisData, series = [], granularity, total, routeBreakdownCach
   return ({
     color: CHART_COLORS,
     title: {
-      left: 35,
+      left: 59,
       top: 20,
       height: 50,
       text: `${granularityLabel} Costs: ${formattedTotal}`,
+      subtext: DRILL_DOWN_SUBTEXT,
     },
+    graphic: [{
+      id: DRILL_DOWN_ICON_ID,
+      type: DRILL_DOWN_ICON_TYPE,
+      left: 35,
+      top: 22,
+      scaleX: 0.75,
+      scaleY: 0.75,
+      silent: true,
+      style: {
+        fill: 'none', lineWidth: 2, lineCap: 'round', lineJoin: 'round',
+      },
+    }],
     grid: {
-      top: 80,
+      top: 95,
       right: '20%',
       bottom: 40,
       left: 40,
