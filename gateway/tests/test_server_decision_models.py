@@ -90,13 +90,17 @@ def _mock_request_uuid(request: Request):
     return str(db_mock.REQUEST_UUID)
 
 
-def _build_routes(*decision_models: dict, **route_config) -> dict:
+def _build_routes(
+    *decision_models: dict, guardrails: list[dict] | None = None, **route_config
+) -> dict:
     config = GatewayConfig.model_validate(
         {
             'decision_models': list(decision_models),
+            'guardrails': guardrails,
             'routes': {
                 'agent': {
                     'decision_models': [m['model_id'] for m in decision_models],
+                    'guardrails': [g['name'] for g in guardrails or []],
                     **route_config,
                 }
             },
@@ -107,7 +111,7 @@ def _build_routes(*decision_models: dict, **route_config) -> dict:
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
         cost_service=cost_service,
-        guardrails=[],
+        guardrails=config.guardrails,
     )
     routes = build_gateway_routes_from_config(
         config,
@@ -139,6 +143,29 @@ JEV_EU = {
 JEV_TO_JEV_EU = [{'target': 'jev', 'fallbacks': ['jev-eu'], 'type': 'decision'}]
 
 
+GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
+REDACT_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_redact.emit_event'
+
+
+def _check_guardrail(behavior: str, value: str) -> dict:
+    return {
+        'name': f'{behavior}_check',
+        'type': 'contains',
+        'where': 'input',
+        'behavior': behavior,
+        'parameters': {'values': [value]},
+        'response_message': f'{behavior} by policy',
+    }
+
+
+REDACT_EMAIL = {
+    'name': 'redact_email',
+    'type': 'presidio_anonymizer',
+    'where': 'input',
+    'parameters': {'language': 'en', 'entities': ['EMAIL_ADDRESS']},
+}
+
+
 class TestDecisionModelEndpoint(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -164,6 +191,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
 
         self.emitted = []
         self.request_events = []
+        self.guardrail_events = []
         self.span = MagicMock()
         self.span.is_recording.return_value = True
         for patcher in (
@@ -173,6 +201,8 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             patch(BACKOFF_SLEEP, new=AsyncMock()),
             patch(CREDENTIAL_STORAGE, return_value=InMemoryStorage()),
             patch(PROJECT_STORAGE, return_value=InMemoryStorage()),
+            patch(GUARDRAIL_EMIT, side_effect=self.guardrail_events.append),
+            patch(REDACT_EMIT, side_effect=self.guardrail_events.append),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -584,3 +614,102 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         attributes = self._span_attributes()
         assert attributes['decision.response.fallback_triggered'] is True
         assert attributes['decision.response.model_id'] == 'jev'
+
+    def _post_state(self, state, questions=QUESTIONS):
+        return self.client.post(
+            '/v1/systemone',
+            json={'state': state, 'model': ROUTE_KEY, 'questions': questions},
+            headers=self.headers,
+        )
+
+    def _expect_typesafe_body(self, state, questions=QUESTIONS):
+        mock = (
+            pook.post(TYPESAFE_URL)
+            .json({'state': state, 'model': 'jev-latest', 'questions': questions})
+            .times(1)
+        )
+        mock.reply(200).json(TYPESAFE_BODY)
+        return mock
+
+    def _spy_on_typesafe(self):
+        typesafe = pook.post(TYPESAFE_URL).times(1)
+        typesafe.reply(200).json(TYPESAFE_BODY)
+        return typesafe
+
+    def test_redact_rewrites_string_leaves_and_keeps_the_structure(self):
+        app.state.routes = _build_routes(JEV, guardrails=[REDACT_EMAIL])
+        state = {
+            'ticket': 'Write to ada@example.com please',
+            'ada@example.com': 'key stays',
+            'amount': 42.5,
+            'refunded': False,
+            'customer': {'contacts': ['bob@example.com', 3, None]},
+        }
+        questions = {
+            'mail': {
+                'type': 'choice',
+                'instructions': 'Is ada@example.com the sender?',
+                'criteria': {'yes': 'Yes', 'no': 'No'},
+            }
+        }
+        self._expect_typesafe_body(
+            {
+                'ticket': 'Write to <EMAIL_ADDRESS> please',
+                'ada@example.com': 'key stays',
+                'amount': 42.5,
+                'refunded': False,
+                'customer': {'contacts': ['<EMAIL_ADDRESS>', 3, None]},
+            },
+            questions=questions,
+        )
+
+        response = self._post_state(state, questions=questions)
+
+        assert response.status_code == 200
+        assert pook.isdone()
+
+    def test_each_string_leaf_is_checked_as_one_text(self):
+        guardrail = {**_check_guardrail('block', 'refund'), 'type': 'starts_with'}
+        app.state.routes = _build_routes(JEV, guardrails=[guardrail])
+        typesafe = self._spy_on_typesafe()
+
+        # 'refund' starts only the second leaf, not the state as a whole.
+        response = self._post_state({'ticket': 'Hello', 'notes': ['refund now']})
+
+        assert response.status_code == 400
+        assert not typesafe.calls
+
+    def test_block_returns_400_without_calling_typesafe(self):
+        app.state.routes = _build_routes(
+            JEV, guardrails=[_check_guardrail('block', 'charged twice')]
+        )
+        typesafe = self._spy_on_typesafe()
+
+        response = self._post()
+
+        assert response.status_code == 400
+        assert response.json()['error']['message'] == 'block by policy'
+        assert not typesafe.calls
+
+    def test_soft_block_returns_400_and_is_recorded_as_soft_block(self):
+        app.state.routes = _build_routes(
+            JEV, guardrails=[_check_guardrail('soft_block', 'charged twice')]
+        )
+        typesafe = self._spy_on_typesafe()
+
+        response = self._post()
+
+        assert response.status_code == 400
+        assert response.json()['error']['message'] == 'soft_block by policy'
+        assert not typesafe.calls
+        assert [e.behavior for e in self.guardrail_events] == ['SOFT_BLOCK']
+
+    def test_questions_are_not_checked(self):
+        app.state.routes = _build_routes(
+            JEV, guardrails=[_check_guardrail('block', 'customer want')]
+        )
+        self._mock_typesafe()
+
+        response = self._post()
+
+        assert response.status_code == 200

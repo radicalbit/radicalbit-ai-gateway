@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 import datetime
 import json
 import logging
+from typing import Any
 
 from langchain_core.messages import (
     AIMessage,
@@ -85,6 +86,7 @@ from radicalbit_ai_gateway.utils.request_context import (
     get_current_credential_limiter,
     get_current_project_budget_limiter,
 )
+from radicalbit_ai_gateway.utils.state_leaves import string_leaves, with_string_leaves
 from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
@@ -947,6 +949,19 @@ class GatewayRoute:
         # The first decision model listed on the route serves its traffic.
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._decision_models[0]
+
+        if self.gateway_route_config.guardrails and 'state' in body:
+            body = {
+                **body,
+                'state': await self._apply_decision_input_guardrails(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    group_uuid=group_uuid,
+                    api_key_name=api_key_name,
+                    group_name=group_name,
+                    state=body['state'],
+                ),
+            }
 
         await self._check_decision_limits(
             request_uuid=request_uuid,
@@ -1853,6 +1868,77 @@ class GatewayRoute:
             )
 
         return None
+
+    async def _apply_decision_input_guardrails(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        state: Any,
+    ) -> Any:
+        """Screen each string leaf of `state` as one text. Return `state` with
+        the leaves redacted.
+
+        A soft block raises the 400 a block raises (ADR 0005): Typesafe's 200
+        body has no room for it. It is still recorded as a soft block.
+        """
+        texts = string_leaves(state)
+        if not texts:
+            return state
+
+        if self.guardrail_engine.has_guardrails_for_route(
+            self.gateway_route_config,
+            GuardrailWhereType.INPUT,
+            GuardrailClass.REDACT,
+        ):
+            set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+            texts = await self._apply_redact_guardrail_to_embeddings(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                input_texts=texts,
+            )
+
+        if self.guardrail_engine.has_guardrails_for_route(
+            self.gateway_route_config,
+            GuardrailWhereType.INPUT,
+            GuardrailClass.CHECK,
+        ):
+            set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+            try:
+                soft_block = (
+                    await self.guardrail_engine.guardrail_check.apply_guardrails(
+                        request_uuid=request_uuid,
+                        api_key_uuid=api_key_uuid,
+                        group_uuid=group_uuid,
+                        api_key_name=api_key_name,
+                        group_name=group_name,
+                        route_config=self.gateway_route_config,
+                        messages=[HumanMessage(content=text) for text in texts],
+                        where=GuardrailWhereType.INPUT,
+                        project_uuid=self.project_uuid,
+                        project_name=self.project_name,
+                    )
+                )
+            except GuardrailBadRequest:
+                # The guardrail error handler logs it.
+                raise
+            except Exception as e:
+                logger.error('Unexpected error during guardrail application: %s', e)
+                raise GatewayInternalError(
+                    f'Error during guardrail application: {e}'
+                ) from e
+
+            if soft_block:
+                raise GuardrailBadRequest(
+                    soft_block.get_soft_block_message(), soft_block.guardrail
+                )
+
+        return with_string_leaves(state, texts)
 
     def has_output_guardrails(self) -> bool:
         """Check if any output guardrails are configured for the route."""

@@ -5,7 +5,7 @@ import { DEFAULT_GROUP_BY, GROUP_BY } from '../group-by';
 
 const useGetNameToId = () => {
   const [searchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
+  const groupBy = searchParams.get('costGroupBy') || DEFAULT_GROUP_BY;
   const routes = searchParams.get('routes')
     ? searchParams.get('routes').split(',')
     : [];
