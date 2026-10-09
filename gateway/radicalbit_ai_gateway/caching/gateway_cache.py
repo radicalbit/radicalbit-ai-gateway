@@ -112,6 +112,32 @@ class GatewayCache:
     ) -> str:
         return f'mcp_method:{method};mcp_servers:{servers_signature}'
 
+    def generate_decision_cache_key(
+        self,
+        project_uuid: str,
+        route_name: str,
+        key_uuid: str,
+        state,
+        questions,
+        model_id: str,
+    ) -> str:
+        request_signature = self._build_decision_request_signature(
+            state=state, questions=questions, model_id=model_id
+        )
+        return self.cache_client.generate_cache_key(
+            project_uuid, route_name, request_signature, key_uuid
+        )
+
+    @staticmethod
+    def _build_decision_request_signature(state, questions, model_id: str) -> str:
+        # Canonical JSON: sorted keys, so key order never changes the key.
+        return json.dumps(
+            {'state': state, 'questions': questions, 'model_id': model_id},
+            sort_keys=True,
+            separators=(',', ':'),
+            ensure_ascii=False,
+        )
+
     def generate_transcription_cache_key(
         self,
         project_uuid: str,

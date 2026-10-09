@@ -270,8 +270,18 @@ class GatewayConfig(BaseModel):
                             f'Route {route_name}: All fallback models for target {fb.target} must be present in the {label} models.'
                         )
 
+            decision_only = route_decision_ids and not (
+                route_chat_ids or route_emb_ids or route_transcription_ids
+            )
+
             # Semantic caching validation
             if isinstance(route.caching, SemanticCaching):
+                if decision_only:
+                    raise ValueError(
+                        f'Route {route_name}: semantic caching is not allowed on a '
+                        'route with only decision models. Decision requests are '
+                        'never served from a semantic cache. Use exact caching.'
+                    )
                 if not route_emb_ids:
                     raise ValueError(
                         f'Route {route_name}: Semantic caching requires at least one embedding model to be referenced.'
@@ -293,9 +303,6 @@ class GatewayConfig(BaseModel):
                     f'Route {route_name}: token_limiting requires at least one '
                     'chat, embedding or decision model to be referenced.'
                 )
-            decision_only = route_decision_ids and not (
-                route_chat_ids or route_emb_ids or route_transcription_ids
-            )
             if (
                 decision_only
                 and route.token_limiting is not None
