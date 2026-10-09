@@ -46,6 +46,9 @@ class DecisionResponse:
     status_code: int
     content: bytes
     media_type: str | None
+    # Set on success only: what limits and budgets consume.
+    input_tokens: int = 0
+    model_invoked: Model | None = None
 
 
 def _set_decision_request_attributes(body: dict, model_id: str) -> None:
@@ -205,6 +208,14 @@ class DecisionModelInvoker(ModelInvoker):
                 fallback_triggered=fallback_triggered,
                 project_uuid=project_uuid,
                 project_name=project_name,
+            )
+
+            return DecisionResponse(
+                status_code=response.status_code,
+                content=response.content,
+                media_type=response.headers.get('content-type'),
+                input_tokens=input_tokens,
+                model_invoked=model_invoked,
             )
 
         return DecisionResponse(

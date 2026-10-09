@@ -453,7 +453,9 @@ app.include_router(
 # Root-level like /v1/... (NOT under /public/api/v1): inbound MCP proxy.
 app.include_router(McpRoute.get_mcp_router(mcp_service))
 # Root-level like /v1/...: Typesafe's decision endpoint, passed through.
-app.include_router(DecisionRoute.get_decision_router(group_service))
+app.include_router(
+    DecisionRoute.get_decision_router(group_service, project_budget_limit_dao)
+)
 app.include_router(
     GroupRoute.get_group_router(group_service, project_service),
     prefix=prefix,

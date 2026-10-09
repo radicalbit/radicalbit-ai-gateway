@@ -948,8 +948,17 @@ class GatewayRoute:
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._decision_models[0]
 
+        await self._check_decision_limits(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+        )
+
         set_operation_category(OperationCategory.INVOCATION)
-        return await self.decision_invoker.decide(
+        response = await self.decision_invoker.decide(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -961,6 +970,88 @@ class GatewayRoute:
             project_uuid=self.project_uuid,
             project_name=self.project_name,
         )
+        if response.model_invoked is not None:
+            await self._count_decision_usage(
+                response.input_tokens, response.model_invoked
+            )
+        return response
+
+    async def _check_decision_limits(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+    ) -> None:
+        """Decision input size is known only from the response, so nothing is
+        estimated: a limit blocks only when its counter is already full.
+        """
+        # Credential first: decides which error is reported when both block.
+        credential_limiter = get_current_credential_limiter()
+        project_budget_limiter = get_current_project_budget_limiter()
+        if not (
+            credential_limiter
+            or project_budget_limiter
+            or self.budget_limiter
+            or self.token_limiter
+        ):
+            return
+        set_operation_category(OperationCategory.LIMITING)
+        if credential_limiter:
+            await credential_limiter.check_budget()
+        if project_budget_limiter:
+            await project_budget_limiter.check_budget()
+        if self.budget_limiter:
+            await self.budget_limiter.check_budget()
+        if credential_limiter:
+            await credential_limiter.check_input_room(
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+        if self.token_limiter:
+            await self.token_limiter.check_input_room(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+
+    async def _count_decision_usage(self, input_tokens: int, model: Model) -> None:
+        """Typesafe bills input tokens only: output-token counters get nothing."""
+        if input_tokens <= 0:
+            return
+        credential_limiter = get_current_credential_limiter()
+        project_budget_limiter = get_current_project_budget_limiter()
+        if self.token_limiter:
+            await self.token_limiter.count_input(prompt_tokens=input_tokens)
+        if credential_limiter:
+            await credential_limiter.count_input_tokens(input_tokens)
+        if not model.input_cost_per_token:
+            return
+        if self.budget_limiter:
+            await self.budget_limiter.count_input(
+                token_count=input_tokens,
+                input_cost_per_token=model.input_cost_per_token,
+            )
+        if credential_limiter:
+            await credential_limiter.count_budget_input(
+                token_count=input_tokens,
+                input_cost_per_token=model.input_cost_per_token,
+            )
+        if project_budget_limiter:
+            await project_budget_limiter.count_input(
+                token_count=input_tokens,
+                input_cost_per_token=model.input_cost_per_token,
+            )
 
     # ============================================================================
     # Pre Process Request
