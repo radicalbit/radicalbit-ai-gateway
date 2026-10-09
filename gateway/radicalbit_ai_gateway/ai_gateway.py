@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 import datetime
 import json
 import logging
+from typing import Any
 
 from langchain_core.messages import (
     AIMessage,
@@ -85,6 +86,7 @@ from radicalbit_ai_gateway.utils.request_context import (
     get_current_credential_limiter,
     get_current_project_budget_limiter,
 )
+from radicalbit_ai_gateway.utils.state_leaves import string_leaves, with_string_leaves
 from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
@@ -948,8 +950,65 @@ class GatewayRoute:
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._decision_models[0]
 
+        if self.gateway_route_config.guardrails and 'state' in body:
+            body = {
+                **body,
+                'state': await self._apply_decision_input_guardrails(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    group_uuid=group_uuid,
+                    api_key_name=api_key_name,
+                    group_name=group_name,
+                    state=body['state'],
+                ),
+            }
+
+        use_cache = self.gateway_cache and self.gateway_cache.cache_type in (
+            CacheType.EXACT,
+            CacheType.IN_MEMORY,
+        )
+        cache_key = ''
+        if use_cache:
+            set_operation_category(OperationCategory.CACHE)
+            cache_key = self.gateway_cache.generate_decision_cache_key(
+                project_uuid=self.project_uuid,
+                route_name=route_name,
+                key_uuid=api_key_uuid,
+                state=body.get('state'),
+                questions=body.get('questions'),
+                model_id=model_selected.model_id,
+            )
+            raw_cached_response = await self.gateway_cache.get(cache_key)
+            if raw_cached_response:
+                logger.debug('Decision cache hit. Key: %s', cache_key)
+                cached = json.loads(raw_cached_response)
+                self._emit_decision_cache_hit(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    group_uuid=group_uuid,
+                    api_key_name=api_key_name,
+                    group_name=group_name,
+                    route_name=route_name,
+                    model_id=cached['model_id'],
+                    input_tokens=cached['input_tokens'],
+                )
+                return DecisionResponse(
+                    status_code=cached['status_code'],
+                    content=cached['content'].encode('utf-8'),
+                    media_type=cached['media_type'],
+                )
+
+        await self._check_decision_limits(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+        )
+
         set_operation_category(OperationCategory.INVOCATION)
-        return await self.decision_invoker.decide(
+        response = await self.decision_invoker.decide(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -961,6 +1020,148 @@ class GatewayRoute:
             project_uuid=self.project_uuid,
             project_name=self.project_name,
         )
+        if response.model_invoked is not None:
+            await self._count_decision_usage(
+                response.input_tokens, response.model_invoked
+            )
+            if use_cache and cache_key:
+                await self.gateway_cache.set(
+                    cache_key=cache_key,
+                    response=json.dumps(
+                        {
+                            'status_code': response.status_code,
+                            'content': response.content.decode('utf-8'),
+                            'media_type': response.media_type,
+                            'model_id': response.model_invoked.model_id,
+                            'input_tokens': response.input_tokens,
+                        }
+                    ),
+                    ttl=self.ttl,
+                )
+        return response
+
+    def _emit_decision_cache_hit(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        model_id: str,
+        input_tokens: int,
+    ) -> None:
+        """Record a hit. It costs nothing: cached input tokens are at $0."""
+        self._emit_cache_events_and_metrics(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            model_id=model_id,
+            usage=None,
+            cache_type=self.gateway_cache.cache_type,
+        )
+        if input_tokens <= 0:
+            return
+        emit_event(
+            CacheEventPayload(
+                value=input_tokens,
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                event_type=EventType.CACHE_INPUT_TOKENS,
+                route_name=route_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+                cost=0.0,
+                cache_type=str(self.gateway_cache.cache_type.value),
+                model_id=model_id,
+            )
+        )
+        cache_input_tokens.add(
+            input_tokens, {'route_name': route_name, 'model_name': model_id}
+        )
+
+    async def _check_decision_limits(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+    ) -> None:
+        """Decision input size is known only from the response, so nothing is
+        estimated: a limit blocks only when its counter is already full.
+        """
+        # Credential first: decides which error is reported when both block.
+        credential_limiter = get_current_credential_limiter()
+        project_budget_limiter = get_current_project_budget_limiter()
+        if not (
+            credential_limiter
+            or project_budget_limiter
+            or self.budget_limiter
+            or self.token_limiter
+        ):
+            return
+        set_operation_category(OperationCategory.LIMITING)
+        if credential_limiter:
+            await credential_limiter.check_budget()
+        if project_budget_limiter:
+            await project_budget_limiter.check_budget()
+        if self.budget_limiter:
+            await self.budget_limiter.check_budget()
+        if credential_limiter:
+            await credential_limiter.check_input_room(
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+        if self.token_limiter:
+            await self.token_limiter.check_input_room(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+
+    async def _count_decision_usage(self, input_tokens: int, model: Model) -> None:
+        """Typesafe bills input tokens only: output-token counters get nothing."""
+        if input_tokens <= 0:
+            return
+        credential_limiter = get_current_credential_limiter()
+        project_budget_limiter = get_current_project_budget_limiter()
+        if self.token_limiter:
+            await self.token_limiter.count_input(prompt_tokens=input_tokens)
+        if credential_limiter:
+            await credential_limiter.count_input_tokens(input_tokens)
+        if not model.input_cost_per_token:
+            return
+        if self.budget_limiter:
+            await self.budget_limiter.count_input(
+                token_count=input_tokens,
+                input_cost_per_token=model.input_cost_per_token,
+            )
+        if credential_limiter:
+            await credential_limiter.count_budget_input(
+                token_count=input_tokens,
+                input_cost_per_token=model.input_cost_per_token,
+            )
+        if project_budget_limiter:
+            await project_budget_limiter.count_input(
+                token_count=input_tokens,
+                input_cost_per_token=model.input_cost_per_token,
+            )
 
     # ============================================================================
     # Pre Process Request
@@ -1762,6 +1963,77 @@ class GatewayRoute:
             )
 
         return None
+
+    async def _apply_decision_input_guardrails(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        state: Any,
+    ) -> Any:
+        """Screen each string leaf of `state` as one text. Return `state` with
+        the leaves redacted.
+
+        A soft block raises the 400 a block raises (ADR 0005): Typesafe's 200
+        body has no room for it. It is still recorded as a soft block.
+        """
+        texts = string_leaves(state)
+        if not texts:
+            return state
+
+        if self.guardrail_engine.has_guardrails_for_route(
+            self.gateway_route_config,
+            GuardrailWhereType.INPUT,
+            GuardrailClass.REDACT,
+        ):
+            set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+            texts = await self._apply_redact_guardrail_to_embeddings(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                input_texts=texts,
+            )
+
+        if self.guardrail_engine.has_guardrails_for_route(
+            self.gateway_route_config,
+            GuardrailWhereType.INPUT,
+            GuardrailClass.CHECK,
+        ):
+            set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+            try:
+                soft_block = (
+                    await self.guardrail_engine.guardrail_check.apply_guardrails(
+                        request_uuid=request_uuid,
+                        api_key_uuid=api_key_uuid,
+                        group_uuid=group_uuid,
+                        api_key_name=api_key_name,
+                        group_name=group_name,
+                        route_config=self.gateway_route_config,
+                        messages=[HumanMessage(content=text) for text in texts],
+                        where=GuardrailWhereType.INPUT,
+                        project_uuid=self.project_uuid,
+                        project_name=self.project_name,
+                    )
+                )
+            except GuardrailBadRequest:
+                # The guardrail error handler logs it.
+                raise
+            except Exception as e:
+                logger.error('Unexpected error during guardrail application: %s', e)
+                raise GatewayInternalError(
+                    f'Error during guardrail application: {e}'
+                ) from e
+
+            if soft_block:
+                raise GuardrailBadRequest(
+                    soft_block.get_soft_block_message(), soft_block.guardrail
+                )
+
+        return with_string_leaves(state, texts)
 
     def has_output_guardrails(self) -> bool:
         """Check if any output guardrails are configured for the route."""

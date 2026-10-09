@@ -10,7 +10,7 @@ const LAZY_HOOKS_BY_GROUP_BY = {
 
 const useLazyGetBreakdownByGroupBy = () => {
   const [searchParams] = useSearchParams();
-  const groupBy = searchParams.get('groupBy') || DEFAULT_GROUP_BY;
+  const groupBy = searchParams.get('costGroupBy') || DEFAULT_GROUP_BY;
 
   const useLazyHook = LAZY_HOOKS_BY_GROUP_BY[groupBy];
 

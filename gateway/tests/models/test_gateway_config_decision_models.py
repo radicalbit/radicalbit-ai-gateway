@@ -183,3 +183,90 @@ def test_fallback_mixing_decision_and_chat_models_is_rejected(fallback, label):
                 },
             }
         )
+
+
+def test_input_token_limit_is_accepted_on_a_decision_only_route():
+    config = GatewayConfig.model_validate(
+        {
+            'decision_models': [JEV],
+            'routes': {
+                'agent': {
+                    'decision_models': ['jev'],
+                    'token_limiting': {'input': {'max_tokens': 1000}},
+                }
+            },
+        }
+    )
+
+    assert config.routes['agent'].token_limiting.input.max_tokens == 1000
+
+
+def test_output_token_limit_on_a_decision_only_route_is_rejected():
+    with pytest.raises(ValueError, match='Decision models produce no output tokens'):
+        GatewayConfig.model_validate(
+            {
+                'decision_models': [JEV],
+                'routes': {
+                    'agent': {
+                        'decision_models': ['jev'],
+                        'token_limiting': {'output': {'max_tokens': 1000}},
+                    }
+                },
+            }
+        )
+
+
+def test_output_token_limit_is_accepted_when_the_route_also_has_chat_models():
+    config = GatewayConfig.model_validate(
+        {
+            'chat_models': [{'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}],
+            'decision_models': [JEV],
+            'routes': {
+                'agent': {
+                    'chat_models': ['gpt'],
+                    'decision_models': ['jev'],
+                    'token_limiting': {'output': {'max_tokens': 1000}},
+                }
+            },
+        }
+    )
+
+    assert config.routes['agent'].token_limiting.output.max_tokens == 1000
+
+
+CACHE = {'redis_host': 'localhost', 'redis_port': 6379}
+
+
+def test_semantic_caching_on_a_decision_only_route_is_rejected():
+    with pytest.raises(
+        ValueError, match='semantic caching is not allowed on a route with only'
+    ):
+        GatewayConfig.model_validate(
+            {
+                'decision_models': [JEV],
+                'cache': CACHE,
+                'routes': {
+                    'agent': {
+                        'decision_models': ['jev'],
+                        'caching': {
+                            'type': 'semantic',
+                            'embedding_model_id': 'emb',
+                        },
+                    }
+                },
+            }
+        )
+
+
+def test_exact_caching_is_accepted_on_a_decision_only_route():
+    config = GatewayConfig.model_validate(
+        {
+            'decision_models': [JEV],
+            'cache': CACHE,
+            'routes': {
+                'agent': {'decision_models': ['jev'], 'caching': {'type': 'exact'}}
+            },
+        }
+    )
+
+    assert config.routes['agent'].caching.type == 'exact'

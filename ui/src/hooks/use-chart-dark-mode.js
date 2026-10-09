@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 
+const DRILL_DOWN_ICON_ID = 'drill-down-icon';
+
 export const updateTheme = (chartRef) => {
   const chartInstance = chartRef.current?.getEchartsInstance();
 
@@ -9,6 +11,13 @@ export const updateTheme = (chartRef) => {
   }
 
   const isDark = document.body.classList.contains('dark');
+  const graphicElements = chartInstance.getOption().graphic?.[0]?.elements || [];
+  const hasDrillDownIcon = graphicElements.some(({ id }) => id === DRILL_DOWN_ICON_ID);
+
+  const drillDownIcon = hasDrillDownIcon
+    ? { graphic: [{ id: DRILL_DOWN_ICON_ID, style: { stroke: isDark ? '#e0e0e0' : '#14141a' } }] }
+    : {};
+
   // Light-mode colors aligned to the new design-system palette:
   // bg = --coo-bk-lv1 (#fdfdfe, components resting on the page),
   // text = --coo-fg-black (#14141a), axes/grid = light secondary greys.
@@ -16,7 +25,10 @@ export const updateTheme = (chartRef) => {
   const themeColors = {
     backgroundColor: isDark ? '#000' : '#fdfdfe',
     textStyle: { color: isDark ? '#e0e0e0' : '#14141a' },
-    title: { textStyle: { color: isDark ? '#e0e0e0' : '#14141a' } },
+    title: {
+      textStyle: { color: isDark ? '#e0e0e0' : '#14141a' },
+      subtextStyle: { color: isDark ? '#9393a1' : '#6b6b7a' },
+    },
     legend: { textStyle: { color: isDark ? '#e0e0e0' : '#14141a' } },
     tooltip: { backgroundColor: isDark ? '#000' : '#fff' },
     grid: {
@@ -32,6 +44,7 @@ export const updateTheme = (chartRef) => {
     },
 
     series: [{ lineStyle: { color: isDark ? '#666' : '#14141a' } }],
+    ...drillDownIcon,
   };
 
   chartInstance.setOption(themeColors, { notMerge: false });
