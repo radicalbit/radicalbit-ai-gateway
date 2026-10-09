@@ -116,8 +116,54 @@ class TokenLimiter:
         """Check if input token counter is exceeded.
         Raise InputTokenLimitExceeded if limit is exceeded.
         """
-        tokens = count_tokens(text, model_string)
+        await self._check_input_cost(
+            tokens=count_tokens(text, model_string),
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            project_uuid=project_uuid,
+            project_name=project_name,
+        )
 
+    @task(name='check_token_input_room')
+    async def check_input_room(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> None:
+        """Check with a cost of 1 token. Use it when the input size is known
+        only after the call. It blocks only when the counter is already full.
+        """
+        await self._check_input_cost(
+            tokens=1,
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            project_uuid=project_uuid,
+            project_name=project_name,
+        )
+
+    async def _check_input_cost(
+        self,
+        *,
+        tokens: int,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        project_uuid: str,
+        project_name: str,
+    ) -> None:
         if not self.input_limiter or not self.input_item or not self.input_config:
             logger.debug(
                 '[TOKEN LIMIT] [route=%s] [kind=TOKEN] [direction=INPUT] '

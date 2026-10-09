@@ -221,7 +221,53 @@ class CredentialLimiter:
         if not self.has_category(CredentialLimitCategory.TOKEN_INPUT):
             return
 
-        tokens = count_tokens(text, model_string)
+        await self._check_input_cost(
+            tokens=count_tokens(text, model_string),
+            request_uuid=request_uuid,
+            group_uuid=group_uuid,
+            group_name=group_name,
+            route_name=route_name,
+            project_uuid=project_uuid,
+            project_name=project_name,
+        )
+
+    async def check_input_room(
+        self,
+        *,
+        request_uuid: str,
+        group_uuid: str,
+        group_name: str,
+        route_name: str,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> None:
+        """Check with a cost of 1 token. Use it when the input size is known
+        only after the call. It blocks only when the counter is already full.
+        """
+        if not self.has_category(CredentialLimitCategory.TOKEN_INPUT):
+            return
+
+        await self._check_input_cost(
+            tokens=1,
+            request_uuid=request_uuid,
+            group_uuid=group_uuid,
+            group_name=group_name,
+            route_name=route_name,
+            project_uuid=project_uuid,
+            project_name=project_name,
+        )
+
+    async def _check_input_cost(
+        self,
+        *,
+        tokens: int,
+        request_uuid: str,
+        group_uuid: str,
+        group_name: str,
+        route_name: str,
+        project_uuid: str,
+        project_name: str,
+    ) -> None:
         exceeded = await self._first_exceeded(
             CredentialLimitCategory.TOKEN_INPUT, cost=tokens
         )
