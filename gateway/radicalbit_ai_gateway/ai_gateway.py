@@ -98,6 +98,8 @@ app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
+DECISION_SCREENED_FIELDS = ('state', 'questions')
+
 
 class GatewayRoute:
     def __init__(
@@ -950,16 +952,17 @@ class GatewayRoute:
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._decision_models[0]
 
-        if self.gateway_route_config.guardrails and 'state' in body:
+        screened = {f: body[f] for f in DECISION_SCREENED_FIELDS if f in body}
+        if self.gateway_route_config.guardrails and screened:
             body = {
                 **body,
-                'state': await self._apply_decision_input_guardrails(
+                **await self._apply_decision_input_guardrails(
                     request_uuid=request_uuid,
                     api_key_uuid=api_key_uuid,
                     group_uuid=group_uuid,
                     api_key_name=api_key_name,
                     group_name=group_name,
-                    state=body['state'],
+                    fields=screened,
                 ),
             }
 
@@ -1971,17 +1974,17 @@ class GatewayRoute:
         group_uuid: str,
         api_key_name: str,
         group_name: str,
-        state: Any,
-    ) -> Any:
-        """Screen each string leaf of `state` as one text. Return `state` with
-        the leaves redacted.
+        fields: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Screen each string leaf of `fields` (`state` and `questions`) as one
+        text. Return `fields` with the leaves redacted.
 
         A soft block raises the 400 a block raises (ADR 0005): Typesafe's 200
         body has no room for it. It is still recorded as a soft block.
         """
-        texts = string_leaves(state)
+        texts = string_leaves(fields)
         if not texts:
-            return state
+            return fields
 
         if self.guardrail_engine.has_guardrails_for_route(
             self.gateway_route_config,
@@ -2033,7 +2036,7 @@ class GatewayRoute:
                     soft_block.get_soft_block_message(), soft_block.guardrail
                 )
 
-        return with_string_leaves(state, texts)
+        return with_string_leaves(fields, texts)
 
     def has_output_guardrails(self) -> bool:
         """Check if any output guardrails are configured for the route."""
