@@ -7,7 +7,6 @@ from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.models.alert_rule_dto import (
-    AlertableEventItem,
     AlertableEventsOut,
     AlertRuleIn,
     AlertRuleOut,
@@ -19,6 +18,7 @@ from radicalbit_ai_gateway.services.alert_email_formatter import (
     build_alert_email_body,
     build_alert_email_subject,
 )
+from radicalbit_ai_gateway.services.alertable_events import AlertableEvents
 from radicalbit_ai_gateway.services.email_service import EmailService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -44,6 +44,7 @@ class AlertRuleService:
         self._project_configs = project_configs if project_configs is not None else {}
         self.project_dao = project_dao
         self.email_service = email_service or EmailService()
+        self.alertable_events = AlertableEvents(self._project_configs)
 
     def _resolve_project_name(self, project_uuid: UUID | str | None) -> str | None:
         if not project_uuid:
@@ -69,7 +70,12 @@ class AlertRuleService:
 
     def _to_out(self, rule: AlertRule) -> AlertRuleOut:
         project_name = self._resolve_project_name(rule.project)
-        return AlertRuleOut.from_alert_rule(rule, project_name=project_name)
+        stale_reason = self.alertable_events.stale_reason(
+            rule.project, rule.route, rule.event
+        )
+        return AlertRuleOut.from_alert_rule(
+            rule, project_name=project_name, stale_reason=stale_reason
+        )
 
     def get_all_rules(self) -> list[AlertRuleOut]:
         try:
@@ -88,104 +94,9 @@ class AlertRuleService:
         return self._to_out(rule)
 
     def get_alertable_events_for_route(
-        self,
-        project_uuid: UUID | str | None = None,
-        route_name: str | None = None,
+        self, project_uuid: UUID | str, route_name: str
     ) -> AlertableEventsOut:
-        guardrails_items: list[AlertableEventItem] = []
-        caching_items: list[AlertableEventItem] = []
-        fallback_items: list[AlertableEventItem] = []
-
-        resolved_project = (
-            self._resolve_project_name(project_uuid) if project_uuid else None
-        )
-        project_key = resolved_project or (str(project_uuid) if project_uuid else None)
-
-        # Inspect route config if available
-        if project_key and route_name and project_key in self._project_configs:
-            entry = self._project_configs[project_key]
-            if entry and entry.config and entry.config.routes:
-                route_cfg = entry.config.routes.get(route_name)
-                if route_cfg:
-                    # Resolve configured guardrails
-                    if getattr(route_cfg, 'guardrails', None):
-                        guardrails_by_name = {
-                            g.name: g
-                            for g in (getattr(entry.config, 'guardrails', None) or [])
-                            if hasattr(g, 'name')
-                        }
-                        for g in route_cfg.guardrails:
-                            g_name = (
-                                g if isinstance(g, str) else getattr(g, 'name', str(g))
-                            )
-                            g_def = guardrails_by_name.get(g_name)
-                            where_attr = (
-                                getattr(g_def, 'where', 'IO') if g_def else 'IO'
-                            )
-                            where_val = (
-                                where_attr.value.upper()
-                                if hasattr(where_attr, 'value')
-                                else str(where_attr).upper()
-                            )
-
-                            if any(k in where_val for k in ('INPUT', 'IO', 'BOTH')):
-                                guardrails_items.append(
-                                    AlertableEventItem(
-                                        event=f'guardrail-input-{g_name}',
-                                        label=f'Guardrail: {g_name.upper()} (input)',
-                                    )
-                                )
-                            if any(k in where_val for k in ('OUTPUT', 'IO', 'BOTH')):
-                                guardrails_items.append(
-                                    AlertableEventItem(
-                                        event=f'guardrail-output-{g_name}',
-                                        label=f'Guardrail: {g_name.upper()} (output)',
-                                    )
-                                )
-
-                    # Resolve caching
-                    if getattr(route_cfg, 'caching', None):
-                        cache_type = str(
-                            getattr(route_cfg.caching, 'type', 'exact')
-                        ).lower()
-                        if cache_type == 'semantic':
-                            caching_items.append(
-                                AlertableEventItem(
-                                    event='cache-semantic',
-                                    label='Caching: semantic match',
-                                )
-                            )
-                        else:
-                            caching_items.append(
-                                AlertableEventItem(
-                                    event='cache-exact',
-                                    label='Caching: exact match',
-                                )
-                            )
-
-                    # Resolve fallback
-                    if getattr(route_cfg, 'fallback', None):
-                        fallback_items.append(
-                            AlertableEventItem(
-                                event='fallback-triggered',
-                                label='Fallback: triggered',
-                            )
-                        )
-
-        return AlertableEventsOut(
-            guardrail=guardrails_items,
-            caching=caching_items,
-            fallback=fallback_items,
-        )
-
-    def _get_valid_events_list(
-        self, project_uuid: UUID | str | None, route_name: str | None
-    ) -> set[str]:
-        events_out = self.get_alertable_events_for_route(project_uuid, route_name)
-        valid_set = set()
-        for item in events_out.guardrail + events_out.caching + events_out.fallback:
-            valid_set.add(item.event)
-        return valid_set
+        return self.alertable_events.for_route(project_uuid, route_name)
 
     def create_rule(self, alert_rule_in: AlertRuleIn) -> AlertRuleOut:
         if alert_rule_in.time_aggregation != AlertRuleTimeAggregation.INSTANT:
@@ -193,10 +104,9 @@ class AlertRuleService:
                 f'Time aggregation "{alert_rule_in.time_aggregation}" is not supported. Only "instant" is supported.'
             )
 
-        valid_events = self._get_valid_events_list(
-            alert_rule_in.project, alert_rule_in.route
-        )
-        if alert_rule_in.event not in valid_events:
+        if not self.alertable_events.offers(
+            alert_rule_in.project, alert_rule_in.route, alert_rule_in.event
+        ):
             raise AlertRuleInvalidEventError(
                 f'Event "{alert_rule_in.event}" is not valid for route "{alert_rule_in.route}"'
             )
@@ -245,8 +155,7 @@ class AlertRuleService:
         new_event = update_dict.get('event', existing.event)
 
         if 'route' in update_dict or 'event' in update_dict or 'project' in update_dict:
-            valid_events = self._get_valid_events_list(new_project, new_route)
-            if new_event not in valid_events:
+            if not self.alertable_events.offers(new_project, new_route, new_event):
                 raise AlertRuleInvalidEventError(
                     f'Event "{new_event}" is not valid for route "{new_route}"'
                 )
@@ -267,9 +176,7 @@ class AlertRuleService:
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
 
-        updated = self.alert_rule_dao.toggle_enabled(
-            alert_rule_uuid, enabled, clear_disabled_reason=True
-        )
+        updated = self.alert_rule_dao.toggle_enabled(alert_rule_uuid, enabled)
         if not updated:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
@@ -287,72 +194,6 @@ class AlertRuleService:
 
         logger.info('Soft deleted alert rule %s', alert_rule_uuid)
         return self._to_out(deleted)
-
-    def validate_rules_on_config_change(
-        self,
-        project_name: str,
-        route_name: str | None = None,
-        project_uuid: str = '',
-    ) -> int:
-        """AG-843: Check active rules when config changes.
-
-        Auto-disable any rule whose route no longer exists or whose event is no longer valid.
-        """
-        resolved_project = (
-            self._resolve_project_name(project_name) if project_name else None
-        )
-        project_key = resolved_project or project_name
-        entry = self._project_configs.get(project_key) if project_key else None
-        valid_routes = (
-            set(entry.config.routes.keys())
-            if (entry and entry.config and entry.config.routes)
-            else set()
-        )
-
-        if route_name:
-            active_rules = self.alert_rule_dao.get_active_by_route(
-                project_name=project_name,
-                route_name=route_name,
-                project_uuid=project_uuid,
-            )
-        else:
-            active_rules = self.alert_rule_dao.get_active_by_project(
-                project_name=project_name,
-                project_uuid=project_uuid,
-            )
-
-        if not active_rules:
-            return 0
-
-        disabled_count = 0
-        for rule in active_rules:
-            # 1. Check if the route itself was deleted from the config
-            if rule.route not in valid_routes:
-                reason = f'The route "{rule.route}" no longer exists in the current project configuration'
-                self.alert_rule_dao.auto_disable_rule(rule.uuid, reason)
-                disabled_count += 1
-                logger.warning(
-                    'Auto-disabled alert rule %s (%s) due to deleted route: %s',
-                    rule.name,
-                    rule.uuid,
-                    reason,
-                )
-                continue
-
-            # 2. Check if the event is no longer valid for the route
-            valid_events = self._get_valid_events_list(project_name, rule.route)
-            if rule.event not in valid_events:
-                reason = f'The event "{rule.event}" is no longer valid for the current route configuration'
-                self.alert_rule_dao.auto_disable_rule(rule.uuid, reason)
-                disabled_count += 1
-                logger.warning(
-                    'Auto-disabled alert rule %s (%s) due to config change: %s',
-                    rule.name,
-                    rule.uuid,
-                    reason,
-                )
-
-        return disabled_count
 
     def dispatch_event_notification(
         self,

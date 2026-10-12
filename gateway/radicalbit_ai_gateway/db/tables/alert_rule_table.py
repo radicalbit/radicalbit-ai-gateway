@@ -30,7 +30,6 @@ class AlertRule(Reflected, BaseTable, BaseDAO):
         'RECIPIENTS', TEXT(), nullable=False
     )  # Stored as JSON string list of emails
     enabled = Column('ENABLED', BOOLEAN(), nullable=False, default=False)
-    disabled_reason = Column('DISABLED_REASON', TEXT(), nullable=True)
     deleted = Column('DELETED', BOOLEAN(), nullable=False, default=False)
     created_at = Column('CREATED_AT', TIMESTAMP(timezone=True), nullable=False)
     updated_at = Column('UPDATED_AT', TIMESTAMP(timezone=True), nullable=False)
