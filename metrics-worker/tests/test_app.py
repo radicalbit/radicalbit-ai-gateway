@@ -140,7 +140,7 @@ def test_worker_startup_wires_both_sets_of_clients(redis_calls):
     assert app_module.celery_app.apprise_client is None
 
 
-def test_process_shutdown_cleans_up_both_workers(monkeypatch):
+def test_process_shutdown_cleans_up_every_worker(monkeypatch):
     """Without this the last buffered batch never reaches ClickHouse."""
     called = []
     monkeypatch.setattr(task_module._worker, 'cleanup', lambda: called.append('events'))
@@ -149,7 +149,10 @@ def test_process_shutdown_cleans_up_both_workers(monkeypatch):
         'cleanup',
         lambda: called.append('request_events'),
     )
+    monkeypatch.setattr(
+        task_module._alert_worker, 'cleanup', lambda: called.append('alerts')
+    )
 
     task_module._cleanup_resources()
 
-    assert called == ['events', 'request_events']
+    assert called == ['events', 'request_events', 'alerts']

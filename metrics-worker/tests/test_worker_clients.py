@@ -1,14 +1,15 @@
 """How each worker manages its ClickHouse client and its buffer.
 
-Both workers hold the same shape: one lazy client, one lazy buffer, and a
-cleanup that Celery calls at process shutdown. The tests run over both so the
-two cannot drift apart.
+Every worker holds the same shape: one lazy client, one lazy buffer, and a
+cleanup that Celery calls at process shutdown. The tests run over all of them so
+they cannot drift apart.
 """
 
 import threading
 
 import pytest
 
+from worker.alerts.worker import ALERT_COLUMN_NAMES, ALERT_TABLE_NAME, AlertWorker
 from worker.events.worker import COLUMN_NAMES, TABLE_NAME, MetricsWorker
 from worker.request_events.worker import (
     REQUEST_COLUMN_NAMES,
@@ -26,6 +27,13 @@ WORKERS = [
         REQUEST_TABLE_NAME,
         REQUEST_COLUMN_NAMES,
         id='request_events',
+    ),
+    pytest.param(
+        AlertWorker,
+        'worker.alerts.worker',
+        ALERT_TABLE_NAME,
+        ALERT_COLUMN_NAMES,
+        id='alerts',
     ),
 ]
 
@@ -53,7 +61,11 @@ def clickhouse(monkeypatch):
         created.append(client)
         return client
 
-    for module in ('worker.events.worker', 'worker.request_events.worker'):
+    for module in (
+        'worker.events.worker',
+        'worker.request_events.worker',
+        'worker.alerts.worker',
+    ):
         monkeypatch.setattr(f'{module}.clickhouse_connect.get_client', get_client)
     return created
 
