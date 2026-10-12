@@ -1,10 +1,10 @@
 import Lucide from '@Components/lucide';
+import { useToggleAlertMutation } from '@State/alerts/api';
+import { FCK_TOGGLE_ALERT } from '@State/alerts/fixed-cache-key';
 import {
-  Button, DataTableAction, Tooltip, Truncate,
+  Button, DataTableAction, Switch, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
-import {
-  CircleCheck, CircleX, TriangleAlert, Trash,
-} from 'lucide-react';
+import { TriangleAlert, Trash } from 'lucide-react';
 import DeleteAlert from '../delete-alert';
 
 const columns = [
@@ -32,7 +32,7 @@ const columns = [
     key: 'enabled',
     width: '80px',
     align: 'center',
-    render: (enabled) => <Enabled enabled={enabled} />,
+    render: (enabled, record) => <EnabledToggle enabled={enabled} uuid={record.uuid} />,
   },
   {
     title: 'Description',
@@ -119,23 +119,26 @@ function Actions({ uuid, name }) {
   );
 }
 
-function Enabled({ enabled }) {
-  if (enabled) {
-    return (
-      <Tooltip title="Enabled">
-        <span className="is-success">
-          <Lucide icon={CircleCheck} />
-        </span>
-      </Tooltip>
-    );
-  }
+function EnabledToggle({ enabled, uuid }) {
+  const [trigger, { isLoading }] = useToggleAlertMutation({ fixedCacheKey: `${FCK_TOGGLE_ALERT}-${uuid}` });
+
+  const tooltip = enabled ? 'Disable alert rule' : 'Enable alert rule';
+
+  // Keeps the row click (which opens the detail) from firing
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+  };
+
+  const handleOnChange = (checked) => {
+    trigger({ uuid, enabled: checked });
+  };
 
   return (
-    <Tooltip title="Disabled">
-      <span className="opacity-50">
-        <Lucide icon={CircleX} />
-      </span>
-    </Tooltip>
+    <span onClick={handleOnClick} role="presentation">
+      <Tooltip title={tooltip}>
+        <Switch aria-label={tooltip} checked={enabled} loading={isLoading} onChange={handleOnChange} size="small" />
+      </Tooltip>
+    </span>
   );
 }
 

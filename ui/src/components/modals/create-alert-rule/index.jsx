@@ -11,7 +11,7 @@ import StepBActions from './step-b/actions';
 import StepC from './step-c';
 import StepCActions from './step-c/actions';
 
-const INITIAL_VALUES = { recipients: [], enabled: false, __metadata: { step: 0 } };
+const INITIAL_VALUES = { recipients: [], __metadata: { step: 0 } };
 
 const STEP_SUBTITLES = [
   'Step 1 - Name rule',

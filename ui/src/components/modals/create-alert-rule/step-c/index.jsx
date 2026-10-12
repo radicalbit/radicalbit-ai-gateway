@@ -2,7 +2,6 @@ import Channel from '@Container/pages/alerts/detail/body/form-fields/channel';
 import Recipient from '@Container/pages/alerts/detail/body/form-fields/recipient';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField } from '@radicalbit/radicalbit-design-system';
-import Enabled from './enabled';
 
 function StepC() {
   const { error } = useFormbitContext();
@@ -15,10 +14,6 @@ function StepC() {
       <Channel />
 
       <Recipient />
-
-      <div className="pt-4" />
-
-      <Enabled />
 
       {backendError ? <FormField message={backendError} /> : false}
     </div>

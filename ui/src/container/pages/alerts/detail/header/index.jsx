@@ -1,6 +1,7 @@
 import Lucide from '@Components/lucide';
 import { PathsEnum } from '@Src/constants';
 import { useGetAlertQuery, useToggleAlertMutation } from '@State/alerts/api';
+import { FCK_TOGGLE_ALERT } from '@State/alerts/fixed-cache-key';
 import {
   NewHeader, SectionTitle, Skeleton, Switch,
 } from '@radicalbit/radicalbit-design-system';
@@ -51,7 +52,7 @@ function EnabledToggle() {
   const { data } = useGetAlertQuery(uuid);
   const enabled = data?.enabled ?? false;
 
-  const [trigger, { isLoading }] = useToggleAlertMutation({ fixedCacheKey: `toggle-alert-${uuid}` });
+  const [trigger, { isLoading }] = useToggleAlertMutation({ fixedCacheKey: `${FCK_TOGGLE_ALERT}-${uuid}` });
 
   const handleOnChange = (checked) => {
     trigger({ uuid, enabled: checked });

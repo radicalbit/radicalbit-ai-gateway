@@ -310,6 +310,42 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert fetched['stale'] is True
         assert fetched['staleReason']
 
+    # --- list order ---
+
+    def test_list_returns_newest_rules_first(self):
+        self.publish(route_config(guardrails={'pii': 'io'}, fallback=True))
+        first = self.created('guardrail-input-pii')
+        second = self.created('guardrail-output-pii')
+        third = self.created('fallback-triggered')
+
+        response = self.client.get('/rule')
+
+        assert response.status_code == 200
+        assert [r['uuid'] for r in response.json()] == [
+            third['uuid'],
+            second['uuid'],
+            first['uuid'],
+        ]
+
+    # --- defaults ---
+
+    def test_create_rule_is_disabled_by_default(self):
+        self.publish(route_config(fallback=True))
+
+        response = self.client.post(
+            '/rule',
+            json={
+                'name': 'rule',
+                'project': str(PROJECT_UUID),
+                'route': 'chat',
+                'event': 'fallback-triggered',
+                'recipients': ['ops@example.com'],
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json()['enabled'] is False
+
     # --- toggle / delete ---
 
     def test_toggle_leaves_staleness_to_the_published_configuration(self):
