@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -90,16 +91,48 @@ class McpInvocationEventPayload(EventBase):
     mcp_target: str = ''
 
 
+class LimitScope(StrEnum):
+    """The entity that owns the limit counter.
+
+    A StrEnum so the event row stores 'route', not 'LimitScope.ROUTE'.
+    """
+
+    ROUTE = 'route'
+    PROJECT = 'project'
+    CREDENTIAL = 'credential'
+
+
 class LimitEventPayload(EventBase):
+    """A limit blocked a request. Names the exact limit and its window state.
+
+    ``category`` is the limiter's scenario (``request_rate``, ``token_input``,
+    ``token_output``, ``audio_duration``, ``budget``). ``maximum`` and
+    ``consumption`` are in the limit's own unit, currency for a budget.
+    ``consumption`` is the counter as it stands, so it can exceed ``maximum``.
+    ``reset_time`` is a Unix timestamp in seconds. ``window_id`` is the
+    limiter's id for the current window, None if no window was open.
+    """
+
     event_type: Literal[
         EventType.RATE_LIMIT,
         EventType.TOKEN_INPUT_LIMIT,
         EventType.TOKEN_OUTPUT_LIMIT,
         EventType.AUDIO_DURATION_LIMIT,
+        EventType.BUDGET_LIMIT,
         EventType.CREDENTIAL_RATE_LIMIT,
         EventType.CREDENTIAL_TOKEN_INPUT_LIMIT,
         EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT,
+        EventType.CREDENTIAL_BUDGET_LIMIT,
+        EventType.PROJECT_BUDGET_LIMIT,
     ]
+    limit_scope: LimitScope
+    category: str
+    window_seconds: int
+    maximum: float
+    consumption: float
+    reset_time: int
+    window_id: str | None = None
+    threshold_percentage: int | None = None
 
 
 class RequestEventPayload(BaseModel):

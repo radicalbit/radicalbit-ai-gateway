@@ -1120,7 +1120,15 @@ async def test_project_budget_limit_blocks_chat_with_no_other_limiters_configure
     finally:
         set_current_project_budget_limiter(None)
 
-    project_budget_limiter.check_budget.assert_awaited_once()
+    # The block event names the caller and the route actually called.
+    project_budget_limiter.check_budget.assert_awaited_once_with(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        api_key_name='rb-key',
+        group_uuid=str(GROUP_UUID),
+        group_name='test-group',
+        route_name='rb-gateway',
+    )
     assert len(pook.pending_mocks()) == 0
 
     pook.disable_network()
@@ -1181,7 +1189,15 @@ async def test_project_budget_limit_blocks_embeddings_with_no_other_limiters_con
     finally:
         set_current_project_budget_limiter(None)
 
-    project_budget_limiter.check_budget.assert_awaited_once()
+    # The block event names the caller and the route actually called.
+    project_budget_limiter.check_budget.assert_awaited_once_with(
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        api_key_name='rb-key',
+        group_uuid=str(GROUP_UUID),
+        group_name='test-group',
+        route_name='rb-gateway',
+    )
     assert len(pook.pending_mocks()) == 0
 
     pook.disable_network()
