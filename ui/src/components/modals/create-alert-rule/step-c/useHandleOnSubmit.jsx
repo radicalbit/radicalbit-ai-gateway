@@ -12,10 +12,9 @@ export default () => {
   const { hideModal } = useModals();
   const { isFormInvalid, submitForm } = useFormbitContext();
 
-  const [trigger, { isLoading }] = useCreateAlertMutation({ fixedCacheKey: FCK_CREATE_ALERT });
-  const isSubmitDisabled = isFormInvalid() || isLoading;
+  const [trigger, args] = useCreateAlertMutation({ fixedCacheKey: FCK_CREATE_ALERT });
+  const isSubmitDisabled = isFormInvalid() || args.isLoading;
 
-  // `enabled` comes from the button the user picked, not from a form field
   const handleOnSubmit = ({ enabled }) => {
     if (isSubmitDisabled) {
       return;
@@ -49,5 +48,5 @@ export default () => {
     });
   };
 
-  return { handleOnSubmit, isSubmitDisabled, isLoading };
+  return { handleOnSubmit, args, isSubmitDisabled };
 };

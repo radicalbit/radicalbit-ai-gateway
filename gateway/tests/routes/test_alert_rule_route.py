@@ -310,8 +310,6 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert fetched['stale'] is True
         assert fetched['staleReason']
 
-    # --- list order ---
-
     def test_list_returns_newest_rules_first(self):
         self.publish(route_config(guardrails={'pii': 'io'}, fallback=True))
         first = self.created('guardrail-input-pii')
@@ -326,8 +324,6 @@ class TestAlertRuleRoute(DatabaseIntegration):
             second['uuid'],
             first['uuid'],
         ]
-
-    # --- defaults ---
 
     def test_create_rule_is_disabled_by_default(self):
         self.publish(route_config(fallback=True))

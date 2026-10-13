@@ -6,10 +6,9 @@ import useHandleOnSubmit from './useHandleOnSubmit';
 function Actions() {
   const { write } = useFormbitContext();
 
-  // Which of the two create buttons was pressed, so only that one shows the spinner
   const [isEnabling, setIsEnabling] = useState(false);
 
-  const { handleOnSubmit, isSubmitDisabled, isLoading } = useHandleOnSubmit();
+  const { handleOnSubmit, args: { isLoading }, isSubmitDisabled } = useHandleOnSubmit();
 
   const isCreating = isLoading && !isEnabling;
   const isCreatingAndEnabling = isLoading && isEnabling;

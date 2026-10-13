@@ -122,9 +122,6 @@ function Actions({ uuid, name }) {
 function EnabledToggle({ enabled, uuid }) {
   const [trigger, { isLoading }] = useToggleAlertMutation({ fixedCacheKey: `${FCK_TOGGLE_ALERT}-${uuid}` });
 
-  const tooltip = enabled ? 'Disable alert rule' : 'Enable alert rule';
-
-  // Keeps the row click (which opens the detail) from firing
   const handleOnClick = (e) => {
     e.stopPropagation();
   };
@@ -133,10 +130,20 @@ function EnabledToggle({ enabled, uuid }) {
     trigger({ uuid, enabled: checked });
   };
 
+  if (enabled) {
+    return (
+      <span onClick={handleOnClick} role="presentation">
+        <Tooltip title="Disable alert rule">
+          <Switch aria-label="Disable alert rule" checked loading={isLoading} onChange={handleOnChange} size="small" />
+        </Tooltip>
+      </span>
+    );
+  }
+
   return (
     <span onClick={handleOnClick} role="presentation">
-      <Tooltip title={tooltip}>
-        <Switch aria-label={tooltip} checked={enabled} loading={isLoading} onChange={handleOnChange} size="small" />
+      <Tooltip title="Enable alert rule">
+        <Switch aria-label="Enable alert rule" checked={false} loading={isLoading} onChange={handleOnChange} size="small" />
       </Tooltip>
     </span>
   );
