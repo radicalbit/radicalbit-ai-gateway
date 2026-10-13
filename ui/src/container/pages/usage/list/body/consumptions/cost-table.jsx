@@ -30,6 +30,7 @@ const useGetDataSource = () => {
   const chatModels = summary?.chatModels;
   const embeddingModels = summary?.embeddingModels;
   const transcriptionModels = summary?.transcriptionModels;
+  const decisionModels = summary?.decisionModels;
   const totals = summary?.totals;
 
   return useMemo(() => [
@@ -47,6 +48,7 @@ const useGetDataSource = () => {
           text: costFormatter({ cent: transcriptionModels?.input?.text }),
         }
         : '--',
+      decision: decisionModels?.input == null ? '--' : costFormatter({ cent: decisionModels.input }),
       total: costFormatter({ cent: totals?.input }),
     },
     {
@@ -56,6 +58,7 @@ const useGetDataSource = () => {
       embedding: '--',
       semanticCache: '--',
       transcription: '--',
+      decision: '--',
       total: costFormatter({ cent: totals?.cachedInput }),
     },
     {
@@ -65,9 +68,10 @@ const useGetDataSource = () => {
       embedding: '--',
       semanticCache: '--',
       transcription: transcriptionModels ? costFormatter({ cent: transcriptionModels?.output }) : '--',
+      decision: '--',
       total: costFormatter({ cent: totals?.output }),
     },
-  ], [chatModels, embeddingModels, transcriptionModels, totals]);
+  ], [chatModels, embeddingModels, transcriptionModels, decisionModels, totals]);
 };
 
 export default CostTable;
