@@ -6,6 +6,7 @@ import pytest
 
 from tests.common import db_mock
 
+from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
@@ -19,6 +20,12 @@ from radicalbit_ai_gateway.models.auth_dto import (
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
+)
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
+from radicalbit_ai_gateway.models.limiting import (
+    BudgetLimiting,
+    RateLimiting,
+    TokenLimiting,
 )
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.services.key_service import KeyService
@@ -362,8 +369,9 @@ class KeyServiceTest(unittest.TestCase):
         self.key_limit_dao.insert_many = MagicMock(return_value=[limit])
         res = self.key_service.add_limits_to_key(key_uuid, limits_in)
         self.key_limit_dao.insert_many.assert_called_once()
-        assert res.limits == [CredentialLimitOut.from_key_limit(limit)]
-        assert res == KeyFullOut.from_key_obscured(key, include_limits=True)
+        assert res.key.limits == [CredentialLimitOut.from_key_limit(limit)]
+        assert res.key == KeyFullOut.from_key_obscured(key, include_limits=True)
+        assert res.warnings == []
 
     def test_add_limits_to_key_with_groups(self):
         key_uuid = uuid.uuid4()
@@ -377,7 +385,7 @@ class KeyServiceTest(unittest.TestCase):
         res = self.key_service.add_limits_to_key(
             key_uuid, limits_in, include_groups=True
         )
-        assert res.group == GroupOut.from_group(group)
+        assert res.key.group == GroupOut.from_group(group)
 
     def test_add_limits_to_key_multiple_categories(self):
         key_uuid = uuid.uuid4()
@@ -422,7 +430,7 @@ class KeyServiceTest(unittest.TestCase):
             key_uuid, db_mock.get_sample_credential_limits_in()
         )
         self.key_limit_dao.insert_many.assert_called_once()
-        assert res == KeyFullOut.from_key_obscured(key, include_limits=True)
+        assert res.key == KeyFullOut.from_key_obscured(key, include_limits=True)
 
     def test_add_limits_to_key_any_owner_ok(self):
         key_uuid = uuid.uuid4()
@@ -436,7 +444,7 @@ class KeyServiceTest(unittest.TestCase):
             key_uuid, db_mock.get_sample_credential_limits_in()
         )
         self.key_limit_dao.insert_many.assert_called_once()
-        assert res == KeyFullOut.from_key_obscured(key, include_limits=True)
+        assert res.key == KeyFullOut.from_key_obscured(key, include_limits=True)
 
     def test_add_limits_to_key_duplicate_individual_limit_raises(self):
         key_uuid = uuid.uuid4()
@@ -474,6 +482,40 @@ class KeyServiceTest(unittest.TestCase):
         self.key_limit_dao.insert_many.assert_not_called()
         assert existing.group_limit_uuid is not None
 
+    def test_add_limits_to_key_surfaces_route_consistency_warning(self):
+        key_uuid = uuid.uuid4()
+        group_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(uuid=key_uuid, group_uuid=group_uuid)
+        limits_in = db_mock.get_sample_credential_limits_in(
+            limits=[
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.RATE,
+                    value=100,
+                    window_size='1 minute',
+                )
+            ]
+        )
+        self.key_dao.get_by_uuid = MagicMock(return_value=key)
+        self.key_limit_dao.insert_many = MagicMock(return_value=[])
+        self.group_dao.get_route_names_by_group_uuid = MagicMock(
+            return_value=['proj/chat']
+        )
+        route = MagicMock(spec=GatewayRoute)
+        route.gateway_route_config = GatewayRouteConfig(
+            route_name='chat',
+            rate_limiting=RateLimiting(max_requests=50, window_size='1 minute'),
+        )
+
+        res = self.key_service.add_limits_to_key(
+            key_uuid, limits_in, gateway_routes={'proj/chat': route}
+        )
+
+        assert len(res.warnings) == 1
+        warning = res.warnings[0]
+        assert warning.route_name == 'proj/chat'
+        assert warning.credential_value == 100
+        assert warning.route_value == 50
+
     def test_get_limits_for_key_ok(self):
         key_uuid = uuid.uuid4()
         key = db_mock.get_sample_key(uuid=key_uuid)
@@ -491,6 +533,223 @@ class KeyServiceTest(unittest.TestCase):
             self.key_service.get_limits_for_key,
             uuid.uuid4(),
         )
+
+
+class CheckRouteLimitConsistencyTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.group_dao: GroupDAO = MagicMock(spec_set=GroupDAO)
+        cls.key_service = KeyService(
+            key_dao=MagicMock(spec_set=KeyDAO),
+            api_key_security=MagicMock(spec_set=ApiKeySecurity),
+            group_dao=cls.group_dao,
+            key_limit_dao=MagicMock(spec_set=KeyLimitDAO),
+            group_limit_dao=MagicMock(spec_set=GroupLimitDAO),
+        )
+
+    def setUp(self):
+        self.group_dao.get_route_names_by_group_uuid = MagicMock(return_value=[])
+
+    @staticmethod
+    def _route(**limiting_kwargs) -> MagicMock:
+        route = MagicMock(spec=GatewayRoute)
+        route.gateway_route_config = GatewayRouteConfig(
+            route_name='chat', **limiting_kwargs
+        )
+        return route
+
+    def test_no_group_is_a_no_op(self):
+        key = db_mock.get_sample_key(group_uuid=None)
+        limits_in = db_mock.get_sample_credential_limits_in()
+        assert self.key_service._check_route_limit_consistency(key, limits_in, {}) == []
+        self.group_dao.get_route_names_by_group_uuid.assert_not_called()
+
+    def test_unreachable_route_key_is_ignored(self):
+        group_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(group_uuid=group_uuid)
+        self.group_dao.get_route_names_by_group_uuid = MagicMock(
+            return_value=['proj/other-route']
+        )
+        limits_in = db_mock.get_sample_credential_limits_in()
+        assert (
+            self.key_service._check_route_limit_consistency(
+                key, limits_in, {'proj/chat': self._route()}
+            )
+            == []
+        )
+
+    def test_route_with_no_limit_for_category_is_a_no_op(self):
+        group_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(group_uuid=group_uuid)
+        self.group_dao.get_route_names_by_group_uuid = MagicMock(
+            return_value=['proj/chat']
+        )
+        limits_in = db_mock.get_sample_credential_limits_in(
+            limits=[
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.RATE
+                )
+            ]
+        )
+        route = self._route(budget_limiting=BudgetLimiting(max_budget=10))
+        assert (
+            self.key_service._check_route_limit_consistency(
+                key, limits_in, {'proj/chat': route}
+            )
+            == []
+        )
+
+    def test_stricter_or_equal_credential_limit_is_a_no_op(self):
+        group_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(group_uuid=group_uuid)
+        self.group_dao.get_route_names_by_group_uuid = MagicMock(
+            return_value=['proj/chat']
+        )
+        route = self._route(
+            rate_limiting=RateLimiting(max_requests=50, window_size='1 minute')
+        )
+        limits_in = db_mock.get_sample_credential_limits_in(
+            limits=[
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.RATE,
+                    value=50,
+                    window_size='1 minute',
+                )
+            ]
+        )
+        assert (
+            self.key_service._check_route_limit_consistency(
+                key, limits_in, {'proj/chat': route}
+            )
+            == []
+        )
+
+    def test_looser_credential_limit_warns(self):
+        group_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(group_uuid=group_uuid)
+        self.group_dao.get_route_names_by_group_uuid = MagicMock(
+            return_value=['proj/chat']
+        )
+        route = self._route(
+            rate_limiting=RateLimiting(max_requests=50, window_size='1 minute')
+        )
+        limits_in = db_mock.get_sample_credential_limits_in(
+            limits=[
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.RATE,
+                    value=100,
+                    window_size='1 minute',
+                )
+            ]
+        )
+        warnings = self.key_service._check_route_limit_consistency(
+            key, limits_in, {'proj/chat': route}
+        )
+        assert len(warnings) == 1
+        assert warnings[0].category == CredentialLimitCategory.RATE
+        assert warnings[0].route_name == 'proj/chat'
+        assert warnings[0].credential_value == 100
+        assert warnings[0].route_value == 50
+
+    def test_different_window_granularity_normalizes_before_comparing(self):
+        """3600/1h credential vs 50/1min route: both 1 req/s, so equal not looser."""
+        group_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(group_uuid=group_uuid)
+        self.group_dao.get_route_names_by_group_uuid = MagicMock(
+            return_value=['proj/chat']
+        )
+        route = self._route(
+            rate_limiting=RateLimiting(max_requests=50, window_size='1 minute')
+        )
+        limits_in = db_mock.get_sample_credential_limits_in(
+            limits=[
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.RATE,
+                    value=3000,
+                    window_size='1 hour',
+                )
+            ]
+        )
+        assert (
+            self.key_service._check_route_limit_consistency(
+                key, limits_in, {'proj/chat': route}
+            )
+            == []
+        )
+
+        looser_limits_in = db_mock.get_sample_credential_limits_in(
+            limits=[
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.RATE,
+                    value=3601,
+                    window_size='1 hour',
+                )
+            ]
+        )
+        warnings = self.key_service._check_route_limit_consistency(
+            key, looser_limits_in, {'proj/chat': route}
+        )
+        assert len(warnings) == 1
+
+    def test_token_input_and_output_are_compared_independently(self):
+        group_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(group_uuid=group_uuid)
+        self.group_dao.get_route_names_by_group_uuid = MagicMock(
+            return_value=['proj/chat']
+        )
+        route = self._route(
+            token_limiting=TokenLimiting(
+                input=RateLimiting(max_tokens=100, window_size='1 minute'),
+            )
+        )
+        limits_in = db_mock.get_sample_credential_limits_in(
+            limits=[
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.TOKEN_INPUT,
+                    value=200,
+                    window_size='1 minute',
+                ),
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.TOKEN_OUTPUT,
+                    value=200,
+                    window_size='1 minute',
+                ),
+            ]
+        )
+        warnings = self.key_service._check_route_limit_consistency(
+            key, limits_in, {'proj/chat': route}
+        )
+        assert len(warnings) == 1
+        assert warnings[0].category == CredentialLimitCategory.TOKEN_INPUT
+
+    def test_multiple_reachable_routes_each_get_their_own_warning(self):
+        group_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(group_uuid=group_uuid)
+        self.group_dao.get_route_names_by_group_uuid = MagicMock(
+            return_value=['proj/chat', 'proj/other']
+        )
+        strict_route = self._route(
+            rate_limiting=RateLimiting(max_requests=10, window_size='1 minute')
+        )
+        lenient_route = self._route(
+            rate_limiting=RateLimiting(max_requests=1000, window_size='1 minute')
+        )
+        limits_in = db_mock.get_sample_credential_limits_in(
+            limits=[
+                db_mock.get_sample_credential_limit_in(
+                    category=CredentialLimitCategory.RATE,
+                    value=100,
+                    window_size='1 minute',
+                )
+            ]
+        )
+        warnings = self.key_service._check_route_limit_consistency(
+            key,
+            limits_in,
+            {'proj/chat': strict_route, 'proj/other': lenient_route},
+        )
+        assert len(warnings) == 1
+        assert warnings[0].route_name == 'proj/chat'
 
 
 class TestDeleteLimitFromKey:

@@ -118,3 +118,16 @@ class CredentialLimitOut(BaseModel):
             created_at=str(key_limit.created_at),
             updated_at=str(key_limit.updated_at),
         )
+
+
+class RouteLimitConsistencyWarning(BaseModel):
+    """Advisory only: the credential limit is saved regardless."""
+
+    category: CredentialLimitCategory
+    route_name: str
+    credential_value: float
+    credential_window_size: str
+    route_value: float
+    route_window_size: str
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)

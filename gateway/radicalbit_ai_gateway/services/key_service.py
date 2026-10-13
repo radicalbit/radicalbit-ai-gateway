@@ -5,6 +5,7 @@ from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 
+from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
@@ -12,20 +13,25 @@ from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.tables.group_limit_table import GroupLimit
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
+from radicalbit_ai_gateway.limiter.window_config import parse_window
 from radicalbit_ai_gateway.limiting.credential_limiter import clear_limit_counter
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     KeyFullOut,
     KeyGroupIn,
     KeyIn,
+    KeyLimitsApplyOut,
 )
 from radicalbit_ai_gateway.models.credential_limiting import (
+    CATEGORY_TO_LIMITING_FIELD,
     CredentialLimitCategory,
     CredentialLimitOut,
     CredentialLimitsIn,
+    RouteLimitConsistencyWarning,
 )
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.group_limiting import GroupLimitOverwriteWarning
-from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
+from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -354,7 +360,8 @@ class KeyService:
         key_uuid: UUID,
         limits_in: CredentialLimitsIn,
         include_groups: bool = False,
-    ) -> KeyFullOut:
+        gateway_routes: dict[str, GatewayRoute] | None = None,
+    ) -> KeyLimitsApplyOut:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
@@ -392,8 +399,78 @@ class KeyService:
             raise KeyInternalError(
                 f'An error occurred while adding the limits: {e}'
             ) from e
-        return self._get_key(
+        key_out = self._get_key(
             key_uuid, include_groups=include_groups, include_limits=True
+        )
+        warnings = self._check_route_limit_consistency(
+            key, limits_in, gateway_routes or {}
+        )
+        return KeyLimitsApplyOut(key=key_out, warnings=warnings)
+
+    def _check_route_limit_consistency(
+        self,
+        key: Key,
+        limits_in: CredentialLimitsIn,
+        gateway_routes: dict[str, GatewayRoute],
+    ) -> list[RouteLimitConsistencyWarning]:
+        """Flag limits looser (higher rate-per-second) than the route's own cap."""
+        if not key.group_uuid:
+            return []
+
+        route_names = self.group_dao.get_route_names_by_group_uuid(key.group_uuid)
+        warnings: list[RouteLimitConsistencyWarning] = []
+        for route_name in route_names:
+            route = gateway_routes.get(route_name)
+            if route is None:
+                continue
+            for limit_in in limits_in.limits:
+                route_limiting = self._route_limiting_for_category(
+                    route.gateway_route_config, limit_in.category
+                )
+                if route_limiting is None:
+                    continue
+                route_value = getattr(
+                    route_limiting, CATEGORY_TO_LIMITING_FIELD[limit_in.category]
+                )
+                if route_value is None:
+                    continue
+                credential_rate = limit_in.value / self._window_seconds(
+                    limit_in.window_size
+                )
+                route_rate = route_value / self._window_seconds(
+                    route_limiting.window_size
+                )
+                if credential_rate > route_rate:
+                    warnings.append(
+                        RouteLimitConsistencyWarning(
+                            category=limit_in.category,
+                            route_name=route_name,
+                            credential_value=limit_in.value,
+                            credential_window_size=str(limit_in.window_size),
+                            route_value=route_value,
+                            route_window_size=str(route_limiting.window_size),
+                        )
+                    )
+        return warnings
+
+    @staticmethod
+    def _route_limiting_for_category(
+        route_config: GatewayRouteConfig, category: CredentialLimitCategory
+    ) -> Limiting | None:
+        if category == CredentialLimitCategory.RATE:
+            return route_config.rate_limiting
+        if category == CredentialLimitCategory.BUDGET:
+            return route_config.budget_limiting
+        if route_config.token_limiting is None:
+            return None
+        if category == CredentialLimitCategory.TOKEN_INPUT:
+            return route_config.token_limiting.input
+        return route_config.token_limiting.output
+
+    @staticmethod
+    def _window_seconds(window_size: int | str) -> int:
+        return (
+            parse_window(window_size) if isinstance(window_size, str) else window_size
         )
 
     def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:

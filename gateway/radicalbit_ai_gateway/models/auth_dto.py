@@ -8,7 +8,10 @@ from pydantic.alias_generators import to_camel
 from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 from radicalbit_ai_gateway.db.tables.group_table import Group
 from radicalbit_ai_gateway.db.tables.key_table import Key
-from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitOut,
+    RouteLimitConsistencyWarning,
+)
 
 
 class KeyIn(BaseModel, validate_assignment=True):
@@ -238,6 +241,13 @@ class KeyFullOut(KeyOut):
             created_at=str(key.created_at),
             updated_at=str(key.updated_at),
         )
+
+
+class KeyLimitsApplyOut(BaseModel):
+    key: KeyFullOut
+    warnings: list[RouteLimitConsistencyWarning]
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
 
 class GroupFullOut(GroupOut):
