@@ -13,11 +13,15 @@ from radicalbit_ai_gateway.limiter import (
     ScenarioType,
     WindowConfig,
 )
-from radicalbit_ai_gateway.limiting.limit_event import limit_fields
+from radicalbit_ai_gateway.limiting.limit_event import (
+    consume_and_emit_thresholds,
+    limit_fields,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import audio_duration_limiting_counter
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import AudioDurationLimitExceeded
 
@@ -192,4 +196,19 @@ class DurationLimiter:
             self.config.window_size,
         )
 
-        await self.limiter.hit(self.item, cost=cost)
+        await consume_and_emit_thresholds(
+            self.limiter,
+            self.item,
+            cost,
+            LimitScope.ROUTE,
+            RequestIdentity(
+                request_uuid=request_uuid,
+                route_name=self.route_name,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                project_uuid=project_uuid,
+                project_name=project_name,
+            ),
+        )

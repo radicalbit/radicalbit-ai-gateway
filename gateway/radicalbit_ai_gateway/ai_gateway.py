@@ -55,6 +55,7 @@ from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import GuardrailClass, GuardrailWhereType
 from radicalbit_ai_gateway.models.model import ENABLE_PROMPT_CACHE_PARAM, Model
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
 from radicalbit_ai_gateway.routing import (
     DeterministicRouter,
@@ -540,6 +541,13 @@ class GatewayRoute:
                 prompt_tokens=final_usage.get('input_tokens', 0),
                 completion_tokens=final_usage.get('output_tokens', 0),
                 model_selected=prepared.model_selected,
+                identity=self._request_identity(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                ),
             )
 
         # Yield usage chunk ONLY if originally requested by the user
@@ -701,14 +709,22 @@ class GatewayRoute:
         )
 
         if response.usage:
+            identity = self._request_identity(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+            )
             if self.token_limiter:
                 await self.token_limiter.count_input(
-                    prompt_tokens=response.usage.prompt_tokens
+                    prompt_tokens=response.usage.prompt_tokens, identity=identity
                 )
             if self.budget_limiter and model_selected.input_cost_per_token:
                 await self.budget_limiter.count_input(
                     token_count=response.usage.prompt_tokens,
                     input_cost_per_token=model_selected.input_cost_per_token,
+                    identity=identity,
                 )
 
         if use_cache and cache_key:
@@ -860,7 +876,17 @@ class GatewayRoute:
             project_name=self.project_name,
         )
 
-        await self._count_transcription_usage(result.usage, model_selected)
+        await self._count_transcription_usage(
+            result.usage,
+            model_selected,
+            identity=self._request_identity(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+            ),
+        )
 
         if use_cache and cache_key:
             await self.gateway_cache.set(
@@ -971,7 +997,15 @@ class GatewayRoute:
 
         if final_event is not None:
             await self._count_transcription_usage(
-                getattr(final_event, 'usage', None), model_selected
+                getattr(final_event, 'usage', None),
+                model_selected,
+                identity=self._request_identity(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                ),
             )
 
     async def invoke_decision(
@@ -1069,7 +1103,15 @@ class GatewayRoute:
         )
         if response.model_invoked is not None:
             await self._count_decision_usage(
-                response.input_tokens, response.model_invoked
+                response.input_tokens,
+                response.model_invoked,
+                identity=self._request_identity(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                ),
             )
             if use_cache and cache_key:
                 await self.gateway_cache.set(
@@ -1204,32 +1246,59 @@ class GatewayRoute:
                 project_name=self.project_name,
             )
 
-    async def _count_decision_usage(self, input_tokens: int, model: Model) -> None:
+    def _request_identity(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        api_key_name: str,
+        group_uuid: str,
+        group_name: str,
+    ) -> RequestIdentity:
+        """Identify the request to the limiters counting its usage."""
+        return RequestIdentity(
+            request_uuid=request_uuid,
+            route_name=self.gateway_route_config.route_name,
+            api_key_uuid=api_key_uuid,
+            api_key_name=api_key_name,
+            group_uuid=group_uuid,
+            group_name=group_name,
+            project_uuid=self.project_uuid,
+            project_name=self.project_name,
+        )
+
+    async def _count_decision_usage(
+        self, input_tokens: int, model: Model, identity: RequestIdentity
+    ) -> None:
         """Typesafe bills input tokens only: output-token counters get nothing."""
         if input_tokens <= 0:
             return
         credential_limiter = get_current_credential_limiter()
         project_budget_limiter = get_current_project_budget_limiter()
         if self.token_limiter:
-            await self.token_limiter.count_input(prompt_tokens=input_tokens)
+            await self.token_limiter.count_input(
+                prompt_tokens=input_tokens, identity=identity
+            )
         if credential_limiter:
-            await credential_limiter.count_input_tokens(input_tokens)
+            await credential_limiter.count_input_tokens(input_tokens, identity)
         if not model.input_cost_per_token:
             return
         if self.budget_limiter:
             await self.budget_limiter.count_input(
                 token_count=input_tokens,
                 input_cost_per_token=model.input_cost_per_token,
+                identity=identity,
             )
         if credential_limiter:
             await credential_limiter.count_budget_input(
                 token_count=input_tokens,
                 input_cost_per_token=model.input_cost_per_token,
+                identity=identity,
             )
         if project_budget_limiter:
             await project_budget_limiter.count_input(
                 token_count=input_tokens,
                 input_cost_per_token=model.input_cost_per_token,
+                identity=identity,
             )
 
     # ============================================================================
@@ -1568,6 +1637,13 @@ class GatewayRoute:
                 prompt_tokens=response.usage.prompt_tokens,
                 completion_tokens=response.usage.completion_tokens,
                 model_selected=model_selected,
+                identity=self._request_identity(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                ),
             )
 
         return response
@@ -2286,36 +2362,45 @@ class GatewayRoute:
         prompt_tokens: int,
         completion_tokens: int,
         model_selected: Model,
+        identity: RequestIdentity,
     ) -> None:
         """Count token and budget usage from a response."""
         if self.token_limiter:
-            await self.token_limiter.count_input(prompt_tokens=prompt_tokens)
-            await self.token_limiter.count_output(token_count=completion_tokens)
+            await self.token_limiter.count_input(
+                prompt_tokens=prompt_tokens, identity=identity
+            )
+            await self.token_limiter.count_output(
+                token_count=completion_tokens, identity=identity
+            )
 
         if self.budget_limiter and model_selected.input_cost_per_token:
             await self.budget_limiter.count_input(
                 token_count=prompt_tokens,
                 input_cost_per_token=model_selected.input_cost_per_token,
+                identity=identity,
             )
         if self.budget_limiter and model_selected.output_cost_per_token:
             await self.budget_limiter.count_output(
                 token_count=completion_tokens,
                 output_cost_per_token=model_selected.output_cost_per_token,
+                identity=identity,
             )
 
         credential_limiter = get_current_credential_limiter()
         if credential_limiter:
-            await credential_limiter.count_input_tokens(prompt_tokens)
-            await credential_limiter.count_output_tokens(completion_tokens)
+            await credential_limiter.count_input_tokens(prompt_tokens, identity)
+            await credential_limiter.count_output_tokens(completion_tokens, identity)
             if model_selected.input_cost_per_token:
                 await credential_limiter.count_budget_input(
                     token_count=prompt_tokens,
                     input_cost_per_token=model_selected.input_cost_per_token,
+                    identity=identity,
                 )
             if model_selected.output_cost_per_token:
                 await credential_limiter.count_budget_output(
                     token_count=completion_tokens,
                     output_cost_per_token=model_selected.output_cost_per_token,
+                    identity=identity,
                 )
 
         project_budget_limiter = get_current_project_budget_limiter()
@@ -2324,17 +2409,20 @@ class GatewayRoute:
                 await project_budget_limiter.count_input(
                     token_count=prompt_tokens,
                     input_cost_per_token=model_selected.input_cost_per_token,
+                    identity=identity,
                 )
             if model_selected.output_cost_per_token:
                 await project_budget_limiter.count_output(
                     token_count=completion_tokens,
                     output_cost_per_token=model_selected.output_cost_per_token,
+                    identity=identity,
                 )
 
     async def _count_transcription_usage(
         self,
         usage: UsageTokens | UsageDuration | None,
         model_selected: Model,
+        identity: RequestIdentity,
     ) -> None:
         """Count budget usage from a transcription response, mirroring _count_usage."""
         credential_limiter = get_current_credential_limiter()
@@ -2355,16 +2443,19 @@ class GatewayRoute:
                     await self.budget_limiter.count_duration(
                         seconds=usage.seconds,
                         cost_per_second=cost_per_second,
+                        identity=identity,
                     )
                 if credential_limiter:
                     await credential_limiter.count_budget_duration(
                         seconds=usage.seconds,
                         cost_per_second=cost_per_second,
+                        identity=identity,
                     )
                 if project_budget_limiter:
                     await project_budget_limiter.count_duration(
                         seconds=usage.seconds,
                         cost_per_second=cost_per_second,
+                        identity=identity,
                     )
             return
 
@@ -2379,48 +2470,57 @@ class GatewayRoute:
                 await self.budget_limiter.count_input(
                     token_count=audio_tokens,
                     input_cost_per_token=model_selected.input_cost_per_audio_token,
+                    identity=identity,
                 )
             if credential_limiter:
                 await credential_limiter.count_budget_input(
                     token_count=audio_tokens,
                     input_cost_per_token=model_selected.input_cost_per_audio_token,
+                    identity=identity,
                 )
             if project_budget_limiter:
                 await project_budget_limiter.count_input(
                     token_count=audio_tokens,
                     input_cost_per_token=model_selected.input_cost_per_audio_token,
+                    identity=identity,
                 )
         if text_tokens > 0 and model_selected.input_cost_per_token:
             if self.budget_limiter:
                 await self.budget_limiter.count_input(
                     token_count=text_tokens,
                     input_cost_per_token=model_selected.input_cost_per_token,
+                    identity=identity,
                 )
             if credential_limiter:
                 await credential_limiter.count_budget_input(
                     token_count=text_tokens,
                     input_cost_per_token=model_selected.input_cost_per_token,
+                    identity=identity,
                 )
             if project_budget_limiter:
                 await project_budget_limiter.count_input(
                     token_count=text_tokens,
                     input_cost_per_token=model_selected.input_cost_per_token,
+                    identity=identity,
                 )
         if usage.output_tokens > 0 and model_selected.output_cost_per_token:
             if self.budget_limiter:
                 await self.budget_limiter.count_output(
                     token_count=usage.output_tokens,
                     output_cost_per_token=model_selected.output_cost_per_token,
+                    identity=identity,
                 )
             if credential_limiter:
                 await credential_limiter.count_budget_output(
                     token_count=usage.output_tokens,
                     output_cost_per_token=model_selected.output_cost_per_token,
+                    identity=identity,
                 )
             if project_budget_limiter:
                 await project_budget_limiter.count_output(
                     token_count=usage.output_tokens,
                     output_cost_per_token=model_selected.output_cost_per_token,
+                    identity=identity,
                 )
 
     # ============================================================================
@@ -2538,6 +2638,13 @@ class GatewayRoute:
                 prompt_tokens=final_usage.get('input_tokens', 0),
                 completion_tokens=final_usage.get('output_tokens', 0),
                 model_selected=model_selected,
+                identity=self._request_identity(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                ),
             )
 
         # If passed, yield the buffered chunks

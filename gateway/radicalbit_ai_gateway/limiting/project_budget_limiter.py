@@ -11,11 +11,15 @@ from radicalbit_ai_gateway.limiter import (
     WindowConfig,
 )
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
-from radicalbit_ai_gateway.limiting.limit_event import limit_fields
+from radicalbit_ai_gateway.limiting.limit_event import (
+    consume_and_emit_thresholds,
+    limit_fields,
+)
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitOut
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
@@ -106,9 +110,11 @@ class ProjectBudgetLimiter:
                 return entry, stats
         return None
 
-    async def _hit(self, cost: int) -> None:
+    async def _hit(self, cost: int, identity: RequestIdentity) -> None:
         for entry in self._entries:
-            await entry.limiter.hit(entry.window, cost=cost)
+            await consume_and_emit_thresholds(
+                entry.limiter, entry.window, cost, LimitScope.PROJECT, identity
+            )
 
     async def check_budget(
         self,
@@ -157,19 +163,29 @@ class ProjectBudgetLimiter:
                 ),
             )
 
-    async def count_input(self, token_count: int, input_cost_per_token: float) -> None:
+    async def count_input(
+        self,
+        token_count: int,
+        input_cost_per_token: float,
+        identity: RequestIdentity,
+    ) -> None:
         cost = int(token_count * input_cost_per_token * BUDGET_MULTIPLIER)
-        await self._hit(cost)
+        await self._hit(cost, identity)
 
     async def count_output(
-        self, token_count: int, output_cost_per_token: float
+        self,
+        token_count: int,
+        output_cost_per_token: float,
+        identity: RequestIdentity,
     ) -> None:
         cost = int(token_count * output_cost_per_token * BUDGET_MULTIPLIER)
-        await self._hit(cost)
+        await self._hit(cost, identity)
 
-    async def count_duration(self, seconds: float, cost_per_second: float) -> None:
+    async def count_duration(
+        self, seconds: float, cost_per_second: float, identity: RequestIdentity
+    ) -> None:
         cost = int(seconds * cost_per_second * BUDGET_MULTIPLIER)
-        await self._hit(cost)
+        await self._hit(cost, identity)
 
 
 def load_project_budget_limiter(

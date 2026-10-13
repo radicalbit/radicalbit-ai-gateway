@@ -11,10 +11,14 @@ from radicalbit_ai_gateway.limiter import (
     ScenarioType,
     WindowConfig,
 )
-from radicalbit_ai_gateway.limiting.limit_event import limit_fields
+from radicalbit_ai_gateway.limiting.limit_event import (
+    consume_and_emit_thresholds,
+    limit_fields,
+)
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
@@ -76,28 +80,40 @@ class BudgetLimiter:
             project_uuid=project_uuid,
         )
 
-    async def count_input(self, token_count: int, input_cost_per_token: float) -> None:
-        cost = int(token_count * input_cost_per_token * BUDGET_MULTIPLIER)
-        if not self.limiter or not self.item:
-            return
-        await self.limiter.hit(self.item, cost=cost)
+    async def count_input(
+        self,
+        token_count: int,
+        input_cost_per_token: float,
+        identity: RequestIdentity,
+    ) -> None:
+        await self._count(
+            int(token_count * input_cost_per_token * BUDGET_MULTIPLIER), identity
+        )
 
     async def count_output(
-        self, token_count: int, output_cost_per_token: float
+        self,
+        token_count: int,
+        output_cost_per_token: float,
+        identity: RequestIdentity,
     ) -> None:
-        cost = int(token_count * output_cost_per_token * BUDGET_MULTIPLIER)
-        if not self.limiter or not self.item:
-            return
-        await self.limiter.hit(self.item, cost=cost)
+        await self._count(
+            int(token_count * output_cost_per_token * BUDGET_MULTIPLIER), identity
+        )
 
-    async def count_duration(self, seconds: float, cost_per_second: float) -> None:
+    async def count_duration(
+        self, seconds: float, cost_per_second: float, identity: RequestIdentity
+    ) -> None:
         """Duration-based billing (whisper-1 style): seconds and price are
         both floats, unlike count_input/count_output's int token counts.
         """
-        cost = int(seconds * cost_per_second * BUDGET_MULTIPLIER)
+        await self._count(int(seconds * cost_per_second * BUDGET_MULTIPLIER), identity)
+
+    async def _count(self, cost: int, identity: RequestIdentity) -> None:
         if not self.limiter or not self.item:
             return
-        await self.limiter.hit(self.item, cost=cost)
+        await consume_and_emit_thresholds(
+            self.limiter, self.item, cost, LimitScope.ROUTE, identity
+        )
 
     @task(name='check_budget_limit')
     async def check_budget(

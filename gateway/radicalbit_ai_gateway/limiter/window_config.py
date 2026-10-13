@@ -56,6 +56,13 @@ class WindowStats(NamedTuple):
     consumed: int = 0  # Counter value, unclamped: it can exceed the limit
 
 
+class Consumption(NamedTuple):
+    """A window's counter right after a hit."""
+
+    value: int  # Counter value after the hit, unclamped
+    window_id: str  # UUID of the window the hit landed in
+
+
 def parse_window(window_string: str) -> int:
     """Parse a window duration string to seconds.
 

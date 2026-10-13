@@ -6,7 +6,11 @@ from abc import ABC, abstractmethod
 import time
 
 from radicalbit_ai_gateway.limiter.storage.base import Storage
-from radicalbit_ai_gateway.limiter.window_config import WindowConfig, WindowStats
+from radicalbit_ai_gateway.limiter.window_config import (
+    Consumption,
+    WindowConfig,
+    WindowStats,
+)
 
 
 class BaseFixedWindowLimiter(ABC):
@@ -68,14 +72,27 @@ class BaseFixedWindowLimiter(ABC):
             True if operation was allowed and consumed, False if limit exceeded.
 
         """
+        return (await self.consume(item, cost)).value <= item.limit
+
+    async def consume(self, item: WindowConfig, cost: int = 1) -> Consumption:
+        """Consume capacity and return the window's counter after the hit.
+
+        Args:
+            item: Limit configuration.
+            cost: Cost of the operation (default 1).
+
+        Returns:
+            Consumption with the new counter value and the window's ID.
+
+        """
         key = self._build_key(item)
         window_start, ttl_remaining = self._calculate_window_boundary(
             item.window_seconds
         )
-        new_value, _ = await self._storage.increment(
+        value, window_id = await self._storage.increment(
             key, cost, ttl_remaining, window_start
         )
-        return new_value <= item.limit
+        return Consumption(value=value, window_id=window_id)
 
     async def get_window_stats(self, item: WindowConfig) -> WindowStats:
         """Get remaining capacity and reset time for a window.

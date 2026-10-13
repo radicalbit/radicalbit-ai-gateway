@@ -12,7 +12,10 @@ from radicalbit_ai_gateway.limiter import (
     ScenarioType,
     WindowConfig,
 )
-from radicalbit_ai_gateway.limiting.limit_event import limit_fields
+from radicalbit_ai_gateway.limiting.limit_event import (
+    consume_and_emit_thresholds,
+    limit_fields,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import (
     token_input_limiting_counter,
     token_output_limiting_counter,
@@ -20,6 +23,7 @@ from radicalbit_ai_gateway.metrics.define_metrics import (
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     InputTokenLimitExceeded,
@@ -245,12 +249,18 @@ class TokenLimiter:
             },
         )
 
-    async def count_input(self, prompt_tokens: int) -> None:
+    async def count_input(self, prompt_tokens: int, identity: RequestIdentity) -> None:
         """Consume token in input window"""
         if not self.input_limiter or not self.input_item or not self.input_config:
             return  # No input limiting configured
 
-        await self.input_limiter.hit(self.input_item, cost=prompt_tokens)
+        await consume_and_emit_thresholds(
+            self.input_limiter,
+            self.input_item,
+            prompt_tokens,
+            LimitScope.ROUTE,
+            identity,
+        )
 
         # Emit notification with current window state after deduction
         input_state = await self.input_limiter.get_window_stats(self.input_item)
@@ -266,14 +276,17 @@ class TokenLimiter:
             window_id=input_state.window_id,
         )
 
-    async def count_output(
-        self,
-        token_count: int,
-    ) -> None:
+    async def count_output(self, token_count: int, identity: RequestIdentity) -> None:
         """Consume token in output window"""
         if not self.output_limiter or not self.output_item:
             return  # No output limiting configured
-        await self.output_limiter.hit(self.output_item, cost=token_count)
+        await consume_and_emit_thresholds(
+            self.output_limiter,
+            self.output_item,
+            token_count,
+            LimitScope.ROUTE,
+            identity,
+        )
 
         # Emit notification with current window state after deduction
         if self.output_config:
