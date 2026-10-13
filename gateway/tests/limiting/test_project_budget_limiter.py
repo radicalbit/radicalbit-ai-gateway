@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 
+from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.tables.project_budget_limit_table import (
     ProjectBudgetLimit,
@@ -18,6 +20,25 @@ from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLi
 from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
 
 _PROJECT_UUID = '3a2c6d4e-0000-4000-8000-0000000000bb'
+
+_CALL_ARGS = {
+    'request_uuid': str(REQUEST_UUID),
+    'api_key_uuid': str(API_KEY_UUID),
+    'api_key_name': 'test-key',
+    'group_uuid': str(GROUP_UUID),
+    'group_name': 'test-group',
+    'route_name': 'my-route',
+}
+
+
+@pytest.fixture(autouse=True)
+def mock_emit_event():
+    """Mock emit_event for all tests in this module."""
+    with patch(
+        'radicalbit_ai_gateway.limiting.project_budget_limiter.emit_event',
+        autospec=True,
+    ):
+        yield
 
 
 def _limit(
@@ -47,7 +68,7 @@ class TestNoLimitsConfigured:
     @pytest.mark.asyncio
     async def test_all_calls_are_noop(self):
         limiter = _limiter([])
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
         await limiter.count_input(100, 0.01)
         await limiter.count_output(100, 0.01)
         await limiter.count_duration(10.0, 0.01)
@@ -59,7 +80,7 @@ class TestBudgetLimiting:
         limiter = _limiter([_limit(1.0)])
         await limiter.count_input(token_count=1000, input_cost_per_token=0.001)
         with pytest.raises(BudgetLimitExceededError) as exc:
-            await limiter.check_budget()
+            await limiter.check_budget(**_CALL_ARGS)
         assert 'my-project' in str(exc.value)
 
     @pytest.mark.asyncio
@@ -67,7 +88,7 @@ class TestBudgetLimiting:
         limiter = _limiter([_limit(10.0)])
         await limiter.count_output(token_count=1000, output_cost_per_token=0.002)
         await limiter.count_duration(seconds=5.0, cost_per_second=0.1)
-        await limiter.check_budget()  # still within limit
+        await limiter.check_budget(**_CALL_ARGS)  # still within limit
 
     @pytest.mark.asyncio
     async def test_and_semantics_across_multiple_windows(self):
@@ -82,7 +103,7 @@ class TestBudgetLimiting:
             ]
         )
         with pytest.raises(BudgetLimitExceededError):
-            await limiter.check_budget()
+            await limiter.check_budget(**_CALL_ARGS)
 
         hourly_entry = limiter._entries[1]
         stats = await hourly_entry.limiter.get_window_stats(hourly_entry.window)
@@ -116,10 +137,10 @@ class TestProjectScoping:
 
         await limiter_a.count_input(token_count=1000, input_cost_per_token=0.001)
         with pytest.raises(BudgetLimitExceededError):
-            await limiter_a.check_budget()
+            await limiter_a.check_budget(**_CALL_ARGS)
 
         # project B, same storage, untouched
-        await limiter_b.check_budget()
+        await limiter_b.check_budget(**_CALL_ARGS)
 
 
 def _fake_dao(rows: list[ProjectBudgetLimit]) -> ProjectBudgetLimitDAO:

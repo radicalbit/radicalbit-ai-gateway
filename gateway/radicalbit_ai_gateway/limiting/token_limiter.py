@@ -12,11 +12,12 @@ from radicalbit_ai_gateway.limiter import (
     ScenarioType,
     WindowConfig,
 )
+from radicalbit_ai_gateway.limiting.limit_event import limit_fields
 from radicalbit_ai_gateway.metrics.define_metrics import (
     token_input_limiting_counter,
     token_output_limiting_counter,
 )
-from radicalbit_ai_gateway.models.event_payload import LimitEventPayload
+from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -209,6 +210,7 @@ class TokenLimiter:
                     event_type=EventType.TOKEN_INPUT_LIMIT,
                     route_name=self.route_name,
                     value=1.0,
+                    **limit_fields(LimitScope.ROUTE, self.input_item, input_state),
                 )
             )
             token_input_limiting_counter.add(1, {'route_name': self.route_name})
@@ -346,6 +348,7 @@ class TokenLimiter:
                     group_name=group_name,
                     project_uuid=project_uuid,
                     project_name=project_name,
+                    **limit_fields(LimitScope.ROUTE, self.output_item, output_state),
                 )
             )
             token_output_limiting_counter.add(1, {'route_name': self.route_name})

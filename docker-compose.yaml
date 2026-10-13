@@ -57,6 +57,8 @@ services:
       SMTP_USER: "${SMTP_USER:-}"
       SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
       SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-alerts@radicalbit.ai}"
+      # Alerts: limit percentages that raise a threshold event
+      ALERT_THRESHOLD_PERCENTAGES: "${ALERT_THRESHOLD_PERCENTAGES:-[75, 98]}"
       # AI Config Generator
       CONFIG_GENERATOR_OPENAI_API_KEY: "${CONFIG_GENERATOR_OPENAI_API_KEY:-sk-123}"
     healthcheck:

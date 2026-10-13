@@ -53,6 +53,7 @@ class WindowStats(NamedTuple):
     reset_time: int  # Unix timestamp (seconds) when window resets
     window_id: str | None  # UUID of the current window, None if no window exists
     remaining_time: int  # Seconds until window expires
+    consumed: int = 0  # Counter value, unclamped: it can exceed the limit
 
 
 def parse_window(window_string: str) -> int:

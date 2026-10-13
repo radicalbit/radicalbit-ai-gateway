@@ -794,16 +794,38 @@ class GatewayRoute:
         credential_limiter = get_current_credential_limiter()
         if credential_limiter:
             set_operation_category(OperationCategory.LIMITING)
-            await credential_limiter.check_budget()
+            await credential_limiter.check_budget(
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
         project_budget_limiter = get_current_project_budget_limiter()
         if project_budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
-            await project_budget_limiter.check_budget()
+            await project_budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+            )
 
         if self.budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
-            await self.budget_limiter.check_budget()
+            await self.budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
         if self.duration_limiter:
             set_operation_category(OperationCategory.LIMITING)
@@ -879,16 +901,38 @@ class GatewayRoute:
         credential_limiter = get_current_credential_limiter()
         if credential_limiter:
             set_operation_category(OperationCategory.LIMITING)
-            await credential_limiter.check_budget()
+            await credential_limiter.check_budget(
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
         project_budget_limiter = get_current_project_budget_limiter()
         if project_budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
-            await project_budget_limiter.check_budget()
+            await project_budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+            )
 
         if self.budget_limiter:
             set_operation_category(OperationCategory.LIMITING)
-            await self.budget_limiter.check_budget()
+            await self.budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
         if self.duration_limiter:
             set_operation_category(OperationCategory.LIMITING)
@@ -1113,11 +1157,33 @@ class GatewayRoute:
             return
         set_operation_category(OperationCategory.LIMITING)
         if credential_limiter:
-            await credential_limiter.check_budget()
+            await credential_limiter.check_budget(
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
         if project_budget_limiter:
-            await project_budget_limiter.check_budget()
+            await project_budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+            )
         if self.budget_limiter:
-            await self.budget_limiter.check_budget()
+            await self.budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
         if credential_limiter:
             await credential_limiter.check_input_room(
                 request_uuid=request_uuid,
@@ -2088,11 +2154,25 @@ class GatewayRoute:
                 project_uuid=self.project_uuid,
                 project_name=self.project_name,
             )
-            await credential_limiter.check_budget()
+            await credential_limiter.check_budget(
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
         project_budget_limiter = get_current_project_budget_limiter()
         if project_budget_limiter:
-            await project_budget_limiter.check_budget()
+            await project_budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+            )
 
         if self.token_limiter:
             if self.token_limiter.input_config:
@@ -2118,7 +2198,15 @@ class GatewayRoute:
                     project_name=self.project_name,
                 )
         if self.budget_limiter and self.budget_limiter.config:
-            await self.budget_limiter.check_budget()
+            await self.budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
     @task(name='check_embedding_limiters')
     async def _validate_embedding_limiters(
@@ -2149,11 +2237,25 @@ class GatewayRoute:
                 project_uuid=self.project_uuid,
                 project_name=self.project_name,
             )
-            await credential_limiter.check_budget()
+            await credential_limiter.check_budget(
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
         project_budget_limiter = get_current_project_budget_limiter()
         if project_budget_limiter:
-            await project_budget_limiter.check_budget()
+            await project_budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=self.gateway_route_config.route_name,
+            )
 
         if self.token_limiter and self.token_limiter.input_config:
             await self.token_limiter.check_input(
@@ -2169,7 +2271,15 @@ class GatewayRoute:
             )
 
         if self.budget_limiter and self.budget_limiter.config:
-            await self.budget_limiter.check_budget()
+            await self.budget_limiter.check_budget(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
 
     async def _count_usage(
         self,

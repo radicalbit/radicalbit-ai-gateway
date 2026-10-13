@@ -252,7 +252,7 @@ class GuardrailRedact:
                 attrs = {
                     'name': guardrail.name,
                     'type': guardrail.type.name,
-                    'where': guardrail.where.name,
+                    'where': where.name,
                     'parameters': str(guardrail.parameters),
                     'behavior': guardrail.behavior.name,
                 }
@@ -270,7 +270,7 @@ class GuardrailRedact:
                         project_name=project_name,
                         name=guardrail.name,
                         type=guardrail.type.name,
-                        where=guardrail.where.name,
+                        where=where.name,
                         parameters=str(guardrail.parameters),
                         behavior=guardrail.behavior.name,
                     )

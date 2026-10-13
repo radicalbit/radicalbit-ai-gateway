@@ -1,11 +1,10 @@
 import datetime
-import io
 from unittest.mock import AsyncMock, patch
-import wave
 
 from freezegun import freeze_time
 import pytest
 
+from tests.common.audio import make_wav_bytes
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 
 from radicalbit_ai_gateway.limiting.duration_limiter import (
@@ -21,17 +20,6 @@ from radicalbit_ai_gateway.utils.exceptions import AudioDurationLimitExceeded
 _PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
 
 
-def _make_wav_bytes(duration_seconds: float, sample_rate: int = 8000) -> bytes:
-    n_frames = int(duration_seconds * sample_rate)
-    buffer = io.BytesIO()
-    with wave.open(buffer, 'wb') as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(b'\x00\x00' * n_frames)
-    return buffer.getvalue()
-
-
 @pytest.fixture(autouse=True)
 def mock_emit_event():
     """Mock emit_event for all tests in this module."""
@@ -43,7 +31,7 @@ def mock_emit_event():
 
 class TestEstimateAudioDurationSeconds:
     def test_wav_duration_is_accurate(self):
-        audio_bytes = _make_wav_bytes(3.0)
+        audio_bytes = make_wav_bytes(3.0)
         duration = estimate_audio_duration_seconds(audio_bytes)
         assert duration == pytest.approx(3.0, abs=0.01)
 
@@ -89,7 +77,7 @@ class TestDurationLimiter:
             group_uuid=str(GROUP_UUID),
             api_key_name='fake-name',
             group_name='test-group',
-            audio_bytes=_make_wav_bytes(5.0),
+            audio_bytes=make_wav_bytes(5.0),
         )
 
     @pytest.mark.asyncio
@@ -106,7 +94,7 @@ class TestDurationLimiter:
                 group_uuid=str(GROUP_UUID),
                 api_key_name='fake-name',
                 group_name='test-group',
-                audio_bytes=_make_wav_bytes(10.0),
+                audio_bytes=make_wav_bytes(10.0),
             )
             mock_hit.assert_called_once()
             assert mock_hit.call_args.kwargs['cost'] == 10
@@ -124,7 +112,7 @@ class TestDurationLimiter:
             group_uuid=str(GROUP_UUID),
             api_key_name='fake-name',
             group_name='test-group',
-            audio_bytes=_make_wav_bytes(10.0),
+            audio_bytes=make_wav_bytes(10.0),
         )
 
         with pytest.raises(AudioDurationLimitExceeded) as exc:
@@ -134,7 +122,7 @@ class TestDurationLimiter:
                 group_uuid=str(GROUP_UUID),
                 api_key_name='fake-name',
                 group_name='test-group',
-                audio_bytes=_make_wav_bytes(10.0),
+                audio_bytes=make_wav_bytes(10.0),
             )
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
@@ -171,7 +159,7 @@ class TestDurationLimiter:
             group_uuid=str(GROUP_UUID),
             api_key_name='fake-name',
             group_name='test-group',
-            audio_bytes=_make_wav_bytes(10.0),
+            audio_bytes=make_wav_bytes(10.0),
         )
 
     @pytest.mark.asyncio
@@ -193,7 +181,7 @@ class TestDurationLimiter:
                 group_uuid=str(GROUP_UUID),
                 api_key_name='fake-name',
                 group_name='test-group',
-                audio_bytes=_make_wav_bytes(10.0),
+                audio_bytes=make_wav_bytes(10.0),
             )
 
             with pytest.raises(AudioDurationLimitExceeded):
@@ -203,7 +191,7 @@ class TestDurationLimiter:
                     group_uuid=str(GROUP_UUID),
                     api_key_name='fake-name',
                     group_name='test-group',
-                    audio_bytes=_make_wav_bytes(1.0),
+                    audio_bytes=make_wav_bytes(1.0),
                 )
 
             frozen_datetime.tick(11)
@@ -214,5 +202,5 @@ class TestDurationLimiter:
                 group_uuid=str(GROUP_UUID),
                 api_key_name='fake-name',
                 group_name='test-group',
-                audio_bytes=_make_wav_bytes(5.0),
+                audio_bytes=make_wav_bytes(5.0),
             )

@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
+from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.limiter import (
     AlignedFixedWindowLimiter,
     FixedWindowLimiter,
@@ -10,6 +11,9 @@ from radicalbit_ai_gateway.limiter import (
     WindowConfig,
 )
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
+from radicalbit_ai_gateway.limiting.limit_event import limit_fields
+from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
+from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitOut
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
@@ -106,13 +110,37 @@ class ProjectBudgetLimiter:
         for entry in self._entries:
             await entry.limiter.hit(entry.window, cost=cost)
 
-    async def check_budget(self) -> None:
+    async def check_budget(
+        self,
+        *,
+        request_uuid: str,
+        api_key_uuid: str,
+        api_key_name: str,
+        group_uuid: str,
+        group_name: str,
+        route_name: str,
+    ) -> None:
         if not self._entries:
             return
 
         exceeded = await self._first_exceeded(cost=1)
         if exceeded is not None:
             entry, stats = exceeded
+            emit_event(
+                LimitEventPayload(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                    project_uuid=self.project_uuid,
+                    project_name=self.project_name,
+                    event_type=EventType.PROJECT_BUDGET_LIMIT,
+                    route_name=route_name,
+                    value=1.0,
+                    **limit_fields(LimitScope.PROJECT, entry.window, stats),
+                )
+            )
             raise BudgetLimitExceededError(
                 message=(
                     f'Project budget limit exceeded: {entry.limit_out.value:g} '

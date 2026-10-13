@@ -8,6 +8,7 @@ from radicalbit_ai_gateway.limiter import (
     WindowConfig,
 )
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
+from radicalbit_ai_gateway.limiting.limit_event import limit_fields
 from radicalbit_ai_gateway.metrics.define_metrics import (
     rate_limiting_counter,
     token_input_limiting_counter,
@@ -17,7 +18,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
 )
-from radicalbit_ai_gateway.models.event_payload import LimitEventPayload
+from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
@@ -36,6 +37,7 @@ _CATEGORY_EVENT_TYPE = {
     CredentialLimitCategory.RATE: EventType.CREDENTIAL_RATE_LIMIT,
     CredentialLimitCategory.TOKEN_INPUT: EventType.CREDENTIAL_TOKEN_INPUT_LIMIT,
     CredentialLimitCategory.TOKEN_OUTPUT: EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT,
+    CredentialLimitCategory.BUDGET: EventType.CREDENTIAL_BUDGET_LIMIT,
 }
 
 
@@ -135,6 +137,8 @@ class CredentialLimiter:
     def _emit_block_event(
         self,
         category: CredentialLimitCategory,
+        entry: _LimitEntry,
+        stats: WindowStats,
         request_uuid: str,
         group_uuid: str,
         group_name: str,
@@ -154,6 +158,7 @@ class CredentialLimiter:
                 event_type=_CATEGORY_EVENT_TYPE[category],
                 route_name=route_name,
                 value=1.0,
+                **limit_fields(LimitScope.CREDENTIAL, entry.window, stats),
             )
         )
 
@@ -175,6 +180,8 @@ class CredentialLimiter:
             entry, stats = exceeded
             self._emit_block_event(
                 CredentialLimitCategory.RATE,
+                entry,
+                stats,
                 request_uuid,
                 group_uuid,
                 group_name,
@@ -275,6 +282,8 @@ class CredentialLimiter:
             entry, stats = exceeded
             self._emit_block_event(
                 CredentialLimitCategory.TOKEN_INPUT,
+                entry,
+                stats,
                 request_uuid,
                 group_uuid,
                 group_name,
@@ -326,6 +335,8 @@ class CredentialLimiter:
             entry, stats = exceeded
             self._emit_block_event(
                 CredentialLimitCategory.TOKEN_OUTPUT,
+                entry,
+                stats,
                 request_uuid,
                 group_uuid,
                 group_name,
@@ -353,16 +364,33 @@ class CredentialLimiter:
     async def count_output_tokens(self, tokens: int) -> None:
         await self._hit(CredentialLimitCategory.TOKEN_OUTPUT, cost=tokens)
 
-    async def check_budget(self) -> None:
-        """No event on block, matching route-level BudgetLimiter.check_budget
-        — only rate/token blocks emit events today.
-        """
+    async def check_budget(
+        self,
+        *,
+        request_uuid: str,
+        group_uuid: str,
+        group_name: str,
+        route_name: str,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> None:
         if not self.has_category(CredentialLimitCategory.BUDGET):
             return
 
         exceeded = await self._first_exceeded(CredentialLimitCategory.BUDGET, cost=1)
         if exceeded is not None:
             entry, stats = exceeded
+            self._emit_block_event(
+                CredentialLimitCategory.BUDGET,
+                entry,
+                stats,
+                request_uuid,
+                group_uuid,
+                group_name,
+                route_name,
+                project_uuid,
+                project_name,
+            )
             raise BudgetLimitExceededError(
                 message=(
                     f'Credential budget limit exceeded: {entry.limit_out.value:g} '
