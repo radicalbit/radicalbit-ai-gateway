@@ -750,6 +750,27 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert response.status_code == 200
         assert typesafe.calls == 1
 
+    def test_body_with_no_string_leaves_is_forwarded_unchanged(self):
+        app.state.routes = _build_routes(
+            JEV, guardrails=[_check_guardrail('block', 'refund')]
+        )
+        state = {'amount': 42.5, 'refunded': False, 'note': None}
+        typesafe = (
+            pook.post(TYPESAFE_URL)
+            .json({'state': state, 'model': 'jev-latest'})
+            .times(1)
+        )
+        typesafe.reply(200).json(TYPESAFE_BODY)
+
+        response = self.client.post(
+            '/v1/systemone',
+            json={'state': state, 'model': ROUTE_KEY},
+            headers=self.headers,
+        )
+
+        assert response.status_code == 200
+        assert pook.isdone()
+
     # Exact cache (AG-1002)
 
     def test_identical_request_is_served_from_cache_without_calling_typesafe(self):
