@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from langchain_core.messages import BaseMessage
 from openai.types.chat.chat_completion import ChatCompletion
@@ -43,6 +43,7 @@ class PrepareAndValidateResult:
     input_soft_block: ChatCompletion | None
     guardrails_input_triggered: bool
     guardrails_block_triggered: bool
+    plugin_context: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass

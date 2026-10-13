@@ -56,7 +56,7 @@ from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import GuardrailClass, GuardrailWhereType
 from radicalbit_ai_gateway.models.model import ENABLE_PROMPT_CACHE_PARAM, Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
-from radicalbit_ai_gateway.preprocessing import run_preprocessing
+from radicalbit_ai_gateway.preprocessing import run_postprocessing, run_preprocessing
 from radicalbit_ai_gateway.routing import (
     DeterministicRouter,
     SemanticRouter,
@@ -261,7 +261,9 @@ class GatewayRoute:
                     group_name=group_name,
                     response=prepared.cached_response,
                 )
-                content = output.response.model_copy(update={'model': route_name})
+                content = await self._postprocess(
+                    output.response.model_copy(update={'model': route_name}), prepared
+                )
                 headers: dict[str, str] = {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
                 if (
                     output.guardrails_block_triggered
@@ -279,7 +281,10 @@ class GatewayRoute:
                     if output.guardrails_triggered:
                         headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] = 'true'
                 return InvokeResponse(content=content, headers=headers)
-            content = prepared.cached_response.model_copy(update={'model': route_name})
+            content = await self._postprocess(
+                prepared.cached_response.model_copy(update={'model': route_name}),
+                prepared,
+            )
             headers: dict[str, str] = {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
             if prepared.guardrails_block_triggered:
                 headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
@@ -347,9 +352,27 @@ class GatewayRoute:
             if output.guardrails_triggered:
                 headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] = 'true'
         return InvokeResponse(
-            content=output.response.model_copy(update={'model': route_name}),
+            content=await self._postprocess(
+                output.response.model_copy(update={'model': route_name}), prepared
+            ),
             headers=headers,
         )
+
+    async def _postprocess(
+        self, response: ChatCompletion, prepared: PrepareAndValidateResult
+    ) -> ChatCompletion:
+        """Run the route's postprocessing plugins over each choice's text.
+
+        Called last, after output guardrails and after caching: the cache keeps
+        what the model returned, and each request is restored with its own context.
+        """
+        plugins = self.gateway_route_config.plugins
+        for choice in response.choices:
+            if isinstance(choice.message.content, str):
+                choice.message.content = await run_postprocessing(
+                    choice.message.content, plugins, prepared.plugin_context
+                )
+        return response
 
     async def prepare_stream(
         self,
@@ -1330,7 +1353,10 @@ class GatewayRoute:
         # only ever see the client's messages. No-op when no plugin is enabled;
         # fail-closed if a plugin raises.
         set_operation_category(OperationCategory.PREPROCESSING)
-        messages = await run_preprocessing(messages, self.gateway_route_config.plugins)
+        plugin_context: dict[str, dict[str, Any]] = {}
+        messages = await run_preprocessing(
+            messages, self.gateway_route_config.plugins, plugin_context
+        )
 
         # Prepare request for processing: route on the preprocessed messages.
         set_operation_category(OperationCategory.ROUTING)
@@ -1421,6 +1447,7 @@ class GatewayRoute:
                         input_soft_block=input_soft_block,
                         guardrails_input_triggered=guardrails_input_triggered,
                         guardrails_block_triggered=True,
+                        plugin_context=plugin_context,
                     )
 
                 # Evaluate WARN-only guardrails on input (does NOT trigger block header)
@@ -1469,6 +1496,7 @@ class GatewayRoute:
                 input_soft_block=None,
                 guardrails_input_triggered=guardrails_input_triggered,
                 guardrails_block_triggered=guardrails_block_triggered,
+                plugin_context=plugin_context,
             )
 
         # Validate Limiters
@@ -1498,6 +1526,7 @@ class GatewayRoute:
             input_soft_block=None,
             guardrails_input_triggered=guardrails_input_triggered,
             guardrails_block_triggered=guardrails_block_triggered,
+            plugin_context=plugin_context,
         )
 
     @task(name='select_model')

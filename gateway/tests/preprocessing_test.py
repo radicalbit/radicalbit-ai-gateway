@@ -4,11 +4,13 @@ import pytest
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
+    PostprocessingError,
     PreprocessingConfig,
     PreprocessingError,
     PreprocessingPlugin,
     _config_key,
     register_preprocessing_plugin,
+    run_postprocessing,
     run_preprocessing,
 )
 from radicalbit_ai_gateway.utils import config_hooks
@@ -40,7 +42,7 @@ def _config(plugins):
 
 
 class Upper(PreprocessingPlugin):
-    async def preprocess(self, messages, config):
+    async def preprocess(self, messages, config, context):
         for m in messages:
             if isinstance(m.content, str):
                 m.content = m.content.upper()
@@ -48,7 +50,7 @@ class Upper(PreprocessingPlugin):
 
 
 class Suffix(PreprocessingPlugin):
-    async def preprocess(self, messages, config):
+    async def preprocess(self, messages, config, context):
         suffix = (config or {}).get('suffix', '')
         for m in messages:
             if isinstance(m.content, str):
@@ -62,7 +64,7 @@ class AlwaysOn(PreprocessingPlugin):
     def is_enabled(self, config):
         return True
 
-    async def preprocess(self, messages, config):
+    async def preprocess(self, messages, config, context):
         for m in messages:
             if isinstance(m.content, str):
                 m.content = m.content + '!'
@@ -76,7 +78,7 @@ class Validating(PreprocessingPlugin):
         if 'threshold' not in config:
             raise ValueError('threshold required')
 
-    async def preprocess(self, messages, config):
+    async def preprocess(self, messages, config, context):
         return messages
 
 
@@ -89,18 +91,52 @@ class SchemaPlugin(PreprocessingPlugin):
 
     config_schema = SchemaConfig
 
-    async def preprocess(self, messages, config):
+    async def preprocess(self, messages, config, context):
         return messages
 
 
 class Boom(PreprocessingPlugin):
-    async def preprocess(self, messages, config):
+    async def preprocess(self, messages, config, context):
         raise RuntimeError('Error')
 
 
 class BadRequest(PreprocessingPlugin):
-    async def preprocess(self, messages, config):
+    async def preprocess(self, messages, config, context):
         raise GatewayBadRequest('Error')
+
+
+class Mask(PreprocessingPlugin):
+    """Replaces a secret word with a placeholder, and puts it back in the response."""
+
+    async def preprocess(self, messages, config, context):
+        for m in messages:
+            if isinstance(m.content, str) and 'secret' in m.content:
+                context['[X]'] = 'secret'
+                m.content = m.content.replace('secret', '[X]')
+        return messages
+
+    async def postprocess(self, content, config, context):
+        for placeholder, value in context.items():
+            content = content.replace(placeholder, value)
+        return content
+
+
+class Tag(PreprocessingPlugin):
+    """Appends its config ``tag`` to the response."""
+
+    async def preprocess(self, messages, config, context):
+        return messages
+
+    async def postprocess(self, content, config, context):
+        return content + config['tag']
+
+
+class PostBoom(PreprocessingPlugin):
+    async def preprocess(self, messages, config, context):
+        return messages
+
+    async def postprocess(self, content, config, context):
+        raise RuntimeError('Error')
 
 
 def _on(key: str, **extra) -> dict:
@@ -251,3 +287,46 @@ def test_schema_rejects_unknown_key():
 def test_schema_accepts_declared_keys():
     register_preprocessing_plugin(SchemaPlugin(), name='schema_plugin')
     _config({'schema_plugin': {'enabled': True, 'threshold': 9}})
+
+
+async def test_postprocess_gets_the_context_preprocess_filled():
+    register_preprocessing_plugin(Mask(), name='mask')
+    context = {}
+    out = await run_preprocessing(
+        [HumanMessage(content='the secret is here')], _on('mask'), context
+    )
+    assert out[0].content == 'the [X] is here'
+    restored = await run_postprocessing('you said [X]', _on('mask'), context)
+    assert restored == 'you said secret'
+
+
+async def test_context_is_per_plugin():
+    register_preprocessing_plugin(Mask(), name='mask')
+    register_preprocessing_plugin(Upper(), name='upper')
+    context = {}
+    await run_preprocessing(
+        [HumanMessage(content='secret')], {**_on('mask'), **_on('upper')}, context
+    )
+    assert context == {'mask': {'[X]': 'secret'}, 'upper': {}}
+
+
+async def test_postprocess_defaults_to_unchanged():
+    register_preprocessing_plugin(Upper(), name='upper')
+    assert await run_postprocessing('hello', _on('upper'), {}) == 'hello'
+
+
+async def test_postprocess_runs_in_reverse_order():
+    register_preprocessing_plugin(Tag(), name='first')
+    register_preprocessing_plugin(Tag(), name='second')
+    plugins = {**_on('first', tag='-1'), **_on('second', tag='-2')}
+    assert await run_postprocessing('x', plugins, {}) == 'x-2-1'
+
+
+async def test_postprocess_without_plugins_is_noop():
+    assert await run_postprocessing('hello', None, {}) == 'hello'
+
+
+async def test_failing_postprocess_is_fail_closed():
+    register_preprocessing_plugin(PostBoom(), name='post_boom')
+    with pytest.raises(PostprocessingError):
+        await run_postprocessing('hello', _on('post_boom'), {})

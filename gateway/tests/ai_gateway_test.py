@@ -2032,7 +2032,7 @@ async def test_preprocessing_runs_before_prompt_injection():
     seen = []
 
     class Spy(PreprocessingPlugin):
-        async def preprocess(self, messages, config):
+        async def preprocess(self, messages, config, context):
             # Snapshot exactly what the plugin receives, then transform client text.
             seen.extend((type(m).__name__, m.content) for m in messages)
             for m in messages:
@@ -2098,7 +2098,7 @@ async def test_preprocessing_includes_client_sent_system_prompt():
     seen = []
 
     class Spy(PreprocessingPlugin):
-        async def preprocess(self, messages, config):
+        async def preprocess(self, messages, config, context):
             seen.extend((type(m).__name__, m.content) for m in messages)
             for m in messages:
                 if isinstance(m.content, str):
@@ -2161,3 +2161,63 @@ async def test_preprocessing_includes_client_sent_system_prompt():
         ('SystemMessage', 'CLIENT SYSTEM'),
         ('HumanMessage', 'HELLO'),
     ]
+
+
+@pytest.mark.asyncio
+async def test_postprocess_restores_with_the_request_context():
+    """What a plugin stores while preprocessing comes back to it on the response."""
+
+    class Mask(PreprocessingPlugin):
+        async def preprocess(self, messages, config, context):
+            context['[X]'] = 'Mario'
+            for m in messages:
+                m.content = m.content.replace('Mario', '[X]')
+            return messages
+
+        async def postprocess(self, content, config, context):
+            return content.replace('[X]', context['[X]'])
+
+    route_cfg = GatewayRouteConfig(
+        route_name='r',
+        chat_models=['m'],
+        plugins={'mask': {'enabled': True}},
+    )
+    ai_gateway = GatewayRoute(
+        gateway_route_config=route_cfg,
+        chat_models=[
+            Model(
+                model_id='m',
+                model='openai/gpt-4o',
+                credentials=Credentials(api_key='sk-123'),
+            )
+        ],
+        embedding_models=None,
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
+        cost_service=MagicMock(spec_set=CostService),
+        gateway_cache=None,
+    )
+
+    try:
+        register_preprocessing_plugin(Mask(), name='mask')
+        prepared = await ai_gateway._prepare_and_validate_request(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='rb-key',
+            group_name='test-group',
+            route_name='r',
+            messages=[HumanMessage(content='Write to Mario')],
+            tools=[],
+            tool_choice=None,
+        )
+        response = await ai_gateway._postprocess(
+            to_mock_openai_chat_completion('Dear [X]'), prepared
+        )
+    finally:
+        preprocessing_module._registered.clear()
+        config_hooks._plugins_validators.clear()
+        config_hooks._known_plugin_keys.clear()
+
+    assert prepared.redacted_messages[-1].content == 'Write to [X]'
+    assert prepared.plugin_context == {'mask': {'[X]': 'Mario'}}
+    assert response.choices[0].message.content == 'Dear Mario'
