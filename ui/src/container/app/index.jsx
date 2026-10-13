@@ -11,7 +11,7 @@ import RightColumnSwitch from '@Container/app/right-column-switch';
 import SecondaryHeaderContentSwitch from '@Container/app/secondary-column-header-content-switch';
 import SecondaryContentSwitch from '@Container/app/secondary-column-main-content-switch';
 import { createRoutes } from '@Container/layout';
-import { PathsEnum } from '@Src/constants';
+import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
 import { useContextConfigurationFromUrlEffect } from '@State/context-configuration/hooks';
 import { useGetFeatureFlagsQuery } from '@State/feature-flags/api';
 import { actions as layoutActions, selectors as layoutSelectors } from '@State/layout';
@@ -212,6 +212,11 @@ const useNavigateNavBarWithKeyboard = () => {
       if ((isMac && e.ctrlKey && e.code === 'Digit8')) {
         e.preventDefault();
         navigate(`/${PathsEnum.CREDENTIALS}`);
+      }
+
+      if ((FEATURE_FLAGS.ALERTS && isMac && e.ctrlKey && e.code === 'Digit9')) {
+        e.preventDefault();
+        navigate(`/${PathsEnum.ALERTS}`);
       }
     };
 

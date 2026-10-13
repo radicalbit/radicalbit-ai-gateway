@@ -128,7 +128,7 @@ const keys = (hasLeftColumnCollapsed) => ({
 
 const alerts = (hasLeftColumnCollapsed) => ({
   position: 14,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle>Alert</CollapsedTitle> : 'Alert',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '9', shape: 'circle' }] }}>Alert</CollapsedTitle> : 'Alert',
   icon: <Lucide icon={Settings2} size="md" />,
   key: PathsEnum.ALERTS,
   link: getLink(PathsEnum.ALERTS),
