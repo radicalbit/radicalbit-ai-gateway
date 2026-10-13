@@ -5,6 +5,7 @@ This module re-exports components for backward compatibility.
 
 from celery.signals import worker_process_shutdown
 
+from worker.alerts import _alert_worker, insert_alert_record
 from worker.app import celery_app
 from worker.base import BatchBuffer, BatchFlushError
 from worker.events import _worker, insert_event_record_connect_async
@@ -16,6 +17,7 @@ def _cleanup_resources(**kwargs):
     """Cleanup resources when Celery worker process shuts down."""
     _worker.cleanup()
     _request_event_worker.cleanup()
+    _alert_worker.cleanup()
 
 
 __all__ = [
@@ -24,7 +26,9 @@ __all__ = [
     'BatchFlushError',
     'insert_event_record_connect_async',
     'insert_request_event_record',
+    'insert_alert_record',
     '_worker',
     '_request_event_worker',
+    '_alert_worker',
     '_cleanup_resources',
 ]

@@ -6,6 +6,7 @@ from uuid import UUID
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
+from radicalbit_ai_gateway.events.alerts_processor import AlertStatus, emit_alert
 from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertableEventsOut,
     AlertRuleIn,
@@ -250,10 +251,27 @@ class AlertRuleService:
                 event_details=event_details,
             )
 
-            success = self.email_service.send_email(
-                recipients=rule_out.recipients,
-                subject=subject,
-                body=body,
+            try:
+                success = self.email_service.send_email(
+                    recipients=rule_out.recipients,
+                    subject=subject,
+                    body=body,
+                )
+            except Exception:
+                logger.exception(
+                    'Failed to send alert for rule "%s" (%s)', rule.name, rule.uuid
+                )
+                success = False
+            emit_alert(
+                rule_uuid=str(rule.uuid),
+                rule_name=rule.name,
+                scope=rule_out.scope.value,
+                project_uuid=project_uuid or None,
+                route_name=route_name,
+                credential_uuid=None,
+                event=event_name,
+                aggregation=rule_out.time_aggregation.value,
+                status=AlertStatus.SENT if success else AlertStatus.FAILED,
             )
             if success:
                 dispatched_count += 1
