@@ -9,7 +9,7 @@ import pytest
 
 from tests.common.mocked_gateway_config_openai import get_default_gateway_openai
 
-from radicalbit_ai_gateway.events.events_processor import _dispatch_alert_if_matching
+from radicalbit_ai_gateway.alerting.alert_dispatch import alert_event
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
@@ -88,12 +88,5 @@ async def test_an_io_redaction_reaches_the_alert_rule_for_its_phase(
     guardrail_engine, where, expected
 ):
     event = await _redact(guardrail_engine, where)
-    alert_service = MagicMock()
 
-    _dispatch_alert_if_matching(alert_service, event)
-
-    alert_service.dispatch_event_notification.assert_called_once()
-    assert (
-        alert_service.dispatch_event_notification.call_args.kwargs['event_name']
-        == expected
-    )
+    assert alert_event(event).key == expected

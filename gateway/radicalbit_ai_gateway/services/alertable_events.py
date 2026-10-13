@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from radicalbit_ai_gateway.models.alert_rule_dto import (
+    AlertableEventAggregation,
     AlertableEventItem,
     AlertableEventsOut,
 )
@@ -32,12 +33,19 @@ def _route_events(
         AlertableEventItem(
             event=_guardrail_event(phase, name),
             label=f'Guardrail: {name.upper()} ({phase})',
+            aggregation=AlertableEventAggregation.SELECTABLE,
         )
         for name in route.guardrails or []
         for phase in _PHASES_BY_WHERE[where_by_name.get(name, GuardrailWhereType.IO)]
     ]
     fallback = (
-        [AlertableEventItem(event=FALLBACK_EVENT, label='Fallback: triggered')]
+        [
+            AlertableEventItem(
+                event=FALLBACK_EVENT,
+                label='Fallback: triggered',
+                aggregation=AlertableEventAggregation.SELECTABLE,
+            )
+        ]
         if route.fallback
         else []
     )
@@ -58,20 +66,24 @@ class AlertableEvents:
     def __init__(self, project_configs: dict[str, ProjectEntry]):
         self._project_configs = project_configs
 
-    def for_route(self, project: UUID | str, route_name: str) -> AlertableEventsOut:
+    def for_route(
+        self, project: UUID | str | None, route_name: str | None
+    ) -> AlertableEventsOut:
         published = self._published_route(project, route_name)
         if published is None:
             return AlertableEventsOut()
         return _route_events(*published)
 
-    def offers(self, project: UUID | str, route_name: str, event: str) -> bool:
+    def offers(
+        self, project: UUID | str | None, route_name: str | None, event: str
+    ) -> bool:
         published = self._published_route(project, route_name)
         return published is not None and event in _event_names(
             _route_events(*published)
         )
 
     def stale_reason(
-        self, project: UUID | str, route_name: str, event: str
+        self, project: UUID | str | None, route_name: str | None, event: str
     ) -> str | None:
         """Why a route rule on `event` no longer matches the published configuration.
 
@@ -100,7 +112,7 @@ class AlertableEvents:
         return f'Event "{event}" is not offered by route "{route_name}"'
 
     def _published_route(
-        self, project: UUID | str, route_name: str
+        self, project: UUID | str | None, route_name: str | None
     ) -> tuple[GatewayConfig, GatewayRouteConfig] | None:
         entry = self._project_entry(project)
         if entry is None:
@@ -110,11 +122,9 @@ class AlertableEvents:
             return None
         return entry.config, route
 
-    def _project_entry(self, project: UUID | str) -> ProjectEntry | None:
-        """Look a project up by name or by uuid: rules may store either."""
+    def _project_entry(self, project: UUID | str | None) -> ProjectEntry | None:
+        """Look a project up by uuid. A rule still holding a project name finds none."""
         key = str(project)
-        if key in self._project_configs:
-            return self._project_configs[key]
         return next(
             (e for e in self._project_configs.values() if str(e.uuid) == key), None
         )

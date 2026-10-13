@@ -23,6 +23,8 @@ from traceloop.sdk import Instruments, Traceloop
 from traceloop.sdk.decorators import workflow
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
+from radicalbit_ai_gateway.alerting.alert_store import build_alert_store
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
@@ -38,7 +40,7 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
-from radicalbit_ai_gateway.events.events_processor import set_alert_rule_service
+from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
 from radicalbit_ai_gateway.limiting.project_budget_limiter import (
     load_project_budget_limiter,
 )
@@ -68,6 +70,7 @@ from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.services.config_generator_service import (
     ConfigGeneratorService,
 )
+from radicalbit_ai_gateway.services.email_service import EmailService
 from radicalbit_ai_gateway.services.event_service import EventService
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
@@ -90,6 +93,7 @@ from radicalbit_ai_gateway.utils.endpoint_helpers import (
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
     AlertRuleInvalidEventError,
+    AlertRuleInvalidTargetError,
     AlertRuleNotFoundError,
     AlertRuleUnsupportedTimeAggregationError,
     ApiKeyError,
@@ -254,8 +258,15 @@ alert_rule_service = AlertRuleService(
     alert_rule_dao=alert_rule_dao,
     project_configs=project_configs,
     project_dao=project_dao,
+    key_dao=key_dao,
 )
-set_alert_rule_service(alert_rule_service)
+set_alert_dispatcher(
+    AlertDispatcher(
+        alert_rule_dao=alert_rule_dao,
+        email_service=EmailService(),
+        store=build_alert_store(app_config.redis_config.redis_url),
+    )
+)
 
 
 @asynccontextmanager
@@ -441,6 +452,7 @@ app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
 app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
 app.add_exception_handler(AlertRuleNotFoundError, alert_rule_exception_handler)
 app.add_exception_handler(AlertRuleInvalidEventError, alert_rule_exception_handler)
+app.add_exception_handler(AlertRuleInvalidTargetError, alert_rule_exception_handler)
 app.add_exception_handler(
     AlertRuleUnsupportedTimeAggregationError, alert_rule_exception_handler
 )

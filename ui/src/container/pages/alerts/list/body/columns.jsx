@@ -58,10 +58,10 @@ const columns = [
     render: (value) => value ?? '--',
   },
   {
-    title: 'Route',
-    dataIndex: 'route',
-    key: 'route',
-    render: (value) => value ?? '--',
+    title: 'Target',
+    dataIndex: 'scope',
+    key: 'target',
+    render: (_, record) => <Target record={record} />,
   },
   {
     title: 'Event',
@@ -150,6 +150,26 @@ function StaleReason({ staleReason }) {
         <Lucide icon={TriangleAlert} type="warning" />
       </span>
     </Tooltip>
+  );
+}
+
+// The route, project or credential the rule watches, according to its scope
+function Target({ record }) {
+  const targetByScope = {
+    route: record.route,
+    project: record.projectName,
+    credential: record.credentialName,
+  };
+  const value = targetByScope[record.scope];
+
+  if (!value) {
+    return '--';
+  }
+
+  return (
+    <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
+      {value}
+    </Truncate>
   );
 }
 

@@ -6,10 +6,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import yaml
 
+from tests.common import db_mock  # noqa: F401  (registers every table Key relates to)
 from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
+from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
+from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
@@ -17,6 +20,7 @@ from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
     AlertRuleInvalidEventError,
+    AlertRuleInvalidTargetError,
     AlertRuleNotFoundError,
     AlertRuleUnsupportedTimeAggregationError,
     alert_rule_exception_handler,
@@ -74,11 +78,13 @@ class TestAlertRuleRoute(DatabaseIntegration):
         service = AlertRuleService(
             alert_rule_dao=AlertRuleDAO(cls.db),
             project_configs=cls.project_configs,
+            key_dao=KeyDAO(cls.db),
         )
         app = FastAPI()
         for err in (
             AlertRuleNotFoundError,
             AlertRuleInvalidEventError,
+            AlertRuleInvalidTargetError,
             AlertRuleUnsupportedTimeAggregationError,
             AlertRuleInternalError,
         ):
@@ -97,7 +103,7 @@ class TestAlertRuleRoute(DatabaseIntegration):
     def unpublish(self) -> None:
         self.project_configs.pop(PROJECT_NAME, None)
 
-    def create(self, event: str, route: str = 'chat'):
+    def create(self, event: str, route: str = 'chat', **overrides):
         payload = {
             'name': 'rule',
             'project': str(PROJECT_UUID),
@@ -105,29 +111,49 @@ class TestAlertRuleRoute(DatabaseIntegration):
             'event': event,
             'recipients': ['ops@example.com'],
             'enabled': True,
+            **overrides,
         }
         return self.client.post('/rule', json=payload)
+
+    def rejected(self, response) -> str:
+        assert response.status_code == 400, response.text
+        return response.json()['error']['message']
 
     def created(self, event: str) -> dict:
         response = self.create(event)
         assert response.status_code == 201, response.text
         return response.json()
 
-    def insert_rule(self, event: str, route: str = 'chat') -> AlertRule:
+    def insert_rule(self, event: str, route: str = 'chat', **columns) -> AlertRule:
         """Store a rule bypassing validation, as an older release could have."""
         now = datetime.datetime.now(tz=datetime.UTC)
         return self.insert(
             AlertRule(
-                name='legacy',
-                project=str(PROJECT_UUID),
-                route=route,
-                scope='route',
-                event=event,
-                time_aggregation='instant',
-                channel='email',
-                recipients=json.dumps(['ops@example.com']),
-                enabled=True,
-                deleted=False,
+                **{
+                    'name': 'legacy',
+                    'project': str(PROJECT_UUID),
+                    'route': route,
+                    'scope': 'route',
+                    'event': event,
+                    'time_aggregation': 'instant',
+                    'channel': 'email',
+                    'recipients': json.dumps(['ops@example.com']),
+                    'enabled': True,
+                    'deleted': False,
+                    'created_at': now,
+                    'updated_at': now,
+                    **columns,
+                }
+            )
+        )
+
+    def insert_credential(self, name: str) -> Key:
+        now = datetime.datetime.now(tz=datetime.UTC)
+        return self.insert(
+            Key(
+                name=name,
+                hashed_key=uuid.uuid4().hex,
+                obscured_key='sk-...abcd',
                 created_at=now,
                 updated_at=now,
             )
@@ -339,3 +365,203 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert response.status_code == 200
         assert self.client.get(f'/rule/{rule["uuid"]}').status_code == 404
         assert all(r['uuid'] != rule['uuid'] for r in self.client.get('/rule').json())
+
+    # --- scopes and aggregations ---
+
+    def test_alertable_guardrail_and_fallback_events_let_the_user_pick_the_aggregation(
+        self,
+    ):
+        self.publish(route_config(guardrails={'pii': 'input'}, fallback=True))
+
+        events = self.alertable_events()
+
+        items = events['guardrail'] + events['fallback']
+        assert items
+        assert {item['aggregation'] for item in items} == {'selectable'}
+
+    def test_a_route_rule_carries_its_scope_and_no_credential_or_window(self):
+        self.publish(route_config(fallback=True))
+
+        rule = self.created('fallback-triggered')
+
+        assert rule['scope'] == 'route'
+        assert rule['project'] == str(PROJECT_UUID)
+        assert rule['route'] == 'chat'
+        assert rule['credentialUuid'] is None
+        assert rule['credentialName'] is None
+        assert rule['timeAggregation'] == 'instant'
+        assert rule['windowSize'] is None
+
+    def test_route_scope_requires_a_route(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(self.create('fallback-triggered', route=None))
+
+        assert 'route' in message.lower()
+
+    def test_route_scope_requires_a_project(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(self.create('fallback-triggered', project=None))
+
+        assert 'project' in message.lower()
+
+    def test_route_scope_takes_no_credential(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(
+            self.create('fallback-triggered', credential=str(uuid.uuid4()))
+        )
+
+        assert 'credential' in message.lower()
+
+    def test_project_scope_requires_a_project(self):
+        message = self.rejected(
+            self.create(
+                'budget_limit-exceeded-1mo', scope='project', project=None, route=None
+            )
+        )
+
+        assert 'project' in message.lower()
+
+    def test_project_scope_takes_no_route(self):
+        message = self.rejected(
+            self.create('budget_limit-exceeded-1mo', scope='project')
+        )
+
+        assert 'route' in message.lower()
+
+    def test_credential_scope_requires_a_credential(self):
+        message = self.rejected(
+            self.create(
+                'rate_limit-exceeded-1m', scope='credential', project=None, route=None
+            )
+        )
+
+        assert 'credential' in message.lower()
+
+    def test_credential_scope_takes_no_project_or_route(self):
+        message = self.rejected(
+            self.create(
+                'rate_limit-exceeded-1m',
+                scope='credential',
+                credential=str(uuid.uuid4()),
+            )
+        )
+
+        assert 'project' in message.lower()
+
+    def test_window_aggregation_requires_a_window_size(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(
+            self.create('fallback-triggered', timeAggregation='window')
+        )
+
+        assert 'window size' in message.lower()
+
+    def test_a_window_size_is_rejected_without_window_aggregation(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(self.create('fallback-triggered', windowSize='5m'))
+
+        assert 'window size' in message.lower()
+
+    def test_an_unknown_window_size_is_invalid(self):
+        self.publish(route_config(fallback=True))
+
+        response = self.create(
+            'fallback-triggered', timeAggregation='window', windowSize='10m'
+        )
+
+        assert response.status_code == 422
+
+    def test_project_and_credential_scopes_are_not_supported_yet(self):
+        project_rule = self.create(
+            'budget_limit-exceeded-1mo', scope='project', route=None
+        )
+        credential_rule = self.create(
+            'rate_limit-exceeded-1m',
+            scope='credential',
+            project=None,
+            route=None,
+            credential=str(uuid.uuid4()),
+        )
+
+        assert 'not supported' in self.rejected(project_rule)
+        assert 'not supported' in self.rejected(credential_rule)
+
+    def test_window_and_limit_window_aggregations_are_not_supported_yet(self):
+        self.publish(route_config(fallback=True))
+
+        window = self.create(
+            'fallback-triggered', timeAggregation='window', windowSize='15m'
+        )
+        limit_window = self.create('fallback-triggered', timeAggregation='limit_window')
+
+        assert 'not supported' in self.rejected(window)
+        assert 'not supported' in self.rejected(limit_window)
+
+    def test_update_validates_the_merged_rule(self):
+        self.publish(route_config(fallback=True))
+        rule = self.created('fallback-triggered')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}',
+            json={'scope': 'credential', 'credential': str(uuid.uuid4())},
+        )
+
+        assert 'project' in self.rejected(response).lower()
+
+    def test_update_rejects_a_window_size_on_an_instant_rule(self):
+        self.publish(route_config(fallback=True))
+        rule = self.created('fallback-triggered')
+
+        response = self.client.patch(f'/rule/{rule["uuid"]}', json={'windowSize': '1h'})
+
+        assert 'window size' in self.rejected(response).lower()
+
+    def test_a_rule_still_holding_a_project_name_is_stale(self):
+        self.publish(route_config(fallback=True))
+        rule = self.insert_rule('fallback-triggered', project=PROJECT_NAME)
+
+        listed = self.listed(rule.uuid)
+
+        assert listed['stale'] is True
+
+    def test_a_credential_rule_shows_the_credential_and_no_project(self):
+        credential = self.insert_credential('billing-service')
+        rule = self.insert_rule(
+            'rate_limit-exceeded-1m',
+            scope='credential',
+            project=None,
+            route=None,
+            credential_uuid=credential.uuid,
+            time_aggregation='limit_window',
+        )
+
+        listed = self.listed(rule.uuid)
+
+        assert listed['scope'] == 'credential'
+        assert listed['credentialUuid'] == str(credential.uuid)
+        assert listed['credentialName'] == 'billing-service'
+        assert listed['project'] is None
+        assert listed['projectName'] is None
+        assert listed['route'] is None
+        assert listed['timeAggregation'] == 'limit_window'
+
+    def test_a_rule_still_holding_a_project_name_can_be_renamed(self):
+        self.publish(route_config(fallback=True))
+        rule = self.insert_rule('fallback-triggered', project=PROJECT_NAME)
+
+        response = self.client.patch(f'/rule/{rule.uuid}', json={'name': 'renamed'})
+
+        assert response.status_code == 200, response.text
+        assert response.json()['name'] == 'renamed'
+
+    def test_a_project_given_by_name_is_rejected_with_a_400(self):
+        self.publish(route_config(fallback=True))
+
+        assert (
+            self.create('fallback-triggered', project=PROJECT_NAME).status_code == 400
+        )

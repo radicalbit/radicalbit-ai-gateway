@@ -1,14 +1,12 @@
 from collections.abc import Sequence
 import datetime
-import logging
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, select
 
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
-
-logger = logging.getLogger('radicalbit-ai-gateway')
+from radicalbit_ai_gateway.models.alert_rule_dto import AlertRuleScope
 
 
 class AlertRuleDAO:
@@ -38,42 +36,34 @@ class AlertRuleDAO:
             )
             return session.scalars(stmt).all()
 
-    def get_active_by_route(
-        self, project_uuid: str = '', route_name: str = '', project_name: str = ''
+    def get_enabled_route_rules(
+        self, project_uuid: str, route_name: str
     ) -> Sequence[AlertRule]:
-        if not project_uuid and not project_name:
-            logger.error(
-                'Missing project identification when querying active alert rules for route %s',
-                route_name,
-            )
-            return []
+        return self._get_enabled(
+            AlertRule.scope == AlertRuleScope.ROUTE.value,
+            AlertRule.project == project_uuid,
+            AlertRule.route == route_name,
+        )
 
-        with self.db.begin_session() as session:
-            conditions = [
-                AlertRule.route == route_name,
-                AlertRule.enabled == True,  # noqa: E712
-                AlertRule.deleted == False,  # noqa: E712
-            ]
+    def get_enabled_project_rules(self, project_uuid: str) -> Sequence[AlertRule]:
+        return self._get_enabled(
+            AlertRule.scope == AlertRuleScope.PROJECT.value,
+            AlertRule.project == project_uuid,
+        )
 
-            p_filters = []
-            if project_uuid:
-                p_filters.append(AlertRule.project == project_uuid)
-            if project_name:
-                p_filters.append(AlertRule.project == project_name)
-
-            if p_filters:
-                conditions.append(or_(*p_filters))
-
-            stmt = select(AlertRule).where(*conditions)
-            return session.scalars(stmt).all()
-
-    def get_all_by_route(
-        self, project_name: str, route_name: str
+    def get_enabled_credential_rules(
+        self, credential_uuid: UUID
     ) -> Sequence[AlertRule]:
+        return self._get_enabled(
+            AlertRule.scope == AlertRuleScope.CREDENTIAL.value,
+            AlertRule.credential_uuid == credential_uuid,
+        )
+
+    def _get_enabled(self, *conditions: ColumnElement[bool]) -> Sequence[AlertRule]:
         with self.db.begin_session() as session:
             stmt = select(AlertRule).where(
-                AlertRule.project == project_name,
-                AlertRule.route == route_name,
+                *conditions,
+                AlertRule.enabled == True,  # noqa: E712
                 AlertRule.deleted == False,  # noqa: E712
             )
             return session.scalars(stmt).all()

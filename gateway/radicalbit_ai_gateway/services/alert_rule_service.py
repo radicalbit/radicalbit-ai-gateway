@@ -1,36 +1,106 @@
-from enum import Enum
-import json
+from collections.abc import Mapping
 import logging
+from typing import Any
 from uuid import UUID
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
+from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
-from radicalbit_ai_gateway.events.alerts_processor import AlertStatus, emit_alert
 from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertableEventsOut,
     AlertRuleIn,
     AlertRuleOut,
+    AlertRuleScope,
     AlertRuleTimeAggregation,
     AlertRuleUpdateIn,
 )
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
-from radicalbit_ai_gateway.services.alert_email_formatter import (
-    build_alert_email_body,
-    build_alert_email_subject,
-)
 from radicalbit_ai_gateway.services.alertable_events import AlertableEvents
-from radicalbit_ai_gateway.services.email_service import EmailService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
     AlertRuleInvalidEventError,
+    AlertRuleInvalidTargetError,
     AlertRuleNotFoundError,
     AlertRuleUnsupportedTimeAggregationError,
 )
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+# Valid, but not dispatched yet: rules using them are refused until they are.
+_UNSUPPORTED_SCOPES = {AlertRuleScope.PROJECT, AlertRuleScope.CREDENTIAL}
+_UNSUPPORTED_AGGREGATIONS = {
+    AlertRuleTimeAggregation.WINDOW,
+    AlertRuleTimeAggregation.LIMIT_WINDOW,
+}
+
+# Changing any of these can change which events the rule's target offers.
+_EVENT_IDENTITY_FIELDS = {'scope', 'project', 'route', 'credential_uuid', 'event'}
+
+
+def _rule_fields(rule: AlertRule) -> dict[str, Any]:
+    return {
+        'scope': rule.scope,
+        'project': rule.project,
+        'route': rule.route,
+        'credential_uuid': rule.credential_uuid,
+        'event': rule.event,
+        'time_aggregation': rule.time_aggregation,
+        'window_size': rule.window_size,
+    }
+
+
+def _check_target(fields: Mapping[str, Any]) -> None:
+    """Raise if the scope and its target do not fit together."""
+    scope = AlertRuleScope(fields['scope'])
+    project, route, credential = (
+        fields.get('project'),
+        fields.get('route'),
+        fields.get('credential_uuid'),
+    )
+    if scope is AlertRuleScope.ROUTE:
+        if not project or not route:
+            raise AlertRuleInvalidTargetError(
+                'A route rule requires a project and a route'
+            )
+        if credential:
+            raise AlertRuleInvalidTargetError('A route rule takes no credential')
+    elif scope is AlertRuleScope.PROJECT:
+        if not project:
+            raise AlertRuleInvalidTargetError('A project rule requires a project')
+        if route or credential:
+            raise AlertRuleInvalidTargetError(
+                'A project rule takes no route and no credential'
+            )
+    elif scope is AlertRuleScope.CREDENTIAL:
+        if not credential:
+            raise AlertRuleInvalidTargetError('A credential rule requires a credential')
+        if project or route:
+            raise AlertRuleInvalidTargetError(
+                'A credential rule takes no project and no route'
+            )
+    if scope in _UNSUPPORTED_SCOPES:
+        raise AlertRuleInvalidTargetError(f'Scope "{scope.value}" is not supported yet')
+
+
+def _check_aggregation(fields: Mapping[str, Any]) -> None:
+    """Raise if the aggregation and the window size do not fit together."""
+    aggregation = AlertRuleTimeAggregation(fields['time_aggregation'])
+    window_size = fields.get('window_size')
+    if aggregation is AlertRuleTimeAggregation.WINDOW and not window_size:
+        raise AlertRuleUnsupportedTimeAggregationError(
+            'A window size is required with window aggregation'
+        )
+    if aggregation is not AlertRuleTimeAggregation.WINDOW and window_size:
+        raise AlertRuleUnsupportedTimeAggregationError(
+            'A window size applies only to window aggregation'
+        )
+    if aggregation in _UNSUPPORTED_AGGREGATIONS:
+        raise AlertRuleUnsupportedTimeAggregationError(
+            f'Time aggregation "{aggregation.value}" is not supported yet'
+        )
 
 
 class AlertRuleService:
@@ -39,49 +109,65 @@ class AlertRuleService:
         alert_rule_dao: AlertRuleDAO,
         project_configs: dict[str, ProjectEntry] | None = None,
         project_dao: ProjectDAO | None = None,
-        email_service: EmailService | None = None,
+        key_dao: KeyDAO | None = None,
     ):
         self.alert_rule_dao = alert_rule_dao
         self._project_configs = project_configs if project_configs is not None else {}
         self.project_dao = project_dao
-        self.email_service = email_service or EmailService()
+        self.key_dao = key_dao
         self.alertable_events = AlertableEvents(self._project_configs)
 
-    def _resolve_project_name(self, project_uuid: UUID | str | None) -> str | None:
+    def _resolve_project_name(self, project_uuid: str | None) -> str | None:
         if not project_uuid:
             return None
-        target_uuid_str = str(project_uuid)
         for p_name, entry in self._project_configs.items():
-            p_uuid_str = str(getattr(entry, 'uuid', ''))
-            if target_uuid_str in (p_name, p_uuid_str):
+            if str(entry.uuid) == project_uuid:
                 return p_name
         if self.project_dao is not None:
             try:
-                p_uuid = (
-                    UUID(target_uuid_str)
-                    if isinstance(project_uuid, str)
-                    else project_uuid
-                )
-                proj = self.project_dao.get_by_uuid(p_uuid)
+                proj = self.project_dao.get_by_uuid(UUID(project_uuid))
                 if proj and proj.name:
                     return proj.name
             except Exception:
                 pass
         return None
 
-    def _to_out(self, rule: AlertRule) -> AlertRuleOut:
-        project_name = self._resolve_project_name(rule.project)
-        stale_reason = self.alertable_events.stale_reason(
-            rule.project, rule.route, rule.event
-        )
+    def _credential_names(self, rules: list[AlertRule]) -> dict[UUID, str]:
+        uuids = [r.credential_uuid for r in rules if r.credential_uuid]
+        if not uuids or self.key_dao is None:
+            return {}
+        return self.key_dao.get_names_by_uuids(uuids)
+
+    def _stale_reason(self, rule: AlertRule) -> str | None:
+        if AlertRuleScope(rule.scope) is not AlertRuleScope.ROUTE:
+            return None
+        return self.alertable_events.stale_reason(rule.project, rule.route, rule.event)
+
+    def _to_out(
+        self, rule: AlertRule, credential_names: Mapping[UUID, str] | None = None
+    ) -> AlertRuleOut:
+        if credential_names is None:
+            credential_names = self._credential_names([rule])
         return AlertRuleOut.from_alert_rule(
-            rule, project_name=project_name, stale_reason=stale_reason
+            rule,
+            project_name=self._resolve_project_name(rule.project),
+            credential_name=credential_names.get(rule.credential_uuid),
+            stale_reason=self._stale_reason(rule),
         )
+
+    def _check_event(self, fields: Mapping[str, Any]) -> None:
+        if not self.alertable_events.offers(
+            fields['project'], fields['route'], fields['event']
+        ):
+            raise AlertRuleInvalidEventError(
+                f'Event "{fields["event"]}" is not valid for route "{fields["route"]}"'
+            )
 
     def get_all_rules(self) -> list[AlertRuleOut]:
         try:
-            rules = self.alert_rule_dao.get_all()
-            return [self._to_out(rule) for rule in rules]
+            rules = list(self.alert_rule_dao.get_all())
+            credential_names = self._credential_names(rules)
+            return [self._to_out(rule, credential_names) for rule in rules]
         except Exception as e:
             logger.exception('Failed to fetch alert rules')
             raise AlertRuleInternalError(f'Failed to fetch alert rules: {e}') from e
@@ -100,20 +186,13 @@ class AlertRuleService:
         return self.alertable_events.for_route(project_uuid, route_name)
 
     def create_rule(self, alert_rule_in: AlertRuleIn) -> AlertRuleOut:
-        if alert_rule_in.time_aggregation != AlertRuleTimeAggregation.INSTANT:
-            raise AlertRuleUnsupportedTimeAggregationError(
-                f'Time aggregation "{alert_rule_in.time_aggregation}" is not supported. Only "instant" is supported.'
-            )
-
-        if not self.alertable_events.offers(
-            alert_rule_in.project, alert_rule_in.route, alert_rule_in.event
-        ):
-            raise AlertRuleInvalidEventError(
-                f'Event "{alert_rule_in.event}" is not valid for route "{alert_rule_in.route}"'
-            )
+        entity = alert_rule_in.to_alert_rule()
+        fields = _rule_fields(entity)
+        _check_target(fields)
+        _check_aggregation(fields)
+        self._check_event(fields)
 
         try:
-            entity = alert_rule_in.to_alert_rule()
             inserted = self.alert_rule_dao.insert(entity)
             logger.info('Created alert rule %s (%s)', inserted.name, inserted.uuid)
             return self._to_out(inserted)
@@ -130,38 +209,19 @@ class AlertRuleService:
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
 
-        if (
-            alert_rule_in.time_aggregation is not None
-            and alert_rule_in.time_aggregation != AlertRuleTimeAggregation.INSTANT
-        ):
-            raise AlertRuleUnsupportedTimeAggregationError(
-                f'Time aggregation "{alert_rule_in.time_aggregation}" is not supported. Only "instant" is supported.'
-            )
-
-        update_dict = alert_rule_in.model_dump(exclude_unset=True)
-        if not update_dict:
+        update_fields = alert_rule_in.to_update_fields()
+        if not update_fields:
             return self._to_out(existing)
 
-        for k, v in update_dict.items():
-            if isinstance(v, Enum):
-                update_dict[k] = v.value
+        merged = {**_rule_fields(existing), **update_fields}
+        _check_target(merged)
+        _check_aggregation(merged)
+        # A stale rule can still be renamed: the event is checked only when the
+        # client changes what it identifies.
+        if _EVENT_IDENTITY_FIELDS & update_fields.keys():
+            self._check_event(merged)
 
-        # Handle recipients serialization if provided
-        if 'recipients' in update_dict and isinstance(update_dict['recipients'], list):
-            update_dict['recipients'] = json.dumps(update_dict['recipients'])
-
-        # Validate event if route, event or project changes
-        new_project = update_dict.get('project', existing.project)
-        new_route = update_dict.get('route', existing.route)
-        new_event = update_dict.get('event', existing.event)
-
-        if 'route' in update_dict or 'event' in update_dict or 'project' in update_dict:
-            if not self.alertable_events.offers(new_project, new_route, new_event):
-                raise AlertRuleInvalidEventError(
-                    f'Event "{new_event}" is not valid for route "{new_route}"'
-                )
-
-        updated = self.alert_rule_dao.update_rule(alert_rule_uuid, update_dict)
+        updated = self.alert_rule_dao.update_rule(alert_rule_uuid, update_fields)
         if not updated:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
@@ -195,85 +255,3 @@ class AlertRuleService:
 
         logger.info('Soft deleted alert rule %s', alert_rule_uuid)
         return self._to_out(deleted)
-
-    def dispatch_event_notification(
-        self,
-        project_uuid: str,
-        route_name: str,
-        event_name: str,
-        event_details: dict | None = None,
-        project_name: str = '',
-    ) -> int:
-        """AG-844: Send email notifications for triggered events on a route."""
-        if not project_uuid and not project_name:
-            logger.error(
-                'Cannot dispatch alert notification: project identification is missing for route %s',
-                route_name,
-            )
-            return 0
-
-        active_rules = self.alert_rule_dao.get_active_by_route(
-            project_uuid=project_uuid,
-            route_name=route_name,
-            project_name=project_name,
-        )
-
-        target_event = event_name.strip().lower()
-        matching_rules = [
-            r for r in active_rules if r.event.strip().lower() == target_event
-        ]
-
-        if not matching_rules:
-            return 0
-
-        dispatched_count = 0
-        for rule in matching_rules:
-            rule_out = AlertRuleOut.from_alert_rule(rule)
-            # TODO: Remove this check once time window aggregation (e.g. 'window') is implemented
-            if rule_out.time_aggregation != AlertRuleTimeAggregation.INSTANT:
-                logger.error(
-                    'Time aggregation "%s" is not supported for immediate event dispatch on alert rule "%s" (%s). Only "instant" is supported.',
-                    rule_out.time_aggregation.value
-                    if isinstance(rule_out.time_aggregation, Enum)
-                    else rule_out.time_aggregation,
-                    rule.name,
-                    rule.uuid,
-                )
-                continue
-
-            subject = build_alert_email_subject(rule.name, route_name)
-            body = build_alert_email_body(
-                rule_name=rule.name,
-                description=rule.description,
-                project_uuid=project_uuid,
-                route_name=route_name,
-                event_name=event_name,
-                event_details=event_details,
-            )
-
-            try:
-                success = self.email_service.send_email(
-                    recipients=rule_out.recipients,
-                    subject=subject,
-                    body=body,
-                )
-            except Exception:
-                logger.exception(
-                    'Failed to send alert for rule "%s" (%s)', rule.name, rule.uuid
-                )
-                success = False
-            emit_alert(
-                rule_uuid=str(rule.uuid),
-                rule_name=rule.name,
-                scope=rule_out.scope.value,
-                project_uuid=project_uuid or None,
-                route_name=route_name,
-                credential_uuid=None,
-                event=event_name,
-                aggregation=rule_out.time_aggregation.value,
-                status=AlertStatus.SENT if success else AlertStatus.FAILED,
-            )
-            if success:
-                dispatched_count += 1
-
-        return dispatched_count

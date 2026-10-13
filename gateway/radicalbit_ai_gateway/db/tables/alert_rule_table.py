@@ -18,13 +18,17 @@ class AlertRule(Reflected, BaseTable, BaseDAO):
     )
     name = Column('NAME', VARCHAR(), nullable=False)
     description = Column('DESCRIPTION', TEXT(), nullable=True)
-    project = Column('PROJECT', VARCHAR(), nullable=False)
-    route = Column('ROUTE', VARCHAR(), nullable=False)
     scope = Column('SCOPE', VARCHAR(), nullable=False, default='route')
+    # The project uuid. A rule stored before project uuids were used may still
+    # hold a project name, which then resolves to nothing and shows as stale.
+    project = Column('PROJECT', VARCHAR(), nullable=True)
+    route = Column('ROUTE', VARCHAR(), nullable=True)
+    credential_uuid = Column('CREDENTIAL_UUID', UUID(as_uuid=True), nullable=True)
     event = Column('EVENT', VARCHAR(), nullable=False)
     time_aggregation = Column(
         'TIME_AGGREGATION', VARCHAR(), nullable=False, default='instant'
     )
+    window_size = Column('WINDOW_SIZE', VARCHAR(), nullable=True)
     channel = Column('CHANNEL', VARCHAR(), nullable=False, default='email')
     recipients = Column(
         'RECIPIENTS', TEXT(), nullable=False

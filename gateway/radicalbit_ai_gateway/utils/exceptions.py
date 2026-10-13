@@ -837,6 +837,17 @@ class AlertRuleInvalidEventError(AppError):
         )
 
 
+class AlertRuleInvalidTargetError(AppError):
+    """A rule's scope and target do not fit together, or the scope is not built yet."""
+
+    def __init__(self, message: str = 'Invalid target for alert rule scope'):
+        super().__init__(
+            client_message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code='invalid_alert_rule_target',
+        )
+
+
 class AlertRuleUnsupportedTimeAggregationError(AppError):
     def __init__(
         self,
