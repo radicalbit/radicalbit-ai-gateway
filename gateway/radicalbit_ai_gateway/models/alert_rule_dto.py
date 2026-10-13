@@ -110,7 +110,6 @@ class AlertRuleIn(BaseModel):
             ),
             recipients=json.dumps(self.recipients),
             enabled=self.enabled,
-            disabled_reason=None,
             deleted=False,
             created_at=now,
             updated_at=now,
@@ -161,7 +160,8 @@ class AlertRuleOut(BaseModel):
     channel: AlertRuleChannel
     recipients: list[str]
     enabled: bool
-    disabled_reason: str | None = Field(None, alias='disabledReason')
+    stale: bool = False
+    stale_reason: str | None = Field(None, alias='staleReason')
     created_at: str = Field(..., alias='createdAt')
     updated_at: str = Field(..., alias='updatedAt')
 
@@ -171,7 +171,9 @@ class AlertRuleOut(BaseModel):
 
     @staticmethod
     def from_alert_rule(
-        alert_rule: AlertRule, project_name: str | None = None
+        alert_rule: AlertRule,
+        project_name: str | None = None,
+        stale_reason: str | None = None,
     ) -> 'AlertRuleOut':
         try:
             parsed_recipients = (
@@ -209,7 +211,8 @@ class AlertRuleOut(BaseModel):
             ),
             recipients=parsed_recipients,
             enabled=alert_rule.enabled,
-            disabled_reason=alert_rule.disabled_reason,
+            stale=stale_reason is not None,
+            stale_reason=stale_reason,
             created_at=str(alert_rule.created_at),
             updated_at=str(alert_rule.updated_at),
         )
@@ -226,7 +229,6 @@ class AlertableEventItem(BaseModel):
 
 class AlertableEventsOut(BaseModel):
     guardrail: list[AlertableEventItem] = Field(default_factory=list)
-    caching: list[AlertableEventItem] = Field(default_factory=list)
     fallback: list[AlertableEventItem] = Field(default_factory=list)
 
     model_config = ConfigDict(

@@ -156,6 +156,7 @@ export const projectsApiSlice = apiService.injectEndpoints({
             { type: API_TAGS.PROJECTS, id: LIST_ID },
             { type: API_TAGS.PROJECTS, id: projectUuid },
             API_TAGS.SECRETS,
+            API_TAGS.ALERTS,
           ];
         }
 

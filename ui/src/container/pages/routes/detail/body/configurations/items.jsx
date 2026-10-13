@@ -6,7 +6,7 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import isEmpty from 'lodash/isEmpty';
 import {
-  Bot, CircleCheck, CornerDownRight, Hourglass, Route, Shield, TableColumnsSplit, Timer,
+  Bot, CircleCheck, CornerDownRight, Hourglass, Plug, Route, Shield, TableColumnsSplit, Timer,
 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
@@ -436,4 +436,47 @@ export function AdvancedRouting() {
   const routing = data?.configuration?.routing;
 
   return <Json data={routing} />;
+}
+
+// *** MCP Servers ***
+export function useGetMcpServersItem() {
+  const { name } = useParams();
+
+  const { data } = useGetRouteByNameWithRange(name);
+  const mcpServers = data?.configuration?.mcpServers;
+
+  if (isEmpty(mcpServers)) {
+    return {
+      collapsible: 'disabled',
+      showArrow: false,
+      label: (
+        <Popover content="Configure this section into your configuration file" placement="top">
+          <div className="flex justify-start items-center gap-4">
+            <IconBadge aria-label="MCP Servers" disabled type="secondary-light"><Lucide icon={Plug} /></IconBadge>
+
+            <div>MCP Servers</div>
+          </div>
+        </Popover>
+      ),
+    };
+  }
+
+  return {
+    label: (
+      <div className="flex justify-start items-center gap-4">
+        <IconBadge aria-label="MCP Servers" type="text"><Lucide icon={Plug} /></IconBadge>
+
+        <div>MCP Servers</div>
+      </div>
+    ),
+  };
+}
+
+export function McpServers() {
+  const { name } = useParams();
+
+  const { data } = useGetRouteByNameWithRange(name);
+  const mcpServers = data?.configuration?.mcpServers;
+
+  return <Json data={mcpServers} />;
 }

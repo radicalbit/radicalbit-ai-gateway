@@ -67,33 +67,6 @@ class AlertRuleDAO:
             stmt = select(AlertRule).where(*conditions)
             return session.scalars(stmt).all()
 
-    def get_active_by_project(
-        self, project_uuid: str = '', project_name: str = ''
-    ) -> Sequence[AlertRule]:
-        if not project_uuid and not project_name:
-            logger.error(
-                'Missing project identification when querying active alert rules for project'
-            )
-            return []
-
-        with self.db.begin_session() as session:
-            conditions = [
-                AlertRule.enabled == True,  # noqa: E712
-                AlertRule.deleted == False,  # noqa: E712
-            ]
-
-            p_filters = []
-            if project_uuid:
-                p_filters.append(AlertRule.project == project_uuid)
-            if project_name:
-                p_filters.append(AlertRule.project == project_name)
-
-            if p_filters:
-                conditions.append(or_(*p_filters))
-
-            stmt = select(AlertRule).where(*conditions)
-            return session.scalars(stmt).all()
-
     def get_all_by_route(
         self, project_name: str, route_name: str
     ) -> Sequence[AlertRule]:
@@ -122,9 +95,7 @@ class AlertRuleDAO:
             session.flush()
             return rule
 
-    def toggle_enabled(
-        self, alert_rule_uuid: UUID, enabled: bool, clear_disabled_reason: bool = True
-    ) -> AlertRule | None:
+    def toggle_enabled(self, alert_rule_uuid: UUID, enabled: bool) -> AlertRule | None:
         UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
         now = datetime.datetime.now(tz=UTC)
         with self.db.begin_session() as session:
@@ -137,26 +108,6 @@ class AlertRuleDAO:
             if not rule:
                 return None
             rule.enabled = enabled
-            if enabled and clear_disabled_reason:
-                rule.disabled_reason = None
-            rule.updated_at = now
-            session.flush()
-            return rule
-
-    def auto_disable_rule(self, alert_rule_uuid: UUID, reason: str) -> AlertRule | None:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
-        with self.db.begin_session() as session:
-            rule = session.scalar(
-                select(AlertRule).where(
-                    AlertRule.uuid == alert_rule_uuid,
-                    AlertRule.deleted == False,  # noqa: E712
-                )
-            )
-            if not rule:
-                return None
-            rule.enabled = False
-            rule.disabled_reason = reason
             rule.updated_at = now
             session.flush()
             return rule

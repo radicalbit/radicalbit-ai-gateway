@@ -10,11 +10,11 @@ import DeleteAlert from '../delete-alert';
 const columns = [
   {
     title: '',
-    dataIndex: 'disabledReason',
-    key: 'disabledReason',
+    dataIndex: 'staleReason',
+    key: 'staleReason',
     width: '40px',
     align: 'center',
-    render: (disabledReason) => <DisabledReason disabledReason={disabledReason} />,
+    render: (staleReason) => <StaleReason staleReason={staleReason} />,
   },
   {
     title: 'Rule Name',
@@ -139,15 +139,15 @@ function Enabled({ enabled }) {
   );
 }
 
-function DisabledReason({ disabledReason }) {
-  if (!disabledReason) {
+function StaleReason({ staleReason }) {
+  if (!staleReason) {
     return false;
   }
 
   return (
-    <Tooltip title={disabledReason}>
-      <span className="is-error">
-        <Lucide icon={TriangleAlert} />
+    <Tooltip title={staleReason}>
+      <span>
+        <Lucide icon={TriangleAlert} type="warning" />
       </span>
     </Tooltip>
   );

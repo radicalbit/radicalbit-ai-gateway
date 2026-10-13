@@ -469,7 +469,6 @@ app.include_router(
         deregister_project_routes=_deregister,
         config=getattr(app.state, 'project_route_config', ProjectRouteConfig()),
         config_generator_service=config_generator_service,
-        alert_rule_service=alert_rule_service,
     ),
     prefix=prefix,
 )

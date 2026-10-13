@@ -14,15 +14,8 @@ from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertRuleTimeAggregation,
     AlertRuleUpdateIn,
 )
-from radicalbit_ai_gateway.models.caching import CacheConfig, SemanticCaching
-from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
-from radicalbit_ai_gateway.models.guardrails import (
-    CheckParameter,
-    Guardrail,
-    GuardrailWhereType,
-)
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
@@ -54,7 +47,6 @@ def test_dispatch_event_notification_mocked_formatter(
         channel='email',
         recipients='["test@example.com"]',
         enabled=True,
-        disabled_reason=None,
         created_at=now,
         updated_at=now,
     )
@@ -109,7 +101,6 @@ def test_dispatch_event_notification_e2e_formatting():
         channel='email',
         recipients='["admin@example.com"]',
         enabled=True,
-        disabled_reason=None,
         created_at=now,
         updated_at=now,
     )
@@ -157,7 +148,6 @@ def test_dispatch_event_notification_skips_window_time_aggregation():
         channel='email',
         recipients='["admin@example.com"]',
         enabled=True,
-        disabled_reason=None,
         created_at=now,
         updated_at=now,
     )
@@ -178,208 +168,6 @@ def test_dispatch_event_notification_skips_window_time_aggregation():
     # Should not dispatch anything because time_aggregation is window
     assert dispatched == 0
     mock_email.send_email.assert_not_called()
-
-
-def test_get_alertable_events_empty_when_no_guardrails_or_features():
-    mock_dao = MagicMock(spec=AlertRuleDAO)
-    project_uuid = uuid4()
-
-    model = Model(model_id='gpt-4', model='gpt-4', provider='openai')
-    route_cfg = GatewayRouteConfig(
-        route_name='plain-route',
-        chat_models=['gpt-4'],
-    )
-    gw_cfg = GatewayConfig(
-        routes={'plain-route': route_cfg},
-        chat_models=[model],
-    )
-    project_entry = ProjectEntry(uuid=project_uuid, config=gw_cfg)
-
-    service = AlertRuleService(
-        alert_rule_dao=mock_dao,
-        project_configs={'my-project': project_entry},
-    )
-
-    events = service.get_alertable_events_for_route(
-        project_uuid=project_uuid, route_name='plain-route'
-    )
-    assert events.guardrail == []
-    assert events.caching == []
-    assert events.fallback == []
-
-
-def test_get_alertable_events_configured_route():
-    mock_dao = MagicMock(spec=AlertRuleDAO)
-    project_uuid = uuid4()
-
-    model1 = Model(model_id='gpt-4', model='gpt-4', provider='openai')
-    model2 = Model(model_id='gpt-3.5', model='gpt-3.5', provider='openai')
-    emb_model = Model(model_id='text-emb', model='text-emb', provider='openai')
-
-    guardrail_input = Guardrail(
-        name='pii_check',
-        where=GuardrailWhereType.INPUT,
-        parameters=CheckParameter(values=['test']),
-    )
-    guardrail_io = Guardrail(
-        name='toxicity_check',
-        where=GuardrailWhereType.IO,
-        parameters=CheckParameter(values=['toxic']),
-    )
-
-    route_cfg = GatewayRouteConfig(
-        route_name='protected-route',
-        chat_models=['gpt-4', 'gpt-3.5'],
-        embedding_models=['text-emb'],
-        guardrails=['pii_check', 'toxicity_check'],
-        caching=SemanticCaching(
-            type='semantic',
-            distance_threshold=0.2,
-            embedding_model_id='text-emb',
-        ),
-        fallback=[Fallback(target='gpt-4', fallbacks=['gpt-3.5'])],
-    )
-    gw_cfg = GatewayConfig(
-        routes={'protected-route': route_cfg},
-        chat_models=[model1, model2],
-        embedding_models=[emb_model],
-        guardrails=[guardrail_input, guardrail_io],
-        cache=CacheConfig(redis_host='localhost', redis_port=6379),
-    )
-    project_entry = ProjectEntry(uuid=project_uuid, config=gw_cfg)
-
-    service = AlertRuleService(
-        alert_rule_dao=mock_dao,
-        project_configs={'my-project': project_entry},
-    )
-
-    events = service.get_alertable_events_for_route(
-        project_uuid=project_uuid, route_name='protected-route'
-    )
-
-    # Guardrails: pii_check is only input; toxicity_check is io (input and output)
-    guardrail_events = [item.event for item in events.guardrail]
-    assert guardrail_events == [
-        'guardrail-input-pii_check',
-        'guardrail-input-toxicity_check',
-        'guardrail-output-toxicity_check',
-    ]
-
-    # Caching: semantic
-    caching_events = [item.event for item in events.caching]
-    assert caching_events == ['cache-semantic']
-
-    # Fallback: triggered
-    fallback_events = [item.event for item in events.fallback]
-    assert fallback_events == ['fallback-triggered']
-
-
-def test_validate_rules_on_config_change_deleted_route():
-    mock_dao = MagicMock(spec=AlertRuleDAO)
-    project_uuid = uuid4()
-
-    model = Model(model_id='gpt-4', model='gpt-4', provider='openai')
-    route_cfg = GatewayRouteConfig(
-        route_name='active-route',
-        chat_models=['gpt-4'],
-    )
-    gw_cfg = GatewayConfig(
-        routes={'active-route': route_cfg},
-        chat_models=[model],
-    )
-    project_entry = ProjectEntry(uuid=project_uuid, config=gw_cfg)
-
-    # Active rule on a route that is NO LONGER in the config
-    orphaned_rule_uuid = uuid4()
-    now = datetime.now(timezone.utc)
-    orphaned_rule = AlertRule(
-        uuid=orphaned_rule_uuid,
-        name='Orphaned Route Rule',
-        description=None,
-        project='my-project',
-        route='deleted-route',
-        scope='route',
-        event='guardrail-input-pii',
-        time_aggregation='instant',
-        channel='email',
-        recipients='["admin@example.com"]',
-        enabled=True,
-        disabled_reason=None,
-        created_at=now,
-        updated_at=now,
-    )
-
-    mock_dao.get_active_by_project.return_value = [orphaned_rule]
-
-    service = AlertRuleService(
-        alert_rule_dao=mock_dao,
-        project_configs={'my-project': project_entry},
-    )
-
-    disabled_count = service.validate_rules_on_config_change(
-        project_name='my-project',
-        project_uuid=str(project_uuid),
-    )
-
-    assert disabled_count == 1
-    mock_dao.auto_disable_rule.assert_called_once_with(
-        orphaned_rule_uuid,
-        'The route "deleted-route" no longer exists in the current project configuration',
-    )
-
-
-def test_validate_rules_on_config_change_invalid_event():
-    mock_dao = MagicMock(spec=AlertRuleDAO)
-    project_uuid = uuid4()
-
-    model = Model(model_id='gpt-4', model='gpt-4', provider='openai')
-    # Route has no guardrails configured
-    route_cfg = GatewayRouteConfig(
-        route_name='active-route',
-        chat_models=['gpt-4'],
-    )
-    gw_cfg = GatewayConfig(
-        routes={'active-route': route_cfg},
-        chat_models=[model],
-    )
-    project_entry = ProjectEntry(uuid=project_uuid, config=gw_cfg)
-
-    rule_uuid = uuid4()
-    now = datetime.now(timezone.utc)
-    invalid_event_rule = AlertRule(
-        uuid=rule_uuid,
-        name='Invalid Guardrail Rule',
-        description=None,
-        project='my-project',
-        route='active-route',
-        scope='route',
-        event='guardrail-input-removed_guardrail',
-        time_aggregation='instant',
-        channel='email',
-        recipients='["admin@example.com"]',
-        enabled=True,
-        disabled_reason=None,
-        created_at=now,
-        updated_at=now,
-    )
-
-    mock_dao.get_active_by_project.return_value = [invalid_event_rule]
-
-    service = AlertRuleService(
-        alert_rule_dao=mock_dao,
-        project_configs={'my-project': project_entry},
-    )
-
-    disabled_count = service.validate_rules_on_config_change(
-        project_name='my-project',
-        project_uuid=str(project_uuid),
-    )
-
-    assert disabled_count == 1
-    mock_dao.auto_disable_rule.assert_called_once_with(
-        rule_uuid,
-        'The event "guardrail-input-removed_guardrail" is no longer valid for the current route configuration',
-    )
 
 
 def test_create_rule_raises_on_invalid_event():
@@ -463,7 +251,6 @@ def test_update_rule_raises_on_invalid_event_or_window():
         channel='email',
         recipients='["admin@example.com"]',
         enabled=True,
-        disabled_reason=None,
         created_at=now,
         updated_at=now,
     )
@@ -536,7 +323,6 @@ def test_from_alert_rule_handles_uppercase_db_values():
         channel='EMAIL',
         recipients='["test@example.com"]',
         enabled=True,
-        disabled_reason=None,
         created_at=now,
         updated_at=now,
     )
