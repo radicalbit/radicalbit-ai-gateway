@@ -193,6 +193,7 @@ class DetailedCostBreakdown(Base):
     transcription_audio: float = 0.0
     transcription_text: float = 0.0
     transcription_output: float = 0.0
+    decision_input: float = 0.0
 
     model_config = ConfigDict(
         populate_by_name=True,

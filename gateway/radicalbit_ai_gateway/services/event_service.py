@@ -894,6 +894,7 @@ class EventService:
         has_embedding_models = False
         has_semantic_cache = False
         has_transcription_models = False
+        has_decision_models = False
         for rn in routes_to_query:
             route_config = config.routes.get(rn)
             if route_config is None:
@@ -906,6 +907,7 @@ class EventService:
                 route_has_embedding_models,
                 route_has_semantic_cache,
                 route_has_transcription_models,
+                route_has_decision_models,
             ) = config.get_route_feature_flags(route_config)
             has_chat_models = has_chat_models or route_has_chat_models
             has_judges = has_judges or route_has_judge
@@ -914,6 +916,7 @@ class EventService:
             has_transcription_models = (
                 has_transcription_models or route_has_transcription_models
             )
+            has_decision_models = has_decision_models or route_has_decision_models
 
         dao_route_names = None if route_names is None else routes_to_query
 
@@ -955,6 +958,7 @@ class EventService:
             has_embedding_models=has_embedding_models,
             has_semantic_cache=has_semantic_cache,
             has_transcription_models=has_transcription_models,
+            has_decision_models=has_decision_models,
         )
 
     def get_token_chart_data(
@@ -1102,6 +1106,7 @@ class EventService:
                 has_embedding_models,
                 has_semantic_cache,
                 has_transcription_models,
+                has_decision_models,
             ) = config.get_route_feature_flags(route_config)
 
             cost_dto = CostDataDTO.from_dao(
@@ -1113,6 +1118,7 @@ class EventService:
                 has_embedding_models=has_embedding_models,
                 has_semantic_cache=has_semantic_cache,
                 has_transcription_models=has_transcription_models,
+                has_decision_models=has_decision_models,
             )
 
             total += (

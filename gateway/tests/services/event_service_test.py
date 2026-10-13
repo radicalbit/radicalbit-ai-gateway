@@ -3274,3 +3274,99 @@ class TestGetRouteLimitsProgress:
         assert 'ok-route' in names
         assert 'warning-route' in names
         assert 'critical-route' not in names
+
+
+class TestDecisionModelsUsage:
+    """Usage shows decision spend only on routes with decision models."""
+
+    @staticmethod
+    def _config() -> GatewayConfig:
+        return GatewayConfig.model_validate(
+            {
+                'chat_models': [{'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}],
+                'decision_models': [
+                    {
+                        'model_id': 'jev',
+                        'model': 'typesafe/jev-latest',
+                        'credentials': {'api_key': 'ts-dummy'},
+                    }
+                ],
+                'routes': {
+                    'agent': {'chat_models': ['gpt'], 'decision_models': ['jev']},
+                    'chat': {'chat_models': ['gpt']},
+                },
+            }
+        )
+
+    @staticmethod
+    def _service(event_dao) -> EventService:
+        return EventService(
+            event_dao=event_dao,
+            request_event_dao=MagicMock(spec_set=RequestEventDAO),
+            key_service=MagicMock(spec_set=KeyService),
+            group_service=MagicMock(spec_set=GroupService),
+        )
+
+    def test_summary_costs_include_decision_spend(self):
+        event_dao = MagicMock(spec_set=EventDAO)
+        event_dao.get_summary_costs.return_value = CostData(
+            input_cost=0.0, output_cost=0.0, total_cost=0.0
+        )
+        event_dao.get_detailed_cost_breakdown.return_value = DetailedCostBreakdown(
+            chat_input_direct=1.0, decision_input=0.25
+        )
+
+        res = self._service(event_dao).get_summary_costs(
+            project_uuid=uuid.uuid4(),
+            config=self._config(),
+            route_names=['agent'],
+        )
+
+        assert res.decision_models.input == 0.25
+        assert res.decision_models.total == 0.25
+        assert res.totals.input == 1.25
+        assert res.total == 1.25
+
+    def test_summary_costs_without_decision_routes_have_no_decision_breakdown(self):
+        event_dao = MagicMock(spec_set=EventDAO)
+        event_dao.get_summary_costs.return_value = CostData(
+            input_cost=0.0, output_cost=0.0, total_cost=0.0
+        )
+        event_dao.get_detailed_cost_breakdown.return_value = DetailedCostBreakdown(
+            chat_input_direct=1.0
+        )
+
+        res = self._service(event_dao).get_summary_costs(
+            project_uuid=uuid.uuid4(),
+            config=self._config(),
+            route_names=['chat'],
+        )
+
+        assert res.decision_models is None
+
+    def test_all_routes_costs_show_zero_only_where_configured(self):
+        event_dao = MagicMock(spec_set=EventDAO)
+        event_dao.get_all_routes_summary_costs.return_value = []
+        event_dao.get_all_routes_detailed_cost_breakdown.return_value = []
+
+        res = self._service(event_dao).get_all_routes_costs(
+            project_uuid=uuid.uuid4(), config=self._config()
+        )
+
+        by_route = {r.route_name: r.summary for r in res.routes}
+        assert by_route['agent'].decision_models.input == 0.0
+        assert by_route['agent'].decision_models.total == 0.0
+        assert by_route['chat'].decision_models is None
+
+    def test_all_routes_costs_add_decision_spend_to_grand_total(self):
+        event_dao = MagicMock(spec_set=EventDAO)
+        event_dao.get_all_routes_summary_costs.return_value = []
+        event_dao.get_all_routes_detailed_cost_breakdown.return_value = [
+            RouteDetailedCostBreakdown(route_name='agent', decision_input=0.25)
+        ]
+
+        res = self._service(event_dao).get_all_routes_costs(
+            project_uuid=uuid.uuid4(), config=self._config()
+        )
+
+        assert res.total == 0.25

@@ -204,3 +204,75 @@ def test_from_dao_without_transcription_models_is_none():
     )
 
     assert result.transcription_models is None
+
+
+def test_from_dao_with_decision_models():
+    """Decision input reaches decision_models, totals.input and total."""
+    cost_data = CostData(input_cost=0.0, output_cost=0.0, total_cost=0.0)
+    detailed_breakdown = DetailedCostBreakdown(
+        chat_input_direct=0.5,
+        chat_output_direct=1.0,
+        decision_input=0.0000109,
+    )
+
+    result = CostDataDTO.from_dao(
+        cost_data,
+        None,
+        detailed_breakdown,
+        has_chat_models=True,
+        has_decision_models=True,
+    )
+
+    assert result.decision_models is not None
+    assert result.decision_models.input == 0.0000109
+    assert result.decision_models.total == 0.0000109
+    assert result.totals.input == 0.5 + 0.0000109
+    assert result.totals.output == 1.0
+    assert result.total == 0.5 + 1.0 + 0.0000109
+
+
+def test_from_dao_with_decision_models_and_no_spend_is_zero():
+    """A configured decision model with no spend reads $0, not missing."""
+    cost_data = CostData(input_cost=0.0, output_cost=0.0, total_cost=0.0)
+
+    result = CostDataDTO.from_dao(
+        cost_data,
+        None,
+        DetailedCostBreakdown(),
+        has_chat_models=False,
+        has_decision_models=True,
+    )
+
+    assert result.decision_models is not None
+    assert result.decision_models.input == 0.0
+    assert result.decision_models.total == 0.0
+
+
+def test_from_dao_without_decision_models_is_none():
+    """has_decision_models=False (default) keeps decision_models unset."""
+    cost_data = CostData(input_cost=0.0, output_cost=0.0, total_cost=0.0)
+
+    result = CostDataDTO.from_dao(
+        cost_data,
+        None,
+        DetailedCostBreakdown(decision_input=0.3),
+        has_chat_models=False,
+    )
+
+    assert result.decision_models is None
+    assert result.total == 0.0
+
+
+def test_cost_data_dto_serializes_decision_models_in_camel_case():
+    cost_data = CostData(input_cost=0.0, output_cost=0.0, total_cost=0.0)
+
+    result = CostDataDTO.from_dao(
+        cost_data,
+        None,
+        DetailedCostBreakdown(decision_input=0.25),
+        has_chat_models=False,
+        has_decision_models=True,
+    )
+
+    dumped = result.model_dump(by_alias=True)
+    assert dumped['decisionModels'] == {'input': 0.25, 'total': 0.25}

@@ -134,12 +134,12 @@ class GatewayConfig(BaseModel):
 
     def get_route_feature_flags(
         self, route_config: GatewayRouteConfig
-    ) -> tuple[bool, bool, bool, bool, bool]:
+    ) -> tuple[bool, bool, bool, bool, bool, bool]:
         """Detect route feature flags based on configuration.
 
         Returns:
             Tuple of (has_chat_models, has_judges, has_embedding_models,
-            has_semantic_cache, has_transcription_models)
+            has_semantic_cache, has_transcription_models, has_decision_models)
 
         """
         has_chat_models = bool(route_config.chat_models)
@@ -150,12 +150,14 @@ class GatewayConfig(BaseModel):
         )
         has_semantic_cache = isinstance(route_config.caching, SemanticCaching)
         has_transcription_models = bool(route_config.transcription_models)
+        has_decision_models = bool(route_config.decision_models)
         return (
             has_chat_models,
             has_judges,
             has_embedding_models,
             has_semantic_cache,
             has_transcription_models,
+            has_decision_models,
         )
 
     @model_validator(mode='before')

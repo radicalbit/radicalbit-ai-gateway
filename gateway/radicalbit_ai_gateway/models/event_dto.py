@@ -770,6 +770,22 @@ class TranscriptionModelsCostDTO(BaseModel):
     )
 
 
+class DecisionModelsCostDTO(BaseModel):
+    input: float = Field(
+        default=0,
+        description='Input token costs for decision models. Exact cache hits cost $0',
+    )
+    total: float = Field(
+        description='Sum of all decision model costs (input only, output is never billed)'
+    )
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+        protected_namespaces=(),
+    )
+
+
 class CostDataDTO(BaseModel):
     input_cost: Annotated[
         float,
@@ -864,6 +880,10 @@ class CostDataDTO(BaseModel):
         default=None,
         description='Cost breakdown for transcription models (duration/audio/text input + output)',
     )
+    decision_models: DecisionModelsCostDTO | None = Field(
+        default=None,
+        description='Cost breakdown for decision models (input only)',
+    )
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -881,6 +901,7 @@ class CostDataDTO(BaseModel):
         has_embedding_models: bool = False,
         has_semantic_cache: bool = False,
         has_transcription_models: bool = False,
+        has_decision_models: bool = False,
     ) -> 'CostDataDTO':
         cache_triggered: int | None = None
         input_cost = cost_data.input_cost
@@ -961,6 +982,7 @@ class CostDataDTO(BaseModel):
         chat_models_cost: ChatModelsCostDTO | None = None
         embedding_models_cost: EmbeddingModelsCostDTO | None = None
         transcription_models_cost: TranscriptionModelsCostDTO | None = None
+        decision_models_cost: DecisionModelsCostDTO | None = None
 
         if detailed_breakdown:
             # Calculate chat models breakdown (None if no chat models)
@@ -1032,6 +1054,13 @@ class CostDataDTO(BaseModel):
                     + detailed_breakdown.transcription_output,
                 )
 
+            # Calculate decision models breakdown (None if no decision models)
+            if has_decision_models:
+                decision_models_cost = DecisionModelsCostDTO(
+                    input=detailed_breakdown.decision_input,
+                    total=detailed_breakdown.decision_input,
+                )
+
             # Calculate total DTO
             chat_input_total = chat_models_cost.input.total if chat_models_cost else 0
             embed_input_total = (
@@ -1041,6 +1070,9 @@ class CostDataDTO(BaseModel):
                 transcription_models_cost.input.total
                 if transcription_models_cost
                 else 0
+            )
+            decision_input_total = (
+                decision_models_cost.input if decision_models_cost else 0
             )
             chat_cached_total = (
                 chat_models_cost.cached_input.total if chat_models_cost else 0
@@ -1053,7 +1085,8 @@ class CostDataDTO(BaseModel):
             total_dto = TotalCostDTO(
                 input=chat_input_total
                 + embed_input_total
-                + transcription_input_grand_total,
+                + transcription_input_grand_total
+                + decision_input_total,
                 cached_input=chat_cached_total,
                 output=chat_output_total + transcription_output_total,
                 saved=total_saved_amount,
@@ -1065,7 +1098,8 @@ class CostDataDTO(BaseModel):
             transcription_total = (
                 transcription_models_cost.total if transcription_models_cost else 0
             )
-            total_all = chat_total + embed_total + transcription_total
+            decision_total = decision_models_cost.total if decision_models_cost else 0
+            total_all = chat_total + embed_total + transcription_total + decision_total
 
         return CostDataDTO(
             input_cost=input_cost,
@@ -1083,6 +1117,7 @@ class CostDataDTO(BaseModel):
             chat_models=chat_models_cost,
             embedding_models=embedding_models_cost,
             transcription_models=transcription_models_cost,
+            decision_models=decision_models_cost,
         )
 
 
