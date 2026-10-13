@@ -76,7 +76,7 @@ class TestNoLimitsConfigured:
         await limiter.count_input_tokens(100)
         await limiter.check_output_tokens(**_CALL_ARGS)
         await limiter.count_output_tokens(100)
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
         await limiter.count_budget_input(100, 0.01)
         await limiter.count_budget_output(100, 0.01)
         await limiter.count_budget_duration(10.0, 0.01)
@@ -165,19 +165,19 @@ class TestTokenOutputLimiting:
 
 class TestBudgetLimiting:
     @pytest.mark.asyncio
-    async def test_check_budget_blocks_without_emitting_event(self, mock_emit_event):
+    async def test_check_budget_blocks_and_emits_event(self, mock_emit_event):
         limiter = _limiter([_limit(CredentialLimitCategory.BUDGET, 1.0)])
         await limiter.count_budget_input(token_count=1000, input_cost_per_token=0.001)
         with pytest.raises(BudgetLimitExceededError):
-            await limiter.check_budget()
-        mock_emit_event.assert_not_called()
+            await limiter.check_budget(**_CALL_ARGS)
+        mock_emit_event.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_count_budget_output_and_duration_consume_same_window(self):
         limiter = _limiter([_limit(CredentialLimitCategory.BUDGET, 10.0)])
         await limiter.count_budget_output(token_count=1000, output_cost_per_token=0.002)
         await limiter.count_budget_duration(seconds=5.0, cost_per_second=0.1)
-        await limiter.check_budget()  # still within limit
+        await limiter.check_budget(**_CALL_ARGS)  # still within limit
 
 
 class TestCredentialScoping:

@@ -2,6 +2,7 @@ from enum import Enum
 from functools import lru_cache
 import logging
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator
 from pydantic.alias_generators import to_camel
@@ -99,6 +100,19 @@ class SmtpConfig(BaseSettings):
     smtp_password: str | None = None
     smtp_from_email: str = 'alerts@radicalbit.ai'
     smtp_max_workers: int = 4
+
+
+class AlertConfig(BaseSettings):
+    """Global alert settings.
+
+    ``alert_threshold_percentages`` are the percentages of a limit at which a
+    threshold event fires, before the limit blocks anything. They are global,
+    not per alert rule.
+    """
+
+    alert_threshold_percentages: list[Annotated[int, Field(ge=1, le=99)]] = Field(
+        default=[75, 98]
+    )
 
 
 class CorsConfig(BaseSettings):
@@ -224,6 +238,7 @@ class AppConfig(BaseSettings):
     cors_config: CorsConfig = CorsConfig()
     config_generator_config: ConfigGeneratorConfig = ConfigGeneratorConfig()
     smtp_config: SmtpConfig = SmtpConfig()
+    alert_config: AlertConfig = AlertConfig()
 
     def model_post_init(self, __context) -> None:
         lvl_str = (

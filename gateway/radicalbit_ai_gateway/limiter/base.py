@@ -106,6 +106,7 @@ class BaseFixedWindowLimiter(ABC):
             reset_time=ttl,
             window_id=window_id,
             remaining_time=remaining_time,
+            consumed=current,
         )
 
     @abstractmethod

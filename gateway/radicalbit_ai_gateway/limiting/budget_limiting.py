@@ -2,6 +2,7 @@ import logging
 
 from traceloop.sdk.decorators import task
 
+from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.limiter import (
     AlignedFixedWindowLimiter,
     FixedWindowLimiter,
@@ -10,6 +11,9 @@ from radicalbit_ai_gateway.limiter import (
     ScenarioType,
     WindowConfig,
 )
+from radicalbit_ai_gateway.limiting.limit_event import limit_fields
+from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
+from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -96,7 +100,17 @@ class BudgetLimiter:
         await self.limiter.hit(self.item, cost=cost)
 
     @task(name='check_budget_limit')
-    async def check_budget(self) -> None:
+    async def check_budget(
+        self,
+        *,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> None:
         """Check if budget counter is exceeded. Raise BudgetLimitExceededError if limit is exceeded."""
         if not self.limiter or not self.item or not self.config:
             logger.debug(
@@ -121,6 +135,21 @@ class BudgetLimiter:
                 f'[reset_s={state.remaining_time}] '
                 f'[item={self.item}] '
                 '[action=BLOCK]'
+            )
+            emit_event(
+                LimitEventPayload(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    group_uuid=group_uuid,
+                    api_key_name=api_key_name,
+                    group_name=group_name,
+                    project_uuid=project_uuid,
+                    project_name=project_name,
+                    event_type=EventType.BUDGET_LIMIT,
+                    route_name=self.route_name,
+                    value=1.0,
+                    **limit_fields(LimitScope.ROUTE, self.item, state),
+                )
             )
 
             user_message = (

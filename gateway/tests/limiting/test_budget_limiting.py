@@ -1,13 +1,33 @@
 import datetime
+from unittest.mock import patch
 
 from freezegun import freeze_time
 import pytest
+
+from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
 from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
 
 _PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+
+_CALL_ARGS = {
+    'request_uuid': str(REQUEST_UUID),
+    'api_key_uuid': str(API_KEY_UUID),
+    'group_uuid': str(GROUP_UUID),
+    'api_key_name': 'test-key',
+    'group_name': 'test-group',
+}
+
+
+@pytest.fixture(autouse=True)
+def mock_emit_event():
+    """Mock emit_event for all tests in this module."""
+    with patch(
+        'radicalbit_ai_gateway.limiting.budget_limiting.emit_event', autospec=True
+    ):
+        yield
 
 
 class TestBudgetLimiter:
@@ -42,7 +62,7 @@ class TestBudgetLimiter:
         limiter = BudgetLimiter(project_uuid=_PROJECT_UUID, route_name='rb-gateway')
         await limiter.count_input(10, 2.5e-06)
         await limiter.count_output(10, 2.5e-06)
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
 
     @pytest.mark.asyncio
     async def test_check_and_count_within_limit(self):
@@ -52,7 +72,7 @@ class TestBudgetLimiter:
         )
         await limiter.count_input(10, 2.5e-06)
         await limiter.count_output(10, 2.5e-06)
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
 
     @pytest.mark.asyncio
     async def test_count_input_exceeds_limit(self):
@@ -63,7 +83,7 @@ class TestBudgetLimiter:
 
         with pytest.raises(BudgetLimitExceededError) as exc:
             await limiter.count_input(10_000_000, 2.5e-06)
-            await limiter.check_budget()
+            await limiter.check_budget(**_CALL_ARGS)
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[BUDGET LIMIT]' in msg
@@ -85,7 +105,7 @@ class TestBudgetLimiter:
         await limiter.count_output(100000, 2.51e-06)
 
         with pytest.raises(BudgetLimitExceededError) as exc:
-            await limiter.check_budget()
+            await limiter.check_budget(**_CALL_ARGS)
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[BUDGET LIMIT]' in msg
@@ -111,7 +131,7 @@ class TestBudgetLimiter:
         await limiter.count_duration(8.25, 0.0001)
 
         with pytest.raises(BudgetLimitExceededError) as exc:
-            await limiter.check_budget()
+            await limiter.check_budget(**_CALL_ARGS)
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[BUDGET LIMIT]' in msg
@@ -128,16 +148,16 @@ class TestBudgetLimiter:
 
         # Each call spends ~0.25, three calls = 0.75 — still under 1.0
         await limiter.count_input(100000, 2.5e-06)
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
         await limiter.count_output(100000, 2.5e-06)
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
         await limiter.count_input(100000, 2.5e-06)
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
 
         # 4th call puts combined total over 1.0
         with pytest.raises(BudgetLimitExceededError) as exc:
             await limiter.count_output(100000, 2.51e-06)
-            await limiter.check_budget()
+            await limiter.check_budget(**_CALL_ARGS)
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[BUDGET LIMIT]' in msg
@@ -156,17 +176,17 @@ class TestBudgetLimiter:
         )
 
         await limiter.count_input(100000, 2.5e-06)
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
 
         await limiter.count_output(100000, 2.5e-06)
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
 
         await limiter.count_input(100000, 2.5e-06)
-        await limiter.check_budget()
+        await limiter.check_budget(**_CALL_ARGS)
 
         with pytest.raises(BudgetLimitExceededError) as exc:
             await limiter.count_input(100000, 2.51e-06)
-            await limiter.check_budget()
+            await limiter.check_budget(**_CALL_ARGS)
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[limit=1.0]' in msg
@@ -191,7 +211,7 @@ class TestBudgetLimiter:
             await limiter.count_output(100000, 5.1e-06)
 
             with pytest.raises(BudgetLimitExceededError) as exc:
-                await limiter.check_budget()
+                await limiter.check_budget(**_CALL_ARGS)
 
             msg = getattr(exc.value, 'log_message', str(exc.value))
             assert '[BUDGET LIMIT]' in msg
@@ -222,11 +242,11 @@ class TestBudgetLimiter:
             )
 
             await limiter.count_input(100000, 2.4e-06)
-            await limiter.check_budget()
+            await limiter.check_budget(**_CALL_ARGS)
 
             with pytest.raises(BudgetLimitExceededError) as exc1:
                 await limiter.count_input(100000, 2.4e-06)
-                await limiter.check_budget()
+                await limiter.check_budget(**_CALL_ARGS)
 
             msg1 = getattr(exc1.value, 'log_message', str(exc1.value))
             assert '[BUDGET LIMIT]' in msg1
@@ -243,7 +263,7 @@ class TestBudgetLimiter:
 
             with pytest.raises(BudgetLimitExceededError) as exc2:
                 await limiter.count_input(100000, 2.4e-06)
-                await limiter.check_budget()
+                await limiter.check_budget(**_CALL_ARGS)
 
             msg2 = getattr(exc2.value, 'log_message', str(exc2.value))
             assert '[BUDGET LIMIT]' in msg2
@@ -257,4 +277,4 @@ class TestBudgetLimiter:
 
             frozen_datetime.tick(7)
             await limiter.count_input(100000, 2.4e-06)
-            await limiter.check_budget()
+            await limiter.check_budget(**_CALL_ARGS)

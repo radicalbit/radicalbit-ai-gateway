@@ -69,6 +69,9 @@ SMTP_USER=
 SMTP_PASSWORD=
 SMTP_FROM_EMAIL=alerts@radicalbit.ai
 
+# Alerts: limit percentages (1-99) that raise a threshold event
+ALERT_THRESHOLD_PERCENTAGES='[75, 98]'
+
 # CORS
 CORS_ALLOW_ORIGINS='["http://localhost:5173"]'
 CORS_ALLOW_CREDENTIALS=True
