@@ -1,4 +1,5 @@
-"""String leaves of a decision request's `state`, walked depth first.
+"""String leaves of a decision request's `state` and `questions`, walked
+depth first.
 
 Guardrails screen each string leaf as one text. Keys, numbers, booleans and
 nulls are never leaves, so they are never checked or redacted.

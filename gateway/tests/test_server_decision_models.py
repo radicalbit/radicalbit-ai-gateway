@@ -677,7 +677,13 @@ class TestDecisionModelEndpoint(unittest.TestCase):
                 'refunded': False,
                 'customer': {'contacts': ['<EMAIL_ADDRESS>', 3, None]},
             },
-            questions=questions,
+            questions={
+                'mail': {
+                    'type': 'choice',
+                    'instructions': 'Is <EMAIL_ADDRESS> the sender?',
+                    'criteria': {'yes': 'Yes', 'no': 'No'},
+                }
+            },
         )
 
         response = self._post_state(state, questions=questions)
@@ -721,15 +727,49 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert not typesafe.calls
         assert [e.behavior for e in self.guardrail_events] == ['SOFT_BLOCK']
 
-    def test_questions_are_not_checked(self):
+    def test_questions_are_checked(self):
+        # 'customer want' is only in the question's instructions.
         app.state.routes = _build_routes(
             JEV, guardrails=[_check_guardrail('block', 'customer want')]
         )
-        self._mock_typesafe()
+        typesafe = self._spy_on_typesafe()
 
         response = self._post()
 
+        assert response.status_code == 400
+        assert not typesafe.calls
+
+    def test_criterion_names_are_keys_and_never_checked(self):
+        app.state.routes = _build_routes(
+            JEV, guardrails=[_check_guardrail('block', 'refund')]
+        )
+        typesafe = self._spy_on_typesafe()
+
+        response = self._post_state({'ticket': 'Hello'})
+
         assert response.status_code == 200
+        assert typesafe.calls == 1
+
+    def test_body_with_no_string_leaves_is_forwarded_unchanged(self):
+        app.state.routes = _build_routes(
+            JEV, guardrails=[_check_guardrail('block', 'refund')]
+        )
+        state = {'amount': 42.5, 'refunded': False, 'note': None}
+        typesafe = (
+            pook.post(TYPESAFE_URL)
+            .json({'state': state, 'model': 'jev-latest'})
+            .times(1)
+        )
+        typesafe.reply(200).json(TYPESAFE_BODY)
+
+        response = self.client.post(
+            '/v1/systemone',
+            json={'state': state, 'model': ROUTE_KEY},
+            headers=self.headers,
+        )
+
+        assert response.status_code == 200
+        assert pook.isdone()
 
     # Exact cache (AG-1002)
 
