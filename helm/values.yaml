@@ -114,18 +114,3 @@ metricsWorker:
   migrations:
     image:
       repository: radicalbit/radicalbit-ai-gateway-clickhouse-migrations
-  notifications:
-    slack:
-      enabled: false
-      webhookMappings: "{}"
-      userMappings: "{}"
-    sendgrid:
-      enabled: false
-      apiKey:
-        value: ""
-        existingSecret:
-        existingSecretKey: sendgrid-api-key
-      fromEmail: ""
-      templateId: ""
-      emailMappings: "{}"
-    thresholds: "[75, 98]"

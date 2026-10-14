@@ -96,42 +96,6 @@ spec:
                   {{- else }}
                   name: {{ include "common.fullname" . }}-ch-auth
                   {{- end }}
-            - name: REDIS_HOST
-              value: {{ .Values.valkey.host }}
-            - name: REDIS_PORT
-              value: {{ .Values.valkey.port | quote }}
-            # Slack settings
-            - name: SLACK_ENABLED
-              value: {{ .Values.metricsWorker.notifications.slack.enabled | quote }}
-            - name: SLACK_WEBHOOK_MAPPINGS
-              value: {{ .Values.metricsWorker.notifications.slack.webhookMappings | quote }}
-            - name: SLACK_USER_MAPPINGS
-              value: {{ .Values.metricsWorker.notifications.slack.userMappings | quote }}
-            # SendGrid settings
-            - name: SENDGRID_ENABLED
-              value: {{ .Values.metricsWorker.notifications.sendgrid.enabled | quote }}
-            - name: SENDGRID_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  {{- if .Values.metricsWorker.notifications.sendgrid.apiKey.existingSecretKey }}
-                  key: {{ .Values.metricsWorker.notifications.sendgrid.apiKey.existingSecretKey }}
-                  {{- else }}
-                  key: sendgrid-api-key
-                  {{- end }}
-                  {{- if .Values.metricsWorker.notifications.sendgrid.apiKey.existingSecret }}
-                  name: {{ .Values.metricsWorker.notifications.sendgrid.apiKey.existingSecret }}
-                  {{- else }}
-                  name: {{ include "common.fullname" . }}-sendgrid
-                  {{- end }}
-            - name: SENDGRID_FROM_EMAIL
-              value: {{ .Values.metricsWorker.notifications.sendgrid.fromEmail | quote }}
-            - name: SENDGRID_TEMPLATE_ID
-              value: {{ .Values.metricsWorker.notifications.sendgrid.templateId | quote }}
-            - name: SENDGRID_EMAIL_MAPPINGS
-              value: {{ .Values.metricsWorker.notifications.sendgrid.emailMappings | quote }}
-            # Notification thresholds
-            - name: NOTIFICATION_THRESHOLDS
-              value: {{ .Values.metricsWorker.notifications.thresholds | quote }}
           {{- with .Values.metricsWorker.resources }}
           resources:
 {{- toYaml . | nindent 12 }}
