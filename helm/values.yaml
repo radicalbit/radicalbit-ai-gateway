@@ -87,6 +87,12 @@ gateway:
     externalConfigMap: ""
     source: "prompts"
     mountPath: "/radicalbit_ai_gateway/radicalbit_ai_gateway/prompts"
+  judgePrompts:
+    enabled: false
+    fromConfigMap: false
+    externalConfigMap: ""
+    source: "custom-prompts"
+    mountPath: "/radicalbit_ai_gateway/radicalbit_ai_gateway/guardrails/judges/custom-prompts"
   assistant:
     apiKey:
       value: ""

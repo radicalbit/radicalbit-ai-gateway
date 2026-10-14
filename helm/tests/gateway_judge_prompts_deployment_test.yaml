@@ -1,0 +1,180 @@
+suite: test gateway deployment with judge prompts
+templates:
+  - gateway/deployment.yaml
+set:
+  gateway:
+    secrets:
+      fromSecret: false
+  postgresql:
+    auth:
+      username:
+        value: "user"
+      password:
+        value: "pass"
+  clickhouse:
+    auth:
+      username:
+        value: "user"
+      password:
+        value: "pass"
+tests:
+  - it: should not have judge prompts volume, mount or env var when disabled
+    set:
+      gateway:
+        judgePrompts:
+          enabled: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: judge-prompts
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: judge-prompts
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: JUDGE_PROMPTS_DIR
+          any: true
+  - it: should have judge prompts volume, mount and env var when enabled
+    set:
+      gateway:
+        judgePrompts:
+          enabled: true
+          fromConfigMap: false
+          source: "tests/fixtures/judge-prompts"
+          mountPath: "/app/judge-prompts"
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: judge-prompts
+            configMap:
+              name: RELEASE-NAME-radicalbit-ai-gateway-gw-judge-prompts
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: judge-prompts
+            mountPath: "/app/judge-prompts"
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: JUDGE_PROMPTS_DIR
+            value: "/app/judge-prompts"
+  - it: should use the default mount path when enabled without overrides
+    set:
+      gateway:
+        judgePrompts:
+          enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: judge-prompts
+            mountPath: "/radicalbit_ai_gateway/radicalbit_ai_gateway/guardrails/judges/custom-prompts"
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: JUDGE_PROMPTS_DIR
+            value: "/radicalbit_ai_gateway/radicalbit_ai_gateway/guardrails/judges/custom-prompts"
+  - it: should use external ConfigMap when fromConfigMap is true
+    set:
+      gateway:
+        judgePrompts:
+          enabled: true
+          fromConfigMap: true
+          externalConfigMap: "my-judge-prompts-configmap"
+          mountPath: "/app/judge-prompts"
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: judge-prompts
+            configMap:
+              name: my-judge-prompts-configmap
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: judge-prompts
+            mountPath: "/app/judge-prompts"
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: JUDGE_PROMPTS_DIR
+            value: "/app/judge-prompts"
+  - it: should not add the model prompts volume or env var when only judge prompts are enabled
+    set:
+      gateway:
+        prompts:
+          enabled: false
+        judgePrompts:
+          enabled: true
+          mountPath: "/app/judge-prompts"
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: prompts
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: prompts
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMPTS_DIR
+          any: true
+  - it: should mount model and judge prompts from separate volumes when both are enabled
+    set:
+      gateway:
+        prompts:
+          enabled: true
+          fromConfigMap: false
+          mountPath: "/app/prompts"
+        judgePrompts:
+          enabled: true
+          fromConfigMap: false
+          mountPath: "/app/judge-prompts"
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: prompts
+            configMap:
+              name: RELEASE-NAME-radicalbit-ai-gateway-gw-prompts
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: judge-prompts
+            configMap:
+              name: RELEASE-NAME-radicalbit-ai-gateway-gw-judge-prompts
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: prompts
+            mountPath: "/app/prompts"
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: judge-prompts
+            mountPath: "/app/judge-prompts"
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMPTS_DIR
+            value: "/app/prompts"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: JUDGE_PROMPTS_DIR
+            value: "/app/judge-prompts"

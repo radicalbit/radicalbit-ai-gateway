@@ -1,0 +1,74 @@
+suite: test judge-prompts-configmap.yaml manifest
+templates:
+  - gateway/judge-prompts-configmap.yaml
+tests:
+  - it: should not create the ConfigMap by default
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: should not create the ConfigMap when judge prompts are disabled
+    set:
+      gateway:
+        judgePrompts:
+          enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: should create the ConfigMap when judge prompts are enabled and fromConfigMap is false
+    set:
+      gateway:
+        judgePrompts:
+          enabled: true
+          fromConfigMap: false
+          source: "tests/fixtures/judge-prompts"
+          mountPath: "/app/judge-prompts"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - isAPIVersion:
+          of: v1
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-radicalbit-ai-gateway-gw-judge-prompts
+  - it: should include only the .md files from the source directory, keyed by file name
+    set:
+      gateway:
+        judgePrompts:
+          enabled: true
+          fromConfigMap: false
+          source: "tests/fixtures/judge-prompts"
+    asserts:
+      - exists:
+          path: data["judge1.md"]
+      - exists:
+          path: data["judge2.md"]
+      - notExists:
+          path: data["ignored.txt"]
+      - matchRegex:
+          path: data["judge1.md"]
+          pattern: "^# Test Judge Prompt 1"
+  - it: should not create the ConfigMap when fromConfigMap is true
+    set:
+      gateway:
+        judgePrompts:
+          enabled: true
+          fromConfigMap: true
+          externalConfigMap: "my-judge-prompts-configmap"
+          source: "tests/fixtures/judge-prompts"
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: should not be affected by the model prompts settings
+    set:
+      gateway:
+        prompts:
+          enabled: true
+          fromConfigMap: false
+          source: "tests/fixtures/prompts"
+        judgePrompts:
+          enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

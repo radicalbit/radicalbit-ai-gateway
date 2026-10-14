@@ -45,6 +45,15 @@ spec:
             name: {{ template "gateway.fullname" . }}-prompts
             {{- end }}
         {{- end }}
+        {{- if .Values.gateway.judgePrompts.enabled }}
+        - name: judge-prompts
+          configMap:
+            {{- if .Values.gateway.judgePrompts.fromConfigMap }}
+            name: {{ .Values.gateway.judgePrompts.externalConfigMap }}
+            {{- else }}
+            name: {{ template "gateway.fullname" . }}-judge-prompts
+            {{- end }}
+        {{- end }}
       initContainers:
         - name: database-migrations
           image: "{{ .Values.gateway.migrations.image.repository }}:{{ .Values.image.tag }}"
@@ -204,6 +213,10 @@ spec:
             - name: PROMPTS_DIR
               value: {{ .Values.gateway.prompts.mountPath }}
             {{- end }}
+            {{- if .Values.gateway.judgePrompts.enabled }}
+            - name: JUDGE_PROMPTS_DIR
+              value: {{ .Values.gateway.judgePrompts.mountPath }}
+            {{- end }}
             {{- with .Values.gateway.extraEnvVars }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -220,6 +233,11 @@ spec:
             {{- if .Values.gateway.prompts.enabled }}
             - name: prompts
               mountPath: {{ .Values.gateway.prompts.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.gateway.judgePrompts.enabled }}
+            - name: judge-prompts
+              mountPath: {{ .Values.gateway.judgePrompts.mountPath }}
               readOnly: true
             {{- end }}
           {{- with .Values.gateway.resources }}
