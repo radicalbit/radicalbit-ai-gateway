@@ -93,6 +93,9 @@ gateway:
     externalConfigMap: ""
     source: "custom-prompts"
     mountPath: "/radicalbit_ai_gateway/radicalbit_ai_gateway/guardrails/judges/custom-prompts"
+  alerts:
+    thresholdPercentages: "[75, 98]"
+    windowTickSeconds: 30
   assistant:
     apiKey:
       value: ""

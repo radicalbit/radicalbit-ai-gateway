@@ -1,4 +1,4 @@
-"""A model with no price entry: the request succeeds and is costed at 0 (AG-998)."""
+"""A model with no price entry: the request succeeds and is costed at 0."""
 
 import unittest
 from unittest.mock import MagicMock, patch

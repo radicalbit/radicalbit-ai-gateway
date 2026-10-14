@@ -1,7 +1,8 @@
 """`emit_event(event)` in; emails and alert records out.
 
 Rules are stored in Postgres. The alert state lives on the Valkey testcontainer
-in one class and in process in the other: both run the same tests.
+in one class and in process in the other: both run the same tests. Windows are
+closed by calling the scheduler's tick, `close_windows`, directly.
 """
 
 from datetime import UTC, datetime
@@ -52,6 +53,17 @@ class FakeBuffer:
 
     def add(self, record: dict) -> None:
         self.records.append(record)
+
+
+class FakeClock:
+    def __init__(self, now: datetime = NOW):
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def set(self, hour: int, minute: int, second: int = 0) -> None:
+        self.now = self.now.replace(hour=hour, minute=minute, second=second)
 
 
 class InlineExecutor:
@@ -107,13 +119,14 @@ class DispatchTests:
     def _wire(self, request):
         self.email = FakeEmailService()
         self.buffer = FakeBuffer()
-        dispatcher = AlertDispatcher(
+        self.clock = FakeClock()
+        self.dispatcher = AlertDispatcher(
             alert_rule_dao=AlertRuleDAO(self.db),
             email_service=self.email,
             store=self.make_store(request),
         )
         with (
-            patch.object(events_processor, '_alert_dispatcher', dispatcher),
+            patch.object(events_processor, '_alert_dispatcher', self.dispatcher),
             patch.object(events_processor, '_alert_executor', InlineExecutor()),
             patch.object(events_processor, '_events_buffer'),
             patch(
@@ -288,13 +301,203 @@ class DispatchTests:
         assert self.email.sent == []
 
     def test_aggregations_not_built_yet_send_nothing(self):
-        self.rule(time_aggregation='window', window_size='5m')
         self.rule(time_aggregation='limit_window')
 
         events_processor.emit_event(guardrail_event())
 
         assert self.email.sent == []
         assert self.buffer.records == []
+
+    # --- window ---
+
+    def window_rule(self, size: str = '5m', **columns) -> AlertRule:
+        return self.rule(time_aggregation='window', window_size=size, **columns)
+
+    def test_a_window_rule_sends_nothing_while_its_window_is_open(self):
+        self.window_rule('5m')
+
+        events_processor.emit_event(guardrail_event())
+        self.clock.set(9, 34, 59)
+        self.dispatcher.close_windows()
+
+        assert self.email.sent == []
+        assert self.buffer.records == []
+
+    def test_a_closed_window_sends_one_alert_with_the_count(self):
+        self.window_rule('5m')
+
+        for _ in range(3):
+            events_processor.emit_event(guardrail_event())
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+
+        [email] = self.email.sent
+        assert email['recipients'] == ['ops@example.com']
+        assert 'PII watch' in email['subject']
+        assert 'acme / chat' in email['subject']
+        assert 'Events' in email['body']
+        assert '>3<' in email['body']
+        assert '2026-10-13 09:30:00 UTC → 2026-10-13 09:35:00 UTC' in email['body']
+
+    def test_a_closed_window_is_sent_once(self):
+        self.window_rule('5m')
+
+        events_processor.emit_event(guardrail_event())
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+        self.clock.set(9, 36)
+        self.dispatcher.close_windows()
+
+        assert len(self.email.sent) == 1
+
+    def test_a_window_alert_is_recorded_with_its_count_and_interval(self):
+        rule = self.window_rule('15m', event='fallback-triggered')
+
+        events_processor.emit_event(fallback_event())
+        events_processor.emit_event(fallback_event())
+        self.clock.set(9, 45)
+        self.dispatcher.close_windows()
+
+        [record] = self.buffer.records
+        assert record['RULE_UUID'] == str(rule.uuid)
+        assert record['EVENT'] == 'fallback-triggered'
+        assert record['AGGREGATION'] == 'window'
+        assert record['COUNT'] == 2
+        assert record['WINDOW_START'] == datetime(2026, 10, 13, 9, 30, tzinfo=UTC)
+        assert record['WINDOW_END'] == datetime(2026, 10, 13, 9, 45, tzinfo=UTC)
+        assert record['STATUS'] == 'sent'
+
+    def test_windows_are_aligned_to_the_utc_clock(self):
+        self.window_rule('1h')
+
+        self.clock.set(9, 41)
+        events_processor.emit_event(guardrail_event())
+        self.clock.set(10, 0)
+        self.dispatcher.close_windows()
+
+        [record] = self.buffer.records
+        assert record['WINDOW_START'] == datetime(2026, 10, 13, 9, 0, tzinfo=UTC)
+        assert record['WINDOW_END'] == datetime(2026, 10, 13, 10, 0, tzinfo=UTC)
+
+    def test_a_day_window_runs_from_midnight_to_midnight_utc(self):
+        self.window_rule('24h')
+
+        events_processor.emit_event(guardrail_event())
+        self.clock.now = datetime(2026, 10, 14, tzinfo=UTC)
+        self.dispatcher.close_windows()
+
+        [record] = self.buffer.records
+        assert record['WINDOW_START'] == datetime(2026, 10, 13, tzinfo=UTC)
+        assert record['WINDOW_END'] == datetime(2026, 10, 14, tzinfo=UTC)
+
+    def test_an_event_counted_after_its_window_closed_sends_no_second_alert(self):
+        self.window_rule('5m')
+
+        events_processor.emit_event(guardrail_event())
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+        # A replica whose clock lags still counts into the closed window.
+        self.clock.set(9, 34, 59)
+        events_processor.emit_event(guardrail_event())
+        self.clock.set(9, 35, 30)
+        self.dispatcher.close_windows()
+
+        assert len(self.email.sent) == 1
+
+    def test_events_in_consecutive_windows_send_one_alert_each(self):
+        self.window_rule('5m')
+
+        events_processor.emit_event(guardrail_event())
+        self.clock.set(9, 36)
+        events_processor.emit_event(guardrail_event())
+        events_processor.emit_event(guardrail_event())
+        self.clock.set(9, 40)
+        self.dispatcher.close_windows()
+
+        counts = sorted(r['COUNT'] for r in self.buffer.records)
+        assert counts == [1, 2]
+
+    def test_an_empty_window_sends_nothing(self):
+        self.window_rule('5m')
+
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+
+        assert self.email.sent == []
+        assert self.buffer.records == []
+
+    def test_each_window_rule_counts_on_its_own(self):
+        self.window_rule('5m', name='first')
+        self.window_rule('5m', name='second')
+
+        events_processor.emit_event(guardrail_event())
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+
+        assert sorted(r['RULE_NAME'] for r in self.buffer.records) == [
+            'first',
+            'second',
+        ]
+
+    def test_a_rule_disabled_before_close_sends_nothing(self):
+        rule = self.window_rule('5m')
+
+        events_processor.emit_event(guardrail_event())
+        AlertRuleDAO(self.db).toggle_enabled(rule.uuid, False)
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+
+        assert self.email.sent == []
+        assert self.buffer.records == []
+
+    def test_a_rule_deleted_before_close_sends_nothing(self):
+        rule = self.window_rule('5m')
+
+        events_processor.emit_event(guardrail_event())
+        AlertRuleDAO(self.db).soft_delete_by_uuid(rule.uuid)
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+
+        assert self.email.sent == []
+
+    def test_a_rule_switched_away_from_its_window_before_close_sends_nothing(self):
+        to_instant = self.window_rule('5m', name='to instant')
+        resized = self.window_rule('5m', name='resized')
+
+        events_processor.emit_event(guardrail_event())
+        dao = AlertRuleDAO(self.db)
+        dao.update_rule(
+            to_instant.uuid, {'time_aggregation': 'instant', 'window_size': None}
+        )
+        dao.update_rule(resized.uuid, {'window_size': '1h'})
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+
+        assert self.email.sent == []
+
+    def test_a_dropped_window_is_not_sent_later(self):
+        rule = self.window_rule('5m')
+
+        events_processor.emit_event(guardrail_event())
+        dao = AlertRuleDAO(self.db)
+        dao.toggle_enabled(rule.uuid, False)
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+        dao.toggle_enabled(rule.uuid, True)
+        self.clock.set(9, 36)
+        self.dispatcher.close_windows()
+
+        assert self.email.sent == []
+
+    def test_a_failed_window_send_is_recorded_as_failed(self):
+        self.window_rule('5m')
+        self.email.outcomes = [RuntimeError('smtp down')]
+
+        events_processor.emit_event(guardrail_event())
+        self.clock.set(9, 35)
+        self.dispatcher.close_windows()
+
+        assert [r['STATUS'] for r in self.buffer.records] == ['failed']
 
     # --- email content ---
 
@@ -342,11 +545,30 @@ class DispatchTests:
 
 class TestDispatchOnRedis(DispatchTests, DatabaseIntegration):
     def make_store(self, request):
-        url = request.getfixturevalue('redis_connection_url')
-        Redis.from_url(url).flushdb()
-        return RedisAlertStore(Redis.from_url(url), clock=lambda: NOW)
+        self.redis_url = request.getfixturevalue('redis_connection_url')
+        Redis.from_url(self.redis_url).flushdb()
+        return RedisAlertStore(Redis.from_url(self.redis_url), clock=self.clock)
+
+    def test_two_dispatchers_on_the_same_redis_send_one_alert_per_window(self):
+        self.window_rule('5m')
+        replica = AlertDispatcher(
+            alert_rule_dao=AlertRuleDAO(self.db),
+            email_service=self.email,
+            store=RedisAlertStore(Redis.from_url(self.redis_url), clock=self.clock),
+        )
+
+        self.dispatcher.dispatch(guardrail_event())
+        replica.dispatch(guardrail_event())
+        replica.dispatch(guardrail_event())
+        self.clock.set(9, 35)
+        replica.close_windows()
+        self.dispatcher.close_windows()
+
+        assert len(self.email.sent) == 1
+        [record] = self.buffer.records
+        assert record['COUNT'] == 3
 
 
 class TestDispatchInProcess(DispatchTests, DatabaseIntegration):
     def make_store(self, request):
-        return InProcessAlertStore(clock=lambda: NOW)
+        return InProcessAlertStore(clock=self.clock)

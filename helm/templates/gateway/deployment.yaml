@@ -203,6 +203,14 @@ spec:
             - name: UVICORN_WORKERS
               value : {{ .Values.gateway.workers.uvicorn | quote }}
             {{- end }}
+            {{- with .Values.gateway.alerts.thresholdPercentages }}
+            - name: ALERT_THRESHOLD_PERCENTAGES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.gateway.alerts.windowTickSeconds }}
+            - name: ALERT_WINDOW_TICK_SECONDS
+              value: {{ . | quote }}
+            {{- end }}
             - name: COLLECTOR_BASE_URL
               value: http://localhost:4318/v1/traces
             {{- if .Values.gateway.tracing.otlpExporters }}

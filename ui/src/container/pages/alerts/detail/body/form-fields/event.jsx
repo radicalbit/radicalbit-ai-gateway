@@ -1,7 +1,9 @@
+import { AlertableEventAggregationEnum, AlertTimeAggregationEnum } from '@Src/constants';
 import { useGetAlertableEventsQuery } from '@State/alerts/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
 import { useId } from 'react';
+import { findAggregation } from './time-aggregation';
 
 const toOptions = (alertableEvents = {}) => Object.values(alertableEvents)
   .flat()
@@ -27,6 +29,11 @@ function Event() {
 
   const handleOnChange = (value) => {
     write('event', value);
+
+    if (findAggregation(data, value) !== AlertableEventAggregationEnum.SELECTABLE) {
+      write('timeAggregation', AlertTimeAggregationEnum.INSTANT);
+      write('windowSize', undefined);
+    }
   };
 
   if (isLoading) {

@@ -1,4 +1,4 @@
-"""The global alert settings: the threshold percentages."""
+"""The global alert settings: the threshold percentages and the window tick."""
 
 from pydantic import ValidationError
 import pytest
@@ -35,3 +35,23 @@ def test_the_bounds_are_inclusive(monkeypatch, value):
 
 def test_the_app_config_carries_the_alert_section():
     assert isinstance(AppConfig().alert_config, AlertConfig)
+
+
+def test_the_window_tick_defaults_to_30_seconds(monkeypatch):
+    monkeypatch.delenv('ALERT_WINDOW_TICK_SECONDS', raising=False)
+
+    assert AlertConfig().alert_window_tick_seconds == 30
+
+
+def test_the_window_tick_is_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv('ALERT_WINDOW_TICK_SECONDS', '5')
+
+    assert AlertConfig().alert_window_tick_seconds == 5
+
+
+@pytest.mark.parametrize('value', ['0', '-1'])
+def test_a_window_tick_that_is_not_positive_is_rejected(monkeypatch, value):
+    monkeypatch.setenv('ALERT_WINDOW_TICK_SECONDS', value)
+
+    with pytest.raises(ValidationError):
+        AlertConfig()

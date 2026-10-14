@@ -16,7 +16,10 @@ from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertRuleUpdateIn,
 )
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
-from radicalbit_ai_gateway.services.alertable_events import AlertableEvents
+from radicalbit_ai_gateway.services.alertable_events import (
+    AlertableEvents,
+    allows_window_aggregation,
+)
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
@@ -31,10 +34,7 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 
 # Valid, but not dispatched yet: rules using them are refused until they are.
 _UNSUPPORTED_SCOPES = {AlertRuleScope.PROJECT, AlertRuleScope.CREDENTIAL}
-_UNSUPPORTED_AGGREGATIONS = {
-    AlertRuleTimeAggregation.WINDOW,
-    AlertRuleTimeAggregation.LIMIT_WINDOW,
-}
+_UNSUPPORTED_AGGREGATIONS = {AlertRuleTimeAggregation.LIMIT_WINDOW}
 
 # Changing any of these can change which events the rule's target offers.
 _EVENT_IDENTITY_FIELDS = {'scope', 'project', 'route', 'credential_uuid', 'event'}
@@ -96,6 +96,12 @@ def _check_aggregation(fields: Mapping[str, Any]) -> None:
     if aggregation is not AlertRuleTimeAggregation.WINDOW and window_size:
         raise AlertRuleUnsupportedTimeAggregationError(
             'A window size applies only to window aggregation'
+        )
+    if aggregation is AlertRuleTimeAggregation.WINDOW and not allows_window_aggregation(
+        fields['event']
+    ):
+        raise AlertRuleUnsupportedTimeAggregationError(
+            'Window aggregation applies only to guardrail and fallback events'
         )
     if aggregation in _UNSUPPORTED_AGGREGATIONS:
         raise AlertRuleUnsupportedTimeAggregationError(
@@ -188,8 +194,8 @@ class AlertRuleService:
     def create_rule(self, alert_rule_in: AlertRuleIn) -> AlertRuleOut:
         entity = alert_rule_in.to_alert_rule()
         fields = _rule_fields(entity)
-        _check_target(fields)
         _check_aggregation(fields)
+        _check_target(fields)
         self._check_event(fields)
 
         try:
@@ -214,8 +220,8 @@ class AlertRuleService:
             return self._to_out(existing)
 
         merged = {**_rule_fields(existing), **update_fields}
-        _check_target(merged)
         _check_aggregation(merged)
+        _check_target(merged)
         # A stale rule can still be renamed: the event is checked only when the
         # client changes what it identifies.
         if _EVENT_IDENTITY_FIELDS & update_fields.keys():
