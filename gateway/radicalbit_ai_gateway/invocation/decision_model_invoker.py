@@ -224,6 +224,16 @@ class DecisionModelInvoker(ModelInvoker):
             media_type=response.headers.get('content-type'),
         )
 
+    async def call(self, model_id: str, body: dict) -> httpx.Response | None:
+        """Call one decision model with retries: no fallbacks, no metrics.
+
+        Return what `_call_with_retries` returns.
+        """
+        if model_id not in self.model_map:
+            raise ModelInvokerBadRequest(f'Decision model {model_id} not defined')
+        model, upstream, _ = self.model_map[model_id]
+        return await self._call_with_retries(model, upstream, body)
+
     async def _call_with_retries(
         self, model: Model, upstream: DecisionUpstream, body: dict
     ) -> httpx.Response | None:

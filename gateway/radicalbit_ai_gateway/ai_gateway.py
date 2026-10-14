@@ -81,6 +81,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
     GatewayInternalError,
     GuardrailBadRequest,
+    JudgeInternalError,
 )
 from radicalbit_ai_gateway.utils.request_context import (
     get_current_credential_limiter,
@@ -1972,7 +1973,7 @@ class GatewayRoute:
                 project_uuid=self.project_uuid,
                 project_name=self.project_name,
             )
-        except GuardrailBadRequest:
+        except (GuardrailBadRequest, JudgeInternalError):
             raise
 
         except Exception as e:
@@ -2088,8 +2089,8 @@ class GatewayRoute:
                         project_name=self.project_name,
                     )
                 )
-            except GuardrailBadRequest:
-                # The guardrail error handler logs it.
+            except (GuardrailBadRequest, JudgeInternalError):
+                # Their error handlers log them.
                 raise
             except Exception as e:
                 logger.error('Unexpected error during guardrail application: %s', e)

@@ -1,5 +1,8 @@
 from radicalbit_ai_gateway.guardrails.guardrail_check import GuardrailCheck
 from radicalbit_ai_gateway.guardrails.guardrail_redact import GuardrailRedact
+from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
+    DecisionJudgeEngine,
+)
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
@@ -20,6 +23,7 @@ class GuardrailEngine:
         cost_service: CostService,
         guardrails: list[Guardrail] | None = None,
         chat_models_by_id: dict[str, Model] | None = None,
+        decision_judge_engine: DecisionJudgeEngine | None = None,
     ):
         self._presidio_engine = presidio_engine
         self._judge_engine = judge_engine
@@ -37,6 +41,7 @@ class GuardrailEngine:
             guardrails_by_name=self._guardrails_by_name,
             chat_models_by_id=self._chat_models_by_id,
             cost_service=cost_service,
+            decision_judge_engine=decision_judge_engine,
         )
 
     @property

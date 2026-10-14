@@ -9,6 +9,7 @@ from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
     CheckParameter,
+    DecisionJudgeParameter,
     Guardrail,
     GuardrailsAIParameter,
     JudgeParameter,
@@ -94,6 +95,15 @@ class JudgeParameterOut(JudgeParameter):
     )
 
 
+class DecisionJudgeParameterOut(DecisionJudgeParameter):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+        protected_namespaces=(),
+        extra='forbid',
+    )
+
+
 class CheckParameterOut(CheckParameter):
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -119,6 +129,7 @@ GuardrailParameterOut = Annotated[
         CheckParameterOut,
         RedactParameterOut,
         JudgeParameterOut,
+        DecisionJudgeParameterOut,
         GuardrailsAIParameterOut,
     ],
     Field(discriminator='type'),
