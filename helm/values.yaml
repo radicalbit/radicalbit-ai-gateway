@@ -96,6 +96,20 @@ gateway:
   alerts:
     thresholdPercentages: "[75, 98]"
     windowTickSeconds: 30
+    # SMTP server the gateway sends alert emails through. An empty host keeps
+    # the gateway default, localhost.
+    smtp:
+      host: ""
+      port: 25
+      user: ""
+      fromEmail: "alerts@radicalbit.ai"
+      maxWorkers: 4
+      # Set either value (the chart stores it in a Secret) or existingSecret.
+      # With neither, no password is sent.
+      password:
+        value: ""
+        existingSecret: ""
+        existingSecretKey: password
   assistant:
     apiKey:
       value: ""

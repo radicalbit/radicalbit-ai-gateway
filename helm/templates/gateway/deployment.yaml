@@ -211,6 +211,40 @@ spec:
             - name: ALERT_WINDOW_TICK_SECONDS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.gateway.alerts.smtp }}
+            {{- if .host }}
+            - name: SMTP_HOST
+              value: {{ .host | quote }}
+            {{- end }}
+            {{- if .port }}
+            - name: SMTP_PORT
+              value: {{ .port | quote }}
+            {{- end }}
+            {{- if .user }}
+            - name: SMTP_USER
+              value: {{ .user | quote }}
+            {{- end }}
+            {{- if .fromEmail }}
+            - name: SMTP_FROM_EMAIL
+              value: {{ .fromEmail | quote }}
+            {{- end }}
+            {{- if .maxWorkers }}
+            - name: SMTP_MAX_WORKERS
+              value: {{ .maxWorkers | quote }}
+            {{- end }}
+            {{- if or .password.existingSecret .password.value }}
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if .password.existingSecret }}
+                  name: {{ .password.existingSecret }}
+                  key: {{ .password.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "gateway.fullname" $ }}-smtp
+                  key: password
+                  {{- end }}
+            {{- end }}
+            {{- end }}
             - name: COLLECTOR_BASE_URL
               value: http://localhost:4318/v1/traces
             {{- if .Values.gateway.tracing.otlpExporters }}
