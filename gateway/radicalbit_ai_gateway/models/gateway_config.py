@@ -14,7 +14,11 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from radicalbit_ai_gateway.models.caching import CacheConfig, SemanticCaching
 from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
-from radicalbit_ai_gateway.models.guardrails import Guardrail, GuardrailType
+from radicalbit_ai_gateway.models.guardrails import (
+    DecisionJudgeParameter,
+    Guardrail,
+    GuardrailType,
+)
 from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
 from radicalbit_ai_gateway.models.routing import (
     AnyRoutingConfig,
@@ -333,6 +337,34 @@ class GatewayConfig(BaseModel):
                 )
             # Typesafe bills input only, so any configured output price is ignored.
             model.output_cost_per_million_tokens = Decimal()
+        return self
+
+    @model_validator(mode='after')
+    def validate_decision_judges(self) -> Self:
+        """Check each decision judge points to declared decision models.
+
+        Any decision model of the project is fine, not only those on the route.
+        The fallback must be another model.
+        """
+        decision_defined = self.decision_models_by_id
+        for guardrail in self.guardrails or []:
+            if not isinstance(guardrail.parameters, DecisionJudgeParameter):
+                continue
+            params = guardrail.parameters
+            for field, model_id in (
+                ('model_id', params.model_id),
+                ('fallback_model_id', params.fallback_model_id),
+            ):
+                if model_id is not None and model_id not in decision_defined:
+                    raise ValueError(
+                        f"Guardrail '{guardrail.name}': {field} '{model_id}' is "
+                        'not declared in top-level decision_models.'
+                    )
+            if params.fallback_model_id == params.model_id:
+                raise ValueError(
+                    f"Guardrail '{guardrail.name}': fallback_model_id "
+                    f"'{params.fallback_model_id}' must differ from model_id."
+                )
         return self
 
     @model_validator(mode='after')
