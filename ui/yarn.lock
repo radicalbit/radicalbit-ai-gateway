@@ -633,10 +633,10 @@
     uuid "^14.0.2"
     yup "^1.7.1"
 
-"@radicalbit/radicalbit-design-system@4.2.5":
-  version "4.2.5"
-  resolved "https://registry.yarnpkg.com/@radicalbit/radicalbit-design-system/-/radicalbit-design-system-4.2.5.tgz#783a20bfc485aa4aaa2f97b43ac3d63729693c4f"
-  integrity sha512-ZgGUgSRwszH1useb5xHGsgDO6Ne2AJkUU3WzBD/UiyiH/62FE/NKSLM3tXYtujToUjHp2cszokVyr1mr3bXKbA==
+"@radicalbit/radicalbit-design-system@4.2.6":
+  version "4.2.6"
+  resolved "https://registry.yarnpkg.com/@radicalbit/radicalbit-design-system/-/radicalbit-design-system-4.2.6.tgz#76faa30c376314a43879424e65f3cca0276ad33a"
+  integrity sha512-G5SASggWgAVfybzENbBgNu137H0/dlBRGPkjObYABhtnIB/U/mQjAPhKZLi7zWLahnfZTqmDJL5YG28gyrVcqw==
   dependencies:
     "@ant-design/icons" "^6.3.4"
     "@fortawesome/fontawesome-svg-core" "6.7.2"
