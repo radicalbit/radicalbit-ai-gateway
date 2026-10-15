@@ -1,10 +1,17 @@
 import Lucide from '@Components/lucide';
+import SuccessMessage from '@Components/success-message';
 import { GATEWAY_OWNER } from '@Src/constants';
 import DeleteKey from '@Container/pages/keys/list/delete-key';
+// PROTOTYPE (AG-1034): fake expiry until the API returns it
+import { EXPIRED_TOOLTIP, getMockExpiry } from '@Container/pages/keys/list/body/prototype-expiry/mock-expiry';
 import useModals, { modals } from '@Hooks/use-modals';
+import { useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import {
   Button, Dropdown,
+  Popconfirm,
+  SectionTitle,
   Skeleton,
+  TextWithBold,
   Tooltip,
 } from '@radicalbit/radicalbit-design-system';
 import { EllipsisVertical } from 'lucide-react';
@@ -37,6 +44,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   const { data, isLoading, isError, isSuccess } = useGetKeyQuery(uuid, { skip: !uuid });
 
   const associateGroupItem = useGetAssociateGroupItem(uuid);
+  const removeGroupItem = useGetRemoveGroupItem(uuid);
 
   const handleOnEditKey = () => {
     showModal(modals.EDIT_KEY, { uuid });
@@ -84,6 +92,34 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     ];
   }
 
+  // PROTOTYPE (AG-1034): an expired credential is delete-only
+  const isExpired = getMockExpiry(uuid).state === 'expired';
+
+  if (isExpired) {
+    return [
+      {
+        label: <Tooltip title={EXPIRED_TOOLTIP}>Edit credential</Tooltip>,
+        disabled: true,
+      },
+      {
+        type: 'divider',
+      },
+      {
+        label: <Tooltip title={EXPIRED_TOOLTIP}>{data?.group ? 'Remove group' : 'Associate group'}</Tooltip>,
+        disabled: true,
+      },
+      {
+        type: 'divider',
+      },
+      {
+        label: (
+          <DeleteKey uuid={uuid}>
+            <div className="is-error">Delete credential</div>
+          </DeleteKey>),
+      },
+    ];
+  }
+
   return [
     {
       label: 'Edit credential',
@@ -92,7 +128,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     {
       type: 'divider',
     },
-    associateGroupItem,
+    data?.group ? removeGroupItem : associateGroupItem,
     {
       type: 'divider',
     },
@@ -144,6 +180,44 @@ const useGetAssociateGroupItem = (uuid) => {
 
   return {
     label: 'Associate group',
+  };
+};
+
+const useGetRemoveGroupItem = (uuid) => {
+  const { data } = useGetKeyQuery(uuid, { skip: !uuid });
+  const groupName = data?.group?.name;
+  const groupUuid = data?.group?.uuid;
+
+  const [trigger] = useRemoveKeyFromGroupMutation({ fixedCacheKey: `remove-key-${uuid}-from-group-${groupUuid}` });
+
+  const handleOnRemove = async () => {
+    const { error } = await trigger({
+      uuid: groupUuid,
+      keyUUID: uuid,
+      successMessage: <SuccessMessage prefix="Group" strong={groupName} suffix="removed" />,
+    });
+
+    if (error) {
+      console.error(error);
+    }
+  };
+
+  const handleOnCancel = (e) => { e.stopPropagation(); };
+
+  return {
+    label: (
+      <Popconfirm
+        arrow={false}
+        cancelButtonProps={{ type: 'secondary-light' }}
+        description={<TextWithBold bold={groupName} isQuestion text="Are you sure you want to remove the credential from the group" />}
+        label={<div>Remove group</div>}
+        okText={<div className="is-error">Remove</div>}
+        okType="error-light"
+        onCancel={handleOnCancel}
+        onConfirm={handleOnRemove}
+        title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
+      />
+    ),
   };
 };
 

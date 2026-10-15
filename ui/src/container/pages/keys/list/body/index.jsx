@@ -1,4 +1,5 @@
 import { Popup, usePopup } from '@Components/popup';
+import PrototypeSwitcher, { usePrototypeVariant } from '@Components/prototype-switcher';
 import Lucide from '@Components/lucide';
 import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
@@ -19,7 +20,16 @@ import { CircleX, Inbox, Plus, TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useParams, useSearchParams } from 'react-router-dom';
-import columns from './columns';
+// PROTOTYPE (AG-1034): variants of the Expires presentation, switchable via ?variant=C|B.
+// C was chosen (minus the badges next to the name); B kept as the alternative. A and D were dropped.
+import { withMockExpiry } from './prototype-expiry/mock-expiry';
+import columnsB, { rowStyleB } from './prototype-expiry/variant-b';
+import columnsC from './prototype-expiry/variant-c';
+
+const PROTOTYPE_VARIANTS = [
+  { key: 'C', name: 'No new column (chosen)', columns: columnsC },
+  { key: 'B', name: 'Separate state column', columns: columnsB },
+];
 
 function KeysList() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -124,7 +134,7 @@ function RowWithSpinner({ children, ...other }) {
   return (isEditing || isDeleting || isAddingGroups) ? (
     <tr {...other}>
       {/* IF scroll={{ y: 'calc(100vh - 10rem)' }} is defined, colSpan must be === columns.length */}
-      <td colSpan={7}>
+      <td colSpan={99}>
         <Spin spinning />
       </td>
     </tr>
@@ -140,7 +150,11 @@ function IsSuccess({ searchValue }) {
 
   const { uuid } = useParams();
 
-  const { data = [] } = useGetKeysQuery();
+  const { data: rawData = [] } = useGetKeysQuery();
+  const data = withMockExpiry(rawData);
+
+  const variant = usePrototypeVariant(PROTOTYPE_VARIANTS);
+  const { columns } = PROTOTYPE_VARIANTS.find(({ key }) => key === variant);
 
   const filteredData = searchValue
     ? data.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
@@ -160,6 +174,7 @@ function IsSuccess({ searchValue }) {
         //     openPopup(event, record);
         //   },
         // })}
+        onRow={(record) => ({ style: variant === 'B' ? rowStyleB(record) : undefined })}
         pagination={{
           hideOnSinglePage: true,
         }}
@@ -173,6 +188,8 @@ function IsSuccess({ searchValue }) {
         onClose={closePopup}
         {...popup}
       />
+
+      <PrototypeSwitcher variants={PROTOTYPE_VARIANTS} />
 
     </>
   );
