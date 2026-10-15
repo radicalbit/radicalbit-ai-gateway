@@ -34,7 +34,7 @@ function ThreeDotsMenu() {
 
 const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and cannot be modified';
 
-const EXPIRED_CREDENTIALS_TOOLTIP = 'This credential has expired and can only be deleted';
+const EXPIRED_CREDENTIALS_TOOLTIP = 'This credential has expired: it can only be deleted or removed from its group';
 
 const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
 
@@ -94,7 +94,11 @@ export const useGetThreeDotsMenuItems = (uuid) => {
 
   const group = data?.group;
   const state = data?.state;
-  const groupItemLabel = group ? 'Remove group' : 'Associate group';
+  // An expired credential can still leave its group (cleanup), but can't join one
+  const expiredGroupItem = group ? removeGroupItem : {
+    label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Associate group</Tooltip>,
+    disabled: true,
+  };
 
   if (state === CredentialStateEnum.EXPIRED) {
     return [
@@ -105,10 +109,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
       {
         type: 'divider',
       },
-      {
-        label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>{groupItemLabel}</Tooltip>,
-        disabled: true,
-      },
+      expiredGroupItem,
       {
         type: 'divider',
       },

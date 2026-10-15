@@ -49,10 +49,11 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 
 
 def _ensure_not_expired(key: Key) -> None:
-    """Refuse any change to an expired credential: it is delete-only."""
+    """Refuse any change to an expired credential except delete and group removal."""
     if get_credential_state(key.expires_on) == CredentialState.EXPIRED:
         raise KeyOperationNotAllowedError(
-            f'Key {key.uuid} expired on {key.expires_on} and can only be deleted'
+            f'Key {key.uuid} expired on {key.expires_on} and can only be deleted '
+            'or removed from its group'
         )
 
 
@@ -223,7 +224,7 @@ class KeyService:
             raise KeyOperationNotAllowedError(
                 f'Key {key_uuid} cannot be unassigned from group because owner is "{key.owner}"'
             )
-        _ensure_not_expired(key)
+        # No expiry check: removing an expired key from its group is cleanup, like delete
         removed_rows = self.key_dao.remove_group(key_uuid=key_uuid)
         if removed_rows == 0:
             raise KeyInternalError(

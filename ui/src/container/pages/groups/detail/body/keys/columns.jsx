@@ -1,6 +1,8 @@
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
-import { DATE_FORMAT, GATEWAY_OWNER } from '@Src/constants';
+import {
+  CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER,
+} from '@Src/constants';
 import { useGetGroupQuery, useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import {
   Button,
@@ -9,8 +11,12 @@ import {
   Tooltip,
   Truncate,
 } from '@radicalbit/radicalbit-design-system';
+import classNames from 'classnames';
+import dayjs from 'dayjs';
 import { Trash } from 'lucide-react';
 import { useParams } from 'react-router-dom';
+
+const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
 
 const columns = [
   {
@@ -18,11 +24,7 @@ const columns = [
     dataIndex: 'name',
     width: '40%',
     key: 'id',
-    render: (value) => (
-      <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
-      </Truncate>
-    ),
+    render: (value, { expiresOn, owner, state }) => <Name expiresOn={expiresOn} name={value} owner={owner} state={state} />,
   },
   {
     title: 'Created',
@@ -48,6 +50,48 @@ const columns = [
 ];
 
 const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
+
+function Name({ expiresOn, name, owner, state }) {
+  const className = classNames({ 'line-through': state === CredentialStateEnum.EXPIRED });
+
+  return (
+    <SectionTitle
+      size="small"
+      subtitle={<ExpiresOn expiresOn={expiresOn} owner={owner} state={state} />}
+      title={(
+        <Truncate tooltip={{ title: name, placement: 'topLeft' }}>
+          <span className={className}>{name}</span>
+        </Truncate>
+      )}
+    />
+  );
+}
+
+function ExpiresOn({ expiresOn, owner, state }) {
+  // Externally managed credentials have no expiry: their lifecycle stays with the identity provider
+  if (owner !== GATEWAY_OWNER) {
+    return false;
+  }
+
+  if (!expiresOn) {
+    return 'Never expires';
+  }
+
+  // expiresOn is a calendar date: dayjs parses YYYY-MM-DD as a local date, so no timezone shift
+  const date = dayjs(expiresOn).format(DATE_FORMAT_SHORT.trim());
+  const isExpired = state === CredentialStateEnum.EXPIRED;
+  const label = isExpired ? `Expired on ${date}` : `Expires on ${date}`;
+  const className = classNames({
+    'text-[var(--coo-warning)]': state === CredentialStateEnum.EXPIRING,
+    'text-[var(--coo-error)]': isExpired,
+  });
+
+  return (
+    <Tooltip placement="topLeft" title={EXPIRES_ON_TOOLTIP}>
+      <span className={className}>{label}</span>
+    </Tooltip>
+  );
+}
 
 function Actions({ uuid: keyUUID, record: { name } }) {
   const { uuid } = useParams();

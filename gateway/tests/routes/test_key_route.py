@@ -8,7 +8,6 @@ from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from freezegun import freeze_time
-import pytest
 from starlette.testclient import TestClient
 
 from tests.common import db_mock
@@ -34,7 +33,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ErrorOut,
     KeyInternalError,
     KeyNotFoundError,
-    KeyOperationNotAllowedError,
     auth_registry_exception_handler,
 )
 
@@ -494,7 +492,7 @@ EXPIRING_AT = '2026-11-10 23:59:59'
 LIMITS_BODY = {'limits': [{'category': 'budget', 'windowSize': '1 day', 'value': 10}]}
 
 
-class TestKeyRouteExpiredIsDeleteOnly(unittest.TestCase):
+class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
     """A real KeyService over mocked DAOs, so the guards run behind the routes."""
 
     def setUp(self):
@@ -571,15 +569,15 @@ class TestKeyRouteExpiredIsDeleteOnly(unittest.TestCase):
         self.key_limit_dao.delete_by_uuid.assert_not_called()
 
     @freeze_time(EXPIRED_AT)
-    def test_group_unassign_on_an_expired_key_is_refused(self):
+    def test_group_unassign_on_an_expired_key_succeeds(self):
         self.key.group_uuid = self.group.uuid
         self.key.group = self.group
-        # Unassign is reached through the group routes, which delegate to KeyService
-        with pytest.raises(KeyOperationNotAllowedError, match='expired'):
-            asyncio.run(
-                self.key_service.remove_group_from_key(self.key_uuid, self.group.uuid)
-            )
-        self.key_dao.remove_group.assert_not_called()
+        # Unassign is cleanup, like delete: allowed on an expired key (ADR 0007).
+        # It is reached through the group routes, which delegate to KeyService
+        asyncio.run(
+            self.key_service.remove_group_from_key(self.key_uuid, self.group.uuid)
+        )
+        self.key_dao.remove_group.assert_called_once_with(key_uuid=self.key_uuid)
 
     @freeze_time(EXPIRED_AT)
     def test_delete_on_an_expired_key_succeeds(self):
