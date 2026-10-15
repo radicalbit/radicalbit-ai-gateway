@@ -1,0 +1,60 @@
+suite: test gateway alerts envs
+templates:
+  - gateway/deployment.yaml
+tests:
+  - it: should set the alert envs from the default values
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ALERT_THRESHOLD_PERCENTAGES
+            value: "[75, 98]"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ALERT_WINDOW_TICK_SECONDS
+            value: "30"
+  - it: should set custom threshold percentages
+    set:
+      gateway:
+        alerts:
+          thresholdPercentages: "[50, 80, 90]"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ALERT_THRESHOLD_PERCENTAGES
+            value: "[50, 80, 90]"
+  - it: should set a custom window tick
+    set:
+      gateway:
+        alerts:
+          windowTickSeconds: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ALERT_WINDOW_TICK_SECONDS
+            value: "5"
+  - it: should not set the threshold percentages when empty
+    set:
+      gateway:
+        alerts:
+          thresholdPercentages: ""
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ALERT_THRESHOLD_PERCENTAGES
+          any: true
+  - it: should not set the window tick when null
+    set:
+      gateway:
+        alerts:
+          windowTickSeconds: null
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ALERT_WINDOW_TICK_SECONDS
+          any: true

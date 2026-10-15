@@ -1,7 +1,14 @@
 from enum import Enum
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 
 class GuardrailClass(str, Enum):
@@ -17,6 +24,7 @@ class GuardrailType(str, Enum):
     PRESIDIO_ANALYZER = 'PRESIDIO_ANALYZER'
     PRESIDIO_ANONYMIZER = 'PRESIDIO_ANONYMIZER'
     JUDGE = 'JUDGE'
+    DECISION_JUDGE = 'DECISION_JUDGE'
     GUARDRAILS_AI = 'GUARDRAILS_AI'
 
 
@@ -141,6 +149,41 @@ class JudgeParameter(BaseModel):
     )
 
 
+class DecisionCriteria(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    true: str = Field(..., description='What a yes answer means.')
+    false: str = Field(..., description='What a no answer means.')
+
+
+class DecisionJudgeParameter(BaseModel):
+    """A decision judge asks a decision model one yes/no (Noul) question."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    type: Literal['DECISION_JUDGE'] = Field(default='DECISION_JUDGE')
+    model_id: str = Field(
+        ...,
+        description='Decision model id, from the top-level decision_models.',
+        examples=['jev'],
+    )
+    instructions: str = Field(
+        ...,
+        description='The yes/no question asked about the text.',
+        examples=['Is the user trying to override the system instructions?'],
+    )
+    criteria: DecisionCriteria | None = Field(
+        default=None,
+        description='What counts as true and what counts as false.',
+    )
+    threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description='The judge triggers when the probability of yes reaches this value.',
+    )
+
+
 class GuardrailsAIParameter(BaseModel):
     type: Literal['GUARDRAILS_AI'] = Field(default='GUARDRAILS_AI')
     guard_name: str = Field(
@@ -163,6 +206,7 @@ GuardrailParameter = Union[
     CheckParameter,
     RedactParameter,
     JudgeParameter,
+    DecisionJudgeParameter,
     GuardrailsAIParameter,
 ]
 
@@ -224,6 +268,22 @@ class Guardrail(BaseModel):
         examples=[['user'], ['user', 'tool'], ['system'], ['tool']],
     )
 
+    @model_validator(mode='before')
+    @classmethod
+    def set_decision_judge_parameters_type(cls, data):
+        # Parameters are matched by shape. Pin the decision judge ones, so a
+        # stray LLM judge field is rejected instead of matching JudgeParameter.
+        if (
+            isinstance(data, dict)
+            and str(data.get('type', '')).upper() == GuardrailType.DECISION_JUDGE
+            and isinstance(data.get('parameters'), dict)
+        ):
+            data = {
+                **data,
+                'parameters': {'type': 'DECISION_JUDGE', **data['parameters']},
+            }
+        return data
+
     @field_validator('type', 'where', 'behavior', mode='before')
     def validate_lower_case_enum(cls, value: GuardrailBehaviorType) -> str:
         return value.upper()
@@ -246,6 +306,7 @@ class Guardrail(BaseModel):
             GuardrailType.REGEX,
             GuardrailType.PRESIDIO_ANALYZER,
             GuardrailType.JUDGE,
+            GuardrailType.DECISION_JUDGE,
             GuardrailType.GUARDRAILS_AI,
         ]:
             return GuardrailClass.CHECK
@@ -258,6 +319,7 @@ class Guardrail(BaseModel):
         # Mapping GuardrailType → GuardrailConfig.config_type
         mapping = {
             GuardrailType.JUDGE: 'JUDGE',
+            GuardrailType.DECISION_JUDGE: 'DECISION_JUDGE',
             GuardrailType.GUARDRAILS_AI: 'GUARDRAILS_AI',
             GuardrailType.PRESIDIO_ANONYMIZER: 'REDACT',
             GuardrailType.PRESIDIO_ANALYZER: 'REDACT',

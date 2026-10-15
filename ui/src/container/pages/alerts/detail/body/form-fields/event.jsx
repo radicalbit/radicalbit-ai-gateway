@@ -1,7 +1,9 @@
+import { AlertableEventAggregationEnum, AlertTimeAggregationEnum } from '@Src/constants';
 import { useGetAlertableEventsQuery } from '@State/alerts/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
 import { useId } from 'react';
+import { findAggregation } from './time-aggregation';
 
 const toOptions = (alertableEvents = {}) => Object.values(alertableEvents)
   .flat()
@@ -14,6 +16,7 @@ function Event() {
   const projectUuid = form?.project;
   const routeName = form?.route;
   const event = form?.event;
+  const timeAggregation = form?.timeAggregation;
 
   const isDisabled = !projectUuid || !routeName;
 
@@ -26,7 +29,22 @@ function Event() {
   const errorMessage = isError ? 'Unable to load events, please retry later' : undefined;
 
   const handleOnChange = (value) => {
+    const aggregation = findAggregation(data, value);
+
     write('event', value);
+
+    if (aggregation === AlertableEventAggregationEnum.LIMIT_WINDOW) {
+      write('timeAggregation', AlertTimeAggregationEnum.LIMIT_WINDOW);
+      write('windowSize', undefined);
+      return;
+    }
+
+    const isSelectable = aggregation === AlertableEventAggregationEnum.SELECTABLE;
+
+    if (!isSelectable || timeAggregation === AlertTimeAggregationEnum.LIMIT_WINDOW) {
+      write('timeAggregation', AlertTimeAggregationEnum.INSTANT);
+      write('windowSize', undefined);
+    }
   };
 
   if (isLoading) {

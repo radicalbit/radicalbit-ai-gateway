@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import json
 import logging.config
 import os
@@ -25,6 +26,9 @@ from traceloop.sdk.decorators import workflow
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
 from radicalbit_ai_gateway.alerting.alert_store import build_alert_store
+from radicalbit_ai_gateway.alerting.alert_window_scheduler import (
+    run_alert_window_scheduler,
+)
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
@@ -259,14 +263,14 @@ alert_rule_service = AlertRuleService(
     project_configs=project_configs,
     project_dao=project_dao,
     key_dao=key_dao,
+    project_budget_limit_dao=project_budget_limit_dao,
 )
-set_alert_dispatcher(
-    AlertDispatcher(
-        alert_rule_dao=alert_rule_dao,
-        email_service=EmailService(),
-        store=build_alert_store(app_config.redis_config.redis_url),
-    )
+alert_dispatcher = AlertDispatcher(
+    alert_rule_dao=alert_rule_dao,
+    email_service=EmailService(),
+    store=build_alert_store(app_config.redis_config.redis_url),
 )
+set_alert_dispatcher(alert_dispatcher)
 
 
 @asynccontextmanager
@@ -314,6 +318,13 @@ async def lifespan(app: FastAPI):
 
     server, _ = start_http_server(int(app_config.prometheus_metrics_port))
 
+    alert_window_scheduler = asyncio.create_task(
+        run_alert_window_scheduler(
+            alert_dispatcher.close_windows,
+            app_config.alert_config.alert_window_tick_seconds,
+        )
+    )
+
     # Telemetry
     def _otlp_endpoint(url: str) -> str:
         """Append /v1/traces if the URL has no explicit path (OTLPSpanExporter uses the value as-is)."""
@@ -354,6 +365,9 @@ async def lifespan(app: FastAPI):
     logger.info('AI Gateway initialized successfully')
     yield
     logger.info('Shutting down AI Gateway')
+    alert_window_scheduler.cancel()
+    with suppress(asyncio.CancelledError):
+        await alert_window_scheduler
     database.reset_connection()
     ch_database.reset_connection()
     await httpx_aiohttp_client.aclose()

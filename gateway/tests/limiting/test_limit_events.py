@@ -7,7 +7,7 @@ captures the event instead of sending it.
 
 from collections.abc import Iterator
 import time
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -113,9 +113,6 @@ _EMITTERS = [
 def events() -> Iterator[list[LimitEventPayload]]:
     captured: list[LimitEventPayload] = []
     patches = [patch(target, new=captured.append) for target in _EMITTERS]
-    patches.append(
-        patch('radicalbit_ai_gateway.limiting.token_limiter.emit_notification', Mock())
-    )
     for p in patches:
         p.start()
     yield captured

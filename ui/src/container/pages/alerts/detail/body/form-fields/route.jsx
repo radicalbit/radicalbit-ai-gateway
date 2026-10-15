@@ -1,3 +1,4 @@
+import { AlertTimeAggregationEnum } from '@Src/constants';
 import { useGetRoutesQuery } from '@State/routes/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
@@ -18,6 +19,7 @@ function Route() {
   const handleOnChange = (value) => {
     write('route', value);
     write('event', undefined);
+    write('timeAggregation', AlertTimeAggregationEnum.INSTANT);
   };
 
   if (isLoading) {

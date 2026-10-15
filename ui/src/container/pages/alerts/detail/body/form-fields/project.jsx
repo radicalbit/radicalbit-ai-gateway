@@ -1,3 +1,4 @@
+import { AlertTimeAggregationEnum } from '@Src/constants';
 import { useGetProjectsQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
@@ -18,6 +19,7 @@ function Project() {
     write('project', value);
     write('route', undefined);
     write('event', undefined);
+    write('timeAggregation', AlertTimeAggregationEnum.INSTANT);
   };
 
   if (isLoading) {

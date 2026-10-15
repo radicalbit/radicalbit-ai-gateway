@@ -249,6 +249,8 @@ class AlertableEventItem(BaseModel):
 class AlertableEventsOut(BaseModel):
     guardrail: list[AlertableEventItem] = Field(default_factory=list)
     fallback: list[AlertableEventItem] = Field(default_factory=list)
+    limit: list[AlertableEventItem] = Field(default_factory=list)
+    threshold: list[AlertableEventItem] = Field(default_factory=list)
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()

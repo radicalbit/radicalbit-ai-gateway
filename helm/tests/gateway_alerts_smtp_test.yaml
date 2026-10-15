@@ -1,0 +1,109 @@
+suite: test gateway alerts smtp envs
+templates:
+  - gateway/deployment.yaml
+tests:
+  - it: should set the smtp envs from the default values
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_PORT
+            value: "25"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_FROM_EMAIL
+            value: alerts@radicalbit.ai
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_MAX_WORKERS
+            value: "4"
+  - it: should not set the smtp host, user and password by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_HOST
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_USER
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_PASSWORD
+          any: true
+  - it: should set a custom smtp server
+    set:
+      gateway:
+        alerts:
+          smtp:
+            host: smtp.example.com
+            port: 587
+            user: alerts-bot
+            fromEmail: gateway@example.com
+            maxWorkers: 8
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_HOST
+            value: smtp.example.com
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_PORT
+            value: "587"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_USER
+            value: alerts-bot
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_FROM_EMAIL
+            value: gateway@example.com
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_MAX_WORKERS
+            value: "8"
+  - it: should read the smtp password from the chart secret when a value is given
+    release:
+      name: rel
+    set:
+      gateway:
+        alerts:
+          smtp:
+            password:
+              value: hunter2
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: rel-radicalbit-ai-gateway-gw-smtp
+                key: password
+  - it: should read the smtp password from an existing secret
+    set:
+      gateway:
+        alerts:
+          smtp:
+            password:
+              existingSecret: my-smtp
+              existingSecretKey: smtp-password
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SMTP_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: my-smtp
+                key: smtp-password

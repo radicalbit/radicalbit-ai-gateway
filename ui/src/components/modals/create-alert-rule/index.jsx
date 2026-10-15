@@ -1,4 +1,5 @@
 import useModals from '@Hooks/use-modals';
+import { AlertTimeAggregationEnum } from '@Src/constants';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
   RbitModal, SectionTitle, Spinner,
@@ -11,7 +12,11 @@ import StepBActions from './step-b/actions';
 import StepC from './step-c';
 import StepCActions from './step-c/actions';
 
-const INITIAL_VALUES = { recipients: [], __metadata: { step: 0 } };
+const INITIAL_VALUES = {
+  recipients: [],
+  timeAggregation: AlertTimeAggregationEnum.INSTANT,
+  __metadata: { step: 0 },
+};
 
 const STEP_SUBTITLES = [
   'Step 1 - Name rule',

@@ -21,6 +21,8 @@ export default () => {
     }
 
     submitForm(async ({ form: formData }, setError) => {
+      const isWindow = formData.timeAggregation === AlertTimeAggregationEnum.WINDOW;
+
       const data = {
         name: formData.name,
         description: formData.description ?? null,
@@ -28,7 +30,8 @@ export default () => {
         route: formData.route,
         scope: AlertScopeEnum.ROUTE,
         event: formData.event,
-        timeAggregation: AlertTimeAggregationEnum.INSTANT,
+        timeAggregation: formData.timeAggregation,
+        windowSize: isWindow ? formData.windowSize : null,
         channel: AlertChannelEnum.EMAIL,
         recipients: formData.recipients,
         enabled,
