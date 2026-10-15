@@ -1,3 +1,4 @@
+import datetime
 import uuid
 
 import pytest
@@ -8,6 +9,8 @@ from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
+from radicalbit_ai_gateway.models.auth_dto import KeyFullOut
+from radicalbit_ai_gateway.models.credential_expiry import CredentialState
 
 
 class KeyDAOTest(DatabaseIntegration):
@@ -106,3 +109,19 @@ class KeyDAOTest(DatabaseIntegration):
         _ = [self.key_dao.insert(i) for i in api_keys]
         res = self.key_dao.get_all(only_unassigned=True)
         assert len(res) == 1
+
+    def test_expires_on_round_trips_as_a_date(self):
+        key = db_mock.get_sample_key(
+            uuid=uuid.uuid4(), name='expiring', expires_on=datetime.date(2026, 11, 10)
+        )
+        self.key_dao.insert(key)
+        assert self.key_dao.get_by_uuid(key.uuid).expires_on == datetime.date(
+            2026, 11, 10
+        )
+
+    def test_a_key_without_expiry_date_reads_back_as_none(self):
+        key = db_mock.get_sample_key(uuid=uuid.uuid4(), name='never')
+        self.key_dao.insert(key)
+        out = KeyFullOut.from_key_obscured(self.key_dao.get_by_uuid(key.uuid))
+        assert out.expires_on is None
+        assert out.state == CredentialState.ACTIVE

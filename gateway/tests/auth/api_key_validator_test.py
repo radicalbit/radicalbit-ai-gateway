@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 import uuid
 
+from freezegun import freeze_time
 import pytest
 
 from tests.common import db_mock
@@ -13,7 +14,12 @@ from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
 from radicalbit_ai_gateway.services.commons.keyed_hash_algorithm import hash_key
-from radicalbit_ai_gateway.utils.exceptions import InvalidApiKey, KeyNotFoundError
+from radicalbit_ai_gateway.utils.exceptions import (
+    ApiKeyError,
+    ExpiredApiKey,
+    InvalidApiKey,
+    KeyNotFoundError,
+)
 
 _UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
 
@@ -54,6 +60,7 @@ def _gw_key(name: str, group: Group) -> Key:
         updated_at=now,
         group_uuid=group.uuid,
         group=group,
+        expires_on=None,
         # unset .limits on a transient instance can hang (SQLAlchemy lazy-load)
         limits=[],
     )
@@ -87,7 +94,11 @@ async def test_validate_token_propagates_limits_from_key_record():
     group = _gw_group('team-a')
     limit_out = CredentialLimitOut.from_key_limit(db_mock.get_sample_key_limit())
     key = SimpleNamespace(
-        uuid=uuid.uuid4(), name='alice', group=group, limits=[limit_out]
+        uuid=uuid.uuid4(),
+        name='alice',
+        group=group,
+        limits=[limit_out],
+        expires_on=None,
     )
     key_service.get_key_by_hashed_key = MagicMock(return_value=key)
 
@@ -134,6 +145,7 @@ async def test_validate_token_raises_invalid_api_key_when_key_has_no_group():
         updated_at=now,
         group_uuid=None,
         group=None,
+        expires_on=None,
     )
     key_service.get_key_by_hashed_key = MagicMock(return_value=key_without_group)
 
@@ -141,3 +153,51 @@ async def test_validate_token_raises_invalid_api_key_when_key_has_no_group():
         await validator.validate_token('sk-rb-orphan')
 
     assert 'group' in exc_info.value.client_message.lower()
+
+
+# ---------------------------------------------------------------------------
+# Expiry
+# ---------------------------------------------------------------------------
+
+
+def _key_expiring_on(expires_on: datetime.date | None) -> Key:
+    key = _gw_key('alice', _gw_group('team-a'))
+    key.expires_on = expires_on
+    return key
+
+
+@freeze_time('2026-11-11 00:00:00')
+async def test_validate_token_rejects_an_expired_key():
+    validator, key_service = _make_validator()
+    key_service.get_key_by_hashed_key = MagicMock(
+        return_value=_key_expiring_on(datetime.date(2026, 11, 10))
+    )
+
+    with pytest.raises(ExpiredApiKey) as exc_info:
+        await validator.validate_token('sk-rb-alice')
+
+    assert isinstance(exc_info.value, ApiKeyError)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.code == 'key_expired_unauthorized'
+    assert exc_info.value.client_message == 'API key has expired.'
+
+
+@freeze_time('2026-11-10 23:59:59')
+async def test_validate_token_authenticates_an_expiring_key():
+    validator, key_service = _make_validator()
+    key = _key_expiring_on(datetime.date(2026, 11, 10))
+    key_service.get_key_by_hashed_key = MagicMock(return_value=key)
+
+    result = await validator.validate_token('sk-rb-alice')
+
+    assert result.api_key_uuid == str(key.uuid)
+
+
+async def test_validate_token_authenticates_a_key_without_expiry_date():
+    validator, key_service = _make_validator()
+    key = _key_expiring_on(None)
+    key_service.get_key_by_hashed_key = MagicMock(return_value=key)
+
+    result = await validator.validate_token('sk-rb-alice')
+
+    assert result.api_key_uuid == str(key.uuid)

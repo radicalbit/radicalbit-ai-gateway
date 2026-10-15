@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import (
+    DATE,
     TEXT,
     TIMESTAMP,
     UUID,
@@ -33,6 +34,8 @@ class Key(Reflected, BaseTable, BaseDAO):
     obscured_key = Column('OBSCURED_KEY', VARCHAR(128), nullable=False)
     created_at = Column('CREATED_AT', TIMESTAMP(timezone=True), nullable=False)
     updated_at = Column('UPDATED_AT', TIMESTAMP(timezone=True), nullable=False)
+    # A calendar date, not an instant: valid up to 23:59:59 UTC on that day. None = never.
+    expires_on = Column('EXPIRES_ON', DATE(), nullable=True)
     group_uuid = Column(
         'GROUP_UUID',
         UUID(as_uuid=True),

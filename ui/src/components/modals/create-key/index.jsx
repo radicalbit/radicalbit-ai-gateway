@@ -1,11 +1,11 @@
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import CreateModal from './create-modal';
-import { schema } from './schema';
+import { initialValues, schema } from './schema';
 import SuccessModal from './success-modal';
 
 function CreateKeyModal() {
   return (
-    <FormbitContextProvider initialValues={{}} schema={schema}>
+    <FormbitContextProvider initialValues={initialValues} schema={schema}>
       <CreateGroupsInner />
     </FormbitContextProvider>
   );

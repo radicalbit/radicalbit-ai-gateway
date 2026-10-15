@@ -1,7 +1,9 @@
+import datetime
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
+from freezegun import freeze_time
 import pytest
 
 from tests.common import db_mock
@@ -341,6 +343,31 @@ class KeyServiceTest(unittest.TestCase):
         res = self.key_service.get_associable_groups(key.uuid, False, False)
         get_all_by_owner_mock.assert_not_called()
         assert res == []
+
+    @freeze_time('2026-11-11 00:00:00')
+    def test_get_associable_groups_expired_key_returns_empty(self):
+        key = db_mock.get_sample_key(expires_on=datetime.date(2026, 11, 10))
+        get_all_by_owner_mock = MagicMock()
+        self.key_dao.get_by_uuid = MagicMock(return_value=key)
+        self.group_dao.get_all_by_owner = get_all_by_owner_mock
+        res = self.key_service.get_associable_groups(key.uuid, False, False)
+        get_all_by_owner_mock.assert_not_called()
+        assert res == []
+
+    @freeze_time('2026-11-11 00:00:00')
+    def test_get_associable_keys_leaves_out_expired_keys(self):
+        group = db_mock.get_sample_group_plain(uuid=uuid.uuid4(), name='g1')
+        expired = db_mock.get_sample_key(
+            uuid=uuid.uuid4(), name='expired', expires_on=datetime.date(2026, 11, 10)
+        )
+        expiring = db_mock.get_sample_key(
+            uuid=uuid.uuid4(), name='expiring', expires_on=datetime.date(2026, 11, 11)
+        )
+        never = db_mock.get_sample_key(uuid=uuid.uuid4(), name='never')
+        self.group_dao.get_by_uuid = MagicMock(return_value=group)
+        self.key_dao.get_all = MagicMock(return_value=[expired, expiring, never])
+        res = self.key_service.get_associable_keys(group.uuid)
+        assert [k.name for k in res] == ['expiring', 'never']
 
     def test_get_associable_groups_key_not_found(self):
         self.key_dao.get_by_uuid = MagicMock(return_value=None)

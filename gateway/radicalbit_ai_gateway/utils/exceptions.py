@@ -150,6 +150,11 @@ class InvalidApiKey(ApiKeyError):
         super().__init__(message, 'key_invalid_unauthorized', log_message=log_message)
 
 
+class ExpiredApiKey(ApiKeyError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(message, 'key_expired_unauthorized', log_message=log_message)
+
+
 class InvalidJwtToken(ApiKeyError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(message, 'invalid_jwt_token', log_message=log_message)

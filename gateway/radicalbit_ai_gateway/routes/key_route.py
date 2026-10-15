@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
+    KeyCreateIn,
     KeyFullOut,
     KeyGroupIn,
     KeyIn,
@@ -30,7 +31,7 @@ class KeyRoute:
         @router.post('/keys', status_code=201, response_model=KeyFullOut)
         @route_meta(entity_type='KEY', response_uuid_field='uuid')
         def create_key(
-            key_in: KeyIn,
+            key_in: KeyCreateIn,
         ):
             key = key_service.create_key(key_in)
             logger.info('Created key %s', key.uuid)

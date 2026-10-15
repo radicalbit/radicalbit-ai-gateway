@@ -15,9 +15,14 @@ from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.limiting.credential_limiter import clear_limit_counter
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
+    KeyCreateIn,
     KeyFullOut,
     KeyGroupIn,
     KeyIn,
+)
+from radicalbit_ai_gateway.models.credential_expiry import (
+    CredentialState,
+    get_credential_state,
 )
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
@@ -41,6 +46,14 @@ from radicalbit_ai_gateway.utils.exceptions import (
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+
+def _ensure_not_expired(key: Key) -> None:
+    """Refuse any change to an expired credential: it is delete-only."""
+    if get_credential_state(key.expires_on) == CredentialState.EXPIRED:
+        raise KeyOperationNotAllowedError(
+            f'Key {key.uuid} expired on {key.expires_on} and can only be deleted'
+        )
 
 
 class KeyService:
@@ -73,7 +86,7 @@ class KeyService:
             include_limits=include_limits,
         )
 
-    def create_key(self, key_in: KeyIn) -> KeyFullOut:
+    def create_key(self, key_in: KeyCreateIn) -> KeyFullOut:
         try:
             api_key_sec = self.api_key_security.generate_key()
             to_insert = key_in.to_key(
@@ -146,6 +159,7 @@ class KeyService:
             raise KeyOperationNotAllowedError(
                 f'Key {key_uuid} cannot be updated because owner is "{key.owner}"'
             )
+        _ensure_not_expired(key)
         try:
             updated_rows = self.key_dao.update_key_name(key_uuid, key_in.name)
         except IntegrityError as e:
@@ -175,6 +189,7 @@ class KeyService:
             raise KeyOperationNotAllowedError(
                 f'Key {key_uuid} cannot be assigned to a group because owner is "{key.owner}"'
             )
+        _ensure_not_expired(key)
         group = self.group_dao.get_by_uuid(key_group_in.group)
         if group and key.owner != group.owner:
             raise KeyOperationNotAllowedError(
@@ -208,6 +223,7 @@ class KeyService:
             raise KeyOperationNotAllowedError(
                 f'Key {key_uuid} cannot be unassigned from group because owner is "{key.owner}"'
             )
+        _ensure_not_expired(key)
         removed_rows = self.key_dao.remove_group(key_uuid=key_uuid)
         if removed_rows == 0:
             raise KeyInternalError(
@@ -316,7 +332,11 @@ class KeyService:
         if group.owner != 'gateway':
             return []
         keys = self.key_dao.get_all(only_unassigned=True, owner='gateway')
-        return [KeyFullOut.from_key_obscured(key=key) for key in keys]
+        return [
+            KeyFullOut.from_key_obscured(key=key)
+            for key in keys
+            if get_credential_state(key.expires_on) != CredentialState.EXPIRED
+        ]
 
     def get_associable_groups(
         self, key_uuid: UUID, include_routes: bool, include_keys: bool
@@ -327,6 +347,8 @@ class KeyService:
         if key.owner != 'gateway':
             return []
         if key.group_uuid:
+            return []
+        if get_credential_state(key.expires_on) == CredentialState.EXPIRED:
             return []
         groups = self.group_dao.get_all_by_owner(owner='gateway')
         return [
@@ -358,6 +380,7 @@ class KeyService:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
+        _ensure_not_expired(key)
         existing_signatures = {
             (limit.category, limit.algorithm, limit.window_size)
             for limit in self.key_limit_dao.get_by_key_uuid(key_uuid)
@@ -411,6 +434,7 @@ class KeyService:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
+        _ensure_not_expired(key)
         limit = self.key_limit_dao.get_by_uuid(limit_uuid)
         if not limit or limit.key_uuid != key_uuid:
             raise CredentialLimitNotFoundError(

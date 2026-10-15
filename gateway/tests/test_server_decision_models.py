@@ -525,6 +525,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             name=self.api_key.name,
             group=self.api_key.group,
             limits=[CredentialLimitOut.from_key_limit(limit)],
+            expires_on=None,
         )
         key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
 

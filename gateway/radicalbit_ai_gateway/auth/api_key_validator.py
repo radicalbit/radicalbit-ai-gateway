@@ -1,7 +1,15 @@
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
+from radicalbit_ai_gateway.models.credential_expiry import (
+    CredentialState,
+    get_credential_state,
+)
 from radicalbit_ai_gateway.services.commons.keyed_hash_algorithm import hash_key
 from radicalbit_ai_gateway.services.key_service import KeyService
-from radicalbit_ai_gateway.utils.exceptions import InvalidApiKey, KeyNotFoundError
+from radicalbit_ai_gateway.utils.exceptions import (
+    ExpiredApiKey,
+    InvalidApiKey,
+    KeyNotFoundError,
+)
 
 
 class ApiKeyValidator:
@@ -18,6 +26,12 @@ class ApiKeyValidator:
             key_record = self._key_service.get_key_by_hashed_key(hashed)
         except KeyNotFoundError as e:
             raise InvalidApiKey('Incorrect API key provided.') from e
+
+        if get_credential_state(key_record.expires_on) == CredentialState.EXPIRED:
+            raise ExpiredApiKey(
+                'API key has expired.',
+                log_message=f'API key {key_record.uuid} expired on {key_record.expires_on}',
+            )
 
         group = key_record.group
         if group is None:

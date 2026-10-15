@@ -92,6 +92,16 @@ const ProjectStatusEnum = {
   PROD: 'PROD',
 };
 
+// Derived by the API from the credential's expiry date (end of day UTC)
+const CredentialStateEnum = {
+  ACTIVE: 'active',
+  EXPIRING: 'expiring',
+  EXPIRED: 'expired',
+};
+
+// expiresOn is a calendar date (YYYY-MM-DD), not an instant: never convert its timezone
+const EXPIRES_ON_FORMAT = 'YYYY-MM-DD';
+
 const SecretStatusEnum = {
   UNAVAILABLE: 'unavailable',
 };
@@ -146,10 +156,12 @@ export {
   ConfigListFilterEnum,
   CONFIG_LIST_FILTER_LABELS,
   ConfigStatusEnum,
+  CredentialStateEnum,
   CHART_COLORS,
   DATE_FORMAT,
   DATE_FORMAT_SHORT,
   DEFAULT_POLLING_INTERVAL,
+  EXPIRES_ON_FORMAT,
   GATEWAY_OWNER,
   FEATURE_FLAGS,
   SEARCH_PARAMS,
