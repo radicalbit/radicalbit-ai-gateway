@@ -1,5 +1,5 @@
 import Lucide from '@Components/lucide';
-import { PathsEnum } from '@Src/constants';
+import { AlertTimeAggregationEnum, PathsEnum } from '@Src/constants';
 import { useGetAlertQuery } from '@State/alerts/api';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
@@ -212,6 +212,7 @@ const useInitializeForm = () => {
         project: data.project,
         route: data.route,
         event: data.event,
+        timeAggregation: data.timeAggregation ?? AlertTimeAggregationEnum.INSTANT,
         recipients: data.recipients ?? [],
       });
     }

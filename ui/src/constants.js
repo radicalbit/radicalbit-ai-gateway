@@ -106,10 +106,17 @@ const ALERT_SCOPE_LABELS = {
 
 const AlertTimeAggregationEnum = {
   INSTANT: 'instant',
+  LIMIT_WINDOW: 'limit_window',
 };
 
 const ALERT_TIME_AGGREGATION_LABELS = {
   [AlertTimeAggregationEnum.INSTANT]: 'Instant',
+  [AlertTimeAggregationEnum.LIMIT_WINDOW]: 'Limit window',
+};
+
+const AlertableEventAggregationEnum = {
+  SELECTABLE: 'selectable',
+  LIMIT_WINDOW: 'limit_window',
 };
 
 const AlertChannelEnum = {
@@ -141,6 +148,7 @@ export {
   ALERT_SCOPE_LABELS,
   AlertTimeAggregationEnum,
   ALERT_TIME_AGGREGATION_LABELS,
+  AlertableEventAggregationEnum,
   AlertChannelEnum,
   ALERT_CHANNEL_LABELS,
   ConfigListFilterEnum,

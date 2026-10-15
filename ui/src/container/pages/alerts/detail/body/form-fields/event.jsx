@@ -1,3 +1,4 @@
+import { AlertableEventAggregationEnum, AlertTimeAggregationEnum } from '@Src/constants';
 import { useGetAlertableEventsQuery } from '@State/alerts/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
@@ -6,6 +7,17 @@ import { useId } from 'react';
 const toOptions = (alertableEvents = {}) => Object.values(alertableEvents)
   .flat()
   .map(({ event, label }) => ({ label, value: event }));
+
+const toTimeAggregation = (alertableEvents, event) => {
+  const aggregation = Object.values(alertableEvents ?? {})
+    .flat()
+    .find((item) => item?.event === event)
+    ?.aggregation;
+
+  return aggregation === AlertableEventAggregationEnum.LIMIT_WINDOW
+    ? AlertTimeAggregationEnum.LIMIT_WINDOW
+    : AlertTimeAggregationEnum.INSTANT;
+};
 
 function Event() {
   const id = useId();
@@ -27,6 +39,7 @@ function Event() {
 
   const handleOnChange = (value) => {
     write('event', value);
+    write('timeAggregation', toTimeAggregation(data, value));
   };
 
   if (isLoading) {

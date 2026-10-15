@@ -28,7 +28,7 @@ export default () => {
         route: formData.route,
         scope: AlertScopeEnum.ROUTE,
         event: formData.event,
-        timeAggregation: AlertTimeAggregationEnum.INSTANT,
+        timeAggregation: formData.timeAggregation ?? AlertTimeAggregationEnum.INSTANT,
         channel: AlertChannelEnum.EMAIL,
         recipients: formData.recipients,
         enabled,

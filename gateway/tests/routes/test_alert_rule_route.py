@@ -1,5 +1,6 @@
 import datetime
 import json
+from unittest.mock import patch
 import uuid
 
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
     AlertRuleInvalidEventError,
@@ -35,6 +37,9 @@ chat_models:
     model: openai/gpt-4
   - model_id: gpt-3.5
     model: openai/gpt-3.5
+transcription_models:
+  - model_id: whisper
+    model: openai/whisper-1
 """
 
 
@@ -43,10 +48,12 @@ def route_config(
     fallback: bool = False,
     caching: bool = False,
     pii_values: tuple[str, ...] = ('secret',),
+    limits: dict | None = None,
 ) -> GatewayConfig:
     """Build a published configuration with one route, `chat`.
 
     `guardrails` maps each guardrail attached to the route to its phase.
+    `limits` holds the route's limiting sections, as in the YAML.
     """
     raw = yaml.safe_load(MODELS)
     route: dict = {'chat_models': ['gpt-4', 'gpt-3.5']}
@@ -66,8 +73,35 @@ def route_config(
     if caching:
         raw['cache'] = {'redis_host': 'localhost', 'redis_port': 6379}
         route['caching'] = {'type': 'exact', 'ttl': 60}
+    route.update(limits or {})
     raw['routes'] = {'chat': route}
     return GatewayConfig.model_validate(raw)
+
+
+def rate_limit(window_size='1 minute', max_requests=10) -> dict:
+    return {'rate_limiting': {'window_size': window_size, 'max_requests': max_requests}}
+
+
+EVERY_LIMIT = {
+    'rate_limiting': {'window_size': '1 minute', 'max_requests': 10},
+    'token_limiting': {
+        'input': {'window_size': '1 hour', 'max_token': 1000},
+        'output': {'window_size': '1 day', 'max_token': 500},
+    },
+    'budget_limiting': {'window_size': '1 month', 'max_budget': 5.0},
+    'duration_limiting': {'window_size': '90 minutes', 'max_duration_seconds': 600},
+    'transcription_models': ['whisper'],
+}
+
+
+class FakeProjectBudgets:
+    """The project budget limits, by project uuid."""
+
+    def __init__(self):
+        self.projects: set[str] = set()
+
+    def get_by_project_uuid(self, project_uuid):
+        return ['a budget limit'] if str(project_uuid) in self.projects else []
 
 
 class TestAlertRuleRoute(DatabaseIntegration):
@@ -75,10 +109,12 @@ class TestAlertRuleRoute(DatabaseIntegration):
     def setUpClass(cls):
         super().setUpClass()
         cls.project_configs: dict[str, ProjectEntry] = {}
+        cls.project_budgets = FakeProjectBudgets()
         service = AlertRuleService(
             alert_rule_dao=AlertRuleDAO(cls.db),
             project_configs=cls.project_configs,
             key_dao=KeyDAO(cls.db),
+            project_budget_limit_dao=cls.project_budgets,
         )
         app = FastAPI()
         for err in (
@@ -94,6 +130,7 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
     def setUp(self):
         self.project_configs.clear()
+        self.project_budgets.projects.clear()
 
     def publish(self, config: GatewayConfig) -> None:
         self.project_configs[PROJECT_NAME] = ProjectEntry(
@@ -119,8 +156,8 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert response.status_code == 400, response.text
         return response.json()['error']['message']
 
-    def created(self, event: str) -> dict:
-        response = self.create(event)
+    def created(self, event: str, **overrides) -> dict:
+        response = self.create(event, **overrides)
         assert response.status_code == 201, response.text
         return response.json()
 
@@ -199,7 +236,12 @@ class TestAlertRuleRoute(DatabaseIntegration):
     def test_alertable_events_never_offer_cache_events(self):
         self.publish(route_config(caching=True))
 
-        assert self.alertable_events() == {'guardrail': [], 'fallback': []}
+        assert self.alertable_events() == {
+            'guardrail': [],
+            'fallback': [],
+            'limit': [],
+            'threshold': [],
+        }
 
     def test_alertable_events_empty_for_unpublished_route(self):
         self.publish(route_config(fallback=True))
@@ -207,7 +249,190 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert self.alertable_events(route='missing') == {
             'guardrail': [],
             'fallback': [],
+            'limit': [],
+            'threshold': [],
         }
+
+    # --- limit and threshold events ---
+
+    def test_alertable_events_offer_every_route_limit(self):
+        self.publish(route_config(limits=EVERY_LIMIT))
+
+        events = self.alertable_events()
+
+        assert [e['event'] for e in events['limit']] == [
+            'rate_limit-exceeded-1m',
+            'token_input_limit-exceeded-1h',
+            'token_output_limit-exceeded-1d',
+            'budget_limit-exceeded-1mo',
+            'audio_duration_limit-exceeded-90m',
+        ]
+
+    def test_alertable_events_offer_one_threshold_per_global_percentage(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        with patch.object(
+            get_app_config().alert_config, 'alert_threshold_percentages', [50, 90]
+        ):
+            events = self.alertable_events()
+
+        assert [e['event'] for e in events['threshold']] == [
+            'rate_limit-50pct-1m',
+            'rate_limit-90pct-1m',
+        ]
+
+    def test_limit_and_threshold_events_use_the_limit_window_aggregation(self):
+        self.publish(route_config(limits=EVERY_LIMIT))
+
+        events = self.alertable_events()
+
+        items = events['limit'] + events['threshold']
+        assert len(events['threshold']) == 2 * len(events['limit'])
+        assert {item['aggregation'] for item in items} == {'limit_window'}
+
+    def test_limit_events_carry_a_label(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        [exceeded] = self.alertable_events()['limit']
+
+        assert exceeded['label']
+
+    def test_the_window_is_named_by_the_largest_unit_that_divides_it(self):
+        cases = {
+            '1 month': '1mo',
+            '30 days': '1mo',
+            '2 weeks': '2w',
+            '14 days': '2w',
+            '8 days': '8d',
+            '90 minutes': '90m',
+            '120 minutes': '2h',
+            '45 seconds': '45s',
+            3600: '1h',
+        }
+        for window_size, name in cases.items():
+            with self.subTest(window_size=window_size):
+                self.publish(route_config(limits=rate_limit(window_size)))
+
+                [exceeded] = self.alertable_events()['limit']
+
+                assert exceeded['event'] == f'rate_limit-exceeded-{name}'
+
+    def test_the_algorithm_is_not_part_of_the_name(self):
+        self.publish(
+            route_config(
+                limits={
+                    'rate_limiting': {
+                        'algorithm': 'ALIGNED_FIXED_WINDOW',
+                        'window_size': '1 hour',
+                        'max_requests': 10,
+                    }
+                }
+            )
+        )
+
+        [exceeded] = self.alertable_events()['limit']
+
+        assert exceeded['event'] == 'rate_limit-exceeded-1h'
+
+    def test_route_budget_is_not_offered_when_the_project_has_a_budget(self):
+        self.publish(route_config(limits=EVERY_LIMIT))
+        self.project_budgets.projects.add(str(PROJECT_UUID))
+
+        events = self.alertable_events()
+
+        offered = [e['event'] for e in events['limit'] + events['threshold']]
+        assert offered
+        assert not [e for e in offered if e.startswith('budget_limit-')]
+
+    def test_create_rule_on_a_limit_event_with_limit_window(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        rule = self.created('rate_limit-exceeded-1m', timeAggregation='limit_window')
+
+        assert rule['timeAggregation'] == 'limit_window'
+
+    def test_create_rule_on_a_threshold_event_with_limit_window(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        rule = self.created('rate_limit-75pct-1m', timeAggregation='limit_window')
+
+        assert rule['event'] == 'rate_limit-75pct-1m'
+
+    def test_a_limit_event_takes_only_the_limit_window_aggregation(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        message = self.rejected(self.create('rate_limit-exceeded-1m'))
+
+        assert 'limit_window' in message
+
+    def test_limit_window_is_only_for_limit_and_threshold_events(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(
+            self.create('fallback-triggered', timeAggregation='limit_window')
+        )
+
+        assert 'limit_window' in message
+
+    def test_update_keeps_a_limit_rule_on_limit_window(self):
+        self.publish(route_config(limits=rate_limit()))
+        rule = self.created('rate_limit-exceeded-1m', timeAggregation='limit_window')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'timeAggregation': 'instant'}
+        )
+
+        assert 'limit_window' in self.rejected(response)
+
+    def test_a_limit_rule_is_stale_when_the_limit_is_removed(self):
+        self.publish(route_config(limits=rate_limit()))
+        rule = self.created('rate_limit-exceeded-1m', timeAggregation='limit_window')
+
+        self.publish(route_config())
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'rate limit' in listed['staleReason'].lower()
+
+    def test_a_limit_rule_is_stale_when_the_window_changes(self):
+        self.publish(route_config(limits=rate_limit('1 minute')))
+        rule = self.created('rate_limit-exceeded-1m', timeAggregation='limit_window')
+
+        self.publish(route_config(limits=rate_limit('1 hour')))
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert '1m' in listed['staleReason']
+
+    def test_a_limit_rule_is_not_stale_when_the_maximum_changes(self):
+        self.publish(route_config(limits=rate_limit(max_requests=10)))
+        rule = self.created('rate_limit-75pct-1m', timeAggregation='limit_window')
+
+        self.publish(route_config(limits=rate_limit(max_requests=99)))
+
+        assert self.listed(rule['uuid'])['stale'] is False
+
+    def test_a_route_budget_rule_is_stale_once_the_project_has_a_budget(self):
+        self.publish(route_config(limits=EVERY_LIMIT))
+        rule = self.created('budget_limit-exceeded-1mo', timeAggregation='limit_window')
+
+        self.project_budgets.projects.add(str(PROJECT_UUID))
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'project' in listed['staleReason'].lower()
+
+    def test_a_threshold_rule_is_stale_when_its_percentage_is_dropped(self):
+        self.publish(route_config(limits=rate_limit()))
+        rule = self.created('rate_limit-75pct-1m', timeAggregation='limit_window')
+
+        with patch.object(
+            get_app_config().alert_config, 'alert_threshold_percentages', [90]
+        ):
+            listed = self.listed(rule['uuid'])
+
+        assert listed['stale'] is True
+        assert '75%' in listed['staleReason']
 
     # --- create / update validation ---
 
@@ -523,16 +748,14 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert 'not supported' in self.rejected(project_rule)
         assert 'not supported' in self.rejected(credential_rule)
 
-    def test_window_and_limit_window_aggregations_are_not_supported_yet(self):
+    def test_window_aggregation_is_not_supported_yet(self):
         self.publish(route_config(fallback=True))
 
         window = self.create(
             'fallback-triggered', timeAggregation='window', windowSize='15m'
         )
-        limit_window = self.create('fallback-triggered', timeAggregation='limit_window')
 
         assert 'not supported' in self.rejected(window)
-        assert 'not supported' in self.rejected(limit_window)
 
     def test_update_validates_the_merged_rule(self):
         self.publish(route_config(fallback=True))
