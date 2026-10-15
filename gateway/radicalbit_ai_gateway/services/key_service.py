@@ -18,7 +18,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyCreateIn,
     KeyFullOut,
     KeyGroupIn,
-    KeyIn,
+    KeyUpdateIn,
 )
 from radicalbit_ai_gateway.models.credential_expiry import (
     CredentialState,
@@ -152,7 +152,7 @@ class KeyService:
             include_limits=include_limits,
         )
 
-    def update_key_name(self, key_uuid: UUID, key_in: KeyIn) -> KeyFullOut:
+    def update_key_name(self, key_uuid: UUID, key_in: KeyUpdateIn) -> KeyFullOut:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')

@@ -26,9 +26,9 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyCreateIn,
     KeyFullOut,
     KeyGroupIn,
-    KeyIn,
     KeyOut,
     KeysUuidIn,
+    KeyUpdateIn,
     RouteGroupsIn,
 )
 from radicalbit_ai_gateway.models.config_slot import Slot
@@ -334,8 +334,8 @@ def get_sample_api_key_sec(
     return ApiKeySec(plain_key=plain_key, hashed_key=hashed_key)
 
 
-def get_sample_key_in(name: str = 'user@domain.com') -> KeyIn:
-    return KeyIn(name=name)
+def get_sample_key_update_in(name: str = 'user@domain.com') -> KeyUpdateIn:
+    return KeyUpdateIn(name=name)
 
 
 def get_sample_key_create_in(name: str = 'user@domain.com') -> KeyCreateIn:

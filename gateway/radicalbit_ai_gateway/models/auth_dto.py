@@ -9,6 +9,7 @@ from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 from radicalbit_ai_gateway.db.tables.group_table import Group
 from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.models.credential_expiry import (
+    UTC,
     CredentialState,
     get_credential_state,
     utc_today,
@@ -16,33 +17,33 @@ from radicalbit_ai_gateway.models.credential_expiry import (
 from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
 
 
-class KeyIn(BaseModel, validate_assignment=True):
+class KeyUpdateIn(BaseModel):
+    """Update contract: only the name can change. Unknown fields are
+    rejected, so an attempt to change the expiry date fails instead of
+    being silently ignored.
+    """
+
     name: str
 
     model_config = ConfigDict(
-        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+        populate_by_name=True,
+        alias_generator=to_camel,
+        protected_namespaces=(),
+        extra='forbid',
     )
 
-    def to_key(self, hashed_key: str, obscured_key: str) -> Key:
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
-        return Key(
-            name=self.name,
-            owner='gateway',
-            key_metadata=None,
-            hashed_key=hashed_key,
-            obscured_key=obscured_key,
-            created_at=now,
-            updated_at=now,
-        )
 
-
-class KeyCreateIn(KeyIn):
+class KeyCreateIn(BaseModel):
     """Create contract: the expiry date is accepted only here, never on
     update, so it stays fixed for the credential's whole life.
     """
 
+    name: str
     expires_on: datetime.date | None = None
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
 
     @field_validator('expires_on')
     @classmethod
@@ -52,9 +53,17 @@ class KeyCreateIn(KeyIn):
         return value
 
     def to_key(self, hashed_key: str, obscured_key: str) -> Key:
-        key = super().to_key(hashed_key=hashed_key, obscured_key=obscured_key)
-        key.expires_on = self.expires_on
-        return key
+        now = datetime.datetime.now(tz=UTC)
+        return Key(
+            name=self.name,
+            owner='gateway',
+            key_metadata=None,
+            hashed_key=hashed_key,
+            obscured_key=obscured_key,
+            expires_on=self.expires_on,
+            created_at=now,
+            updated_at=now,
+        )
 
 
 class KeyOut(BaseModel):

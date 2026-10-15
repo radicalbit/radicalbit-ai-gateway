@@ -16,12 +16,7 @@ from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
-from radicalbit_ai_gateway.models.auth_dto import (
-    GroupFullOut,
-    KeyCreateIn,
-    KeyFullOut,
-    KeyIn,
-)
+from radicalbit_ai_gateway.models.auth_dto import GroupFullOut, KeyCreateIn, KeyFullOut
 from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.server import validation_exception_handler
@@ -150,7 +145,7 @@ class TestKeyRoute(unittest.TestCase):
         self.key_service.get_key_by_uuid.assert_called_once_with(key.uuid, False, False)
 
     def test_update_key_name(self):
-        key_in = db_mock.get_sample_key_in()
+        key_in = db_mock.get_sample_key_update_in()
         key = db_mock.get_sample_key()
         key_out = KeyFullOut.from_key_obscured(key)
         self.key_service.update_key_name = MagicMock(return_value=key_out)
@@ -162,7 +157,7 @@ class TestKeyRoute(unittest.TestCase):
         self.key_service.update_key_name.assert_called_once_with(key.uuid, key_in)
 
     def test_update_key_name_ko(self):
-        key_in = db_mock.get_sample_key_in()
+        key_in = db_mock.get_sample_key_update_in()
         key = db_mock.get_sample_key()
         self.key_service.update_key_name = MagicMock(
             side_effect=KeyInternalError('error')
@@ -180,7 +175,7 @@ class TestKeyRoute(unittest.TestCase):
         self.key_service.update_key_name.assert_called_once_with(key.uuid, key_in)
 
     def test_update_missing_key(self):
-        key_in = db_mock.get_sample_key_in()
+        key_in = db_mock.get_sample_key_update_in()
         key = db_mock.get_sample_key()
         self.key_service.update_key_name = MagicMock(
             side_effect=KeyNotFoundError('error')
@@ -473,17 +468,13 @@ class TestKeyRouteExpiry(unittest.TestCase):
 
     def test_update_cannot_change_the_expiry_date(self):
         key = db_mock.get_sample_key()
-        self.key_service.update_key_name = MagicMock(
-            return_value=KeyFullOut.from_key_obscured(key)
-        )
+        self.key_service.update_key_name = MagicMock()
         res = self.client.patch(
             f'{self.prefix}/keys/{key.uuid}',
             json={'name': 'renamed', 'expiresOn': '2099-01-01'},
         )
-        assert res.status_code == 200
-        (_, key_in), _ = self.key_service.update_key_name.call_args
-        assert key_in == KeyIn(name='renamed')
-        assert 'expires_on' not in type(key_in).model_fields
+        assert res.status_code == 422
+        self.key_service.update_key_name.assert_not_called()
 
 
 EXPIRES_ON = datetime.date(2026, 11, 10)

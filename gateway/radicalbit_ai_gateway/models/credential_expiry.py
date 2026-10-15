@@ -1,7 +1,7 @@
 import datetime
 from enum import Enum
 
-_UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
 
 
 class CredentialState(str, Enum):
@@ -11,7 +11,7 @@ class CredentialState(str, Enum):
 
 
 def utc_today() -> datetime.date:
-    return datetime.datetime.now(tz=_UTC).date()
+    return datetime.datetime.now(tz=UTC).date()
 
 
 def get_credential_state(
@@ -23,7 +23,7 @@ def get_credential_state(
     """
     if expires_on is None:
         return CredentialState.ACTIVE
-    today = (now or datetime.datetime.now(tz=_UTC)).astimezone(_UTC).date()
+    today = (now or datetime.datetime.now(tz=UTC)).astimezone(UTC).date()
     if today > expires_on:
         return CredentialState.EXPIRED
     if today >= expires_on - datetime.timedelta(days=1):

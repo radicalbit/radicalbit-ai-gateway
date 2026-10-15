@@ -69,7 +69,7 @@ class KeyServiceTest(unittest.TestCase):
         api_key_sec = db_mock.get_sample_api_key_sec()
         self.key_dao.insert = MagicMock(return_value=key)
         self.api_key_security.generate_key = MagicMock(return_value=api_key_sec)
-        key_in = db_mock.get_sample_key_in()
+        key_in = db_mock.get_sample_key_create_in()
         res = self.key_service.create_key(key_in)
         self.key_dao.insert.assert_called_once()
         assert res == KeyFullOut.from_key(key=key, plain_api_key=api_key_sec.plain_key)
@@ -163,7 +163,7 @@ class KeyServiceTest(unittest.TestCase):
         key = db_mock.get_sample_key(group_uuid=group_uuid)
         group = db_mock.get_sample_group(uuid=group_uuid)
         key.group = group
-        key_in = db_mock.get_sample_key_in()
+        key_in = db_mock.get_sample_key_update_in()
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
         self.key_dao.update_key_name = MagicMock(return_value=1)
         res = self.key_service.update_key_name(key.uuid, key_in)
@@ -173,7 +173,7 @@ class KeyServiceTest(unittest.TestCase):
 
     def test_update_key_name_ko(self):
         key = db_mock.get_sample_key()
-        key_in = db_mock.get_sample_key_in()
+        key_in = db_mock.get_sample_key_update_in()
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
         self.key_dao.update_key_name = MagicMock(return_value=0)
         pytest.raises(
@@ -187,7 +187,7 @@ class KeyServiceTest(unittest.TestCase):
 
     def test_update_missing_key(self):
         key = db_mock.get_sample_key()
-        key_in = db_mock.get_sample_key_in()
+        key_in = db_mock.get_sample_key_update_in()
         self.key_dao.get_by_uuid = MagicMock(return_value=None)
         pytest.raises(
             KeyNotFoundError,
