@@ -17,6 +17,9 @@ from opentelemetry import trace
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
+from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
+    DecisionJudgeEngine,
+)
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
@@ -26,6 +29,7 @@ from radicalbit_ai_gateway.models.gateway_config import get_model_from_model_id
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
     CheckParameter,
+    DecisionJudgeParameter,
     Guardrail,
     GuardrailBehaviorType,
     GuardrailClass,
@@ -42,7 +46,10 @@ from radicalbit_ai_gateway.models.soft_block_info import SoftBlockInfo
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
-from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
+from radicalbit_ai_gateway.utils.exceptions import (
+    GuardrailBadRequest,
+    JudgeInternalError,
+)
 
 app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
@@ -172,9 +179,11 @@ class GuardrailCheck:
         cost_service: CostService,
         guardrails_by_name: dict[str, Guardrail] | None = None,
         chat_models_by_id: dict[str, Model] | None = None,
+        decision_judge_engine: DecisionJudgeEngine | None = None,
     ):
         self._presidio_engine = presidio_engine
         self._judge_engine = judge_engine
+        self._decision_judge_engine = decision_judge_engine
         self._guardrails_by_name = guardrails_by_name or {}
         self._chat_models_by_id = chat_models_by_id or {}
         self._cost_service = cost_service
@@ -189,6 +198,7 @@ class GuardrailCheck:
             GuardrailType.REGEX: self._check_regex,
             GuardrailType.PRESIDIO_ANALYZER: self._check_presidio_analyzer,
             GuardrailType.JUDGE: self._check_judge,
+            GuardrailType.DECISION_JUDGE: self._check_decision_judge,
             GuardrailType.GUARDRAILS_AI: self._check_guardrails_ai,
         }
 
@@ -484,6 +494,47 @@ class GuardrailCheck:
                     logger.error('CHECK_JUDGE TELEMETRY ERROR: %s', telemetry_err)
             return result.triggered
 
+    @task(name='check_decision_judge')
+    async def _check_decision_judge(
+        self,
+        messages: list[BaseMessage],
+        params: DecisionJudgeParameter,
+        route_config: GatewayRouteConfig,
+        **kwargs,
+    ) -> bool:
+        """Ask a decision model one yes/no question: trigger when noul >= threshold."""
+        if self._decision_judge_engine is None:
+            raise JudgeInternalError(
+                'Decision judge failed',
+                log_message='No decision judge engine is configured',
+                model_id=params.model_id,
+            )
+        noul = await self._decision_judge_engine.ask(messages, params, **kwargs)
+        triggered = noul >= params.threshold
+        logger.info(
+            'Decision judge on route=%s: noul=%s, threshold=%s, triggered=%s',
+            route_config.route_name,
+            noul,
+            params.threshold,
+            triggered,
+        )
+        if triggered:
+            texts = _texts_from_messages(messages)
+            phase = kwargs.get('where')
+            self._reason_payload_ctx.set(
+                {
+                    'kind': 'decision_judge',
+                    'message_index': max(0, len(texts) - 1),
+                    'context': _trunc(texts[-1] if texts else '', max_len=200),
+                    'phase': getattr(phase, 'name', None),
+                    # Extra fields (for logs), sanitized out from API responses
+                    'model_id': params.model_id,
+                    'noul': noul,
+                    'threshold': params.threshold,
+                }
+            )
+        return triggered
+
     @task(name='check_guardrails_ai')
     async def _check_guardrails_ai(
         self,
@@ -767,8 +818,12 @@ class GuardrailCheck:
         # For JUDGE and GUARDRAILS_AI, the payload is produced by the check function and passed via `reason_payload_override`.
         if guardrail.type in (
             GuardrailType.JUDGE,
+            GuardrailType.DECISION_JUDGE,
             GuardrailType.GUARDRAILS_AI,
-        ) or isinstance(guardrail.parameters, JudgeParameter | GuardrailsAIParameter):
+        ) or isinstance(
+            guardrail.parameters,
+            JudgeParameter | DecisionJudgeParameter | GuardrailsAIParameter,
+        ):
             return None
         found = self._find_first_check_match(guardrail, messages)
         if not found:
@@ -826,6 +881,16 @@ class GuardrailCheck:
             reasoning = reason_payload.get('reasoning')
             if isinstance(reasoning, str) and reasoning:
                 s += f' reasoning={_trunc(repr(reasoning), max_len=200)}'
+            excerpt = reason_payload.get('context')
+            if isinstance(excerpt, str) and excerpt:
+                s += f' text="{_trunc(excerpt, max_len=120)}"'
+            return s
+        elif kind == 'decision_judge':
+            s = 'decision_judge'
+            for key in ('model_id', 'noul', 'threshold', 'phase'):
+                value = reason_payload.get(key)
+                if value is not None:
+                    s += f' {key}={_trunc(repr(value), max_len=120)}'
             excerpt = reason_payload.get('context')
             if isinstance(excerpt, str) and excerpt:
                 s += f' text="{_trunc(excerpt, max_len=120)}"'

@@ -735,7 +735,10 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
     def test_project_and_credential_scopes_are_not_supported_yet(self):
         project_rule = self.create(
-            'budget_limit-exceeded-1mo', scope='project', route=None
+            'budget_limit-exceeded-1mo',
+            scope='project',
+            route=None,
+            timeAggregation='limit_window',
         )
         credential_rule = self.create(
             'rate_limit-exceeded-1m',
@@ -743,19 +746,71 @@ class TestAlertRuleRoute(DatabaseIntegration):
             project=None,
             route=None,
             credential=str(uuid.uuid4()),
+            timeAggregation='limit_window',
         )
 
         assert 'not supported' in self.rejected(project_rule)
         assert 'not supported' in self.rejected(credential_rule)
 
-    def test_window_aggregation_is_not_supported_yet(self):
+    def test_a_fallback_rule_can_use_a_window(self):
         self.publish(route_config(fallback=True))
 
-        window = self.create(
+        response = self.create(
             'fallback-triggered', timeAggregation='window', windowSize='15m'
         )
 
-        assert 'not supported' in self.rejected(window)
+        assert response.status_code == 201, response.text
+        assert response.json()['timeAggregation'] == 'window'
+        assert response.json()['windowSize'] == '15m'
+
+    def test_a_guardrail_rule_can_use_a_window(self):
+        self.publish(route_config(guardrails={'pii': 'input'}))
+
+        response = self.create(
+            'guardrail-input-pii', timeAggregation='window', windowSize='24h'
+        )
+
+        assert response.status_code == 201, response.text
+
+    def test_a_window_is_only_for_guardrail_and_fallback_events(self):
+        message = self.rejected(
+            self.create(
+                'budget_limit-exceeded-1mo',
+                scope='project',
+                route=None,
+                timeAggregation='window',
+                windowSize='1h',
+            )
+        )
+
+        assert 'guardrail and fallback' in message.lower()
+
+    def test_update_switches_a_rule_to_a_window(self):
+        self.publish(route_config(fallback=True))
+        rule = self.created('fallback-triggered')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}',
+            json={'timeAggregation': 'window', 'windowSize': '6h'},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['windowSize'] == '6h'
+
+    def test_update_switches_a_window_rule_back_to_instant(self):
+        self.publish(route_config(fallback=True))
+        rule = self.create(
+            'fallback-triggered', timeAggregation='window', windowSize='5m'
+        ).json()
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}',
+            json={'timeAggregation': 'instant', 'windowSize': None},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['timeAggregation'] == 'instant'
+        assert response.json()['windowSize'] is None
 
     def test_update_validates_the_merged_rule(self):
         self.publish(route_config(fallback=True))

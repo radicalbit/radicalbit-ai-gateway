@@ -107,11 +107,29 @@ const ALERT_SCOPE_LABELS = {
 const AlertTimeAggregationEnum = {
   INSTANT: 'instant',
   LIMIT_WINDOW: 'limit_window',
+  WINDOW: 'window',
 };
 
 const ALERT_TIME_AGGREGATION_LABELS = {
   [AlertTimeAggregationEnum.INSTANT]: 'Instant',
   [AlertTimeAggregationEnum.LIMIT_WINDOW]: 'Limit window',
+  [AlertTimeAggregationEnum.WINDOW]: 'Window',
+};
+
+const AlertWindowSizeEnum = {
+  FIVE_MINUTES: '5m',
+  FIFTEEN_MINUTES: '15m',
+  ONE_HOUR: '1h',
+  SIX_HOURS: '6h',
+  ONE_DAY: '24h',
+};
+
+const ALERT_WINDOW_SIZE_LABELS = {
+  [AlertWindowSizeEnum.FIVE_MINUTES]: '5 minutes',
+  [AlertWindowSizeEnum.FIFTEEN_MINUTES]: '15 minutes',
+  [AlertWindowSizeEnum.ONE_HOUR]: '1 hour',
+  [AlertWindowSizeEnum.SIX_HOURS]: '6 hours',
+  [AlertWindowSizeEnum.ONE_DAY]: '24 hours',
 };
 
 const AlertableEventAggregationEnum = {
@@ -148,6 +166,8 @@ export {
   ALERT_SCOPE_LABELS,
   AlertTimeAggregationEnum,
   ALERT_TIME_AGGREGATION_LABELS,
+  AlertWindowSizeEnum,
+  ALERT_WINDOW_SIZE_LABELS,
   AlertableEventAggregationEnum,
   AlertChannelEnum,
   ALERT_CHANNEL_LABELS,

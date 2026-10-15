@@ -14,6 +14,9 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
+    DecisionJudgeEngine,
+)
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -246,6 +249,11 @@ def build_project_route_registrar(
             guardrails=project_gateway_config.guardrails,
             chat_models_by_id=project_gateway_config.chat_models_by_id,
             cost_service=project_cost_service,
+            decision_judge_engine=DecisionJudgeEngine(
+                decision_models=project_gateway_config.decision_models,
+                cost_service=project_cost_service,
+                httpx_client=httpx_client,
+            ),
         )
 
         project_redis_client = None

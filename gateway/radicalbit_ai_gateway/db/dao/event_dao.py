@@ -204,6 +204,16 @@ class EventDAO:
             ),
         )
 
+        # Exact cache hits on decision requests are recorded at $0, so direct
+        # input is the whole decision cost.
+        decision_input = F.sumIf(
+            T.c['COST'],
+            F.and_(
+                T.c['EVENT_TYPE'] == 'INPUT_TOKEN_PROCESSED',
+                T.c['MODEL_TYPE'] == 'decision_model',
+            ),
+        )
+
         return [
             chat_input_direct.label('chat_input_direct'),
             chat_input_cached.label('chat_input_cached'),
@@ -218,6 +228,7 @@ class EventDAO:
             transcription_audio.label('transcription_audio'),
             transcription_text.label('transcription_text'),
             transcription_output.label('transcription_output'),
+            decision_input.label('decision_input'),
         ]
 
     def _get_attrs_per_metric(self, event_type: str) -> list:
@@ -1096,6 +1107,7 @@ class EventDAO:
                 'transcription_audio',
                 'transcription_text',
                 'transcription_output',
+                'decision_input',
             ]
             return [
                 RouteDetailedCostBreakdown.model_validate(dict(zip(field_names, row)))

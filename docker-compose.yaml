@@ -220,17 +220,6 @@ services:
       CLICKHOUSE_PORT: "8123"
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_PASSWORD: "default"
-      REDIS_HOST: "valkey"
-      REDIS_PORT: 6379
-      SLACK_ENABLED: "False"
-      # SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/t1/t2/t3"
-      # SLACK_USER_MAPPINGS: '{"business-development": "U123ABC"}'
-      SENDGRID_ENABLED: "False"
-      # SENDGRID_API_KEY: "SG.-..."
-      # SENDGRID_FROM_EMAIL: "ai-gateway@radicalbit.ai"
-      # SENDGRID_EMAIL_MAPPINGS: '{"business-development": ["hello@radicalbit.ai", "another@radicalbit.ai"], "marketing": ["hello@radicalbit.ai", "another@radicalbit.ai"]}'
-      # SENDGRID_TEMPLATE_ID: "d-abcde"
-
     depends_on:
       clickhouse:
         condition: service_healthy

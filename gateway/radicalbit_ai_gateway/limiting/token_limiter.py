@@ -3,7 +3,6 @@ import logging
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
-from radicalbit_ai_gateway.events.notifications_processor import emit_notification
 from radicalbit_ai_gateway.limiter import (
     AlignedFixedWindowLimiter,
     FixedWindowLimiter,
@@ -262,20 +261,6 @@ class TokenLimiter:
             identity,
         )
 
-        # Emit notification with current window state after deduction
-        input_state = await self.input_limiter.get_window_stats(self.input_item)
-        current_usage = self.input_config.max_tokens - input_state.remaining
-
-        emit_notification(
-            route_name=self.route_name,
-            direction='input',
-            window_size=self.input_item.window_seconds,
-            max_tokens=self.input_config.max_tokens,
-            current_usage=current_usage,
-            reset_time=input_state.reset_time,
-            window_id=input_state.window_id,
-        )
-
     async def count_output(self, token_count: int, identity: RequestIdentity) -> None:
         """Consume token in output window"""
         if not self.output_limiter or not self.output_item:
@@ -287,20 +272,6 @@ class TokenLimiter:
             LimitScope.ROUTE,
             identity,
         )
-
-        # Emit notification with current window state after deduction
-        if self.output_config:
-            output_state = await self.output_limiter.get_window_stats(self.output_item)
-            current_usage = self.output_config.max_tokens - output_state.remaining
-            emit_notification(
-                route_name=self.route_name,
-                direction='output',
-                window_size=self.output_item.window_seconds,
-                max_tokens=self.output_config.max_tokens,
-                current_usage=current_usage,
-                reset_time=output_state.reset_time,
-                window_id=output_state.window_id,
-            )
 
     @task(name='check_token_output_limit')
     async def check_output(

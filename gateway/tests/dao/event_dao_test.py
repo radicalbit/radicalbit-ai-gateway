@@ -2317,6 +2317,88 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         assert res.transcription_text == 0.0000125
         assert res.transcription_output == 0.00038
 
+    def test_detailed_cost_breakdown_decision(self):
+        base_time = datetime.datetime(
+            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        test_events = [
+            # decision call: input only, output recorded at $0
+            db_mock.get_sample_event(
+                event_type='INPUT_TOKEN_PROCESSED',
+                timestamp=base_time,
+                cost=0.0000109,
+                model_type='decision_model',
+                cache_type='',
+            ),
+            db_mock.get_sample_event(
+                event_type='OUTPUT_TOKEN_PROCESSED',
+                timestamp=base_time,
+                cost=0.0,
+                model_type='decision_model',
+            ),
+            # exact cache hit on a decision request: cached tokens at $0
+            db_mock.get_sample_event(
+                event_type='CACHE_INPUT_TOKENS',
+                timestamp=base_time,
+                value=260,
+                cost=0.0,
+                model_id='jev',
+                cache_type='exact',
+            ),
+            # chat input must not leak into the decision column
+            db_mock.get_sample_event(
+                event_type='INPUT_TOKEN_PROCESSED',
+                timestamp=base_time,
+                cost=1.0,
+                model_type='chat-model',
+            ),
+        ]
+        self.insert(test_events)
+
+        _from = base_time
+        _to = base_time + datetime.timedelta(hours=1)
+
+        res = self.event_dao.get_detailed_cost_breakdown(
+            None, ['rb-gateway'], _from, _to
+        )
+        assert res.decision_input == 0.0000109
+        assert res.chat_input_direct == 1.0
+
+    def test_costs_chart_by_model_includes_decision_cost(self):
+        base_time = datetime.datetime(
+            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        self.insert(
+            [
+                db_mock.get_sample_event(
+                    event_type='INPUT_TOKEN_PROCESSED',
+                    timestamp=base_time,
+                    cost=0.25,
+                    model_id='jev',
+                    model_type='decision_model',
+                ),
+                db_mock.get_sample_event(
+                    event_type='INPUT_TOKEN_PROCESSED',
+                    timestamp=base_time,
+                    cost=1.0,
+                    model_id='gpt',
+                    model_type='chat-model',
+                ),
+            ]
+        )
+
+        res = self.event_dao.get_costs_chart_data(
+            None,
+            ['rb-gateway'],
+            base_time,
+            base_time + datetime.timedelta(hours=1),
+            'hours',
+            'models',
+        )
+
+        by_model = {p.group_by_value: p.total_cost for p in res}
+        assert by_model == {'gpt': 1.0, 'jev': 0.25}
+
     def test_get_all_routes_detailed_cost_breakdown(self):
         base_time = datetime.datetime(
             2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
@@ -2391,6 +2473,14 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
                 cost=0.00038,
                 model_type='transcription',
             ),
+            # route-E: decision
+            db_mock.get_sample_event(
+                event_type='INPUT_TOKEN_PROCESSED',
+                route_name='route-E',
+                timestamp=base_time,
+                cost=0.0000109,
+                model_type='decision_model',
+            ),
         ]
         self.insert(test_events)
 
@@ -2450,6 +2540,12 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         assert by_route['route-D'].transcription_audio == 0.0
         assert by_route['route-D'].transcription_text == 0.0
         assert by_route['route-D'].transcription_output == 0.00038
+        assert by_route['route-D'].decision_input == 0.0
+
+        # route-E: decision, the last column, must not shift the others
+        assert by_route['route-E'].decision_input == 0.0000109
+        assert by_route['route-E'].transcription_output == 0.0
+        assert by_route['route-E'].chat_input_direct == 0.0
 
     def test_get_all_routes_detailed_cost_breakdown_empty(self):
         now = datetime.datetime.now(datetime.timezone.utc)

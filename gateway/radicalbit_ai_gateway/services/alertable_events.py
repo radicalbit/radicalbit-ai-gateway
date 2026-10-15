@@ -41,6 +41,11 @@ def _guardrail_event(phase: str, name: str) -> str:
     return f'{_GUARDRAIL_PREFIX}{phase}-{name}'
 
 
+def allows_window_aggregation(event: str) -> bool:
+    """Whether a rule on `event` may use window aggregation instead of instant."""
+    return event == FALLBACK_EVENT or event.startswith(_GUARDRAIL_PREFIX)
+
+
 def _window_seconds(limit: Limiting) -> int:
     size = limit.window_size
     return parse_window(size) if isinstance(size, str) else size

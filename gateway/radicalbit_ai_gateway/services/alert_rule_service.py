@@ -18,7 +18,10 @@ from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertRuleUpdateIn,
 )
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
-from radicalbit_ai_gateway.services.alertable_events import AlertableEvents
+from radicalbit_ai_gateway.services.alertable_events import (
+    AlertableEvents,
+    allows_window_aggregation,
+)
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
@@ -33,7 +36,6 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 
 # Valid, but not dispatched yet: rules using them are refused until they are.
 _UNSUPPORTED_SCOPES = {AlertRuleScope.PROJECT, AlertRuleScope.CREDENTIAL}
-_UNSUPPORTED_AGGREGATIONS = {AlertRuleTimeAggregation.WINDOW}
 
 # Changing any of these can change which events the rule's target offers.
 _EVENT_IDENTITY_FIELDS = {'scope', 'project', 'route', 'credential_uuid', 'event'}
@@ -80,6 +82,10 @@ def _check_target(fields: Mapping[str, Any]) -> None:
             raise AlertRuleInvalidTargetError(
                 'A credential rule takes no project and no route'
             )
+
+
+def _check_scope_supported(fields: Mapping[str, Any]) -> None:
+    scope = AlertRuleScope(fields['scope'])
     if scope in _UNSUPPORTED_SCOPES:
         raise AlertRuleInvalidTargetError(f'Scope "{scope.value}" is not supported yet')
 
@@ -96,6 +102,12 @@ def _check_aggregation(fields: Mapping[str, Any]) -> None:
         raise AlertRuleUnsupportedTimeAggregationError(
             'A window size applies only to window aggregation'
         )
+    if aggregation is AlertRuleTimeAggregation.WINDOW and not allows_window_aggregation(
+        fields['event']
+    ):
+        raise AlertRuleUnsupportedTimeAggregationError(
+            'Window aggregation applies only to guardrail and fallback events'
+        )
     is_limit_event = parse_limit_event(fields['event']) is not None
     if is_limit_event and aggregation is not AlertRuleTimeAggregation.LIMIT_WINDOW:
         raise AlertRuleUnsupportedTimeAggregationError(
@@ -104,10 +116,6 @@ def _check_aggregation(fields: Mapping[str, Any]) -> None:
     if not is_limit_event and aggregation is AlertRuleTimeAggregation.LIMIT_WINDOW:
         raise AlertRuleUnsupportedTimeAggregationError(
             'The limit_window aggregation applies only to limit and threshold events'
-        )
-    if aggregation in _UNSUPPORTED_AGGREGATIONS:
-        raise AlertRuleUnsupportedTimeAggregationError(
-            f'Time aggregation "{aggregation.value}" is not supported yet'
         )
 
 
@@ -209,6 +217,7 @@ class AlertRuleService:
         fields = _rule_fields(entity)
         _check_target(fields)
         _check_aggregation(fields)
+        _check_scope_supported(fields)
         self._check_event(fields)
 
         try:
@@ -235,6 +244,7 @@ class AlertRuleService:
         merged = {**_rule_fields(existing), **update_fields}
         _check_target(merged)
         _check_aggregation(merged)
+        _check_scope_supported(merged)
         # A stale rule can still be renamed: the event is checked only when the
         # client changes what it identifies.
         if _EVENT_IDENTITY_FIELDS & update_fields.keys():

@@ -23,30 +23,10 @@ TEST_MODEL = 'openai/gpt-4o'
 
 
 @pytest.fixture(autouse=True)
-def mock_emit_functions():
-    """Mock emit_event and emit_notification for all tests to prevent real Celery calls."""
-    mock_event = Mock()
-    mock_notification = Mock()
-    with (
-        patch(
-            'radicalbit_ai_gateway.limiting.token_limiter.emit_event',
-            new=mock_event,
-        ),
-        patch(
-            'radicalbit_ai_gateway.limiting.token_limiter.emit_notification',
-            new=mock_notification,
-        ),
-    ):
-        yield {
-            'emit_event': mock_event,
-            'emit_notification': mock_notification,
-        }
-
-
-@pytest.fixture
-def emit_notification_mock(mock_emit_functions):
-    """Return the notification mock for tests that need to verify calls."""
-    return mock_emit_functions['emit_notification']
+def mock_emit_event():
+    """Mock emit_event for all tests to prevent real Celery calls."""
+    with patch('radicalbit_ai_gateway.limiting.token_limiter.emit_event', new=Mock()):
+        yield
 
 
 class TestTokenLimiter:
@@ -560,49 +540,3 @@ class TestTokenLimiter:
         )
         assert limiter.input_limiter is not None
         assert isinstance(limiter.input_limiter, FixedWindowLimiter)
-
-    @pytest.mark.asyncio
-    async def test_count_input_sends_notification(self, emit_notification_mock):
-        """Test that count_input sends notification with correct parameters after deduction."""
-        input_config = Limiting(max_tokens=100, window_size='1 minute')
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name='rb-gateway',
-            input_config=input_config,
-        )
-
-        await limiter.count_input(prompt_tokens=42, identity=IDENTITY)
-
-        # Verify emit_notification was called with correct parameters
-        emit_notification_mock.assert_called_once()
-        call_kwargs = emit_notification_mock.call_args.kwargs
-        assert call_kwargs['route_name'] == 'rb-gateway'
-        assert call_kwargs['direction'] == 'input'
-        assert call_kwargs['window_size'] == 60
-        assert call_kwargs['max_tokens'] == 100
-        assert call_kwargs['current_usage'] == 42
-        # reset_time is dynamic
-        assert 'reset_time' in call_kwargs
-
-    @pytest.mark.asyncio
-    async def test_count_output_sends_notification(self, emit_notification_mock):
-        """Test that count_output sends notification with correct parameters after deduction."""
-        output_config = Limiting(max_tokens=50, window_size='1 minute')
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name='rb-gateway',
-            output_config=output_config,
-        )
-
-        await limiter.count_output(token_count=17, identity=IDENTITY)
-
-        # Verify emit_notification was called with correct parameters
-        emit_notification_mock.assert_called_once()
-        call_kwargs = emit_notification_mock.call_args.kwargs
-        assert call_kwargs['route_name'] == 'rb-gateway'
-        assert call_kwargs['direction'] == 'output'
-        assert call_kwargs['window_size'] == 60
-        assert call_kwargs['max_tokens'] == 50
-        assert call_kwargs['current_usage'] == 17
-        # reset_time is dynamic
-        assert 'reset_time' in call_kwargs

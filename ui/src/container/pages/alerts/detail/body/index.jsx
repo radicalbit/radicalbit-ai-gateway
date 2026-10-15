@@ -213,6 +213,7 @@ const useInitializeForm = () => {
         route: data.route,
         event: data.event,
         timeAggregation: data.timeAggregation ?? AlertTimeAggregationEnum.INSTANT,
+        windowSize: data.windowSize ?? undefined,
         recipients: data.recipients ?? [],
       });
     }

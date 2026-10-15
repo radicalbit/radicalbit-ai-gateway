@@ -208,8 +208,7 @@ routes:
 
 def test_build_gateway_routes_from_config_resolves_transcription_models():
     """Step 3: a route's transcription_models resolve to Model instances on
-    the GatewayRoute. No invoker is built yet (that's AG-891's job — this
-    ticket, AG-896, only covers config schema + wiring).
+    the GatewayRoute. No invoker is built yet.
     """
     resolved = resolve_secrets_from_string(_PROJECT_CONFIG_WITH_TRANSCRIPTION_YAML)
     config = GatewayConfig.model_validate(resolved)

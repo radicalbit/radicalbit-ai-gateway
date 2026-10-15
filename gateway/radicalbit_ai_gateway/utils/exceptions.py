@@ -787,6 +787,9 @@ def guardrail_exception_handler(request: Request, err: GuardrailError):
         sanitized_reason.pop('prompt_ref', None)
         sanitized_reason.pop('model_id', None)
         sanitized_reason.pop('fallback_model_id', None)
+        # A caller who sees the score can tune a prompt to slip under it.
+        sanitized_reason.pop('noul', None)
+        sanitized_reason.pop('threshold', None)
         payload = {**payload, 'reason': sanitized_reason}
     response = _log_and_json_response(err, 'guardrail_error', param_override=payload)
     # Surface that a guardrail (hard block) was triggered
