@@ -104,7 +104,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
     const { error } = await trigger({
       uuid,
       keyUUID,
-      successMessage: <SuccessMessage prefix="Group" strong={name} suffix="removed" />,
+      successMessage: <SuccessMessage prefix="Credential" strong={name} suffix="removed from the group" />,
     });
 
     if (error) {
@@ -141,7 +141,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
     <Tooltip title="Remove">
       <Popconfirm
         cancelButtonProps={{ type: 'secondary-light' }}
-        description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove the group from the credential" />}
+        description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove the credential" />}
         label={(
           <Button aria-label="Remove" onClick={handleOnTriggerClick} size="small" type="text">
             <Lucide icon={Trash} type="error" />
@@ -151,7 +151,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
         okType="error-light"
         onCancel={handleOnCancel}
         onConfirm={handleOnDelete}
-        title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
+        title={<SectionTitle size="small" title="Remove from group" titleColor="error" />}
       />
     </Tooltip>
   );
