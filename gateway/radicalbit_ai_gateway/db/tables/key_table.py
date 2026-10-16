@@ -21,7 +21,7 @@ class Key(Reflected, BaseTable, BaseDAO):
     __tablename__ = 'key'
     __table_args__ = (
         UniqueConstraint('NAME', 'OWNER', name='uq_key_NAME_OWNER'),
-        # Authentication looks a credential up by either of its values (ADR 0008)
+        # Authentication looks a credential up by either of its values
         Index('ix_key_PREVIOUS_HASHED_KEY', 'PREVIOUS_HASHED_KEY'),
     )
 
@@ -41,7 +41,7 @@ class Key(Reflected, BaseTable, BaseDAO):
     updated_at = Column('UPDATED_AT', TIMESTAMP(timezone=True), nullable=False)
     # A calendar date, not an instant: valid up to 23:59:59 UTC on that day. None = never.
     expires_on = Column('EXPIRES_ON', DATE(), nullable=True)
-    # Rotation (ADR 0008): the previous value's hash and the grace end are kept only
+    # Rotation: the previous value's hash and the grace end are kept only
     # for a grace period; the last rotation instant stays until the next rotation.
     previous_hashed_key = Column('PREVIOUS_HASHED_KEY', VARCHAR(128), nullable=True)
     grace_ends_at = Column('GRACE_ENDS_AT', TIMESTAMP(timezone=True), nullable=True)

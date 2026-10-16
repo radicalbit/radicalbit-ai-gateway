@@ -211,7 +211,7 @@ async def test_validate_token_authenticates_a_key_without_expiry_date():
 
 
 # ---------------------------------------------------------------------------
-# Rotation (ADR 0008)
+# Rotation
 # ---------------------------------------------------------------------------
 
 PREVIOUS = 'sk-rb-previous'
@@ -282,7 +282,7 @@ async def test_the_previous_value_is_a_wrong_credential_once_the_grace_period_is
 @freeze_time('2026-11-07 00:00:00')
 async def test_after_expiry_a_stale_previous_value_still_looks_wrong_not_expired():
     # The grace period ended before the expiry and its hash was never cleared:
-    # "expired" would confirm the old value was once real (ADR 0008)
+    # "expired" would confirm the old value was once real
     key = _rotated_key(expires_on=datetime.date(2026, 11, 6))
     validator = _validator_over(key)
 

@@ -1,7 +1,7 @@
 import datetime
 from enum import Enum
-import re
 
+from radicalbit_ai_gateway.limiter.window_config import parse_window
 from radicalbit_ai_gateway.models.credential_expiry import (
     UTC,
     CredentialState,
@@ -12,12 +12,9 @@ from radicalbit_ai_gateway.models.credential_expiry import (
 GRACE_ENDING_WINDOW = datetime.timedelta(hours=24)
 MIN_GRACE_PERIOD = datetime.timedelta(hours=1)
 
-# Same "N unit" shape as limit windows, restricted to hour, day and week
-_GRACE_PERIOD_PATTERN = re.compile(r'^(\d+)\s+(hour|day|week)s?$')
-_GRACE_PERIOD_UNIT_HOURS = {'hour': 1, 'day': 24, 'week': 7 * 24}
-# Compared in whole hours, so an absurd N is refused before any date arithmetic
-_MIN_GRACE_PERIOD_HOURS = 1
-_MAX_GRACE_PERIOD_HOURS = 365 * 24
+# Compared in seconds, so an absurd N is refused before any date arithmetic
+_MIN_GRACE_PERIOD_SECONDS = int(MIN_GRACE_PERIOD.total_seconds())
+_MAX_GRACE_PERIOD_SECONDS = 365 * 24 * 60 * 60
 
 
 class GracePeriodOutOfBoundsError(ValueError):
@@ -25,17 +22,13 @@ class GracePeriodOutOfBoundsError(ValueError):
 
 
 def parse_grace_period(text: str) -> datetime.timedelta:
-    match = _GRACE_PERIOD_PATTERN.match(text.strip())
-    if not match:
-        raise ValueError(
-            f'Invalid grace period {text!r}: expected "N unit" with unit hour, day or week'
-        )
-    hours = int(match.group(1)) * _GRACE_PERIOD_UNIT_HOURS[match.group(2)]
-    if hours < _MIN_GRACE_PERIOD_HOURS:
+    """Parse a grace period in the same "N unit" format as limit windows."""
+    seconds = parse_window(text)
+    if seconds < _MIN_GRACE_PERIOD_SECONDS:
         raise ValueError('The grace period must be at least 1 hour')
-    if hours > _MAX_GRACE_PERIOD_HOURS:
+    if seconds > _MAX_GRACE_PERIOD_SECONDS:
         raise ValueError('The grace period must be at most 1 year (365 days)')
-    return datetime.timedelta(hours=hours)
+    return datetime.timedelta(seconds=seconds)
 
 
 def get_grace_end(
@@ -76,7 +69,7 @@ def previous_value_authenticates(
     now: datetime.datetime | None = None,
 ) -> bool:
     """Tell whether the previous value still authenticates: only before the grace
-    end, and only while the credential has not expired (ADR 0008).
+    end, and only while the credential has not expired.
     """
     now = now or datetime.datetime.now(tz=UTC)
     return (

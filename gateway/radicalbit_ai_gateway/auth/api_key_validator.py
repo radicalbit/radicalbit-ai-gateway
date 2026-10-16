@@ -32,7 +32,7 @@ class ApiKeyValidator:
 
         # Found by its previous value: valid only during the grace period, and
         # afterwards indistinguishable from a wrong value, even once the credential
-        # has expired (ADR 0008). A grace period never outlasts the expiry.
+        # has expired. A grace period never outlasts the expiry.
         if hashed != key_record.hashed_key and not previous_value_authenticates(
             key_record.expires_on, key_record.grace_ends_at
         ):

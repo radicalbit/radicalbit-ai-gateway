@@ -740,7 +740,7 @@ class TestKeyRouteRotation(unittest.TestCase):
         for name, body in {
             'below 1 hour': {'gracePeriod': '0 hours'},
             'minutes': {'gracePeriod': '30 minutes'},
-            'months': {'gracePeriod': '1 month'},
+            'unknown unit': {'gracePeriod': '1 fortnight'},
             'not a duration': {'gracePeriod': 'tomorrow'},
             'missing': {},
             'after the expiry': {'gracePeriod': '2 weeks'},

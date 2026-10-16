@@ -95,6 +95,10 @@ def test_rotation_state(
         ('365 days', datetime.timedelta(days=365)),
         ('8760 hours', datetime.timedelta(days=365)),
         ('52 weeks', datetime.timedelta(weeks=52)),
+        ('1 month', datetime.timedelta(days=30)),
+        ('90 minutes', datetime.timedelta(minutes=90)),
+        ('3600 seconds', datetime.timedelta(hours=1)),
+        ('2 Days', datetime.timedelta(days=2)),
     ],
 )
 def test_parse_grace_period(text, expected):
@@ -103,7 +107,7 @@ def test_parse_grace_period(text, expected):
 
 @pytest.mark.parametrize(
     'text',
-    ['0 hours', '30 minutes', '1 month', 'hours', '-1 hour', '1.5 hours', ''],
+    ['0 hours', '30 minutes', '1 fortnight', 'hours', '-1 hour', '1.5 hours', ''],
 )
 def test_parse_grace_period_rejects_other_shapes_and_units(text):
     with pytest.raises(ValueError):
@@ -111,7 +115,8 @@ def test_parse_grace_period_rejects_other_shapes_and_units(text):
 
 
 @pytest.mark.parametrize(
-    'text', ['366 days', '8761 hours', '53 weeks', '99999999999999999999 weeks']
+    'text',
+    ['366 days', '8761 hours', '53 weeks', '13 months', '99999999999999999999 weeks'],
 )
 def test_parse_grace_period_rejects_more_than_one_year(text):
     with pytest.raises(ValueError, match='at most 1 year'):

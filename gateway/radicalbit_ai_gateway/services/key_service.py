@@ -185,7 +185,7 @@ class KeyService:
 
     def rotate_key(self, key_uuid: UUID, rotation_in: KeyRotationIn) -> KeyFullOut:
         """Give the credential a new value, shown once. During the grace period the
-        previous value keeps working; with none, it stops now (ADR 0008).
+        previous value keeps working; with none, it stops now.
         Raises GracePeriodOutOfBoundsError when the grace period ends after the expiry.
         """
         key = self.key_dao.get_by_uuid(key_uuid)
