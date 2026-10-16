@@ -69,9 +69,9 @@ def _build_judge_prompt_item(
     judge_params = guardrail.parameters
     judge_model = config.chat_models_by_id.get(judge_params.model_id)
     model_name = judge_model.model if judge_model else judge_params.model_id
-    prompt_text = None
+    prompt_text = judge_params.prompt
     prompt_manager = PromptManager.get_global()
-    if prompt_manager:
+    if prompt_text is None and prompt_manager:
         try:
             prompt_text = prompt_manager.get_judge_prompt(judge_params.prompt_ref)
         except FileNotFoundError:

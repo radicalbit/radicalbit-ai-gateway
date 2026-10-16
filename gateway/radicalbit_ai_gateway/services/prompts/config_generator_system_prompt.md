@@ -219,6 +219,19 @@ Uses an LLM to semantically evaluate content.
     max_tokens: 10
 ```
 
+Set the judge prompt with exactly one of `prompt_ref` (a prompt file) or `prompt` (the prompt text inline). Never set both.
+
+```yaml
+- name: medical-advice-check
+  type: judge
+  where: input
+  behavior: block
+  parameters:
+    prompt: |
+      Flag the text if it asks for a diagnosis, a dosage or other medical advice.
+    model_id: gpt4o
+```
+
 ---
 
 ## `routing`

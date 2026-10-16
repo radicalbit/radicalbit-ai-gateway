@@ -88,7 +88,7 @@ class RouteServiceTest(unittest.TestCase):
         PromptManager._global_instance = None
 
     def test_get_route_prompts_judge_prompt_not_found(self):
-        """Missing judge prompt file should result in prompt=None and tokens=0."""
+        """A judge prompt file removed after startup should give prompt=None and tokens=0."""
         pm = PromptManager(conf=PromptManagerConfig())
         PromptManager.set_global(pm)
 
@@ -99,10 +99,12 @@ class RouteServiceTest(unittest.TestCase):
             where='INPUT',
             behavior='BLOCK',
             parameters=JudgeParameter(
-                prompt_ref='non_existent_prompt.md',
+                prompt_ref='toxicity_check.md',
                 model_id='openai',
             ),
         )
+        # Bypass validation: the file check at config load would reject it.
+        object.__setattr__(judge.parameters, 'prompt_ref', 'non_existent_prompt.md')
         config.guardrails.append(judge)
         config.routes['route-A'].guardrails.append('missing_prompt')
 
