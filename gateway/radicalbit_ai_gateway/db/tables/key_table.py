@@ -8,6 +8,7 @@ from sqlalchemy import (
     VARCHAR,
     Column,
     ForeignKey,
+    Index,
     UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
@@ -18,7 +19,11 @@ from radicalbit_ai_gateway.db.database import BaseTable, Reflected
 
 class Key(Reflected, BaseTable, BaseDAO):
     __tablename__ = 'key'
-    __table_args__ = (UniqueConstraint('NAME', 'OWNER', name='uq_key_NAME_OWNER'),)
+    __table_args__ = (
+        UniqueConstraint('NAME', 'OWNER', name='uq_key_NAME_OWNER'),
+        # Authentication looks a credential up by either of its values (ADR 0008)
+        Index('ix_key_PREVIOUS_HASHED_KEY', 'PREVIOUS_HASHED_KEY'),
+    )
 
     uuid = Column(
         'UUID',
@@ -36,6 +41,11 @@ class Key(Reflected, BaseTable, BaseDAO):
     updated_at = Column('UPDATED_AT', TIMESTAMP(timezone=True), nullable=False)
     # A calendar date, not an instant: valid up to 23:59:59 UTC on that day. None = never.
     expires_on = Column('EXPIRES_ON', DATE(), nullable=True)
+    # Rotation (ADR 0008): the previous value's hash and the grace end are kept only
+    # for a grace period; the last rotation instant stays until the next rotation.
+    previous_hashed_key = Column('PREVIOUS_HASHED_KEY', VARCHAR(128), nullable=True)
+    grace_ends_at = Column('GRACE_ENDS_AT', TIMESTAMP(timezone=True), nullable=True)
+    last_rotated_at = Column('LAST_ROTATED_AT', TIMESTAMP(timezone=True), nullable=True)
     group_uuid = Column(
         'GROUP_UUID',
         UUID(as_uuid=True),

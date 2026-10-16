@@ -538,6 +538,16 @@ class KeyOperationNotAllowedError(AuthRegistryError):
         )
 
 
+class KeyRotationConflictError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_409_CONFLICT,
+            'key_rotation_conflict',
+            log_message=log_message,
+        )
+
+
 class KeyGroupAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(

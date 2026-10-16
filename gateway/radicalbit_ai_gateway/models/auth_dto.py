@@ -15,6 +15,11 @@ from radicalbit_ai_gateway.models.credential_expiry import (
     utc_today,
 )
 from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
+from radicalbit_ai_gateway.models.credential_rotation import (
+    RotationState,
+    get_rotation_state,
+    parse_grace_period,
+)
 
 
 class KeyUpdateIn(BaseModel):
@@ -66,6 +71,45 @@ class KeyCreateIn(BaseModel):
         )
 
 
+class KeyRotationIn(BaseModel):
+    """Rotation contract: gracePeriod is required, and null means no grace period,
+    so cutting callers off is always an explicit choice.
+    """
+
+    grace_period: str | None
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+    @field_validator('grace_period')
+    @classmethod
+    def _valid_duration(cls, value: str | None) -> str | None:
+        if value is not None:
+            parse_grace_period(value)
+        return value
+
+    def to_timedelta(self) -> datetime.timedelta | None:
+        return (
+            None if self.grace_period is None else parse_grace_period(self.grace_period)
+        )
+
+
+def _rotation_fields(key: Key) -> dict:
+    rotation_state = get_rotation_state(
+        key.expires_on, key.grace_ends_at, key.last_rotated_at
+    )
+    is_grace_running = rotation_state in (
+        RotationState.IN_GRACE,
+        RotationState.GRACE_ENDING,
+    )
+    return {
+        'grace_ends_at': key.grace_ends_at if is_grace_running else None,
+        'rotation_state': rotation_state,
+        'last_rotated_at': key.last_rotated_at,
+    }
+
+
 class KeyOut(BaseModel):
     uuid: UUID
     name: str
@@ -77,6 +121,9 @@ class KeyOut(BaseModel):
     updated_at: str
     expires_on: datetime.date | None = None
     state: CredentialState = CredentialState.ACTIVE
+    grace_ends_at: datetime.datetime | None = None
+    rotation_state: RotationState = RotationState.NONE
+    last_rotated_at: datetime.datetime | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -95,6 +142,7 @@ class KeyOut(BaseModel):
             updated_at=str(key.updated_at),
             expires_on=key.expires_on,
             state=get_credential_state(key.expires_on),
+            **_rotation_fields(key),
             hashed_key=key.hashed_key,
             api_key=key.obscured_key,
         )
@@ -253,6 +301,7 @@ class KeyFullOut(KeyOut):
             updated_at=str(key.updated_at),
             expires_on=key.expires_on,
             state=get_credential_state(key.expires_on),
+            **_rotation_fields(key),
         )
 
     # Used to return Key with api_key obscured
@@ -279,6 +328,7 @@ class KeyFullOut(KeyOut):
             updated_at=str(key.updated_at),
             expires_on=key.expires_on,
             state=get_credential_state(key.expires_on),
+            **_rotation_fields(key),
         )
 
 
