@@ -886,6 +886,73 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
         assert self.listed(rule['uuid'])['stale'] is True
 
+    def test_an_unreadable_credential_limit_is_skipped(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', 'whenever')
+        self.add_credential_limit(credential, 'mystery', '1 hour')
+        self.add_credential_limit(credential, 'budget', '1 day')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == ['budget_limit-exceeded-1d']
+
+    def test_credential_events_are_empty_when_credentials_are_not_wired(self):
+        service = AlertRuleService(alert_rule_dao=AlertRuleDAO(self.db))
+        app = FastAPI()
+        app.include_router(AlertRuleRoute.get_alert_rule_router(service))
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        response = TestClient(app).get(f'/keys/{credential.uuid}/alertable-events')
+
+        assert response.status_code == 200
+        assert response.json()['limit'] == []
+
+    def test_a_credential_rule_without_a_credential_is_stale(self):
+        rule = self.insert_rule(
+            'rate_limit-exceeded-1m',
+            scope='credential',
+            project=None,
+            route=None,
+            credential_uuid=None,
+            time_aggregation='limit_window',
+        )
+
+        listed = self.listed(rule.uuid)
+
+        assert listed['stale'] is True
+        assert 'credential' in listed['staleReason'].lower()
+
+    def test_a_credential_rule_on_an_event_that_is_not_a_limit_is_stale(self):
+        credential = self.insert_credential('billing-service')
+        rule = self.insert_rule(
+            'fallback-triggered',
+            scope='credential',
+            project=None,
+            route=None,
+            credential_uuid=credential.uuid,
+        )
+
+        listed = self.listed(rule.uuid)
+
+        assert listed['stale'] is True
+        assert 'fallback-triggered' in listed['staleReason']
+
+    def test_a_credential_threshold_rule_is_stale_when_its_percentage_is_dropped(
+        self,
+    ):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-75pct-1m')
+
+        with patch.object(
+            get_app_config().alert_config, 'alert_threshold_percentages', [90]
+        ):
+            listed = self.listed(rule['uuid'])
+
+        assert listed['stale'] is True
+        assert '75%' in listed['staleReason']
+
     # --- create / update validation ---
 
     def test_create_rule_on_offered_event(self):
