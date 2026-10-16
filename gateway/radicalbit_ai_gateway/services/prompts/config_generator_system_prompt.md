@@ -216,7 +216,21 @@ Uses an LLM to semantically evaluate content.
     prompt_ref: toxicity_check.md         # built-in: toxicity_check.md, business_context_check.md, prompt_injection_check.md
     model_id: gpt4o                       # must be a defined chat_models model_id
     temperature: 0.0
-    max_tokens: 10
+```
+
+Set the judge prompt with exactly one of `prompt_ref` (a prompt file) or `prompt` (the prompt text inline). Never set both.
+
+Omit `max_tokens` on a judge unless the user asks for it: the default (100) leaves room for the JSON verdict and its reasoning. Never set it below 50.
+
+```yaml
+- name: medical-advice-check
+  type: judge
+  where: input
+  behavior: block
+  parameters:
+    prompt: |
+      Flag the text if it asks for a diagnosis, a dosage or other medical advice.
+    model_id: gpt4o
 ```
 
 ---

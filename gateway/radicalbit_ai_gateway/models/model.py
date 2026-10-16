@@ -67,7 +67,7 @@ class Model(BaseModel):
         default=None,
         description=(
             'Reference (path/filename) to a Markdown file containing the system prompt. '
-            'If set, the file content is loaded at startup and overrides the inline `prompt`.'
+            'The file content is loaded at startup. Mutually exclusive with `prompt`.'
         ),
         examples=['customer_service.md', 'prompts/system_prompt.md'],
     )
@@ -259,7 +259,10 @@ class Model(BaseModel):
         prompt_manager = PromptManager.get_global() or PromptManager(
             conf=app_config.prompt_manager_config
         )
-        prompt_manager.get_model_prompt(self.prompt_ref)
+        try:
+            prompt_manager.get_model_prompt(self.prompt_ref)
+        except FileNotFoundError as e:
+            raise ValueError(f'Prompt file not found: {self.prompt_ref}') from e
         return self
 
 

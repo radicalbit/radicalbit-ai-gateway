@@ -6,5 +6,6 @@ class JudgeRuntimeConfig(BaseModel):
     fallback_model_id: str | None = None
     temperature: float = 0.0
     max_tokens: int = 512
-    prompt_ref: str
+    prompt: str | None = None
+    prompt_ref: str | None = None
     include_reasoning: bool = True

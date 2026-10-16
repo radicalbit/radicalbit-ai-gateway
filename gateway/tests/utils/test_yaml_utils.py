@@ -1,6 +1,7 @@
 import pytest
 
-from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.utils.app_config import PromptManagerConfig, get_app_config
 from radicalbit_ai_gateway.utils.exceptions import ProjectConfigValidationError
 from radicalbit_ai_gateway.utils.yaml_utils import (
     check_no_literal_secrets,
@@ -55,6 +56,47 @@ def test_validate_gateway_config_pydantic_error_includes_field_path():
     message = str(exc_info.value)
     assert 'chat_models' in message
     assert 'error(s)' in message
+
+
+def test_validate_gateway_config_rejects_missing_judge_prompt_file():
+    yaml_with_missing_prompt = (
+        'chat_models:\n'
+        '  - model_id: gpt\n'
+        '    model: openai/gpt-4o-mini\n'
+        'routes: {}\n'
+        'guardrails:\n'
+        '  - name: judge\n'
+        '    type: judge\n'
+        '    where: input\n'
+        '    behavior: block\n'
+        '    parameters:\n'
+        '      prompt_ref: non_existent_prompt.md\n'
+        '      model_id: gpt\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_missing_prompt, check_secrets=False)
+    assert 'Prompt file not found: non_existent_prompt.md' in str(exc_info.value)
+
+
+def test_validate_gateway_config_rejects_missing_model_prompt_file(tmp_path):
+    PromptManager.set_global(
+        PromptManager(PromptManagerConfig(prompts_dir=str(tmp_path)))
+    )
+    yaml_with_missing_prompt = (
+        'chat_models:\n'
+        '  - model_id: gpt\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    prompt_ref: non_existent_prompt.md\n'
+        'routes: {}\n'
+    )
+    try:
+        with pytest.raises(ProjectConfigValidationError) as exc_info:
+            validate_gateway_config(yaml_with_missing_prompt, check_secrets=False)
+    finally:
+        PromptManager._global_instance = None
+    message = str(exc_info.value)
+    assert 'Prompt file not found: non_existent_prompt.md' in message
+    assert str(tmp_path) not in message
 
 
 def test_validate_gateway_config_secret_violation_includes_line_number():
