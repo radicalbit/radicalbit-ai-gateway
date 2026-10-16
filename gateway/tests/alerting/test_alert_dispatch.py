@@ -432,6 +432,74 @@ class DispatchTests:
 
         assert self.email.sent == []
 
+    def project_rule(self, event: str = 'budget_limit-exceeded-1m', **columns):
+        return self.rule(
+            event,
+            scope='project',
+            route=None,
+            time_aggregation='limit_window',
+            **columns,
+        )
+
+    def project_budget_event(self, **fields):
+        return limit_event(category='budget', **fields).model_copy(
+            update={
+                'limit_scope': LimitScope.PROJECT,
+                'event_type': EventType.PROJECT_BUDGET_LIMIT
+                if fields.get('threshold_percentage') is None
+                else EventType.LIMIT_THRESHOLD,
+            }
+        )
+
+    def test_a_project_rule_sends_when_the_project_budget_is_exceeded(self):
+        rule = self.project_rule()
+
+        events_processor.emit_event(self.project_budget_event())
+
+        [email] = self.email.sent
+        assert email['subject'] == '[Alert] PII watch: budget_limit-exceeded-1m on acme'
+        [record] = self.buffer.records
+        assert record['RULE_UUID'] == str(rule.uuid)
+        assert record['SCOPE'] == 'project'
+        assert record['PROJECT_UUID'] == PROJECT_UUID
+        assert record['ROUTE_NAME'] is None
+
+    def test_a_project_rule_sends_on_a_budget_threshold(self):
+        self.project_rule('budget_limit-75pct-1m')
+
+        events_processor.emit_event(
+            self.project_budget_event(threshold_percentage=75, consumption=7.5)
+        )
+
+        [email] = self.email.sent
+        assert '>75%<' in email['body']
+        assert '>7.5<' in email['body']
+
+    def test_a_project_rule_sends_once_per_window(self):
+        self.project_rule()
+
+        events_processor.emit_event(self.project_budget_event(window_id='w1'))
+        events_processor.emit_event(self.project_budget_event(window_id='w1'))
+        events_processor.emit_event(self.project_budget_event(window_id='w2'))
+
+        assert len(self.email.sent) == 2
+
+    def test_a_project_rule_watches_only_its_project(self):
+        self.project_rule(project=str(uuid.uuid4()))
+
+        events_processor.emit_event(self.project_budget_event())
+
+        assert self.email.sent == []
+
+    def test_a_route_budget_does_not_trigger_a_project_rule(self):
+        self.project_rule()
+
+        events_processor.emit_event(
+            limit_event(category='budget', event_type=EventType.BUDGET_LIMIT)
+        )
+
+        assert self.email.sent == []
+
     def test_a_limit_alert_is_recorded_with_its_window(self):
         rule = self.limit_rule()
 

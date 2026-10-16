@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from uuid import UUID
 
 from radicalbit_ai_gateway.alerting.limit_event_names import (
@@ -102,26 +102,43 @@ def _route_events(
         if route.fallback
         else []
     )
-    limits = _route_limits(route, with_budget)
+    limit, threshold = _limit_groups(_route_limits(route, with_budget).items())
+    return AlertableEventsOut(
+        guardrail=guardrail, fallback=fallback, limit=limit, threshold=threshold
+    )
+
+
+def _limit_groups(
+    limits: Iterable[tuple[str, int]],
+) -> tuple[list[AlertableEventItem], list[AlertableEventItem]]:
+    """Build the exceeded and threshold events of each (category, seconds) limit."""
+    limits = list(limits)
     percentages = get_app_config().alert_config.alert_threshold_percentages
     limit = [
         _limit_item(
             exceeded_event(category, seconds),
             f'{CATEGORY_LABELS[category]}: exceeded ({window_name(seconds)})',
         )
-        for category, seconds in limits.items()
+        for category, seconds in limits
     ]
     threshold = [
         _limit_item(
             threshold_event(category, pct, seconds),
             f'{CATEGORY_LABELS[category]}: {pct}% ({window_name(seconds)})',
         )
-        for category, seconds in limits.items()
+        for category, seconds in limits
         for pct in percentages
     ]
-    return AlertableEventsOut(
-        guardrail=guardrail, fallback=fallback, limit=limit, threshold=threshold
+    return limit, threshold
+
+
+def _project_events(budget_windows: Iterable[int]) -> AlertableEventsOut:
+    limit, threshold = _limit_groups(
+        # Limits on the same window, by algorithm or spelling, share their events.
+        (BUDGET_LIMIT, seconds)
+        for seconds in sorted(set(budget_windows))
     )
+    return AlertableEventsOut(limit=limit, threshold=threshold)
 
 
 def _event_names(events: AlertableEventsOut) -> set[str]:
@@ -162,10 +179,43 @@ class AlertableEvents:
     def __init__(
         self,
         project_configs: dict[str, ProjectEntry],
-        project_has_budget: Callable[[str], bool] = lambda _: False,
+        project_budget_windows: Callable[[str], list[int]] = lambda _: [],
+        project_exists: Callable[[str], bool] = lambda _: False,
     ):
+        """`project_budget_windows` gives the window seconds of each budget limit
+        stored for a project; `project_exists` says whether it is still there.
+        """
         self._project_configs = project_configs
-        self._project_has_budget = project_has_budget
+        self._project_budget_windows = project_budget_windows
+        self._project_exists = project_exists
+
+    def for_project(self, project: UUID | str | None) -> AlertableEventsOut:
+        """List the project's budget events, read from the stored budget limits."""
+        if not self._project_exists(str(project)):
+            return AlertableEventsOut()
+        return _project_events(self._project_budget_windows(str(project)))
+
+    def offers_project(self, project: UUID | str | None, event: str) -> bool:
+        return event in _event_names(self.for_project(project))
+
+    def project_stale_reason(
+        self, project: UUID | str | None, event: str
+    ) -> str | None:
+        """Why a project rule on `event` no longer matches the stored budget limits.
+
+        Returns None when the rule is not stale.
+        """
+        if not self._project_exists(str(project)):
+            return 'The project no longer exists'
+        if self.offers_project(project, event):
+            return None
+        limit_event = parse_limit_event(event)
+        if limit_event is None or limit_event.category != BUDGET_LIMIT:
+            return f'Event "{event}" is not offered by the project'
+        windows = {window_name(s) for s in self._project_budget_windows(str(project))}
+        if limit_event.window not in windows:
+            return f'The project has no budget limit with a {limit_event.window} window'
+        return f'Threshold {limit_event.percentage}% is no longer configured'
 
     def for_route(
         self, project: UUID | str | None, route_name: str | None
@@ -218,7 +268,7 @@ class AlertableEvents:
 
     def _with_budget(self, project: UUID | str | None) -> bool:
         """Whether the route budget counts: not when the project has a budget."""
-        return not self._project_has_budget(str(project))
+        return not self._project_budget_windows(str(project))
 
     def _published_route(
         self, project: UUID | str | None, route_name: str | None

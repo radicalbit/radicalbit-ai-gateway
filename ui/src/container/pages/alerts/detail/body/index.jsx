@@ -1,5 +1,5 @@
 import Lucide from '@Components/lucide';
-import { AlertTimeAggregationEnum, PathsEnum } from '@Src/constants';
+import { AlertScopeEnum, AlertTimeAggregationEnum, PathsEnum } from '@Src/constants';
 import { useGetAlertQuery } from '@State/alerts/api';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
@@ -209,6 +209,7 @@ const useInitializeForm = () => {
       initialize({
         name: data.name,
         description: data.description ?? '',
+        scope: data.scope ?? AlertScopeEnum.ROUTE,
         project: data.project,
         route: data.route,
         event: data.event,

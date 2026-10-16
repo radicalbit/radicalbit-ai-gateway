@@ -1,4 +1,4 @@
-import { AlertTimeAggregationEnum } from '@Src/constants';
+import { AlertScopeEnum, AlertTimeAggregationEnum } from '@Src/constants';
 import { useGetRoutesQuery } from '@State/routes/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
@@ -10,8 +10,14 @@ function Route() {
   const { error, form, write } = useFormbitContext();
   const projectUuid = form?.project;
   const route = form?.route;
+  const scope = form?.scope;
 
-  const { data = [], isError, isLoading } = useGetRoutesQuery({ projectUuid }, { skip: !projectUuid });
+  const isProjectScope = scope === AlertScopeEnum.PROJECT;
+
+  const { data = [], isError, isLoading } = useGetRoutesQuery(
+    { projectUuid },
+    { skip: !projectUuid || isProjectScope },
+  );
   const options = data.map(({ routeName }) => ({ label: routeName, value: routeName }));
 
   const errorMessage = isError ? 'Unable to load routes, please retry later' : undefined;
@@ -21,6 +27,10 @@ function Route() {
     write('event', undefined);
     write('timeAggregation', AlertTimeAggregationEnum.INSTANT);
   };
+
+  if (isProjectScope) {
+    return false;
+  }
 
   if (isLoading) {
     return <Skeleton.Input active block />;

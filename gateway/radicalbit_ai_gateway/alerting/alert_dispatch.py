@@ -80,8 +80,8 @@ def alert_event(event: EventPayload) -> AlertEvent | None:
     if isinstance(event, FallbackEventPayload):
         return AlertEvent(key=FALLBACK_EVENT, scope=AlertRuleScope.ROUTE)
     if isinstance(event, LimitEventPayload):
-        # Rules on project and credential limits are not dispatched yet.
-        if event.limit_scope is not LimitScope.ROUTE:
+        # Rules on credential limits are not dispatched yet.
+        if event.limit_scope is LimitScope.CREDENTIAL:
             return None
         category = CATEGORY_BY_SCENARIO.get(event.category)
         if category is None:
@@ -92,7 +92,7 @@ def alert_event(event: EventPayload) -> AlertEvent | None:
             key = threshold_event(
                 category, event.threshold_percentage, event.window_seconds
             )
-        return AlertEvent(key=key, scope=AlertRuleScope.ROUTE)
+        return AlertEvent(key=key, scope=AlertRuleScope(event.limit_scope.value))
     return None
 
 

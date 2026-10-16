@@ -1,4 +1,7 @@
-import { ALERT_SCOPE_LABELS, AlertScopeEnum } from '@Src/constants';
+import {
+  ALERT_SCOPE_LABELS, AlertScopeEnum, AlertTimeAggregationEnum,
+} from '@Src/constants';
+import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select } from '@radicalbit/radicalbit-design-system';
 import { useId } from 'react';
 
@@ -10,9 +13,20 @@ const SCOPE_OPTIONS = Object.values(AlertScopeEnum).map((value) => ({
 function Scope() {
   const id = useId();
 
+  const { form, write } = useFormbitContext();
+  const scope = form?.scope;
+
+  const handleOnChange = (value) => {
+    write('scope', value);
+    write('route', undefined);
+    write('event', undefined);
+    write('timeAggregation', AlertTimeAggregationEnum.INSTANT);
+    write('windowSize', undefined);
+  };
+
   return (
     <FormField htmlFor={id} label="Scope">
-      <Select disabled id={id} options={SCOPE_OPTIONS} value={AlertScopeEnum.ROUTE} />
+      <Select id={id} onChange={handleOnChange} options={SCOPE_OPTIONS} value={scope} />
     </FormField>
   );
 }

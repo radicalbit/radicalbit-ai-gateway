@@ -1,5 +1,5 @@
 import useModals from '@Hooks/use-modals';
-import { AlertTimeAggregationEnum } from '@Src/constants';
+import { AlertScopeEnum, AlertTimeAggregationEnum } from '@Src/constants';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
   RbitModal, SectionTitle, Spinner,
@@ -14,6 +14,7 @@ import StepCActions from './step-c/actions';
 
 const INITIAL_VALUES = {
   recipients: [],
+  scope: AlertScopeEnum.ROUTE,
   timeAggregation: AlertTimeAggregationEnum.INSTANT,
   __metadata: { step: 0 },
 };

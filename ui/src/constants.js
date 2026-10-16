@@ -97,11 +97,13 @@ const SecretStatusEnum = {
 };
 
 const AlertScopeEnum = {
-  ROUTE: 'ROUTE',
+  ROUTE: 'route',
+  PROJECT: 'project',
 };
 
 const ALERT_SCOPE_LABELS = {
   [AlertScopeEnum.ROUTE]: 'Route',
+  [AlertScopeEnum.PROJECT]: 'Project',
 };
 
 const AlertTimeAggregationEnum = {

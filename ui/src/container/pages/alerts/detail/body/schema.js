@@ -1,4 +1,4 @@
-import { AlertTimeAggregationEnum } from '@Src/constants';
+import { AlertScopeEnum, AlertTimeAggregationEnum } from '@Src/constants';
 import * as yup from 'yup';
 
 const NAME_REGEX = /^[A-Za-z0-9 _\-#.]+$/;
@@ -14,7 +14,12 @@ const schema = yup.object().shape({
     .test('min-length', 'Description min length is 3 characters', (value) => !value || value.length >= 3)
     .nullable(),
   project: yup.string().required('Project is required'),
-  route: yup.string().required('Route is required'),
+  scope: yup.string().required('Scope is required'),
+  route: yup.string().when('scope', {
+    is: AlertScopeEnum.ROUTE,
+    then: (field) => field.required('Route is required'),
+    otherwise: (field) => field.nullable(),
+  }),
   event: yup.string().required('Event is required'),
   timeAggregation: yup.string().required('Time aggregation is required'),
   windowSize: yup.string().when('timeAggregation', {

@@ -1,5 +1,6 @@
 import datetime
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 import uuid
 
@@ -95,13 +96,29 @@ EVERY_LIMIT = {
 
 
 class FakeProjectBudgets:
-    """The project budget limits, by project uuid."""
+    """The project budget limits stored in the DB, by project uuid."""
 
     def __init__(self):
-        self.projects: set[str] = set()
+        self.limits: dict[str, list[SimpleNamespace]] = {}
+
+    def add(self, project_uuid, window_size: str, max_value: float = 10.0) -> None:
+        self.limits.setdefault(str(project_uuid), []).append(
+            SimpleNamespace(window_size=window_size, max_value=max_value)
+        )
 
     def get_by_project_uuid(self, project_uuid):
-        return ['a budget limit'] if str(project_uuid) in self.projects else []
+        return list(self.limits.get(str(project_uuid), []))
+
+
+class FakeProjects:
+    """The projects that are not deleted, by uuid."""
+
+    def __init__(self):
+        self.names: dict[str, str] = {}
+
+    def get_by_uuid(self, project_uuid):
+        name = self.names.get(str(project_uuid))
+        return SimpleNamespace(name=name) if name else None
 
 
 class TestAlertRuleRoute(DatabaseIntegration):
@@ -110,9 +127,11 @@ class TestAlertRuleRoute(DatabaseIntegration):
         super().setUpClass()
         cls.project_configs: dict[str, ProjectEntry] = {}
         cls.project_budgets = FakeProjectBudgets()
+        cls.projects = FakeProjects()
         service = AlertRuleService(
             alert_rule_dao=AlertRuleDAO(cls.db),
             project_configs=cls.project_configs,
+            project_dao=cls.projects,
             key_dao=KeyDAO(cls.db),
             project_budget_limit_dao=cls.project_budgets,
         )
@@ -130,7 +149,8 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
     def setUp(self):
         self.project_configs.clear()
-        self.project_budgets.projects.clear()
+        self.project_budgets.limits.clear()
+        self.projects.names = {str(PROJECT_UUID): PROJECT_NAME}
 
     def publish(self, config: GatewayConfig) -> None:
         self.project_configs[PROJECT_NAME] = ProjectEntry(
@@ -336,7 +356,7 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
     def test_route_budget_is_not_offered_when_the_project_has_a_budget(self):
         self.publish(route_config(limits=EVERY_LIMIT))
-        self.project_budgets.projects.add(str(PROJECT_UUID))
+        self.project_budgets.add(PROJECT_UUID, '1 day')
 
         events = self.alertable_events()
 
@@ -416,7 +436,7 @@ class TestAlertRuleRoute(DatabaseIntegration):
         self.publish(route_config(limits=EVERY_LIMIT))
         rule = self.created('budget_limit-exceeded-1mo', timeAggregation='limit_window')
 
-        self.project_budgets.projects.add(str(PROJECT_UUID))
+        self.project_budgets.add(PROJECT_UUID, '1 day')
 
         listed = self.listed(rule['uuid'])
         assert listed['stale'] is True
@@ -433,6 +453,186 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
         assert listed['stale'] is True
         assert '75%' in listed['staleReason']
+
+    # --- project budget ---
+
+    def project_events(self, project_uuid=PROJECT_UUID) -> dict:
+        response = self.client.get(f'/projects/{project_uuid}/alertable-events')
+        assert response.status_code == 200
+        return response.json()
+
+    def create_project_rule(self, event: str = 'budget_limit-exceeded-1d', **overrides):
+        return self.create(
+            event,
+            **{
+                'scope': 'project',
+                'route': None,
+                'timeAggregation': 'limit_window',
+                **overrides,
+            },
+        )
+
+    def created_project_rule(self, event: str = 'budget_limit-exceeded-1d') -> dict:
+        response = self.create_project_rule(event)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def test_project_events_offer_each_budget_limit_and_its_thresholds(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.project_budgets.add(PROJECT_UUID, '30 days')
+
+        events = self.project_events()
+
+        assert [e['event'] for e in events['limit']] == [
+            'budget_limit-exceeded-1d',
+            'budget_limit-exceeded-1mo',
+        ]
+        assert [e['event'] for e in events['threshold']] == [
+            'budget_limit-75pct-1d',
+            'budget_limit-98pct-1d',
+            'budget_limit-75pct-1mo',
+            'budget_limit-98pct-1mo',
+        ]
+        assert events['guardrail'] == []
+        assert events['fallback'] == []
+
+    def test_budget_limits_on_the_same_window_offer_their_events_once(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.project_budgets.add(PROJECT_UUID, '24 hours')
+        self.project_budgets.add(PROJECT_UUID, '86400')
+
+        events = self.project_events()
+
+        assert [e['event'] for e in events['limit']] == ['budget_limit-exceeded-1d']
+
+    def test_an_unreadable_stored_window_is_skipped(self):
+        self.project_budgets.add(PROJECT_UUID, 'whenever')
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        events = self.project_events()
+
+        assert [e['event'] for e in events['limit']] == ['budget_limit-exceeded-1d']
+
+    def test_project_events_use_the_limit_window_aggregation(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        events = self.project_events()
+
+        items = events['limit'] + events['threshold']
+        assert items
+        assert {item['aggregation'] for item in items} == {'limit_window'}
+        assert all(item['label'] for item in items)
+
+    def test_project_events_are_empty_without_a_budget_limit(self):
+        events = self.project_events()
+
+        assert events['limit'] == []
+        assert events['threshold'] == []
+
+    def test_project_events_are_empty_for_a_deleted_project(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.projects.names.clear()
+
+        assert self.project_events()['limit'] == []
+
+    def test_project_events_do_not_need_a_published_configuration(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.unpublish()
+
+        assert self.project_events()['limit']
+
+    def test_create_a_project_rule_on_a_budget_event(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        rule = self.created_project_rule('budget_limit-98pct-1d')
+
+        assert rule['scope'] == 'project'
+        assert rule['project'] == str(PROJECT_UUID)
+        assert rule['projectName'] == PROJECT_NAME
+        assert rule['route'] is None
+        assert rule['timeAggregation'] == 'limit_window'
+        assert rule['stale'] is False
+
+    def test_a_project_rule_rejects_an_event_the_project_does_not_offer(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        message = self.rejected(self.create_project_rule('budget_limit-exceeded-1h'))
+
+        assert 'budget_limit-exceeded-1h' in message
+
+    def test_a_project_rule_rejects_a_route_event(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        response = self.create_project_rule('rate_limit-exceeded-1d')
+
+        assert response.status_code == 400
+
+    def test_a_project_rule_takes_only_the_limit_window_aggregation(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        response = self.create_project_rule(timeAggregation='instant')
+
+        assert 'limit_window' in self.rejected(response)
+
+    def test_update_moves_a_project_rule_to_another_offered_event(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.project_budgets.add(PROJECT_UUID, '1 month')
+        rule = self.created_project_rule()
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'event': 'budget_limit-75pct-1mo'}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['event'] == 'budget_limit-75pct-1mo'
+
+    def test_update_rejects_a_project_event_that_is_not_offered(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        rule = self.created_project_rule()
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'event': 'budget_limit-exceeded-1w'}
+        )
+
+        assert response.status_code == 400
+
+    def test_a_project_rule_is_stale_once_the_project_is_deleted(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        rule = self.created_project_rule()
+
+        self.projects.names.clear()
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'project' in listed['staleReason'].lower()
+
+    def test_a_project_rule_is_stale_without_a_budget_limit_on_its_window(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        rule = self.created_project_rule()
+
+        self.project_budgets.limits.clear()
+        self.project_budgets.add(PROJECT_UUID, '1 week')
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert '1d' in listed['staleReason']
+
+    def test_a_project_rule_is_not_stale_when_the_maximum_changes(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day', max_value=10)
+        rule = self.created_project_rule()
+
+        self.project_budgets.limits.clear()
+        self.project_budgets.add(PROJECT_UUID, '1 day', max_value=500)
+
+        assert self.listed(rule['uuid'])['stale'] is False
+
+    def test_a_project_rule_does_not_depend_on_the_published_configuration(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        rule = self.created_project_rule()
+
+        self.unpublish()
+
+        assert self.listed(rule['uuid'])['stale'] is False
 
     # --- create / update validation ---
 
@@ -733,13 +933,7 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
         assert response.status_code == 422
 
-    def test_project_and_credential_scopes_are_not_supported_yet(self):
-        project_rule = self.create(
-            'budget_limit-exceeded-1mo',
-            scope='project',
-            route=None,
-            timeAggregation='limit_window',
-        )
+    def test_credential_scope_is_not_supported_yet(self):
         credential_rule = self.create(
             'rate_limit-exceeded-1m',
             scope='credential',
@@ -749,7 +943,6 @@ class TestAlertRuleRoute(DatabaseIntegration):
             timeAggregation='limit_window',
         )
 
-        assert 'not supported' in self.rejected(project_rule)
         assert 'not supported' in self.rejected(credential_rule)
 
     def test_a_fallback_rule_can_use_a_window(self):

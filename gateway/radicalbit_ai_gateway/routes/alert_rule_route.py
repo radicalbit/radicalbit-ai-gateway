@@ -82,6 +82,14 @@ class AlertRuleRoute:
             return alert_rule_service.delete_rule(rule_uuid)
 
         @router.get(
+            '/projects/{project_uuid}/alertable-events',
+            status_code=200,
+            response_model=AlertableEventsOut,
+        )
+        def get_project_alertable_events(project_uuid: UUID = Path(...)):
+            return alert_rule_service.get_alertable_events_for_project(project_uuid)
+
+        @router.get(
             '/projects/{project_uuid}/routes/{route_name}/alertable-events',
             status_code=200,
             response_model=AlertableEventsOut,

@@ -9,6 +9,7 @@ from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
+from radicalbit_ai_gateway.limiter.window_config import parse_window
 from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertableEventsOut,
     AlertRuleIn,
@@ -35,10 +36,15 @@ app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 # Valid, but not dispatched yet: rules using them are refused until they are.
-_UNSUPPORTED_SCOPES = {AlertRuleScope.PROJECT, AlertRuleScope.CREDENTIAL}
+_UNSUPPORTED_SCOPES = {AlertRuleScope.CREDENTIAL}
 
 # Changing any of these can change which events the rule's target offers.
 _EVENT_IDENTITY_FIELDS = {'scope', 'project', 'route', 'credential_uuid', 'event'}
+
+
+def _window_seconds(window_size: str) -> int:
+    """Read a stored window size: seconds as digits, or a duration like '1 day'."""
+    return int(window_size) if window_size.isdigit() else parse_window(window_size)
 
 
 def _rule_fields(rule: AlertRule) -> dict[str, Any]:
@@ -134,15 +140,39 @@ class AlertRuleService:
         self.key_dao = key_dao
         self.project_budget_limit_dao = project_budget_limit_dao
         self.alertable_events = AlertableEvents(
-            self._project_configs, project_has_budget=self._project_has_budget
+            self._project_configs,
+            project_budget_windows=self._project_budget_windows,
+            project_exists=self._project_exists,
         )
 
-    def _project_has_budget(self, project_uuid: str) -> bool:
+    def _project_budget_windows(self, project_uuid: str) -> list[int]:
         if self.project_budget_limit_dao is None:
+            return []
+        try:
+            limits = self.project_budget_limit_dao.get_by_project_uuid(
+                UUID(project_uuid)
+            )
+        except ValueError:  # a rule still holding a project name
+            return []
+        windows = []
+        for limit in limits:
+            try:
+                windows.append(_window_seconds(limit.window_size))
+            except ValueError:
+                logger.warning(
+                    'Project %s has a budget limit with an unreadable window "%s"',
+                    project_uuid,
+                    limit.window_size,
+                )
+        return windows
+
+    def _project_exists(self, project_uuid: str) -> bool:
+        if self.project_dao is None:
             return False
-        return bool(
-            self.project_budget_limit_dao.get_by_project_uuid(UUID(project_uuid))
-        )
+        try:
+            return self.project_dao.get_by_uuid(UUID(project_uuid)) is not None
+        except ValueError:  # a rule still holding a project name
+            return False
 
     def _resolve_project_name(self, project_uuid: str | None) -> str | None:
         if not project_uuid:
@@ -166,9 +196,14 @@ class AlertRuleService:
         return self.key_dao.get_names_by_uuids(uuids)
 
     def _stale_reason(self, rule: AlertRule) -> str | None:
-        if AlertRuleScope(rule.scope) is not AlertRuleScope.ROUTE:
-            return None
-        return self.alertable_events.stale_reason(rule.project, rule.route, rule.event)
+        scope = AlertRuleScope(rule.scope)
+        if scope is AlertRuleScope.ROUTE:
+            return self.alertable_events.stale_reason(
+                rule.project, rule.route, rule.event
+            )
+        if scope is AlertRuleScope.PROJECT:
+            return self.alertable_events.project_stale_reason(rule.project, rule.event)
+        return None
 
     def _to_out(
         self, rule: AlertRule, credential_names: Mapping[UUID, str] | None = None
@@ -183,11 +218,16 @@ class AlertRuleService:
         )
 
     def _check_event(self, fields: Mapping[str, Any]) -> None:
-        if not self.alertable_events.offers(
-            fields['project'], fields['route'], fields['event']
-        ):
+        event = fields['event']
+        if AlertRuleScope(fields['scope']) is AlertRuleScope.PROJECT:
+            if not self.alertable_events.offers_project(fields['project'], event):
+                raise AlertRuleInvalidEventError(
+                    f'Event "{event}" is not valid for project "{fields["project"]}"'
+                )
+            return
+        if not self.alertable_events.offers(fields['project'], fields['route'], event):
             raise AlertRuleInvalidEventError(
-                f'Event "{fields["event"]}" is not valid for route "{fields["route"]}"'
+                f'Event "{event}" is not valid for route "{fields["route"]}"'
             )
 
     def get_all_rules(self) -> list[AlertRuleOut]:
@@ -206,6 +246,11 @@ class AlertRuleService:
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
         return self._to_out(rule)
+
+    def get_alertable_events_for_project(
+        self, project_uuid: UUID | str
+    ) -> AlertableEventsOut:
+        return self.alertable_events.for_project(project_uuid)
 
     def get_alertable_events_for_route(
         self, project_uuid: UUID | str, route_name: str

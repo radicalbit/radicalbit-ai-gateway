@@ -1,5 +1,5 @@
-import { AlertableEventAggregationEnum, AlertTimeAggregationEnum } from '@Src/constants';
-import { useGetAlertableEventsQuery } from '@State/alerts/api';
+import { AlertableEventAggregationEnum, AlertScopeEnum, AlertTimeAggregationEnum } from '@Src/constants';
+import { useGetAlertableEventsQuery, useGetProjectAlertableEventsQuery } from '@State/alerts/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
 import { useId } from 'react';
@@ -16,14 +16,23 @@ function Event() {
   const projectUuid = form?.project;
   const routeName = form?.route;
   const event = form?.event;
+  const scope = form?.scope;
   const timeAggregation = form?.timeAggregation;
 
-  const isDisabled = !projectUuid || !routeName;
+  const isProjectScope = scope === AlertScopeEnum.PROJECT;
+  const isDisabled = !projectUuid || (!isProjectScope && !routeName);
 
-  const { data, isError, isLoading } = useGetAlertableEventsQuery(
+  const routeEvents = useGetAlertableEventsQuery(
     { projectUuid, routeName },
-    { skip: isDisabled },
+    { skip: isDisabled || isProjectScope },
   );
+
+  const projectEvents = useGetProjectAlertableEventsQuery(
+    { projectUuid },
+    { skip: isDisabled || !isProjectScope },
+  );
+
+  const { data, isError, isLoading } = isProjectScope ? projectEvents : routeEvents;
   const options = toOptions(data);
 
   const errorMessage = isError ? 'Unable to load events, please retry later' : undefined;

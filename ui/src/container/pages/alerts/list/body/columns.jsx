@@ -1,4 +1,5 @@
 import Lucide from '@Components/lucide';
+import { ALERT_SCOPE_LABELS } from '@Src/constants';
 import { useToggleAlertMutation } from '@State/alerts/api';
 import { FCK_TOGGLE_ALERT } from '@State/alerts/fixed-cache-key';
 import {
@@ -50,6 +51,7 @@ const columns = [
     title: 'Scope',
     dataIndex: 'scope',
     key: 'scope',
+    render: (value) => ALERT_SCOPE_LABELS[value] ?? value ?? '--',
   },
   {
     title: 'Project',

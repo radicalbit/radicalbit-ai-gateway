@@ -18,6 +18,13 @@ export const alertsApiSlice = apiService.injectEndpoints({
       providesTags: (result, error, uuid) => [`${API_TAGS.ALERTS}-${uuid}`],
     }),
 
+    getProjectAlertableEvents: builder.query({
+      query: ({ projectUuid } = {}) => ({
+        url: `/projects/${projectUuid}/alertable-events`,
+        method: 'get',
+      }),
+    }),
+
     getAlertableEvents: builder.query({
       query: ({ projectUuid, routeName } = {}) => ({
         url: `/projects/${projectUuid}/routes/${routeName}/alertable-events`,
@@ -90,6 +97,7 @@ export const {
   useGetAlertsQuery,
   useGetAlertQuery,
   useGetAlertableEventsQuery,
+  useGetProjectAlertableEventsQuery,
   useCreateAlertMutation,
   useToggleAlertMutation,
   useEditAlertMutation,
