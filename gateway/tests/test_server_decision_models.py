@@ -523,6 +523,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         key_record = SimpleNamespace(
             uuid=self.api_key.uuid,
             name=self.api_key.name,
+            hashed_key=self.api_key.hashed_key,
             group=self.api_key.group,
             limits=[CredentialLimitOut.from_key_limit(limit)],
             expires_on=None,

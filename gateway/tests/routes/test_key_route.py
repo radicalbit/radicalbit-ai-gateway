@@ -12,6 +12,7 @@ from starlette.testclient import TestClient
 
 from tests.common import db_mock
 
+from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
@@ -21,8 +22,10 @@ from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.server import validation_exception_handler
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
+from radicalbit_ai_gateway.services.commons.keyed_hash_algorithm import hash_key
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
+    ApiKeyError,
     AuthRegistryError,
     CredentialLimitNotFoundError,
     ErrorOut,
@@ -590,3 +593,262 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
             self.key_service.remove_group_from_key(self.key_uuid, self.group.uuid)
         )
         self.key_dao.remove_group.assert_called_once_with(key_uuid=self.key_uuid)
+
+
+NOW = datetime.datetime(2026, 11, 3, 12, tzinfo=datetime.timezone.utc)
+ROTATION_EXPIRES_ON = datetime.date(2026, 11, 10)
+
+
+class TestKeyRouteRotation(unittest.TestCase):
+    """POST/DELETE /keys/{uuid}/rotation and the rotation read fields, through a
+    real KeyService over mocked DAOs (AG-1042, AG-1043).
+    """
+
+    def setUp(self):
+        self.prefix = '/public/api/v1'
+        self.key_uuid = uuid.uuid4()
+        self.group = db_mock.get_sample_group(uuid=uuid.uuid4())
+        self.key = db_mock.get_sample_key(
+            uuid=self.key_uuid,
+            expires_on=ROTATION_EXPIRES_ON,
+            group_uuid=self.group.uuid,
+        )
+        self.key.group = self.group
+        self.key.limits = [
+            db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=self.key_uuid)
+        ]
+
+        self.key_dao = MagicMock(spec_set=KeyDAO)
+        self.key_dao.get_by_uuid = MagicMock(side_effect=lambda _: self.key)
+        self.key_dao.rotate = MagicMock(side_effect=self._apply_rotation)
+        self.key_dao.end_grace_period = MagicMock(side_effect=self._apply_end_grace)
+        self.key_dao.delete_by_uuid = MagicMock(side_effect=self._apply_delete)
+        self.key_dao.get_key_by_hashed_key = MagicMock(side_effect=self._lookup)
+
+        self.key_service = KeyService(
+            key_dao=self.key_dao,
+            api_key_security=ApiKeySecurity(),
+            group_dao=MagicMock(spec_set=GroupDAO),
+            key_limit_dao=MagicMock(spec_set=KeyLimitDAO),
+            group_limit_dao=MagicMock(spec_set=GroupLimitDAO),
+        )
+        app = FastAPI(title='AI Gateway', debug=True)
+        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+        app.add_exception_handler(RequestValidationError, validation_exception_handler)
+        app.include_router(
+            KeyRoute.get_key_router(self.key_service), prefix=self.prefix
+        )
+        self.client = TestClient(app)
+        self.url = f'{self.prefix}/keys/{self.key_uuid}/rotation'
+        self.validator = ApiKeyValidator(self.key_service)
+
+        frozen = freeze_time(NOW)
+        frozen.start()
+        self.addCleanup(frozen.stop)
+
+    # The mocked DAO behaves like the conditional update it stands for
+    def _apply_rotation(
+        self, *, expected_hashed_key, hashed_key, obscured_key, grace_ends_at, now, **_
+    ):
+        if self.key.hashed_key != expected_hashed_key or (
+            self.key.grace_ends_at is not None and self.key.grace_ends_at > now
+        ):
+            return None
+        self.key.previous_hashed_key = expected_hashed_key if grace_ends_at else None
+        self.key.hashed_key = hashed_key
+        self.key.obscured_key = obscured_key
+        self.key.grace_ends_at = grace_ends_at
+        self.key.last_rotated_at = now
+        return self.key
+
+    def _apply_end_grace(self, _key_uuid, now):
+        if self.key.grace_ends_at is None or self.key.grace_ends_at <= now:
+            return None
+        self.key.previous_hashed_key = None
+        self.key.grace_ends_at = None
+        return self.key
+
+    def _apply_delete(self, _key_uuid):
+        self.key = None
+        return 1
+
+    def _lookup(self, hashed_api_key):
+        if self.key and hashed_api_key in (
+            self.key.hashed_key,
+            self.key.previous_hashed_key,
+        ):
+            return self.key
+        return None
+
+    def _authenticate(self, token: str) -> str:
+        """Return the credential uuid the token resolves to, or the 401 code."""
+        try:
+            return asyncio.run(self.validator.validate_token(token)).api_key_uuid
+        except ApiKeyError as e:
+            return e.code
+
+    def _rotate(self, grace_period='24 hours'):
+        return self.client.post(self.url, json={'gracePeriod': grace_period})
+
+    def _in_grace(self, hours=24):
+        self.key.previous_hashed_key = 'previous'
+        self.key.grace_ends_at = NOW + datetime.timedelta(hours=hours)
+        self.key.last_rotated_at = NOW - datetime.timedelta(hours=1)
+
+    def test_rotate_returns_the_new_value_once_and_keeps_the_credential(self):
+        old_hash = self.key.hashed_key
+        res = self._rotate('24 hours')
+        assert res.status_code == 200
+        body = res.json()
+        assert body['apiKey'].startswith('sk-rb-')
+        assert hash_key(body['apiKey']) == self.key.hashed_key != old_hash
+        assert body['uuid'] == str(self.key_uuid)
+        assert body['name'] == 'rb-key'
+        assert body['group']['uuid'] == str(self.group.uuid)
+        assert len(body['limits']) == 1
+        assert body['expiresOn'] == '2026-11-10'
+        assert body['graceEndsAt'] == '2026-11-04T12:00:00Z'
+        assert body['rotationState'] == 'grace_ending'
+        assert body['lastRotatedAt'] == '2026-11-03T12:00:00Z'
+        assert self.key.previous_hashed_key == old_hash
+        # Never shown again: a read returns the obscured value
+        read = self.client.get(f'{self.prefix}/keys/{self.key_uuid}').json()
+        assert read['apiKey'] != body['apiKey']
+
+    def test_grace_end_follows_the_unit(self):
+        for grace_period, grace_ends_at, state in [
+            ('1 hour', '2026-11-03T13:00:00Z', 'grace_ending'),
+            ('2 days', '2026-11-05T12:00:00Z', 'in_grace'),
+            ('1 week', '2026-11-10T12:00:00Z', 'in_grace'),
+        ]:
+            with self.subTest(grace_period):
+                self.key.grace_ends_at = None
+                body = self._rotate(grace_period).json()
+                assert body['graceEndsAt'] == grace_ends_at
+                assert body['rotationState'] == state
+
+    def test_rotate_with_no_grace_period(self):
+        old_hash = self.key.hashed_key
+        body = self._rotate(None).json()
+        assert body['graceEndsAt'] is None
+        assert body['rotationState'] == 'rotated'
+        assert body['lastRotatedAt'] == '2026-11-03T12:00:00Z'
+        assert self.key.previous_hashed_key is None
+        assert self.key.hashed_key != old_hash
+
+    def test_grace_period_bounds_are_validation_errors(self):
+        for name, body in {
+            'below 1 hour': {'gracePeriod': '0 hours'},
+            'minutes': {'gracePeriod': '30 minutes'},
+            'unknown unit': {'gracePeriod': '1 fortnight'},
+            'not a duration': {'gracePeriod': 'tomorrow'},
+            'missing': {},
+            'after the expiry': {'gracePeriod': '2 weeks'},
+            'more than a year': {'gracePeriod': '53 weeks'},
+            'absurdly long': {'gracePeriod': '99999999999999999999 weeks'},
+        }.items():
+            with self.subTest(name):
+                res = self.client.post(self.url, json=body)
+                assert res.status_code == 422
+                assert res.json()['detail'][0]['loc'] == ['body', 'gracePeriod']
+        self.key_dao.rotate.assert_not_called()
+
+    def test_the_grace_end_may_reach_the_end_of_the_expiry_date(self):
+        # 2026-11-03 12:00 + 1 week is after 2026-11-10 12:00, still before 23:59:59
+        res = self._rotate('7 days')
+        assert res.status_code == 200
+        assert res.json()['graceEndsAt'] == '2026-11-10T12:00:00Z'
+
+    def test_within_one_hour_of_the_expiry_only_no_grace_period_is_accepted(self):
+        with freeze_time('2026-11-10 23:30:00'):
+            res = self._rotate('1 hour')
+            assert res.status_code == 422
+            assert res.json()['detail'][0]['loc'] == ['body', 'gracePeriod']
+            assert self._rotate(None).status_code == 200
+
+    def test_rotate_while_a_grace_period_is_running_is_a_conflict(self):
+        self._in_grace()
+        res = self._rotate('24 hours')
+        assert res.status_code == 409
+        assert res.json()['error']['code'] == 'key_rotation_conflict'
+        self.key_dao.rotate.assert_not_called()
+
+    def test_a_rotation_lost_to_a_concurrent_one_is_a_conflict(self):
+        self.key_dao.rotate = MagicMock(return_value=None)
+        assert self._rotate(None).status_code == 409
+
+    def test_rotate_is_refused_on_an_expired_credential(self):
+        with freeze_time('2026-11-11 00:00:00'):
+            res = self._rotate(None)
+        assert res.status_code == 405
+        assert res.json()['error']['code'] == 'key_operation_method_not_allowed'
+        self.key_dao.rotate.assert_not_called()
+
+    def test_rotate_is_refused_on_an_externally_managed_credential(self):
+        self.key.owner = 'keycloak'
+        res = self._rotate(None)
+        assert res.status_code == 405
+        assert res.json()['error']['code'] == 'key_operation_method_not_allowed'
+        self.key_dao.rotate.assert_not_called()
+
+    def test_rotate_a_missing_credential(self):
+        self.key = None
+        assert self._rotate(None).status_code == 404
+
+    def test_reads_carry_the_rotation_fields(self):
+        url = f'{self.prefix}/keys/{self.key_uuid}'
+        never = self.client.get(url).json()
+        assert never['graceEndsAt'] is None
+        assert never['rotationState'] == 'none'
+        assert never['lastRotatedAt'] is None
+
+        self._in_grace(hours=48)
+        running = self.client.get(url).json()
+        assert running['graceEndsAt'] == '2026-11-05T12:00:00Z'
+        assert running['rotationState'] == 'in_grace'
+        assert running['lastRotatedAt'] == '2026-11-03T11:00:00Z'
+
+        with freeze_time('2026-11-06 00:00:00'):
+            over = self.client.get(url).json()
+        assert over['graceEndsAt'] is None
+        assert over['rotationState'] == 'rotated'
+        assert over['lastRotatedAt'] == '2026-11-03T11:00:00Z'
+
+    def test_delete_during_a_grace_period_stops_both_values(self):
+        new_value = self._rotate('24 hours').json()['apiKey']
+        assert self._authenticate(db_mock.PLAIN_KEY) == str(self.key_uuid)
+
+        res = self.client.delete(f'{self.prefix}/keys/{self.key_uuid}')
+
+        assert res.status_code == 200
+        assert self._authenticate(db_mock.PLAIN_KEY) == 'key_invalid_unauthorized'
+        assert self._authenticate(new_value) == 'key_invalid_unauthorized'
+
+    def test_end_grace_period_stops_the_previous_value_only(self):
+        new_value = self._rotate('24 hours').json()['apiKey']
+        assert self._authenticate(db_mock.PLAIN_KEY) == str(self.key_uuid)
+
+        res = self.client.delete(self.url)
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body['graceEndsAt'] is None
+        assert body['rotationState'] == 'rotated'
+        assert body['lastRotatedAt'] == '2026-11-03T12:00:00Z'
+        assert self._authenticate(db_mock.PLAIN_KEY) == 'key_invalid_unauthorized'
+        assert self._authenticate(new_value) == str(self.key_uuid)
+
+    def test_end_grace_period_with_none_running_is_a_conflict(self):
+        for name, setup in {
+            'never rotated': lambda: None,
+            'grace period over': lambda: self._in_grace(hours=-1),
+        }.items():
+            with self.subTest(name):
+                setup()
+                res = self.client.delete(self.url)
+                assert res.status_code == 409
+                assert res.json()['error']['code'] == 'key_rotation_conflict'
+
+    def test_end_grace_period_on_a_missing_credential(self):
+        self.key = None
+        assert self.client.delete(self.url).status_code == 404
