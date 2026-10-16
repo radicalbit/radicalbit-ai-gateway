@@ -10,9 +10,15 @@ import yaml
 
 from tests.common import db_mock  # noqa: F401  (registers every table Key relates to)
 from tests.common.db_integration import DatabaseIntegration
+from tests.common.db_mock import (
+    get_sample_group_limit,
+    get_sample_group_plain,
+    get_sample_key_limit,
+)
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
+from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -134,6 +140,7 @@ class TestAlertRuleRoute(DatabaseIntegration):
             project_dao=cls.projects,
             key_dao=KeyDAO(cls.db),
             project_budget_limit_dao=cls.project_budgets,
+            key_limit_dao=KeyLimitDAO(cls.db),
         )
         app = FastAPI()
         for err in (
@@ -634,6 +641,251 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
         assert self.listed(rule['uuid'])['stale'] is False
 
+    # --- credential limits ---
+
+    def credential_events(self, credential_uuid) -> dict:
+        response = self.client.get(f'/keys/{credential_uuid}/alertable-events')
+        assert response.status_code == 200
+        return response.json()
+
+    def add_credential_limit(
+        self, credential, category: str, window_size: str, max_value: float = 10.0
+    ):
+        return self.insert(
+            get_sample_key_limit(
+                uuid=uuid.uuid4(),
+                key_uuid=credential.uuid,
+                category=category,
+                window_size=window_size,
+                max_value=max_value,
+            )
+        )
+
+    def add_group_limit(self, credential, category: str, window_size: str):
+        """Give the credential a limit propagated from a group."""
+        group = self.insert(get_sample_group_plain(uuid=uuid.uuid4()))
+        group_limit = self.insert(
+            get_sample_group_limit(
+                uuid=uuid.uuid4(),
+                group_uuid=group.uuid,
+                category=category,
+                window_size=window_size,
+            )
+        )
+        return self.insert(
+            get_sample_key_limit(
+                uuid=uuid.uuid4(),
+                key_uuid=credential.uuid,
+                category=category,
+                window_size=window_size,
+                group_limit_uuid=group_limit.uuid,
+            )
+        )
+
+    def create_credential_rule(self, credential, event: str, **overrides):
+        return self.create(
+            event,
+            **{
+                'scope': 'credential',
+                'project': None,
+                'route': None,
+                'credential': str(credential.uuid),
+                'timeAggregation': 'limit_window',
+                **overrides,
+            },
+        )
+
+    def created_credential_rule(self, credential, event: str) -> dict:
+        response = self.create_credential_rule(credential, event)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def test_credential_events_offer_one_event_per_limit_and_window(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        self.add_credential_limit(credential, 'request_rate', '1 day')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == [
+            'rate_limit-exceeded-1m',
+            'rate_limit-exceeded-1d',
+        ]
+
+    def test_credential_events_cover_every_credential_category(self):
+        credential = self.insert_credential('billing-service')
+        for category in ('budget', 'token_output', 'token_input', 'request_rate'):
+            self.add_credential_limit(credential, category, '1 hour')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == [
+            'rate_limit-exceeded-1h',
+            'token_input_limit-exceeded-1h',
+            'token_output_limit-exceeded-1h',
+            'budget_limit-exceeded-1h',
+        ]
+
+    def test_credential_events_offer_one_threshold_per_global_percentage(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['threshold']] == [
+            'rate_limit-75pct-1m',
+            'rate_limit-98pct-1m',
+        ]
+        items = events['limit'] + events['threshold']
+        assert {item['aggregation'] for item in items} == {'limit_window'}
+        assert all(item['label'] for item in items)
+        assert events['guardrail'] == []
+        assert events['fallback'] == []
+
+    def test_a_limit_propagated_from_a_group_counts_like_a_direct_one(self):
+        credential = self.insert_credential('billing-service')
+        self.add_group_limit(credential, 'token_input', '1 day')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == [
+            'rate_limit-exceeded-1m',
+            'token_input_limit-exceeded-1d',
+        ]
+
+    def test_direct_and_group_limits_on_the_same_window_offer_their_events_once(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        self.add_group_limit(credential, 'request_rate', '60 seconds')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == ['rate_limit-exceeded-1m']
+
+    def test_credential_events_are_empty_without_limits(self):
+        credential = self.insert_credential('billing-service')
+
+        events = self.credential_events(credential.uuid)
+
+        assert events['limit'] == []
+        assert events['threshold'] == []
+
+    def test_credential_events_are_empty_for_an_unknown_credential(self):
+        assert self.credential_events(uuid.uuid4())['limit'] == []
+
+    def test_create_a_credential_rule_on_a_limit_event(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        rule = self.created_credential_rule(credential, 'rate_limit-75pct-1m')
+
+        assert rule['scope'] == 'credential'
+        assert rule['credentialUuid'] == str(credential.uuid)
+        assert rule['credentialName'] == 'billing-service'
+        assert rule['project'] is None
+        assert rule['projectName'] is None
+        assert rule['route'] is None
+        assert rule['stale'] is False
+
+    def test_a_credential_rule_rejects_an_event_the_credential_does_not_offer(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        response = self.create_credential_rule(credential, 'rate_limit-exceeded-1d')
+
+        assert 'rate_limit-exceeded-1d' in self.rejected(response)
+
+    def test_a_credential_rule_takes_only_the_limit_window_aggregation(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        response = self.create_credential_rule(
+            credential, 'rate_limit-exceeded-1m', timeAggregation='instant'
+        )
+
+        assert 'limit_window' in self.rejected(response)
+
+    def test_update_moves_a_credential_rule_to_another_offered_event(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        self.add_credential_limit(credential, 'budget', '1 day')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'event': 'budget_limit-98pct-1d'}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['event'] == 'budget_limit-98pct-1d'
+
+    def test_update_rejects_a_credential_event_that_is_not_offered(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'event': 'budget_limit-exceeded-1m'}
+        )
+
+        assert response.status_code == 400
+
+    def test_a_credential_rule_is_stale_once_the_credential_is_deleted(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        KeyDAO(self.db).delete_by_uuid(credential.uuid)
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'credential' in listed['staleReason'].lower()
+
+    def test_a_credential_rule_is_stale_when_its_limit_is_removed(self):
+        credential = self.insert_credential('billing-service')
+        limit = self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        KeyLimitDAO(self.db).delete_by_uuid(limit.uuid)
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'rate limit' in listed['staleReason'].lower()
+        assert '1m' in listed['staleReason']
+
+    def test_a_credential_rule_is_stale_when_the_window_changes(self):
+        credential = self.insert_credential('billing-service')
+        limit = self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        KeyLimitDAO(self.db).delete_by_uuid(limit.uuid)
+        self.add_credential_limit(credential, 'request_rate', '1 hour')
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert '1m' in listed['staleReason']
+
+    def test_a_credential_rule_is_not_stale_when_the_maximum_changes(self):
+        credential = self.insert_credential('billing-service')
+        limit = self.add_credential_limit(
+            credential, 'request_rate', '1 minute', max_value=100
+        )
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        KeyLimitDAO(self.db).delete_by_uuid(limit.uuid)
+        self.add_credential_limit(credential, 'request_rate', '1 minute', max_value=5)
+
+        assert self.listed(rule['uuid'])['stale'] is False
+
+    def test_a_rule_on_a_group_limit_is_stale_once_the_group_limit_is_gone(self):
+        credential = self.insert_credential('billing-service')
+        key_limit = self.add_group_limit(credential, 'budget', '1 day')
+        rule = self.created_credential_rule(credential, 'budget_limit-exceeded-1d')
+
+        KeyLimitDAO(self.db).delete_by_uuid(key_limit.uuid)
+
+        assert self.listed(rule['uuid'])['stale'] is True
+
     # --- create / update validation ---
 
     def test_create_rule_on_offered_event(self):
@@ -932,18 +1184,6 @@ class TestAlertRuleRoute(DatabaseIntegration):
         )
 
         assert response.status_code == 422
-
-    def test_credential_scope_is_not_supported_yet(self):
-        credential_rule = self.create(
-            'rate_limit-exceeded-1m',
-            scope='credential',
-            project=None,
-            route=None,
-            credential=str(uuid.uuid4()),
-            timeAggregation='limit_window',
-        )
-
-        assert 'not supported' in self.rejected(credential_rule)
 
     def test_a_fallback_rule_can_use_a_window(self):
         self.publish(route_config(fallback=True))

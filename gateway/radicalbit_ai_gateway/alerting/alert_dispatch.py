@@ -35,7 +35,6 @@ from radicalbit_ai_gateway.models.event_payload import (
     FallbackEventPayload,
     GuardrailEventPayload,
     LimitEventPayload,
-    LimitScope,
 )
 from radicalbit_ai_gateway.services.alert_email_formatter import (
     build_alert_email_body,
@@ -80,9 +79,6 @@ def alert_event(event: EventPayload) -> AlertEvent | None:
     if isinstance(event, FallbackEventPayload):
         return AlertEvent(key=FALLBACK_EVENT, scope=AlertRuleScope.ROUTE)
     if isinstance(event, LimitEventPayload):
-        # Rules on credential limits are not dispatched yet.
-        if event.limit_scope is LimitScope.CREDENTIAL:
-            return None
         category = CATEGORY_BY_SCENARIO.get(event.category)
         if category is None:
             return None
@@ -253,9 +249,12 @@ class AlertDispatcher:
             if not event.project_uuid:
                 return []
             return self._alert_rule_dao.get_enabled_project_rules(event.project_uuid)
-        return self._alert_rule_dao.get_enabled_credential_rules(
-            UUID(event.api_key_uuid)
-        )
+        # Credential limits name no route ('*'): the credential is the target.
+        try:
+            credential_uuid = UUID(event.api_key_uuid)
+        except ValueError:
+            return []
+        return self._alert_rule_dao.get_enabled_credential_rules(credential_uuid)
 
     def close_windows(self) -> None:
         """Send the alert of every window that has closed by now.

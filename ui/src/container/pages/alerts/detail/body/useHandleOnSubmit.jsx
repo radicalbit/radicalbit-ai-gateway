@@ -26,8 +26,9 @@ export default () => {
       const data = {
         name: formData.name,
         description: formData.description ?? null,
-        project: formData.project,
-        route: formData.scope === AlertScopeEnum.PROJECT ? null : formData.route,
+        project: formData.scope === AlertScopeEnum.CREDENTIAL ? null : formData.project,
+        route: formData.scope === AlertScopeEnum.ROUTE ? formData.route : null,
+        credential: formData.scope === AlertScopeEnum.CREDENTIAL ? formData.credential : null,
         scope: formData.scope,
         event: formData.event,
         timeAggregation: formData.timeAggregation,

@@ -13,7 +13,16 @@ const schema = yup.object().shape({
     .max(200, 'Description max length is 200 characters')
     .test('min-length', 'Description min length is 3 characters', (value) => !value || value.length >= 3)
     .nullable(),
-  project: yup.string().required('Project is required'),
+  project: yup.string().when('scope', {
+    is: AlertScopeEnum.CREDENTIAL,
+    then: (field) => field.nullable(),
+    otherwise: (field) => field.required('Project is required'),
+  }),
+  credential: yup.string().when('scope', {
+    is: AlertScopeEnum.CREDENTIAL,
+    then: (field) => field.required('Credential is required'),
+    otherwise: (field) => field.nullable(),
+  }),
   scope: yup.string().required('Scope is required'),
   route: yup.string().when('scope', {
     is: AlertScopeEnum.ROUTE,

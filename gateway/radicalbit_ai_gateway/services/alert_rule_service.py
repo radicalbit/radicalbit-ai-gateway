@@ -3,9 +3,13 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from radicalbit_ai_gateway.alerting.limit_event_names import parse_limit_event
+from radicalbit_ai_gateway.alerting.limit_event_names import (
+    CATEGORY_BY_SCENARIO,
+    parse_limit_event,
+)
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
+from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
@@ -34,9 +38,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
-
-# Valid, but not dispatched yet: rules using them are refused until they are.
-_UNSUPPORTED_SCOPES = {AlertRuleScope.CREDENTIAL}
 
 # Changing any of these can change which events the rule's target offers.
 _EVENT_IDENTITY_FIELDS = {'scope', 'project', 'route', 'credential_uuid', 'event'}
@@ -90,12 +91,6 @@ def _check_target(fields: Mapping[str, Any]) -> None:
             )
 
 
-def _check_scope_supported(fields: Mapping[str, Any]) -> None:
-    scope = AlertRuleScope(fields['scope'])
-    if scope in _UNSUPPORTED_SCOPES:
-        raise AlertRuleInvalidTargetError(f'Scope "{scope.value}" is not supported yet')
-
-
 def _check_aggregation(fields: Mapping[str, Any]) -> None:
     """Raise if the aggregation and the window size do not fit together."""
     aggregation = AlertRuleTimeAggregation(fields['time_aggregation'])
@@ -133,16 +128,19 @@ class AlertRuleService:
         project_dao: ProjectDAO | None = None,
         key_dao: KeyDAO | None = None,
         project_budget_limit_dao: ProjectBudgetLimitDAO | None = None,
+        key_limit_dao: KeyLimitDAO | None = None,
     ):
         self.alert_rule_dao = alert_rule_dao
         self._project_configs = project_configs if project_configs is not None else {}
         self.project_dao = project_dao
         self.key_dao = key_dao
         self.project_budget_limit_dao = project_budget_limit_dao
+        self.key_limit_dao = key_limit_dao
         self.alertable_events = AlertableEvents(
             self._project_configs,
             project_budget_windows=self._project_budget_windows,
             project_exists=self._project_exists,
+            credential_limits=self._credential_limits,
         )
 
     def _project_budget_windows(self, project_uuid: str) -> list[int]:
@@ -165,6 +163,36 @@ class AlertRuleService:
                     limit.window_size,
                 )
         return windows
+
+    def _credential_limits(self, credential_uuid: str) -> list[tuple[str, int]] | None:
+        """Return the credential's limits, direct or from its group, or None if
+        the credential is gone.
+        """
+        if self.key_dao is None or self.key_limit_dao is None:
+            return None
+        try:
+            key_uuid = UUID(credential_uuid)
+        except ValueError:
+            return None
+        if self.key_dao.get_by_uuid(key_uuid) is None:
+            return None
+        limits = []
+        for limit in self.key_limit_dao.get_by_key_uuid(key_uuid):
+            category = CATEGORY_BY_SCENARIO.get(limit.category)
+            try:
+                seconds = _window_seconds(limit.window_size)
+            except ValueError:
+                seconds = None
+            if category is None or seconds is None:
+                logger.warning(
+                    'Credential %s has an unreadable limit: %s every "%s"',
+                    credential_uuid,
+                    limit.category,
+                    limit.window_size,
+                )
+                continue
+            limits.append((category, seconds))
+        return limits
 
     def _project_exists(self, project_uuid: str) -> bool:
         if self.project_dao is None:
@@ -203,7 +231,9 @@ class AlertRuleService:
             )
         if scope is AlertRuleScope.PROJECT:
             return self.alertable_events.project_stale_reason(rule.project, rule.event)
-        return None
+        return self.alertable_events.credential_stale_reason(
+            rule.credential_uuid, rule.event
+        )
 
     def _to_out(
         self, rule: AlertRule, credential_names: Mapping[UUID, str] | None = None
@@ -219,7 +249,15 @@ class AlertRuleService:
 
     def _check_event(self, fields: Mapping[str, Any]) -> None:
         event = fields['event']
-        if AlertRuleScope(fields['scope']) is AlertRuleScope.PROJECT:
+        scope = AlertRuleScope(fields['scope'])
+        if scope is AlertRuleScope.CREDENTIAL:
+            credential = fields['credential_uuid']
+            if not self.alertable_events.offers_credential(credential, event):
+                raise AlertRuleInvalidEventError(
+                    f'Event "{event}" is not valid for credential "{credential}"'
+                )
+            return
+        if scope is AlertRuleScope.PROJECT:
             if not self.alertable_events.offers_project(fields['project'], event):
                 raise AlertRuleInvalidEventError(
                     f'Event "{event}" is not valid for project "{fields["project"]}"'
@@ -247,6 +285,11 @@ class AlertRuleService:
             )
         return self._to_out(rule)
 
+    def get_alertable_events_for_credential(
+        self, credential_uuid: UUID | str
+    ) -> AlertableEventsOut:
+        return self.alertable_events.for_credential(credential_uuid)
+
     def get_alertable_events_for_project(
         self, project_uuid: UUID | str
     ) -> AlertableEventsOut:
@@ -262,7 +305,6 @@ class AlertRuleService:
         fields = _rule_fields(entity)
         _check_target(fields)
         _check_aggregation(fields)
-        _check_scope_supported(fields)
         self._check_event(fields)
 
         try:
@@ -289,7 +331,6 @@ class AlertRuleService:
         merged = {**_rule_fields(existing), **update_fields}
         _check_target(merged)
         _check_aggregation(merged)
-        _check_scope_supported(merged)
         # A stale rule can still be renamed: the event is checked only when the
         # client changes what it identifies.
         if _EVENT_IDENTITY_FIELDS & update_fields.keys():

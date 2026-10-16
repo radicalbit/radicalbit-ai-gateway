@@ -18,6 +18,8 @@ function Scope() {
 
   const handleOnChange = (value) => {
     write('scope', value);
+    write('project', undefined);
+    write('credential', undefined);
     write('route', undefined);
     write('event', undefined);
     write('timeAggregation', AlertTimeAggregationEnum.INSTANT);

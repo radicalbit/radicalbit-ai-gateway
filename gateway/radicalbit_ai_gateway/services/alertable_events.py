@@ -132,13 +132,32 @@ def _limit_groups(
     return limit, threshold
 
 
-def _project_events(budget_windows: Iterable[int]) -> AlertableEventsOut:
-    limit, threshold = _limit_groups(
-        # Limits on the same window, by algorithm or spelling, share their events.
-        (BUDGET_LIMIT, seconds)
-        for seconds in sorted(set(budget_windows))
-    )
+_CATEGORY_ORDER = {category: i for i, category in enumerate(CATEGORY_LABELS)}
+
+
+def _stored_events(limits: Iterable[tuple[str, int]]) -> AlertableEventsOut:
+    """List the events of limits stored in the DB, as (category, window seconds).
+
+    Limits on the same category and window share their events, whatever their
+    algorithm, spelling or origin (set directly or propagated from a group).
+    """
+    unique = sorted(set(limits), key=lambda lim: (_CATEGORY_ORDER[lim[0]], lim[1]))
+    limit, threshold = _limit_groups(unique)
     return AlertableEventsOut(limit=limit, threshold=threshold)
+
+
+def _stored_stale_reason(
+    owner: str, limits: Iterable[tuple[str, int]], event: str
+) -> str:
+    """Why `event` is not among the events of the `owner`'s stored limits."""
+    limit_event = parse_limit_event(event)
+    if limit_event is None:
+        return f'Event "{event}" is not offered by the {owner}'
+    windows = {window_name(s) for c, s in limits if c == limit_event.category}
+    if limit_event.window not in windows:
+        label = limit_event.label.lower()
+        return f'The {owner} has no {label} with a {limit_event.window} window'
+    return f'Threshold {limit_event.percentage}% is no longer configured'
 
 
 def _event_names(events: AlertableEventsOut) -> set[str]:
@@ -181,19 +200,26 @@ class AlertableEvents:
         project_configs: dict[str, ProjectEntry],
         project_budget_windows: Callable[[str], list[int]] = lambda _: [],
         project_exists: Callable[[str], bool] = lambda _: False,
+        credential_limits: Callable[[str], list[tuple[str, int]] | None] = (
+            lambda _: None
+        ),
     ):
         """`project_budget_windows` gives the window seconds of each budget limit
         stored for a project; `project_exists` says whether it is still there.
+        `credential_limits` gives the (category, window seconds) of each limit
+        stored for a credential, direct or from its group, or None when the
+        credential is gone.
         """
         self._project_configs = project_configs
         self._project_budget_windows = project_budget_windows
         self._project_exists = project_exists
+        self._credential_limits = credential_limits
 
     def for_project(self, project: UUID | str | None) -> AlertableEventsOut:
         """List the project's budget events, read from the stored budget limits."""
         if not self._project_exists(str(project)):
             return AlertableEventsOut()
-        return _project_events(self._project_budget_windows(str(project)))
+        return _stored_events(self._project_budgets(project))
 
     def offers_project(self, project: UUID | str | None, event: str) -> bool:
         return event in _event_names(self.for_project(project))
@@ -209,13 +235,34 @@ class AlertableEvents:
             return 'The project no longer exists'
         if self.offers_project(project, event):
             return None
-        limit_event = parse_limit_event(event)
-        if limit_event is None or limit_event.category != BUDGET_LIMIT:
-            return f'Event "{event}" is not offered by the project'
-        windows = {window_name(s) for s in self._project_budget_windows(str(project))}
-        if limit_event.window not in windows:
-            return f'The project has no budget limit with a {limit_event.window} window'
-        return f'Threshold {limit_event.percentage}% is no longer configured'
+        return _stored_stale_reason('project', self._project_budgets(project), event)
+
+    def _project_budgets(self, project: UUID | str | None) -> list[tuple[str, int]]:
+        return [(BUDGET_LIMIT, s) for s in self._project_budget_windows(str(project))]
+
+    def for_credential(self, credential: UUID | str | None) -> AlertableEventsOut:
+        """List the credential's limit events, read from its stored limits."""
+        limits = self._credential_limits(str(credential))
+        if limits is None:
+            return AlertableEventsOut()
+        return _stored_events(limits)
+
+    def offers_credential(self, credential: UUID | str | None, event: str) -> bool:
+        return event in _event_names(self.for_credential(credential))
+
+    def credential_stale_reason(
+        self, credential: UUID | str | None, event: str
+    ) -> str | None:
+        """Why a credential rule on `event` no longer matches the stored limits.
+
+        Returns None when the rule is not stale.
+        """
+        limits = self._credential_limits(str(credential))
+        if limits is None:
+            return 'The credential no longer exists'
+        if event in _event_names(_stored_events(limits)):
+            return None
+        return _stored_stale_reason('credential', limits, event)
 
     def for_route(
         self, project: UUID | str | None, route_name: str | None

@@ -500,6 +500,93 @@ class DispatchTests:
 
         assert self.email.sent == []
 
+    def credential_rule(
+        self, credential_uuid: str, event: str = 'rate_limit-exceeded-1m'
+    ):
+        return self.rule(
+            event,
+            scope='credential',
+            project=None,
+            route=None,
+            credential_uuid=uuid.UUID(credential_uuid),
+            time_aggregation='limit_window',
+        )
+
+    def credential_event(self, credential_uuid: str, **fields):
+        return limit_event(**fields).model_copy(
+            update={
+                'limit_scope': LimitScope.CREDENTIAL,
+                'api_key_uuid': credential_uuid,
+                'route_name': '*',
+            }
+        )
+
+    def test_a_credential_rule_sends_when_its_limit_blocks(self):
+        credential = str(uuid.uuid4())
+        rule = self.credential_rule(credential)
+
+        events_processor.emit_event(
+            self.credential_event(
+                credential, event_type=EventType.CREDENTIAL_RATE_LIMIT
+            )
+        )
+
+        [email] = self.email.sent
+        assert (
+            email['subject']
+            == '[Alert] PII watch: rate_limit-exceeded-1m on billing-service'
+        )
+        [record] = self.buffer.records
+        assert record['RULE_UUID'] == str(rule.uuid)
+        assert record['SCOPE'] == 'credential'
+        assert record['CREDENTIAL_UUID'] == credential
+        assert record['PROJECT_UUID'] is None
+
+    def test_a_credential_rule_sends_on_a_threshold(self):
+        credential = str(uuid.uuid4())
+        self.credential_rule(credential, 'rate_limit-98pct-1m')
+
+        events_processor.emit_event(
+            self.credential_event(credential, threshold_percentage=98)
+        )
+
+        assert len(self.email.sent) == 1
+
+    def test_a_credential_rule_sends_once_per_window(self):
+        credential = str(uuid.uuid4())
+        self.credential_rule(credential)
+
+        for window_id in ('w1', 'w1', 'w2'):
+            events_processor.emit_event(
+                self.credential_event(credential, window_id=window_id)
+            )
+
+        assert len(self.email.sent) == 2
+
+    def test_a_credential_rule_watches_only_its_credential(self):
+        self.credential_rule(str(uuid.uuid4()))
+
+        events_processor.emit_event(self.credential_event(str(uuid.uuid4())))
+
+        assert self.email.sent == []
+
+    def test_a_route_limit_does_not_trigger_a_credential_rule(self):
+        credential = str(uuid.uuid4())
+        self.credential_rule(credential)
+
+        events_processor.emit_event(
+            limit_event().model_copy(update={'api_key_uuid': credential})
+        )
+
+        assert self.email.sent == []
+
+    def test_a_credential_event_without_a_credential_sends_nothing(self):
+        self.credential_rule(str(uuid.uuid4()))
+
+        events_processor.emit_event(self.credential_event(''))
+
+        assert self.email.sent == []
+
     def test_a_limit_alert_is_recorded_with_its_window(self):
         rule = self.limit_rule()
 

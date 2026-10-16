@@ -12,11 +12,11 @@ function Route() {
   const route = form?.route;
   const scope = form?.scope;
 
-  const isProjectScope = scope === AlertScopeEnum.PROJECT;
+  const isRouteScope = scope === AlertScopeEnum.ROUTE;
 
   const { data = [], isError, isLoading } = useGetRoutesQuery(
     { projectUuid },
-    { skip: !projectUuid || isProjectScope },
+    { skip: !projectUuid || !isRouteScope },
   );
   const options = data.map(({ routeName }) => ({ label: routeName, value: routeName }));
 
@@ -28,7 +28,7 @@ function Route() {
     write('timeAggregation', AlertTimeAggregationEnum.INSTANT);
   };
 
-  if (isProjectScope) {
+  if (!isRouteScope) {
     return false;
   }
 

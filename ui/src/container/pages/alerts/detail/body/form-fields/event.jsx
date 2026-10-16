@@ -1,5 +1,7 @@
 import { AlertableEventAggregationEnum, AlertScopeEnum, AlertTimeAggregationEnum } from '@Src/constants';
-import { useGetAlertableEventsQuery, useGetProjectAlertableEventsQuery } from '@State/alerts/api';
+import {
+  useGetAlertableEventsQuery, useGetCredentialAlertableEventsQuery, useGetProjectAlertableEventsQuery,
+} from '@State/alerts/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
 import { useId } from 'react';
@@ -15,16 +17,21 @@ function Event() {
   const { error, form, write } = useFormbitContext();
   const projectUuid = form?.project;
   const routeName = form?.route;
+  const credentialUuid = form?.credential;
   const event = form?.event;
   const scope = form?.scope;
   const timeAggregation = form?.timeAggregation;
 
+  const isRouteScope = scope === AlertScopeEnum.ROUTE;
   const isProjectScope = scope === AlertScopeEnum.PROJECT;
-  const isDisabled = !projectUuid || (!isProjectScope && !routeName);
+  const isCredentialScope = scope === AlertScopeEnum.CREDENTIAL;
+  const isDisabled = isCredentialScope
+    ? !credentialUuid
+    : !projectUuid || (isRouteScope && !routeName);
 
   const routeEvents = useGetAlertableEventsQuery(
     { projectUuid, routeName },
-    { skip: isDisabled || isProjectScope },
+    { skip: isDisabled || !isRouteScope },
   );
 
   const projectEvents = useGetProjectAlertableEventsQuery(
@@ -32,7 +39,16 @@ function Event() {
     { skip: isDisabled || !isProjectScope },
   );
 
-  const { data, isError, isLoading } = isProjectScope ? projectEvents : routeEvents;
+  const credentialEvents = useGetCredentialAlertableEventsQuery(
+    { credentialUuid },
+    { skip: isDisabled || !isCredentialScope },
+  );
+
+  const eventsByScope = {
+    [AlertScopeEnum.PROJECT]: projectEvents,
+    [AlertScopeEnum.CREDENTIAL]: credentialEvents,
+  };
+  const { data, isError, isLoading } = eventsByScope[scope] ?? routeEvents;
   const options = toOptions(data);
 
   const errorMessage = isError ? 'Unable to load events, please retry later' : undefined;

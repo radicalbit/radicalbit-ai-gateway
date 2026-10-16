@@ -99,11 +99,13 @@ const SecretStatusEnum = {
 const AlertScopeEnum = {
   ROUTE: 'route',
   PROJECT: 'project',
+  CREDENTIAL: 'credential',
 };
 
 const ALERT_SCOPE_LABELS = {
   [AlertScopeEnum.ROUTE]: 'Route',
   [AlertScopeEnum.PROJECT]: 'Project',
+  [AlertScopeEnum.CREDENTIAL]: 'Credential',
 };
 
 const AlertTimeAggregationEnum = {
