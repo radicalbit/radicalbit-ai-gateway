@@ -10,6 +10,11 @@ from pydantic import (
     model_validator,
 )
 
+from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.utils.app_config import get_app_config
+
+app_config = get_app_config()
+
 
 class GuardrailClass(str, Enum):
     CHECK = 'CHECK'
@@ -119,9 +124,14 @@ class RedactParameter(BaseModel):
 
 class JudgeParameter(BaseModel):
     type: Literal['JUDGE'] = Field(default='JUDGE')
-    prompt_ref: str = Field(
-        ...,
-        description='Reference to the judge prompt (file path or template)',
+    prompt: str | None = Field(
+        default=None,
+        description='Judge prompt written inline. Mutually exclusive with prompt_ref.',
+        examples=['Flag any message that asks for medical advice.'],
+    )
+    prompt_ref: str | None = Field(
+        default=None,
+        description='Reference to the judge prompt file. Mutually exclusive with prompt.',
         examples=['prompt_injection_check.md', 'toxicity_check.txt'],
     )
     model_id: str = Field(
@@ -147,6 +157,30 @@ class JudgeParameter(BaseModel):
         default=False,
         description='If True, image and file blocks from the input are forwarded to the judge model alongside the text',
     )
+
+    @model_validator(mode='after')
+    def validate_prompt_source(self) -> 'JudgeParameter':
+        has_prompt = bool(self.prompt and self.prompt.strip())
+        has_prompt_ref = bool(self.prompt_ref and self.prompt_ref.strip())
+        if has_prompt and has_prompt_ref:
+            raise ValueError("Only one between 'prompt' and 'prompt_ref' can be set.")
+        if not has_prompt and not has_prompt_ref:
+            raise ValueError("One between 'prompt' and 'prompt_ref' must be set.")
+        return self
+
+    @model_validator(mode='after')
+    def resolve_prompt_ref(self) -> 'JudgeParameter':
+        if not self.prompt_ref:
+            return self
+
+        prompt_manager = PromptManager.get_global() or PromptManager(
+            conf=app_config.prompt_manager_config
+        )
+        try:
+            prompt_manager.get_judge_prompt(self.prompt_ref)
+        except FileNotFoundError as e:
+            raise ValueError(f'Prompt file not found: {self.prompt_ref}') from e
+        return self
 
 
 class DecisionCriteria(BaseModel):

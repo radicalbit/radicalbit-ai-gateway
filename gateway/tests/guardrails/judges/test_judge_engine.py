@@ -205,6 +205,19 @@ class TestJudgeEngine:
             in template_text
         )
 
+    def test_build_prompt_template_inline_prompt(self):
+        config = JudgeRuntimeConfig(
+            model_id='gpt-4o',
+            prompt='Flag any request for medical advice.',
+        )
+
+        prompt_template = self.engine._build_prompt_template(config)
+
+        assert prompt_template.template.startswith(
+            'Flag any request for medical advice.'
+        )
+        self.prompt_manager.get_judge_prompt.assert_not_called()
+
     # -----------------------------------------------------
     # Model caching (with_structured_output applied)
     # -----------------------------------------------------

@@ -1196,6 +1196,44 @@ class TestDashboardRoute(unittest.TestCase):
         self.client.app.state.project_configs[PROJECT_NAME].config = self.gateway_config
         PromptManager._global_instance = None
 
+    def test_get_route_prompts_with_inline_judge_prompt(self):
+        """A JUDGE guardrail with an inline prompt should return that prompt."""
+        config = copy.deepcopy(self.gateway_config)
+
+        judge_guardrail = GuardrailConfig(
+            name='medical_check',
+            type=GuardrailType.JUDGE,
+            where='INPUT',
+            behavior='BLOCK',
+            parameters=JudgeParameter(
+                prompt='Flag any request for medical advice.',
+                model_id='openai',
+            ),
+        )
+        if config.guardrails is None:
+            config.guardrails = []
+        config.guardrails.append(judge_guardrail)
+
+        route = config.routes['rb-gateway']
+        if route.guardrails is None:
+            route.guardrails = []
+        route.guardrails.append('medical_check')
+
+        self.client.app.state.project_configs[PROJECT_NAME].config = config
+
+        response = self.client.get(f'{self.project_path}/routes/rb-gateway/prompts')
+        assert response.status_code == 200
+        judge = next(
+            p
+            for p in response.json()['prompts']
+            if p['category'] == PromptCategory.GUARDRAIL_JUDGE.value
+        )
+        assert judge['guardrailName'] == 'medical_check'
+        assert judge['prompt'] == 'Flag any request for medical advice.'
+        assert judge['tokens'] > 0
+
+        self.client.app.state.project_configs[PROJECT_NAME].config = self.gateway_config
+
     def test_get_route_prompts_camel_case(self):
         """Verify all response keys are camelCase."""
         response = self.client.get(f'{self.project_path}/routes/rb-gateway/prompts')

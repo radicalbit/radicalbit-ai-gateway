@@ -321,7 +321,19 @@ def _guardrail_param_payload(guardrail: Any) -> Any:
             return f'<unprintable {type(v).__name__}>'
 
     fallback = {'class': type(guardrail).__name__, 'repr': _safe_str(guardrail)}
-    _SENSITIVE_PARAM_KEYS = {'api_key', 'base_url', 'ahds'}
+    # Judge configuration is internal, as in the sanitized `reason` below.
+    _SENSITIVE_PARAM_KEYS = {
+        'api_key',
+        'base_url',
+        'ahds',
+        'prompt',
+        'prompt_ref',
+        'model_id',
+        'fallback_model_id',
+        'instructions',
+        'criteria',
+        'threshold',
+    }
 
     def _serialize_params(params: Any) -> Any:
         if isinstance(params, dict):

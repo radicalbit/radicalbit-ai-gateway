@@ -468,12 +468,11 @@ class TestDecisionJudgeOnChatInput(unittest.TestCase):
 
     def test_llm_judge_failure_is_a_judge_internal_error(self):
         prompt_manager = MagicMock(spec_set=PromptManager)
-        prompt_manager.get_judge_prompt.return_value = 'Is this off topic?'
         llm_judge = {
             'name': 'llm_off_topic',
             'type': 'judge',
             'where': 'input',
-            'parameters': {'prompt_ref': 'off_topic.md', 'model_id': 'gpt'},
+            'parameters': {'prompt': 'Is this off topic?', 'model_id': 'gpt'},
         }
         app.state.routes = _build_routes(llm_judge, prompt_manager=prompt_manager)
         # The SDK does not retry a 400: the judge call fails at once.
