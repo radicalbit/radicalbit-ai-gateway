@@ -2,7 +2,7 @@ import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
 import {
-  CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, SEARCH_PARAMS,
+  CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum, SEARCH_PARAMS,
 } from '@Src/constants';
 import {
   Button,
@@ -32,7 +32,7 @@ const columns = [
     title: 'Name',
     dataIndex: 'name',
     key: 'id',
-    render: (value, { expiresOn, owner, state }) => <Name expiresOn={expiresOn} name={value} owner={owner} state={state} />,
+    render: (_, record) => <Name record={record} />,
   },
   {
     title: 'Owner',
@@ -75,13 +75,22 @@ const columns = [
   },
 ];
 
-function Name({ expiresOn, name, owner, state }) {
+function Name({ record }) {
+  const {
+    expiresOn, graceEndsAt, lastRotatedAt, name, owner, rotationState, state,
+  } = record;
   const className = classNames({ 'line-through': state === CredentialStateEnum.EXPIRED });
 
   return (
     <SectionTitle
       size="small"
-      subtitle={<ExpiresOn expiresOn={expiresOn} owner={owner} state={state} />}
+      subtitle={(
+        <div className="flex flex-col">
+          <ExpiresOn expiresOn={expiresOn} owner={owner} state={state} />
+
+          <Rotation graceEndsAt={graceEndsAt} lastRotatedAt={lastRotatedAt} owner={owner} rotationState={rotationState} />
+        </div>
+      )}
       title={(
         <Truncate tooltip={{ title: name, placement: 'topLeft' }}>
           <span className={className}>{name}</span>
@@ -115,6 +124,27 @@ function ExpiresOn({ expiresOn, owner, state }) {
       <span className={className}>{label}</span>
     </Tooltip>
   );
+}
+
+function Rotation({ graceEndsAt, lastRotatedAt, owner, rotationState }) {
+  const isGraceEnding = rotationState === RotationStateEnum.GRACE_ENDING;
+  const isGraceRunning = rotationState === RotationStateEnum.IN_GRACE || isGraceEnding;
+  const className = classNames({ 'text-[var(--coo-warning)]': isGraceEnding });
+
+  // Externally managed credentials are never rotated: their lifecycle stays with the identity provider
+  if (owner !== GATEWAY_OWNER) {
+    return false;
+  }
+
+  if (rotationState === RotationStateEnum.ROTATED) {
+    return <span className="text-[var(--coo-success)]">{`Rotated on ${dayjs(lastRotatedAt).format(ROTATION_FORMAT)}`}</span>;
+  }
+
+  if (isGraceRunning) {
+    return <span className={className}>{`Previous value works until ${dayjs(graceEndsAt).format(ROTATION_FORMAT)}`}</span>;
+  }
+
+  return false;
 }
 
 function AssociatedGroup({ group }) {
