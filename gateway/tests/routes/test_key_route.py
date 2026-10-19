@@ -17,12 +17,12 @@ from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
+from radicalbit_ai_gateway.models.api_key_dto import ApiKeySec
 from radicalbit_ai_gateway.models.auth_dto import GroupFullOut, KeyCreateIn, KeyFullOut
 from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.server import validation_exception_handler
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
-from radicalbit_ai_gateway.services.commons.keyed_hash_algorithm import hash_key
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
@@ -625,9 +625,14 @@ class TestKeyRouteRotation(unittest.TestCase):
         self.key_dao.delete_by_uuid = MagicMock(side_effect=self._apply_delete)
         self.key_dao.get_key_by_hashed_key = MagicMock(side_effect=self._lookup)
 
+        # A known new value, so the tests never hash what the response returns
+        api_key_security = MagicMock(spec_set=ApiKeySecurity)
+        api_key_security.generate_key.return_value = ApiKeySec(
+            plain_key=db_mock.ROTATED_PLAIN_KEY, hashed_key=db_mock.ROTATED_HASHED_KEY
+        )
         self.key_service = KeyService(
             key_dao=self.key_dao,
-            api_key_security=ApiKeySecurity(),
+            api_key_security=api_key_security,
             group_dao=MagicMock(spec_set=GroupDAO),
             key_limit_dao=MagicMock(spec_set=KeyLimitDAO),
             group_limit_dao=MagicMock(spec_set=GroupLimitDAO),
@@ -700,8 +705,8 @@ class TestKeyRouteRotation(unittest.TestCase):
         res = self._rotate('24 hours')
         assert res.status_code == 200
         body = res.json()
-        assert body['apiKey'].startswith('sk-rb-')
-        assert hash_key(body['apiKey']) == self.key.hashed_key != old_hash
+        assert body['apiKey'] == db_mock.ROTATED_PLAIN_KEY
+        assert self.key.hashed_key == db_mock.ROTATED_HASHED_KEY != old_hash
         assert body['uuid'] == str(self.key_uuid)
         assert body['name'] == 'rb-key'
         assert body['group']['uuid'] == str(self.group.uuid)
@@ -815,17 +820,19 @@ class TestKeyRouteRotation(unittest.TestCase):
         assert over['lastRotatedAt'] == '2026-11-03T11:00:00Z'
 
     def test_delete_during_a_grace_period_stops_both_values(self):
-        new_value = self._rotate('24 hours').json()['apiKey']
+        assert self._rotate('24 hours').json()['apiKey'] == db_mock.ROTATED_PLAIN_KEY
         assert self._authenticate(db_mock.PLAIN_KEY) == str(self.key_uuid)
 
         res = self.client.delete(f'{self.prefix}/keys/{self.key_uuid}')
 
         assert res.status_code == 200
         assert self._authenticate(db_mock.PLAIN_KEY) == 'key_invalid_unauthorized'
-        assert self._authenticate(new_value) == 'key_invalid_unauthorized'
+        assert (
+            self._authenticate(db_mock.ROTATED_PLAIN_KEY) == 'key_invalid_unauthorized'
+        )
 
     def test_end_grace_period_stops_the_previous_value_only(self):
-        new_value = self._rotate('24 hours').json()['apiKey']
+        assert self._rotate('24 hours').json()['apiKey'] == db_mock.ROTATED_PLAIN_KEY
         assert self._authenticate(db_mock.PLAIN_KEY) == str(self.key_uuid)
 
         res = self.client.delete(self.url)
@@ -836,7 +843,7 @@ class TestKeyRouteRotation(unittest.TestCase):
         assert body['rotationState'] == 'rotated'
         assert body['lastRotatedAt'] == '2026-11-03T12:00:00Z'
         assert self._authenticate(db_mock.PLAIN_KEY) == 'key_invalid_unauthorized'
-        assert self._authenticate(new_value) == str(self.key_uuid)
+        assert self._authenticate(db_mock.ROTATED_PLAIN_KEY) == str(self.key_uuid)
 
     def test_end_grace_period_with_none_running_is_a_conflict(self):
         for name, setup in {
