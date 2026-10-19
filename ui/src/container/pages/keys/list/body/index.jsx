@@ -1,4 +1,5 @@
 import { Popup, usePopup } from '@Components/popup';
+import PrototypeSwitcher, { usePrototypeVariant } from '@Components/prototype-switcher';
 import Lucide from '@Components/lucide';
 import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
@@ -19,7 +20,14 @@ import { CircleX, Inbox, Plus, TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useParams, useSearchParams } from 'react-router-dom';
-import columns from './columns';
+// PROTOTYPE (AG-1041): rotation state in the list. B (second line under the name) was chosen;
+// A (column), C (tag) and D (icon) were dropped.
+import { withMockCredentials } from './prototype-rotation/mock-rotation';
+import columnsB from './prototype-rotation/variant-b';
+
+const PROTOTYPE_VARIANTS = [
+  { key: 'B', name: 'Second line under the name (chosen)', columns: columnsB },
+];
 
 function KeysList() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -140,7 +148,11 @@ function IsSuccess({ searchValue }) {
 
   const { uuid } = useParams();
 
-  const { data = [] } = useGetKeysQuery();
+  const { data: rawData = [] } = useGetKeysQuery();
+  const data = withMockCredentials(rawData);
+
+  const variant = usePrototypeVariant(PROTOTYPE_VARIANTS);
+  const { columns } = PROTOTYPE_VARIANTS.find(({ key }) => key === variant);
 
   const filteredData = searchValue
     ? data.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
@@ -174,6 +186,7 @@ function IsSuccess({ searchValue }) {
         {...popup}
       />
 
+      <PrototypeSwitcher variants={PROTOTYPE_VARIANTS} />
     </>
   );
 }

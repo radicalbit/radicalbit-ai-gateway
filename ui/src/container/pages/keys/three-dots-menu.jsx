@@ -2,6 +2,8 @@ import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import { CredentialStateEnum, GATEWAY_OWNER } from '@Src/constants';
 import DeleteKey from '@Container/pages/keys/list/delete-key';
+// PROTOTYPE (AG-1041): fake expiry + rotation fields until the dev backend returns them
+import { RotationStateEnum, getMockCredential } from '@Container/pages/keys/list/body/prototype-rotation/mock-rotation';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import {
@@ -38,6 +40,8 @@ const EXPIRED_CREDENTIALS_TOOLTIP = 'This credential has expired: it can only be
 
 const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
 
+const IN_GRACE_TOOLTIP = 'A grace period is running: end it before rotating again';
+
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { showModal } = useModals();
 
@@ -49,6 +53,17 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   const handleOnEditKey = () => {
     showModal(modals.EDIT_KEY, { uuid });
   };
+
+  const handleOnRotateKey = () => {
+    showModal(modals.ROTATE_KEY, { uuid });
+  };
+
+  const handleOnEndGracePeriod = () => {
+    // PROTOTYPE: no API call
+    console.info('PROTOTYPE: would call DELETE /keys/%s/rotation', uuid);
+  };
+
+  const handleOnCancel = (e) => { e.stopPropagation(); };
 
   if (!uuid) {
     return [];
@@ -76,6 +91,10 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         disabled: true,
       },
       {
+        label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>Rotate credential</Tooltip>,
+        disabled: true,
+      },
+      {
         type: 'divider',
       },
       {
@@ -93,7 +112,28 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   }
 
   const group = data?.group;
-  const state = data?.state;
+  const { state, rotationState } = getMockCredential(uuid);
+  const isGraceRunning = rotationState === RotationStateEnum.IN_GRACE || rotationState === RotationStateEnum.GRACE_ENDING;
+
+  const rotateItem = isGraceRunning
+    ? { label: <Tooltip title={IN_GRACE_TOOLTIP}>Rotate credential</Tooltip>, disabled: true }
+    : { label: 'Rotate credential', onClick: handleOnRotateKey };
+
+  const endGraceItem = {
+    label: (
+      <Popconfirm
+        arrow={false}
+        cancelButtonProps={{ type: 'secondary-light' }}
+        description="The previous value stops working now."
+        label={<div>End grace period</div>}
+        okText={<div className="is-error">End</div>}
+        okType="error-light"
+        onCancel={handleOnCancel}
+        onConfirm={handleOnEndGracePeriod}
+        title={<SectionTitle size="small" title="End grace period" titleColor="error" />}
+      />
+    ),
+  };
   // An expired credential can still leave its group (cleanup), but can't join one
   const expiredGroupItem = group ? removeGroupItem : {
     label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Associate group</Tooltip>,
@@ -104,6 +144,10 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     return [
       {
         label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Edit credential</Tooltip>,
+        disabled: true,
+      },
+      {
+        label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Rotate credential</Tooltip>,
         disabled: true,
       },
       {
@@ -127,6 +171,8 @@ export const useGetThreeDotsMenuItems = (uuid) => {
       label: 'Edit credential',
       onClick: handleOnEditKey,
     },
+    rotateItem,
+    isGraceRunning && endGraceItem,
     {
       type: 'divider',
     },
@@ -140,7 +186,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
           <div className="is-error">Delete credential</div>
         </DeleteKey>),
     },
-  ];
+  ].filter(Boolean);
 };
 
 const useGetAssociateGroupItem = (uuid) => {
