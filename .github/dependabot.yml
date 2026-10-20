@@ -2,6 +2,15 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/ui"
+    ignore:
+      # typescript-eslint (via eslint-config-airbnb-extended) does not support TS 7
+      - dependency-name: "typescript"
+        versions: [">=7"]
+      # eslint-plugin-react crashes on ESLint 10; eslint-config-airbnb-extended peers eslint ^9
+      - dependency-name: "eslint"
+        versions: [">=10"]
+      - dependency-name: "@eslint/js"
+        versions: [">=10"]
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
