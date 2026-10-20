@@ -79,7 +79,7 @@ async def initialize_async_routers(routes: dict[str, GatewayRoute]) -> None:
 def get_proper_cache(
     route_config: GatewayRouteConfig, redis_client: redis.asyncio.Redis | None
 ) -> AbstractCache | None:
-    if not route_config.caching:
+    if not route_config.caching or not route_config.caching.enabled:
         return None
     if redis_client is None:
         return CacheToolsInMemory()

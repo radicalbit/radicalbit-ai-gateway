@@ -27,6 +27,7 @@ from tests.common.mocked_build_openai_chat_completion import (
 )
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute, InvokeResponse
+from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
@@ -563,3 +564,59 @@ async def test_cache_client_asks_for_resp2():
         await registrar(uuid.uuid4(), 'cached-project', _CACHED_PROJECT_YAML)
 
     assert mock_redis.call_args.kwargs['protocol'] == 2
+
+
+_DISABLED_CACHING_ROUTE_YAML = """\
+chat_models:
+  - model_id: openai-gpt4o
+    model: openai/gpt-4o-mini
+    credentials:
+      api_key: sk-test-key
+routes:
+  my-route:
+    chat_models:
+      - openai-gpt4o
+    caching:
+      enabled: false
+      type: exact
+      ttl: 60
+"""
+
+
+def _build_routes(yaml_content: str, redis_client) -> dict[str, GatewayRoute]:
+    config = GatewayConfig.model_validate(resolve_secrets_from_string(yaml_content))
+    return build_gateway_routes_from_config(
+        config,
+        guardrail_engine=_make_guardrail_engine(),
+        redis_client=redis_client,
+        cost_service=MagicMock(spec_set=CostService),
+        httpx_client=None,
+        project_uuid=_PROJECT_UUID,
+    )
+
+
+def test_disabled_route_caching_builds_no_cache_with_redis():
+    """``enabled: false`` turns caching off even when Redis is configured."""
+    yaml_content = (
+        'cache:\n  redis_host: localhost\n  redis_port: 6379\n'
+        + _DISABLED_CACHING_ROUTE_YAML
+    )
+
+    routes = _build_routes(yaml_content, redis_client=MagicMock())
+
+    assert routes['my-route'].gateway_cache is None
+
+
+def test_disabled_route_caching_builds_no_cache_without_redis():
+    """``enabled: false`` with no top-level ``cache`` must not cache in memory."""
+    routes = _build_routes(_DISABLED_CACHING_ROUTE_YAML, redis_client=None)
+
+    assert routes['my-route'].gateway_cache is None
+
+
+def test_enabled_route_caching_falls_back_to_memory_without_redis():
+    """With no Redis client, an enabled route still caches, in memory."""
+    routes = _build_routes(_CACHED_PROJECT_YAML, redis_client=None)
+
+    cache = routes['my-route'].gateway_cache
+    assert isinstance(cache.cache_client, CacheToolsInMemory)
