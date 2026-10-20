@@ -8,6 +8,7 @@ import {
 import { TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import AlertHistory from './alert-history';
 import Channel from './form-fields/channel';
 import Credential from './form-fields/credential';
 import Description from './form-fields/description';
@@ -57,6 +58,8 @@ function AlertDetailForm() {
           secondary={<Description />}
           size="small"
         />
+
+        <AlertHistory />
 
         <Collapse
           defaultActiveKey={['rule']}

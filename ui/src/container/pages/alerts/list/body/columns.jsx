@@ -28,6 +28,24 @@ const columns = [
     ),
   },
   {
+    title: <Last48hTitle title="Sent" />,
+    dataIndex: 'sent',
+    key: 'sent',
+    width: '100px',
+    align: 'right',
+    sorter: (a, b) => (a.sent ?? 0) - (b.sent ?? 0),
+    render: (value) => value ?? '--',
+  },
+  {
+    title: <Last48hTitle title="Failed" />,
+    dataIndex: 'failed',
+    key: 'failed',
+    width: '100px',
+    align: 'right',
+    sorter: (a, b) => (a.failed ?? 0) - (b.failed ?? 0),
+    render: (value) => <FailedCount failed={value} />,
+  },
+  {
     title: 'Active',
     dataIndex: 'enabled',
     key: 'enabled',
@@ -97,6 +115,28 @@ const columns = [
     width: '10px',
   },
 ];
+
+function Last48hTitle({ title }) {
+  return (
+    <div className="flex flex-col leading-tight">
+      <span>{title}</span>
+
+      <span>(Last 48h)</span>
+    </div>
+  );
+}
+
+function FailedCount({ failed }) {
+  if (failed === undefined) {
+    return '--';
+  }
+
+  if (failed === 0) {
+    return 0;
+  }
+
+  return <span className="text-[var(--coo-error)] font-[var(--coo-font-weight-bold)]">{failed}</span>;
+}
 
 function Actions({ uuid, name }) {
   const handleOnClick = (e) => {

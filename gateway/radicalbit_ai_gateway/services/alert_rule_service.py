@@ -1,4 +1,5 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
 import logging
 from typing import Any
 from uuid import UUID
@@ -7,6 +8,7 @@ from radicalbit_ai_gateway.alerting.limit_event_names import (
     CATEGORY_BY_SCENARIO,
     parse_limit_event,
 )
+from radicalbit_ai_gateway.db.dao.alert_dao import AlertDAO
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
@@ -16,6 +18,7 @@ from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.limiter.window_config import parse_window
 from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertableEventsOut,
+    AlertHistoryBucketOut,
     AlertRuleIn,
     AlertRuleOut,
     AlertRuleScope,
@@ -38,6 +41,9 @@ from radicalbit_ai_gateway.utils.exceptions import (
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+# The alert history shows this many whole hours when no range is asked for.
+_HISTORY_WINDOW = timedelta(hours=48)
 
 # Changing any of these can change which events the rule's target offers.
 _EVENT_IDENTITY_FIELDS = {'scope', 'project', 'route', 'credential_uuid', 'event'}
@@ -129,8 +135,12 @@ class AlertRuleService:
         key_dao: KeyDAO | None = None,
         project_budget_limit_dao: ProjectBudgetLimitDAO | None = None,
         key_limit_dao: KeyLimitDAO | None = None,
+        alert_dao: AlertDAO | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
     ):
         self.alert_rule_dao = alert_rule_dao
+        self.alert_dao = alert_dao
+        self._clock = clock
         self._project_configs = project_configs if project_configs is not None else {}
         self.project_dao = project_dao
         self.key_dao = key_dao
@@ -284,6 +294,40 @@ class AlertRuleService:
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
         return self._to_out(rule)
+
+    def get_history(
+        self, _from: datetime | None = None, _to: datetime | None = None
+    ) -> list[AlertHistoryBucketOut]:
+        return self._history(_from, _to)
+
+    def get_rule_history(
+        self,
+        rule_uuid: UUID,
+        _from: datetime | None = None,
+        _to: datetime | None = None,
+    ) -> list[AlertHistoryBucketOut]:
+        if not self.alert_rule_dao.get_by_uuid(rule_uuid):
+            raise AlertRuleNotFoundError(f'Alert rule with UUID {rule_uuid} not found')
+        return self._history(_from, _to, rule_uuid)
+
+    def _history(
+        self,
+        _from: datetime | None,
+        _to: datetime | None,
+        rule_uuid: UUID | None = None,
+    ) -> list[AlertHistoryBucketOut]:
+        """Hourly alert buckets in [_from, _to). Without a range, the last 48
+        whole hours, the current one included.
+        """
+        if self.alert_dao is None:
+            return []
+        if _to is None:
+            current_hour = self._clock().replace(minute=0, second=0, microsecond=0)
+            _to = current_hour + timedelta(hours=1)
+        if _from is None:
+            _from = _to - _HISTORY_WINDOW
+        buckets = self.alert_dao.get_history(_from=_from, _to=_to, rule_uuid=rule_uuid)
+        return [AlertHistoryBucketOut.model_validate(b) for b in buckets]
 
     def get_alertable_events_for_credential(
         self, credential_uuid: UUID | str

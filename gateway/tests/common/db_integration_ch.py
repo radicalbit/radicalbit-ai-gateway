@@ -9,6 +9,7 @@ from radicalbit_ai_gateway.db.clickhouse_database import (
     ClickHouseBaseTable,
     ClickHouseDatabase,
 )
+from radicalbit_ai_gateway.db.tables.alert_table import Alert
 from radicalbit_ai_gateway.db.tables.event_table import Event
 from radicalbit_ai_gateway.db.tables.otel_traces_table import OtelTraces
 from radicalbit_ai_gateway.db.tables.request_event_table import RequestEvent
@@ -128,4 +129,5 @@ class DatabaseIntegrationClickhouse(unittest.TestCase):
             session.execute(text(f'TRUNCATE TABLE {Event.__tablename__}'))
             session.execute(text(f'TRUNCATE TABLE {RequestEvent.__tablename__}'))
             session.execute(text(f'TRUNCATE TABLE {OtelTraces.__tablename__}'))
+            session.execute(text(f'TRUNCATE TABLE {Alert.__tablename__}'))
             session.commit()

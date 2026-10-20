@@ -255,3 +255,20 @@ class AlertableEventsOut(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
     )
+
+
+class AlertHistoryBucketOut(BaseModel):
+    """Alerts of one rule in one hour: how many were sent and how many failed."""
+
+    rule_uuid: UUID
+    rule_name: str
+    bucket_start: datetime.datetime
+    sent: int
+    failed: int
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+        protected_namespaces=(),
+        from_attributes=True,
+    )

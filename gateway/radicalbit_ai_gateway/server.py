@@ -31,6 +31,7 @@ from radicalbit_ai_gateway.alerting.alert_window_scheduler import (
 )
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
+from radicalbit_ai_gateway.db.dao.alert_dao import AlertDAO
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
@@ -265,6 +266,7 @@ alert_rule_service = AlertRuleService(
     key_dao=key_dao,
     project_budget_limit_dao=project_budget_limit_dao,
     key_limit_dao=key_limit_dao,
+    alert_dao=AlertDAO(ch_database),
 )
 alert_dispatcher = AlertDispatcher(
     alert_rule_dao=alert_rule_dao,
