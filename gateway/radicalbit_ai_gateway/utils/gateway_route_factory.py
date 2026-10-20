@@ -19,17 +19,20 @@ from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
 )
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.invocation.chat_model_invoker import build_chat_model
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.model import MockGatewayEmbeddings, Model
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.routing import (
+    LLMRoutingConfig,
     SemanticRoutingConfig,
     TextClassificationRoutingConfig,
 )
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routing import (
     DeterministicRouter,
+    LLMRouter,
     SemanticRouter,
     TextClassificationRouter,
 )
@@ -180,7 +183,16 @@ def build_gateway_routes_from_config(
                     router = SemanticRouter(
                         config=routing_config,
                         models_by_id=route_models_by_id,
+                        embedding_model=emb_model,
                         embeddings_model=embeddings_instance,
+                    )
+                elif isinstance(routing_config, LLMRoutingConfig):
+                    router_model = chat_by_id[routing_config.router_model_id]
+                    router = LLMRouter(
+                        config=routing_config,
+                        models_by_id=route_models_by_id,
+                        router_model=router_model,
+                        chat_model=build_chat_model(router_model, httpx_client),
                     )
                 else:
                     router = DeterministicRouter(

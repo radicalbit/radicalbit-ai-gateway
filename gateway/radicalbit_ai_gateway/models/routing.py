@@ -187,11 +187,33 @@ class SemanticRoutingConfig(RoutingConfig):
         return self
 
 
+class LLMRoutingConfig(RoutingConfig):
+    type: Literal['llm'] = 'llm'
+    router_model_id: str
+    threshold: float = Field(default=0.375, ge=0.0, le=1.0)
+    timeout: float = Field(
+        default=5.0, gt=0, description='Timeout in seconds for router model calls'
+    )
+
+    @model_validator(mode='after')
+    def validate_output_mapping_entries(self) -> Self:
+        model_ids = [entry.model_id for entry in self.output_mapping]
+        if len(model_ids) != len(set(model_ids)):
+            raise ValueError('LLM routing: output_mapping model_ids must be unique')
+        for entry in self.output_mapping:
+            if not isinstance(entry.conditions, list) or not entry.conditions:
+                raise ValueError(
+                    f"LLM routing: conditions for model '{entry.model_id}' must be a non-empty list of strings"
+                )
+        return self
+
+
 AnyRoutingConfig = Annotated[
     Union[
         DeterministicRoutingConfig,
         TextClassificationRoutingConfig,
         SemanticRoutingConfig,
+        LLMRoutingConfig,
     ],
     Field(discriminator='type'),
 ]

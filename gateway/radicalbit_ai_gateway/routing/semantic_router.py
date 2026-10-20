@@ -1,4 +1,5 @@
 import logging
+import time
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -6,8 +7,10 @@ import numpy as np
 
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import SemanticRoutingConfig
+from radicalbit_ai_gateway.routing.usage import OnRoutingUsage, RoutingUsage
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import stringify_message_content
+from radicalbit_ai_gateway.utils.token_encoding import count_tokens
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
@@ -34,10 +37,12 @@ class SemanticRouter:
         self,
         config: SemanticRoutingConfig,
         models_by_id: dict[str, Model],
+        embedding_model: Model,
         embeddings_model: Embeddings,
     ):
         self._config = config
         self._models_by_id = models_by_id
+        self._embedding_model = embedding_model
         self._embeddings_model = embeddings_model
         self._centroids: list[tuple[str, np.ndarray]] = []
         self._initialized = False
@@ -61,7 +66,11 @@ class SemanticRouter:
             )
         self._initialized = True
 
-    async def select_model(self, messages: list[BaseMessage]) -> Model:
+    async def select_model(
+        self,
+        messages: list[BaseMessage],
+        on_usage: OnRoutingUsage | None = None,
+    ) -> Model:
         if not self._initialized:
             logger.warning('SemanticRouter not initialized, using default model')
             return self._models_by_id[self._config.default_model_id]
@@ -70,7 +79,17 @@ class SemanticRouter:
         if not last_text:
             return self._models_by_id[self._config.default_model_id]
 
+        start_time = time.monotonic()
         query_vector = await self._embeddings_model.aembed_query(last_text)
+        if on_usage is not None:
+            await on_usage(
+                RoutingUsage(
+                    model=self._embedding_model,
+                    model_type='embeddings',
+                    latency_ms=(time.monotonic() - start_time) * 1000,
+                    input_tokens=count_tokens(last_text, self._embedding_model.model),
+                )
+            )
         query = _normalize(np.array(query_vector))
 
         best_model_id = self._config.default_model_id

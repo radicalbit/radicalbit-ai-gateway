@@ -24,6 +24,7 @@ def _build_router(embeddings_mock):
     return SemanticRouter(
         config=routing_config,
         models_by_id=models_by_id,
+        embedding_model=config.embedding_models_by_id['embedder'],
         embeddings_model=embeddings_mock,
     )
 
@@ -118,3 +119,23 @@ class TestSemanticRouter:
         router = _build_router(embeddings_mock)
         await router.initialize()
         assert embeddings_mock.aembed_documents.call_count == 2
+
+    async def test_reports_query_embedding_usage(self, router, embeddings_mock):
+        embeddings_mock.aembed_query = AsyncMock(return_value=[1.0, 0.0, 0.0, 0.0, 0.0])
+        on_usage = AsyncMock()
+        await router.select_model(
+            [HumanMessage(content='write python code')], on_usage=on_usage
+        )
+        on_usage.assert_awaited_once()
+        usage = on_usage.await_args.args[0]
+        assert usage.model.model_id == 'embedder'
+        assert usage.model_type == 'embeddings'
+        assert usage.input_tokens > 0
+        assert usage.output_tokens is None
+
+    async def test_no_usage_without_query_embedding(self, router):
+        on_usage = AsyncMock()
+        await router.select_model(
+            [SystemMessage(content='you are a bot')], on_usage=on_usage
+        )
+        on_usage.assert_not_awaited()

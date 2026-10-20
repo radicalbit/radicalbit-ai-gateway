@@ -390,3 +390,77 @@ def test_time_routing_model_id_not_in_route():
     }
     with pytest.raises(ValueError, match='not in route chat_models'):
         GatewayConfig.model_validate(raw)
+
+
+def _llm_routing_raw(**routing_overrides) -> dict:
+    model = {'model': 'openai/gpt-4o', 'credentials': {'api_key': 'sk-dummy'}}
+    routing = {
+        'name': 'llm_router',
+        'type': 'llm',
+        'router_model_id': 'router',
+        'default_model_id': 'm1',
+        'output_mapping': [
+            {'model_id': 'm2', 'conditions': ['coding questions']},
+        ],
+        **routing_overrides,
+    }
+    return {
+        'chat_models': [
+            {'model_id': 'm1', **model},
+            {'model_id': 'm2', **model},
+            {'model_id': 'router', **model},
+        ],
+        'decision_models': [
+            {
+                'model_id': 'decider',
+                'model': 'typesafe/jev-latest',
+                'credentials': {'api_key': 'ts-dummy'},
+            },
+        ],
+        'routing': [routing],
+        'routes': {
+            'r': {'chat_models': ['m1', 'm2'], 'routing': 'llm_router'},
+        },
+    }
+
+
+def test_llm_routing_valid():
+    gateway_config = GatewayConfig.model_validate(_llm_routing_raw())
+    routing_config = gateway_config.routing_by_name['llm_router']
+    assert routing_config.router_model_id == 'router'
+    assert routing_config.threshold == 0.375
+    assert routing_config.timeout == 5.0
+
+
+def test_llm_routing_router_model_not_in_top_level_chat_models():
+    with pytest.raises(ValueError, match='not found in top-level chat_models'):
+        GatewayConfig.model_validate(_llm_routing_raw(router_model_id='missing'))
+
+
+def test_llm_routing_router_model_cannot_be_a_decision_model():
+    with pytest.raises(ValueError, match='not found in top-level chat_models'):
+        GatewayConfig.model_validate(_llm_routing_raw(router_model_id='decider'))
+
+
+def test_llm_routing_duplicate_model_ids():
+    raw = _llm_routing_raw(
+        output_mapping=[
+            {'model_id': 'm2', 'conditions': ['coding questions']},
+            {'model_id': 'm2', 'conditions': ['math questions']},
+        ]
+    )
+    with pytest.raises(ValueError, match='model_ids must be unique'):
+        GatewayConfig.model_validate(raw)
+
+
+def test_llm_routing_conditions_must_be_a_list_of_strings():
+    raw = _llm_routing_raw(
+        output_mapping=[{'model_id': 'm2', 'conditions': {'gte': 10}}]
+    )
+    with pytest.raises(ValueError, match='non-empty list of strings'):
+        GatewayConfig.model_validate(raw)
+
+
+def test_llm_routing_threshold_out_of_range():
+    with pytest.raises(ValueError):
+        GatewayConfig.model_validate(_llm_routing_raw(threshold=1.5))

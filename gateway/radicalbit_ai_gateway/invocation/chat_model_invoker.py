@@ -34,6 +34,56 @@ app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 
+def build_chat_model(model: Model, httpx_client=None) -> BaseChatModel:
+    """Build a chat model from configuration.
+
+    Shared by the chat invoker and by the routers that call a chat model.
+
+    Returns:
+        BaseChatModel: A chat model instance.
+
+    """
+    provider, model_name = parse_provider_and_model(model.model)
+    params = model.params or {}
+    credentials = (
+        model.credentials.model_dump(exclude_none=True) if model.credentials else {}
+    )
+
+    # Handle mock provider (gateway-specific)
+    if provider == 'mock':
+        latency_ms: int = int(params.get('latency_ms', 0))
+        response_text: str = params.get('response_text', 'ok')
+        return MockGatewayChatModel(
+            model_name=model_name,
+            latency_ms=latency_ms,
+            response_text=response_text,
+        )
+
+    # Strip gateway-only params that must not reach LangChain
+    _GATEWAY_PARAMS = {ENABLE_PROMPT_CACHE_PARAM}
+    init_kwargs = {
+        k: v for k, v in {**params, **credentials}.items() if k not in _GATEWAY_PARAMS
+    }
+
+    if provider == 'deepseek':
+        return GatewayDeepSeekChatModel(
+            model=model_name,
+            http_async_client=httpx_client,
+            **init_kwargs,
+        )
+
+    # Map gateway provider names to LangChain provider names
+    # LangChain uses underscore (google_genai) while gateway uses hyphen (google-genai)
+    langchain_provider = provider.replace('-', '_')
+
+    if provider not in ('anthropic', 'mistralai'):
+        init_kwargs['http_async_client'] = httpx_client
+    return init_chat_model(
+        model=f'{langchain_provider}:{model_name}',
+        **init_kwargs,
+    )
+
+
 class ChatModelInvoker(ModelInvoker):
     def __init__(
         self,
@@ -51,53 +101,7 @@ class ChatModelInvoker(ModelInvoker):
         self._initialize_models(self._build_model)
 
     def _build_model(self, model: Model) -> BaseChatModel:
-        """Build a chat model from configuration.
-
-        Returns:
-            BaseChatModel: A chat model instance.
-
-        """
-        provider, model_name = parse_provider_and_model(model.model)
-        params = model.params or {}
-        credentials = (
-            model.credentials.model_dump(exclude_none=True) if model.credentials else {}
-        )
-
-        # Handle mock provider (gateway-specific)
-        if provider == 'mock':
-            latency_ms: int = int(params.get('latency_ms', 0))
-            response_text: str = params.get('response_text', 'ok')
-            return MockGatewayChatModel(
-                model_name=model_name,
-                latency_ms=latency_ms,
-                response_text=response_text,
-            )
-
-        # Strip gateway-only params that must not reach LangChain
-        _GATEWAY_PARAMS = {ENABLE_PROMPT_CACHE_PARAM}
-        init_kwargs = {
-            k: v
-            for k, v in {**params, **credentials}.items()
-            if k not in _GATEWAY_PARAMS
-        }
-
-        if provider == 'deepseek':
-            return GatewayDeepSeekChatModel(
-                model=model_name,
-                http_async_client=self.httpx_client,
-                **init_kwargs,
-            )
-
-        # Map gateway provider names to LangChain provider names
-        # LangChain uses underscore (google_genai) while gateway uses hyphen (google-genai)
-        langchain_provider = provider.replace('-', '_')
-
-        if provider not in ('anthropic', 'mistralai'):
-            init_kwargs['http_async_client'] = self.httpx_client
-        return init_chat_model(
-            model=f'{langchain_provider}:{model_name}',
-            **init_kwargs,
-        )
+        return build_chat_model(model, self.httpx_client)
 
     @staticmethod
     def _normalize_kwargs_for_model(model: Model, kwargs: dict) -> dict:

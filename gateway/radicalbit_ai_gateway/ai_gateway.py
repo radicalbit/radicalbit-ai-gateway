@@ -59,9 +59,11 @@ from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
 from radicalbit_ai_gateway.routing import (
     DeterministicRouter,
+    LLMRouter,
     SemanticRouter,
     TextClassificationRouter,
 )
+from radicalbit_ai_gateway.routing.usage import RoutingUsage
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.ai_gateway_types import (
     CacheResult,
@@ -116,6 +118,7 @@ class GatewayRoute:
         router: DeterministicRouter
         | SemanticRouter
         | TextClassificationRouter
+        | LLMRouter
         | None = None,
         token_limiter: TokenLimiter | None = None,
         rate_limiter: RequestRateLimiter | None = None,
@@ -1334,7 +1337,16 @@ class GatewayRoute:
 
         # Prepare request for processing: route on the preprocessed messages.
         set_operation_category(OperationCategory.ROUTING)
-        model_selected = await self._select_chat_model(messages)
+        model_selected = await self._select_chat_model(
+            messages,
+            identity=self._request_identity(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+            ),
+        )
 
         if self.router and self.gateway_route_config.routing:
             emit_event(
@@ -1501,16 +1513,49 @@ class GatewayRoute:
         )
 
     @task(name='select_model')
-    async def _select_chat_model(self, messages: list[BaseMessage]) -> Model:
+    async def _select_chat_model(
+        self, messages: list[BaseMessage], identity: RequestIdentity
+    ) -> Model:
         """Select the chat model for this request based on the routing config."""
         if self.router:
-            model_selected = await self.router.select_model(messages)
+
+            async def on_usage(usage: RoutingUsage) -> None:
+                await self._record_routing_usage(usage, identity)
+
+            model_selected = await self.router.select_model(messages, on_usage=on_usage)
         else:
             model_selected = self._chat_models[0]
 
         logger.debug('Selected chat model: %s', model_selected.model_id)
 
         return model_selected
+
+    async def _record_routing_usage(
+        self, usage: RoutingUsage, identity: RequestIdentity
+    ) -> None:
+        """Cost a router's own model call in Usage and count it against limits."""
+        self.chat_invoker._record_metrics(
+            request_uuid=identity.request_uuid,
+            api_key_uuid=identity.api_key_uuid,
+            api_key_name=identity.api_key_name,
+            group_name=identity.group_name,
+            group_uuid=identity.group_uuid,
+            route_name=identity.route_name,
+            target_model_id=usage.model.model_id,
+            model=usage.model,
+            latency_ms=usage.latency_ms,
+            model_type=usage.model_type,
+            token_input_count=usage.input_tokens,
+            token_output_count=usage.output_tokens,
+            project_uuid=identity.project_uuid,
+            project_name=identity.project_name,
+        )
+        await self._count_usage(
+            prompt_tokens=usage.input_tokens,
+            completion_tokens=usage.output_tokens or 0,
+            model_selected=usage.model,
+            identity=identity,
+        )
 
     def _apply_config_prompt(
         self, messages: list[BaseMessage], model_selected: Model

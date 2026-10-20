@@ -24,6 +24,7 @@ from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
 from radicalbit_ai_gateway.models.routing import (
     AnyRoutingConfig,
     DeterministicRoutingConfig,
+    LLMRoutingConfig,
     RoutingRuleType,
     SemanticRoutingConfig,
 )
@@ -471,6 +472,13 @@ class GatewayConfig(BaseModel):
                     raise ValueError(
                         f"Route '{route_name}': semantic routing embedding_model_id '{routing_config.embedding_model_id}' "
                         f'not found in top-level embedding_models.'
+                    )
+
+            if isinstance(routing_config, LLMRoutingConfig):
+                if routing_config.router_model_id not in set(self.chat_models_by_id):
+                    raise ValueError(
+                        f"Route '{route_name}': llm routing router_model_id '{routing_config.router_model_id}' "
+                        f'not found in top-level chat_models.'
                     )
 
             # default_model_id must be in route's chat_models
