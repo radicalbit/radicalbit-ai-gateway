@@ -16,7 +16,14 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_deepseek import ChatDeepSeek
-from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.prompt_manager import PromptManager
@@ -31,6 +38,8 @@ ENABLE_PROMPT_CACHE_PARAM = 'enable_prompt_cache'
 
 
 class Model(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     model_id: str = Field(
         ...,
         description='Unique name for the model configuration.',

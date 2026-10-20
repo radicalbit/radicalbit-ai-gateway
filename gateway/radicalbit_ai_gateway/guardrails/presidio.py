@@ -7,14 +7,14 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_analyzer.predefined_recognizers import AzureHealthDeidRecognizer
 from presidio_anonymizer import AnonymizerEngine
 
-from radicalbit_ai_gateway.models.guardrails import AhdsParams
+from radicalbit_ai_gateway.models.guardrails import PRESIDIO_LANGUAGES, AhdsParams
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
 
 class PresidioEngine:
-    def __init__(self, languages: list[str] = ['en', 'it']):
+    def __init__(self, languages: list[str] = PRESIDIO_LANGUAGES):
         self._analyzer_local = None
         self._anonymizer = None
         self._nlp_engine = None

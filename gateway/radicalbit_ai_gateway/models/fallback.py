@@ -1,6 +1,6 @@
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class FallbackModelType(str, Enum):
@@ -11,6 +11,8 @@ class FallbackModelType(str, Enum):
 
 
 class Fallback(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     target: str = Field(
         ..., description='Target model id for fallback.', examples=['example_model']
     )

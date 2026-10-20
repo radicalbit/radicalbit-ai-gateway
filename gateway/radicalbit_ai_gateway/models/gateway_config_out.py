@@ -44,8 +44,12 @@ class CredentialsOut(Credentials):
 class ModelOut(Model):
     credentials: CredentialsOut | None
 
+    # Built from Model.model_dump(), which also holds the computed fields.
     model_config = ConfigDict(
-        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+        extra='ignore',
+        populate_by_name=True,
+        alias_generator=to_camel,
+        protected_namespaces=(),
     )
 
     @model_validator(mode='after')

@@ -425,12 +425,6 @@ class TestDecisionJudgeOnChatInput(unittest.TestCase):
 
         self._assert_fails_closed(self._chat(), openai)
 
-    def test_unknown_decision_model_fails_closed(self):
-        app.state.routes = _build_routes(_decision_judge(model_id='missing'))
-        openai = self._mock_openai()
-
-        self._assert_fails_closed(self._chat(), openai)
-
     def test_rate_limited_answer_is_retried(self):
         app.state.routes = _build_routes(_decision_judge())
         self._mock_typesafe(status=429, body={'detail': 'slow down'})

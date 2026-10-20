@@ -44,17 +44,11 @@ class TestRequestRateLimiter:
         )
         assert limiter.limiter is not None
 
-    def test_init_without_max_requests_raises_error(self):
-        """Test that initialization without max_requests raises ValueError."""
-        config = RateLimiting(window_size='1 minute')  # No max_requests set
+    def test_config_without_max_requests_is_rejected(self):
         with pytest.raises(
             ValueError, match='max_requests must be set for rate limiting'
         ):
-            RequestRateLimiter(
-                project_uuid=_PROJECT_UUID,
-                route_name='rb-gateway',
-                rate_limiting_config=config,
-            )
+            RateLimiting(window_size='1 minute')
 
     @pytest.mark.asyncio
     async def test_check_request_no_config(self):

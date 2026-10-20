@@ -1,19 +1,52 @@
+from collections.abc import Iterator
 import difflib
 from importlib.resources import files
 import re
+from typing import get_args
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 import yaml
 
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.utils.exceptions import ProjectConfigValidationError
 from radicalbit_ai_gateway.utils.secrets import get_secret_provider
 
-_KNOWN_CONFIG_FIELDS = sorted(
-    set(GatewayConfig.model_fields) | set(GatewayRouteConfig.model_fields)
-)
+
+def _config_field_names(
+    model: type[BaseModel], seen: set[type[BaseModel]] | None = None
+) -> set[str]:
+    """Field names of `model` and of every model nested in its fields."""
+    seen = seen if seen is not None else set()
+    if model in seen:
+        return set()
+    seen.add(model)
+    names = set(model.model_fields)
+    for field in model.model_fields.values():
+        for tp in _nested_types(field.annotation):
+            if isinstance(tp, type) and issubclass(tp, BaseModel):
+                names |= _config_field_names(tp, seen)
+    return names
+
+
+def _nested_types(tp) -> Iterator:
+    yield tp
+    for arg in get_args(tp):
+        yield from _nested_types(arg)
+
+
+_KNOWN_CONFIG_FIELDS = sorted(_config_field_names(GatewayConfig))
+
+
+def _suggest_field(field: str) -> str | None:
+    # difflib compares characters in order, so a field with the same words in
+    # another order loses to a shorter field sharing the same tail.
+    words = sorted(field.split('_'))
+    for known in _KNOWN_CONFIG_FIELDS:
+        if sorted(known.split('_')) == words:
+            return known
+    matches = difflib.get_close_matches(field, _KNOWN_CONFIG_FIELDS, n=1, cutoff=0.6)
+    return matches[0] if matches else None
 
 
 def _find_key_line(yaml_str: str, key: str) -> int | None:
@@ -34,12 +67,9 @@ def _format_validation_error(err: ErrorDetails, yaml_str: str) -> str:
     loc = '.'.join(str(p) for p in err['loc'])
     msg = err['msg']
     if err['type'] == 'extra_forbidden' and err['loc']:
-        field = str(err['loc'][-1])
-        suggestion = difflib.get_close_matches(
-            field, _KNOWN_CONFIG_FIELDS, n=1, cutoff=0.6
-        )
+        suggestion = _suggest_field(str(err['loc'][-1]))
         if suggestion:
-            msg = f"{msg} (did you mean '{suggestion[0]}'?)"
+            msg = f"{msg} (did you mean '{suggestion}'?)"
     string_keys = [p for p in err['loc'] if isinstance(p, str)]
     line = _find_key_line(yaml_str, string_keys[-1]) if string_keys else None
     location = f' (line {line})' if line else ''

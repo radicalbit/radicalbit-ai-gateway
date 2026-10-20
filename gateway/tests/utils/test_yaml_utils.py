@@ -179,6 +179,57 @@ def test_validate_gateway_config_extra_field_includes_line():
     assert "'rout' (line 6)" in str(exc_info.value)
 
 
+def test_validate_gateway_config_suggests_field_with_reordered_words():
+    yaml_with_reordered_field = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    cached_input_cost_per_million_tokens: 0.5\n'
+        'routes: {}\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_reordered_field, check_secrets=False)
+    message = str(exc_info.value)
+    assert "'chat_models.0.cached_input_cost_per_million_tokens' (line 4)" in message
+    assert "did you mean 'input_cached_cost_per_million_tokens'?" in message
+
+
+def test_validate_gateway_config_suggests_nested_field_on_typo():
+    yaml_with_typo = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    retry_attemps: 5\n'
+        'routes: {}\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_typo, check_secrets=False)
+    assert "did you mean 'retry_attempts'?" in str(exc_info.value)
+
+
+def test_validate_gateway_config_reports_only_the_guardrail_own_parameters():
+    yaml_with_both_prompts = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        'guardrails:\n'
+        '  - name: j\n'
+        '    type: judge\n'
+        '    parameters:\n'
+        '      model_id: m1\n'
+        '      prompt: hi\n'
+        '      prompt_ref: toxicity_check.md\n'
+        'routes:\n'
+        '  default-route:\n'
+        '    chat_models: [m1]\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_both_prompts, check_secrets=False)
+    message = str(exc_info.value)
+    assert 'Invalid gateway configuration - 1 error(s)' in message
+    assert "Only one between 'prompt' and 'prompt_ref' can be set." in message
+
+
 # ---------------------------------------------------------------------------
 # extract_secret_references
 # ---------------------------------------------------------------------------

@@ -14,7 +14,12 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from radicalbit_ai_gateway.models.caching import CacheConfig, SemanticCaching
 from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
-from radicalbit_ai_gateway.models.guardrails import Guardrail, GuardrailType
+from radicalbit_ai_gateway.models.guardrails import (
+    DecisionJudgeParameter,
+    Guardrail,
+    GuardrailType,
+    JudgeParameter,
+)
 from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
 from radicalbit_ai_gateway.models.routing import (
     AnyRoutingConfig,
@@ -381,7 +386,7 @@ class GatewayConfig(BaseModel):
         def norm(s: str) -> str:
             return s.strip().casefold()
 
-        global_names_norm = {norm(g.name) for g in (self.guardrails or [])}
+        global_names = {g.name for g in (self.guardrails or [])}
 
         for r_name, route in self.routes.items():
             names = route.guardrails or []
@@ -393,13 +398,34 @@ class GatewayConfig(BaseModel):
                     f"Route '{r_name}': duplicate guardrails: {', '.join(dup_originals)}"
                 )
 
-            unknown = [n for n in names if norm(n) not in global_names_norm]
+            # Guardrails are looked up by exact name at runtime.
+            unknown = [n for n in names if n not in global_names]
             if unknown:
-                # This should not happen if the 'before' validator resolved names correctly, but keep a clear message.
                 raise ValueError(
-                    f"Route '{r_name}': guardrails not declared in top-level config: {', '.join(sorted(unknown))}"
+                    f"Route '{r_name}': guardrails not declared in top-level config "
+                    f'(names are case-sensitive): {", ".join(sorted(unknown))}'
                 )
 
+        return self
+
+    @model_validator(mode='after')
+    def validate_judge_models(self) -> Self:
+        """Judges call models by id, so each id must be a top-level model."""
+        for guardrail in self.guardrails or []:
+            params = guardrail.parameters
+            if isinstance(params, JudgeParameter):
+                for model_id in (params.model_id, params.fallback_model_id):
+                    if model_id is not None and model_id not in self.chat_models_by_id:
+                        raise ValueError(
+                            f"Guardrail '{guardrail.name}': judge model '{model_id}' "
+                            'not declared in top-level chat_models.'
+                        )
+            elif isinstance(params, DecisionJudgeParameter):
+                if params.model_id not in self.decision_models_by_id:
+                    raise ValueError(
+                        f"Guardrail '{guardrail.name}': decision judge model "
+                        f"'{params.model_id}' not declared in top-level decision_models."
+                    )
         return self
 
     @model_validator(mode='after')

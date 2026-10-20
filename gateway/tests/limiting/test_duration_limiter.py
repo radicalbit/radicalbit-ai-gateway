@@ -60,14 +60,11 @@ class TestDurationLimiter:
         )
         assert limiter.limiter is not None
 
-    def test_init_without_max_duration_seconds_raises_error(self):
-        config = AudioDurationLimiting(window_size='1 minute')
+    def test_config_without_max_duration_seconds_is_rejected(self):
         with pytest.raises(
             ValueError, match='max_duration_seconds must be set for duration limiting'
         ):
-            DurationLimiter(
-                project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
-            )
+            AudioDurationLimiting(window_size='1 minute')
 
     @pytest.mark.asyncio
     async def test_check_and_count_duration_no_config_is_noop(self):
