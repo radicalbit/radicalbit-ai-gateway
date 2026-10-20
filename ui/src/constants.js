@@ -66,6 +66,9 @@ const DATE_FORMAT = ' DD MMM YYYY, HH:mm:ss';
 
 const DATE_FORMAT_SHORT = ' DD MMM YYYY';
 
+// Rotation instants (grace end, last rotation) are timestamps: shown in the browser's local time
+const ROTATION_FORMAT = 'DD MMM YYYY, HH:mm';
+
 const ConfigStatusEnum = {
   EMPTY: 'EMPTY',
   DRAFT: 'DRAFT',
@@ -97,6 +100,14 @@ const CredentialStateEnum = {
   ACTIVE: 'active',
   EXPIRING: 'expiring',
   EXPIRED: 'expired',
+};
+
+// Derived by the API from the last rotation and the grace end
+const RotationStateEnum = {
+  NONE: 'none',
+  IN_GRACE: 'in_grace',
+  GRACE_ENDING: 'grace_ending',
+  ROTATED: 'rotated',
 };
 
 // expiresOn is a calendar date (YYYY-MM-DD), not an instant: never convert its timezone
@@ -202,6 +213,8 @@ export {
   numberFormatterFloat,
   pageSize,
   PathsEnum,
+  ROTATION_FORMAT,
+  RotationStateEnum,
   ProjectStatusEnum,
   RequestTypeEnum,
   REQUEST_TYPE_LABELS,

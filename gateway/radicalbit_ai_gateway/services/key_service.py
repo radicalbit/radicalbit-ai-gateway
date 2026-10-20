@@ -18,9 +18,11 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyCreateIn,
     KeyFullOut,
     KeyGroupIn,
+    KeyRotationIn,
     KeyUpdateIn,
 )
 from radicalbit_ai_gateway.models.credential_expiry import (
+    UTC,
     CredentialState,
     get_credential_state,
 )
@@ -28,6 +30,10 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
     CredentialLimitsIn,
+)
+from radicalbit_ai_gateway.models.credential_rotation import (
+    get_grace_end,
+    previous_value_authenticates,
 )
 from radicalbit_ai_gateway.models.group_limiting import GroupLimitOverwriteWarning
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
@@ -42,6 +48,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     KeyInternalError,
     KeyNotFoundError,
     KeyOperationNotAllowedError,
+    KeyRotationConflictError,
 )
 
 app_config = get_app_config()
@@ -175,6 +182,62 @@ class KeyService:
         if updated_rows == 0:
             raise KeyInternalError(f'Key {key.name} not updated')
         return self._get_key(key_uuid)
+
+    def rotate_key(self, key_uuid: UUID, rotation_in: KeyRotationIn) -> KeyFullOut:
+        """Give the credential a new value, shown once. During the grace period the
+        previous value keeps working; with none, it stops now.
+        Raises GracePeriodOutOfBoundsError when the grace period ends after the expiry.
+        """
+        key = self.key_dao.get_by_uuid(key_uuid)
+        if not key:
+            raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
+        if key.owner != 'gateway':
+            raise KeyOperationNotAllowedError(
+                f'Key {key_uuid} cannot be rotated because owner is "{key.owner}"'
+            )
+        _ensure_not_expired(key)
+        now = datetime.datetime.now(tz=UTC)
+        if previous_value_authenticates(key.expires_on, key.grace_ends_at, now):
+            raise KeyRotationConflictError(
+                f'Key {key_uuid} is in a grace period until {key.grace_ends_at}: '
+                'end it before rotating again'
+            )
+        grace_ends_at = get_grace_end(rotation_in.to_timedelta(), key.expires_on, now)
+        api_key_sec = self.api_key_security.generate_key()
+        rotated = self.key_dao.rotate(
+            key_uuid=key_uuid,
+            expected_hashed_key=key.hashed_key,
+            hashed_key=api_key_sec.hashed_key,
+            obscured_key=api_key_sec.obscured_key,
+            grace_ends_at=grace_ends_at,
+            now=now,
+        )
+        if rotated is None:
+            raise KeyRotationConflictError(
+                f'Key {key_uuid} was rotated by another request, please retry'
+            )
+        return KeyFullOut.from_key(
+            key=rotated,
+            plain_api_key=api_key_sec.plain_key,
+            include_groups=True,
+            include_limits=True,
+        )
+
+    def end_grace_period(self, key_uuid: UUID) -> KeyFullOut:
+        """Stop the previous value now."""
+        key = self.key_dao.get_by_uuid(key_uuid)
+        if not key:
+            raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
+        ended = self.key_dao.end_grace_period(
+            key_uuid, now=datetime.datetime.now(tz=UTC)
+        )
+        if ended is None:
+            raise KeyRotationConflictError(
+                f'Key {key_uuid} has no grace period running'
+            )
+        return KeyFullOut.from_key_obscured(
+            key=ended, include_groups=True, include_limits=True
+        )
 
     def add_group_to_key(
         self, key_uuid: UUID, key_group_in: KeyGroupIn, include_groups: bool

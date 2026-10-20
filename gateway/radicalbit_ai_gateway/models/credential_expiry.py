@@ -14,6 +14,11 @@ def utc_today() -> datetime.date:
     return datetime.datetime.now(tz=UTC).date()
 
 
+def get_expiry_instant(expires_on: datetime.date) -> datetime.datetime:
+    """Return the last instant a credential expiring on that date still works."""
+    return datetime.datetime.combine(expires_on, datetime.time(23, 59, 59), tzinfo=UTC)
+
+
 def get_credential_state(
     expires_on: datetime.date | None, now: datetime.datetime | None = None
 ) -> CredentialState:

@@ -61,6 +61,12 @@ RANDOM_UUID = uuid.uuid4()
 HASHED_KEY = 'da4af9c445b9bc1686ba63455d7c34aa569aeb09b95f395963dc7777a2afc6d4'
 PLAIN_KEY = 'sk-rb-SmnyH9HPJfwyRpJ2vfZEO0ugFWykvwarbEQ2PPpTezpsueV1'
 OBSCURED_KEY = 'sk-rb-Sm...eV1'
+ROTATED_HASHED_KEY = (
+    'a04b6bf515a71d792bed309e043067e9a042b332e28460ae23ac69f534090f0c'  # gitleaks:allow
+)
+ROTATED_PLAIN_KEY = (
+    'sk-rb-Rt8kWq2ZpLm4NxVc7HjY3bGd9FsA6eTu1oKiQ5wXyRnB0MvJ'  # gitleaks:allow
+)
 UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
 REQUEST_UUID = uuid.UUID(int=0)
 API_KEY_UUID = uuid.UUID(int=0)
@@ -87,6 +93,9 @@ def get_sample_key(
         updated_at=now,
         group_uuid=group_uuid,
         expires_on=expires_on,
+        previous_hashed_key=None,
+        grace_ends_at=None,
+        last_rotated_at=None,
         # unset .limits on a transient instance can hang (SQLAlchemy lazy-load)
         limits=[],
     )
@@ -113,6 +122,9 @@ def get_sample_key_with_group(
         group=get_sample_group(uuid=group_uuid),
         limits=[],
         expires_on=None,
+        previous_hashed_key=None,
+        grace_ends_at=None,
+        last_rotated_at=None,
     )
 
 
