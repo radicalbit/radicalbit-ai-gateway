@@ -1083,7 +1083,7 @@ class GatewayRoute:
                     media_type=cached['media_type'],
                 )
 
-        await self._check_decision_limits(
+        await self._check_limits_not_full(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -1179,7 +1179,7 @@ class GatewayRoute:
             input_tokens, {'route_name': route_name, 'model_name': model_id}
         )
 
-    async def _check_decision_limits(
+    async def _check_limits_not_full(
         self,
         request_uuid: str,
         api_key_uuid: str,
@@ -1187,9 +1187,14 @@ class GatewayRoute:
         api_key_name: str,
         group_name: str,
         route_name: str,
+        include_output: bool = False,
     ) -> None:
-        """Decision input size is known only from the response, so nothing is
-        estimated: a limit blocks only when its counter is already full.
+        """Block only when a counter is already full: nothing is estimated.
+
+        Used where the spend is known only after the call: decision models,
+        whose input size comes from the response, and paid routers, which run
+        before the request's own limits are checked. ``include_output`` also
+        tests the output-token counters, for callers that spend output tokens.
         """
         # Credential first: decides which error is reported when both block.
         credential_limiter = get_current_credential_limiter()
@@ -1241,6 +1246,27 @@ class GatewayRoute:
             )
         if self.token_limiter:
             await self.token_limiter.check_input_room(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+        if not include_output:
+            return
+        if credential_limiter:
+            await credential_limiter.check_output_tokens(
+                request_uuid=request_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                route_name=route_name,
+                project_uuid=self.project_uuid,
+                project_name=self.project_name,
+            )
+        if self.token_limiter:
+            await self.token_limiter.check_output(
                 request_uuid=request_uuid,
                 api_key_uuid=api_key_uuid,
                 group_uuid=group_uuid,
@@ -1334,6 +1360,19 @@ class GatewayRoute:
         # fail-closed if a plugin raises.
         set_operation_category(OperationCategory.PREPROCESSING)
         messages = await run_preprocessing(messages, self.gateway_route_config.plugins)
+
+        # A paid router spends before the request's own limits are checked:
+        # when a counter is already full, reject before paying for routing.
+        if isinstance(self.router, (LLMRouter, SemanticRouter)):
+            await self._check_limits_not_full(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                route_name=route_name,
+                include_output=True,
+            )
 
         # Prepare request for processing: route on the preprocessed messages.
         set_operation_category(OperationCategory.ROUTING)
@@ -1549,6 +1588,7 @@ class GatewayRoute:
             token_output_count=usage.output_tokens,
             project_uuid=identity.project_uuid,
             project_name=identity.project_name,
+            routing_name=self.gateway_route_config.routing,
         )
         await self._count_usage(
             prompt_tokens=usage.input_tokens,

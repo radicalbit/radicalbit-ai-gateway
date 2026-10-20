@@ -27,6 +27,8 @@ class ModelInvocationPayload(EventBase):
     model_type: str
     cache_type: str | None = None
     is_judge: bool = False
+    # Set on the usage of a router's own model call: names the routing.
+    routing_name: str | None = None
 
 
 class InputTokenProcessedPayload(EventBase):
@@ -36,6 +38,8 @@ class InputTokenProcessedPayload(EventBase):
     cache_type: str | None = None
     is_cached_tokens: bool = False
     is_judge: bool = False
+    # Set on the usage of a router's own model call: names the routing.
+    routing_name: str | None = None
 
 
 class OutputTokenProcessedPayload(EventBase):
@@ -44,6 +48,8 @@ class OutputTokenProcessedPayload(EventBase):
     model_type: str | None = None
     cache_type: str | None = None
     is_judge: bool = False
+    # Set on the usage of a router's own model call: names the routing.
+    routing_name: str | None = None
 
 
 class FallbackEventPayload(EventBase):
