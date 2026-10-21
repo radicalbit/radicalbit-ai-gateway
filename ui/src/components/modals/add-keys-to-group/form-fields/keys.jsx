@@ -1,6 +1,6 @@
 import useModals from '@Hooks/use-modals';
 import {
-  CredentialStateEnum, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum,
+  CredentialStateEnum, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum,
 } from '@Src/constants';
 import Lucide from '@Components/lucide';
 import { useGetAssociableKeysByGroupQuery, useGetGroupQuery } from '@State/groups/api';
@@ -54,7 +54,14 @@ function KeysInner() {
   const groupUuid = modalPayload?.data?.uuid;
   const { data = [] } = useGetAssociableKeysByGroupQuery({ groupUuid }, { skip: !groupUuid });
   const keys = data.map((i) => ({
-    label: i.name, value: i.uuid, expiresOn: i.expiresOn, owner: i.owner, state: i.state,
+    label: i.name,
+    value: i.uuid,
+    expiresOn: i.expiresOn,
+    graceEndsAt: i.graceEndsAt,
+    lastRotatedAt: i.lastRotatedAt,
+    owner: i.owner,
+    rotationState: i.rotationState,
+    state: i.state,
   }));
 
   const handleOnSelect = (value) => {
@@ -63,7 +70,7 @@ function KeysInner() {
 
   const handleOnFilterOption = (input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase());
 
-  // Dropdown options show the expiry under the name; the selected tags keep just the name
+  // Dropdown options show the expiry and rotation under the name; the selected tags keep just the name
   const handleOnOptionRender = ({ data: option }) => <KeyOption option={option} />;
 
   return (
@@ -92,7 +99,10 @@ function KeysInner() {
 function KeyOption({ option }) {
   const label = option?.label;
   const expiresOn = option?.expiresOn;
+  const graceEndsAt = option?.graceEndsAt;
+  const lastRotatedAt = option?.lastRotatedAt;
   const owner = option?.owner;
+  const rotationState = option?.rotationState;
   const state = option?.state;
 
   return (
@@ -101,6 +111,10 @@ function KeyOption({ option }) {
 
       <span className="text-xs opacity-70">
         <ExpiresOn expiresOn={expiresOn} owner={owner} state={state} />
+      </span>
+
+      <span className="text-xs opacity-70">
+        <Rotation graceEndsAt={graceEndsAt} lastRotatedAt={lastRotatedAt} owner={owner} rotationState={rotationState} />
       </span>
     </div>
   );
@@ -130,6 +144,27 @@ function ExpiresOn({ expiresOn, owner, state }) {
       <span className={className}>{label}</span>
     </Tooltip>
   );
+}
+
+function Rotation({ graceEndsAt, lastRotatedAt, owner, rotationState }) {
+  const isGraceEnding = rotationState === RotationStateEnum.GRACE_ENDING;
+  const isGraceRunning = rotationState === RotationStateEnum.IN_GRACE || isGraceEnding;
+  const className = classNames({ 'text-[var(--coo-warning)]': isGraceEnding });
+
+  // Externally managed credentials are never rotated: their lifecycle stays with the identity provider
+  if (owner !== GATEWAY_OWNER) {
+    return false;
+  }
+
+  if (rotationState === RotationStateEnum.ROTATED) {
+    return <span className="text-[var(--coo-success)]">{`Rotated on ${dayjs(lastRotatedAt).format(ROTATION_FORMAT)}`}</span>;
+  }
+
+  if (isGraceRunning) {
+    return <span className={className}>{`Previous value works until ${dayjs(graceEndsAt).format(ROTATION_FORMAT)}`}</span>;
+  }
+
+  return false;
 }
 
 function NoKeysAlert() {
