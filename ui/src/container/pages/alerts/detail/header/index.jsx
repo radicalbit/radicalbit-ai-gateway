@@ -35,7 +35,6 @@ function AlertDetailHeader() {
 
   return (
     <NewHeader
-      className="[&_.l-header\_\_title]:min-w-0 [&_.c-section-title]:max-w-full"
       details={{ one: <EnabledToggle /> }}
       prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={handleOnBack} />}
       title={(
@@ -65,7 +64,7 @@ function EnabledToggle() {
     <div className="flex items-center gap-2">
       <Switch aria-label="Enable alert" checked={enabled} loading={isLoading} onChange={handleOnChange} />
 
-      <div className="whitespace-nowrap">{label}</div>
+      <div>{label}</div>
     </div>
   );
 }
