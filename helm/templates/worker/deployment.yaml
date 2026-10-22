@@ -96,6 +96,36 @@ spec:
                   {{- else }}
                   name: {{ include "common.fullname" . }}-ch-auth
                   {{- end }}
+            - name: CLICKHOUSE_DATABASE
+              value: {{ .Values.clickhouse.database | quote }}
+            {{- with .Values.metricsWorker.clickhouse }}
+            {{- if not (kindIs "invalid" .asyncInsert) }}
+            - name: CLICKHOUSE_ASYNC_INSERT
+              value: {{ .asyncInsert | quote }}
+            {{- end }}
+            {{- if not (kindIs "invalid" .waitForAsync) }}
+            - name: CLICKHOUSE_WAIT_FOR_ASYNC
+              value: {{ .waitForAsync | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.metricsWorker.metrics }}
+            {{- if .prefetch }}
+            - name: METRICS_WORKER_PREFETCH
+              value: {{ .prefetch | quote }}
+            {{- end }}
+            {{- if .batchSize }}
+            - name: METRICS_BATCH_SIZE
+              value: {{ .batchSize | quote }}
+            {{- end }}
+            {{- if .flushIntervalMs }}
+            - name: METRICS_FLUSH_INTERVAL_MS
+              value: {{ .flushIntervalMs | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.metricsWorker.logLevel }}
+            - name: LOG_LEVEL
+              value: {{ . | quote }}
+            {{- end }}
           {{- with .Values.metricsWorker.resources }}
           resources:
 {{- toYaml . | nindent 12 }}
