@@ -16,8 +16,10 @@ WORKDIR /worker
 
 COPY --from=build /app/requirements.txt .
 
-# Install system dependencies
+# Apply Debian security updates (the pinned base tag is not rebuilt once a newer
+# Python patch is released) and install system dependencies
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         gcc libpq-dev python3-dev tini && \
     pip install --no-cache-dir --no-compile --default-timeout=1000 -r requirements.txt && \

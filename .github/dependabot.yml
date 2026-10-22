@@ -34,6 +34,22 @@ updates:
         update-types:
           - "major"
 
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/gateway"
+      - "/metrics-worker"
+      - "/clickhouse-migrations"
+    ignore:
+      # Patch releases only: a new Python or Node minor/major is a deliberate upgrade
+      - dependency-name: "python"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
   - package-ecosystem: "pip"
     directory: "/gateway"
     schedule:
