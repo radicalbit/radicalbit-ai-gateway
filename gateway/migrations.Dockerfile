@@ -1,5 +1,11 @@
 FROM python:3.11.13-slim
 
+# Apply Debian security updates (the pinned base tag is not rebuilt once a newer
+# Python patch is released)
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install uv
