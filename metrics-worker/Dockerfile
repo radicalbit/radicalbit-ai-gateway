@@ -1,4 +1,4 @@
-FROM python:3.13.11-slim AS build
+FROM python:3.13.15-slim AS build
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ RUN pip install --no-cache-dir --no-compile uv==0.9.27 && \
     rm -f uv.lock pyproject.toml && \
     rm -rf /root/.cache
 
-FROM python:3.13.11-slim
+FROM python:3.13.15-slim
 
 ENV PYTHONUNBUFFERED=1
 
