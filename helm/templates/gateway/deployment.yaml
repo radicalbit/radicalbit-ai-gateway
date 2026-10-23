@@ -157,7 +157,7 @@ spec:
                   {{- else }}
                   name: {{ include "common.fullname" . }}-ch-auth
                   {{- end }}
-            - name: CLICKHOUSE_DB_PASSWORD
+            - name: CLICKHOUSE_DB_PWD
               valueFrom:
                 secretKeyRef:
                   {{- if .Values.clickhouse.auth.password.existingSecretKey }}
@@ -170,8 +170,24 @@ spec:
                   {{- else }}
                   name: {{ include "common.fullname" . }}-ch-auth
                   {{- end }}
+            - name: CLICKHOUSE_DB_NAME
+              value: {{ .Values.clickhouse.database | quote }}
             - name: CELERY_BROKER_URL
               value: redis://{{ .Values.valkey.host }}:{{ .Values.valkey.port }}/0
+            {{- with .Values.gateway.events }}
+            {{- if .batchSize }}
+            - name: CELERY_EVENTS_BATCH_SIZE
+              value: {{ .batchSize | quote }}
+            {{- end }}
+            {{- if .flushMs }}
+            - name: CELERY_EVENTS_FLUSH_MS
+              value: {{ .flushMs | quote }}
+            {{- end }}
+            {{- if .brokerPoolLimit }}
+            - name: CELERY_BROKER_POOL_LIMIT
+              value: {{ .brokerPoolLimit | quote }}
+            {{- end }}
+            {{- end }}
             - name: REDIS_HOST
               value: {{ .Values.valkey.host }}
             - name: REDIS_PORT
@@ -189,16 +205,38 @@ spec:
                   {{- else }}
                   name: {{ template "gateway.fullname" . }}-assistant-key
                   {{- end }}
+            {{- with .Values.gateway.assistant }}
+            {{- if .baseUrl }}
+            - name: CONFIG_GENERATOR_OPENAI_BASE_URL
+              value: {{ .baseUrl | quote }}
+            {{- end }}
+            {{- if .model }}
+            - name: CONFIG_GENERATOR_OPENAI_MODEL
+              value: {{ .model | quote }}
+            {{- end }}
+            {{- if .maxRetries }}
+            - name: CONFIG_GENERATOR_MAX_RETRIES
+              value: {{ .maxRetries | quote }}
+            {{- end }}
+            {{- end }}
             - name: GATEWAY_DEBUG_MODE
-              value: "False"
+              value: {{ .Values.gateway.debugMode | quote }}
             - name: LOG_MODE
-              value: plain
+              value: {{ .Values.gateway.logMode | quote }}
+            - name: PROMETHEUS_METRICS_PORT
+              value: {{ .Values.gateway.service.ports.metrics | quote }}
+            {{- with .Values.gateway.cors }}
+            {{- if .allowOrigins }}
+            - name: CORS_ALLOW_ORIGINS
+              value: {{ .allowOrigins | toJson | quote }}
+            {{- end }}
+            {{- if not (kindIs "invalid" .allowCredentials) }}
+            - name: CORS_ALLOW_CREDENTIALS
+              value: {{ .allowCredentials | quote }}
+            {{- end }}
+            {{- end }}
             - name: ENABLED_PLUGINS
               value: {{ .Values.gateway.plugins }}
-            {{- if .Values.gateway.workers.threadPool }}
-            - name: THREAD_POOL_MAX_WORKERS
-              value : {{ .Values.gateway.workers.threadPool | quote }}
-            {{- end }}
             {{- if .Values.gateway.workers.uvicorn }}
             - name: UVICORN_WORKERS
               value : {{ .Values.gateway.workers.uvicorn | quote }}
