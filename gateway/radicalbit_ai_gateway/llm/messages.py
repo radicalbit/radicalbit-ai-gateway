@@ -6,9 +6,12 @@ changing it invalidates every cached entry.
 """
 
 import json
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# pydantic needs typing_extensions.TypedDict before Python 3.12.
+from typing_extensions import NotRequired, TypedDict
 
 MessageContent = str | list[str | dict[Any, Any]]
 
