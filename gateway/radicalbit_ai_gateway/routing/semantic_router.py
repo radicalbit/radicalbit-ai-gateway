@@ -1,9 +1,9 @@
 import logging
 
-from langchain_core.embeddings import Embeddings
-from langchain_core.messages import BaseMessage, HumanMessage
 import numpy as np
 
+from radicalbit_ai_gateway.llm.embeddings import Embeddings
+from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import SemanticRoutingConfig
 from radicalbit_ai_gateway.utils.app_config import get_app_config

@@ -1,13 +1,13 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-from langchain_core.messages import HumanMessage, SystemMessage
 import pytest
 
 from tests.common.mocked_gateway_config_openai import (
     get_gateway_routing_text_classification,
 )
 
+from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.routing.text_classification_router import (
     TextClassificationRouter,
 )

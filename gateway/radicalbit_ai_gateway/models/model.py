@@ -10,12 +10,6 @@ try:
 except ImportError:
     from typing_extensions import Self
 
-from langchain_core.embeddings import Embeddings
-from langchain_core.language_models import LanguageModelInput
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_deepseek import ChatDeepSeek
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -25,6 +19,9 @@ from pydantic import (
     model_validator,
 )
 
+from radicalbit_ai_gateway.llm.chat_model import ChatModel
+from radicalbit_ai_gateway.llm.embeddings import Embeddings
+from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -33,7 +30,7 @@ app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
-# Gateway-specific param keys intercepted before forwarding params to LangChain
+# Gateway-specific param keys intercepted before forwarding params to the provider
 ENABLE_PROMPT_CACHE_PARAM = 'enable_prompt_cache'
 
 
@@ -275,85 +272,26 @@ class Model(BaseModel):
         return self
 
 
-class GatewayDeepSeekChatModel(ChatDeepSeek):
-    def _get_request_payload(
-        self,
-        input_: LanguageModelInput,
-        *,
-        stop: list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict:
-        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        messages = self._convert_input(input_).to_messages()
-        for msg_dict, msg in zip(payload['messages'], messages):
-            if (
-                isinstance(msg, AIMessage)
-                and msg_dict.get('role') == 'assistant'
-                and msg.additional_kwargs.get('reasoning_content')
-            ):
-                msg_dict['reasoning_content'] = msg.additional_kwargs[
-                    'reasoning_content'
-                ]
-        return payload
-
-
 # Mock models for testing purposes
-class MockGatewayChatModel(BaseChatModel):
+class MockGatewayChatModel(ChatModel):
     """Mock chat model for testing and benchmarking purposes.
 
-    Extends BaseChatModel to provide proper type compatibility while maintaining
-    the same interface for testing scenarios. This is a gateway-specific mock
-    implementation for testing and performance benchmarking.
+    Answers with a fixed text after a configurable latency; streaming yields
+    the text word by word.
     """
 
-    model_config = {
-        'extra': 'allow'
-    }  # Allow extra attributes for model_name, model, etc.
+    _gen_ai_provider = 'mock'
 
-    def __init__(self, model_name: str, latency_ms: int, response_text: str, **kwargs):
-        super().__init__(**kwargs)
-        # Use object.__setattr__ to bypass Pydantic validation for these attributes
-        object.__setattr__(self, 'model_name', model_name)
-        object.__setattr__(self, 'model', model_name)
-        object.__setattr__(self, '_latency_ms', latency_ms)
-        object.__setattr__(self, '_response_text', response_text)
+    def __init__(self, model_name: str, latency_ms: int, response_text: str):
+        self.model_name = model_name
+        self.model = model_name
+        self._latency_ms = latency_ms
+        self._response_text = response_text
 
-    @property
-    def _llm_type(self) -> str:
-        """Required property that returns a unique name for the model class."""
-        return 'mock-chat-model'
-
-    def _generate(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: Any | None = None,
-        **kwargs: Any,
-    ) -> ChatResult:
-        """Generate a mock response with configurable latency (sync)."""
-        time.sleep(self._latency_ms / 1000.0)
-        response_message = AIMessage(
-            content=self._response_text,
-            response_metadata={
-                'model': self.model_name,
-                'model_name': self.model_name,
-                'latency_ms': self._latency_ms,
-            },
-            usage_metadata={
-                'input_tokens': 0,
-                'output_tokens': 0,
-                'total_tokens': 0,
-            },
-        )
-        generation = ChatGeneration(message=response_message)
-        return ChatResult(generations=[generation])
-
-    async def _agenerate(
-        self, messages: list[BaseMessage], *args, **kwargs
-    ) -> ChatResult:
-        """Generate a mock response with configurable latency (async)."""
+    async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
+        """Generate a mock response with configurable latency."""
         await asyncio.sleep(self._latency_ms / 1000.0)
-        response_message = AIMessage(
+        return AIMessage(
             content=self._response_text,
             response_metadata={
                 'model': self.model_name,
@@ -366,45 +304,32 @@ class MockGatewayChatModel(BaseChatModel):
                 'total_tokens': 0,
             },
         )
-        generation = ChatGeneration(message=response_message)
-        return ChatResult(generations=[generation])
 
-    async def _astream(self, messages: list[BaseMessage], *args, **kwargs):
+    async def _astream(self, messages: list[BaseMessage], **kwargs: Any):
         """Mock behavior for streaming by yielding words."""
         await asyncio.sleep(self._latency_ms / 1000.0)
         words = self._response_text.split()
         for i, word in enumerate(words):
             # simulate small delay between words
             await asyncio.sleep(0.01)
-            yield ChatGeneration(
-                message=AIMessageChunk(
-                    content=word + (' ' if i < len(words) - 1 else ''),
-                    usage_metadata={
-                        'input_tokens': 0,
-                        'output_tokens': len(words) if i == len(words) - 1 else 0,
-                        'total_tokens': len(words) if i == len(words) - 1 else 0,
-                    }
-                    if i == len(words) - 1
-                    else None,
-                )
+            yield AIMessageChunk(
+                content=word + (' ' if i < len(words) - 1 else ''),
+                usage_metadata={
+                    'input_tokens': 0,
+                    'output_tokens': len(words) if i == len(words) - 1 else 0,
+                    'total_tokens': len(words) if i == len(words) - 1 else 0,
+                }
+                if i == len(words) - 1
+                else None,
             )
 
 
 class MockGatewayEmbeddings(Embeddings):
-    """Mock embeddings model for testing and benchmarking purposes.
+    """Mock embeddings model for testing and benchmarking purposes."""
 
-    Extends Embeddings to provide proper type compatibility while maintaining
-    the same interface for testing scenarios. This is a gateway-specific mock
-    implementation for testing and performance benchmarking.
-    """
-
-    model_config = {'extra': 'allow'}  # Allow extra attributes
-
-    def __init__(self, latency_ms: int, vector_size: int, **kwargs):
-        super().__init__(**kwargs)
-        # Use object.__setattr__ to bypass Pydantic validation for these attributes
-        object.__setattr__(self, '_latency_ms', latency_ms)
-        object.__setattr__(self, '_vector_size', vector_size)
+    def __init__(self, latency_ms: int, vector_size: int):
+        self._latency_ms = latency_ms
+        self._vector_size = vector_size
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Generate mock embeddings for a list of documents with configurable latency."""

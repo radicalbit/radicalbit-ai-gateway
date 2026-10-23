@@ -4,13 +4,6 @@ import json
 import logging
 from typing import Any
 
-from langchain_core.messages import (
-    AIMessage,
-    AIMessageChunk,
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-)
 import numpy as np
 from openai.types.audio.transcription import Transcription, UsageDuration, UsageTokens
 from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
@@ -39,6 +32,13 @@ from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
 from radicalbit_ai_gateway.limiting.duration_limiter import DurationLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.limiting.token_limiter import TokenLimiter
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import (
     cache_hit_counter,
     cache_input_tokens,

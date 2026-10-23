@@ -2,10 +2,10 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import TypeAlias
 
-from langchain_core.messages import BaseMessage
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 
 # Type aliases for streaming methods

@@ -109,7 +109,7 @@ class TranscriptionModelInvoker(ModelInvoker):
         self._initialize_models(self._build_model)
 
     def _build_model(self, model: Model) -> AsyncOpenAI | AsyncAzureOpenAI:
-        """Bypasses LangChain: `OpenAIWhisperParser` discards `usage`, needed for cost tracking."""
+        """Build an openai SDK client: the transcription `usage` is needed for cost tracking."""
         provider, _ = parse_provider_and_model(model.model)
         credentials = (
             model.credentials.model_dump(exclude_none=True) if model.credentials else {}

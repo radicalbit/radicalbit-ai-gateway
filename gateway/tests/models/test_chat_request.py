@@ -1,6 +1,11 @@
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 import pytest
 
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from radicalbit_ai_gateway.models.chat_request import (
     convert_openai_messages,
     parse_tool_calls,

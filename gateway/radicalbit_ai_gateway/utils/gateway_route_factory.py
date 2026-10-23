@@ -3,8 +3,6 @@ import logging
 from uuid import UUID
 
 from fastapi import FastAPI
-from langchain.embeddings.base import init_embeddings
-from langchain_core.embeddings import Embeddings
 import redis
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
@@ -19,6 +17,8 @@ from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
 )
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.embeddings import Embeddings
+from radicalbit_ai_gateway.llm.factory import init_embeddings
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.model import MockGatewayEmbeddings, Model
@@ -54,10 +54,10 @@ def build_embeddings_model(model: Model, httpx_client=None) -> Embeddings:
         latency_ms = int(params.get('latency_ms', 0))
         vector_size = int(params.get('vector_size', 5))
         return MockGatewayEmbeddings(latency_ms=latency_ms, vector_size=vector_size)
-    langchain_provider = provider.replace('-', '_')
+    factory_provider = provider.replace('-', '_')
     return init_embeddings(
         model=model_name,
-        provider=langchain_provider,
+        provider=factory_provider,
         http_async_client=httpx_client,
         **{**params, **credentials},
     )

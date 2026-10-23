@@ -1,11 +1,16 @@
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from langchain_core.language_models import BaseLanguageModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.prompts import PromptTemplate
 import pytest
 
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
+from radicalbit_ai_gateway.llm.chat_model import ChatModel
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from radicalbit_ai_gateway.llm.prompts import PromptTemplate
 from radicalbit_ai_gateway.models.guardrails import GuardrailWhereType, JudgeParameter
 from radicalbit_ai_gateway.models.judge_result import JudgeResult
 from radicalbit_ai_gateway.models.judge_runtime_config import JudgeRuntimeConfig
@@ -40,7 +45,7 @@ def mock_all_external_llm_calls():
     """Prevent real network/API calls by mocking model initialization globally.
     Ensures tests run fully offline.
     """
-    mock_base_model = Mock(spec=BaseLanguageModel)
+    mock_base_model = Mock(spec=ChatModel)
     # with_structured_output returns a runnable; we just return the mock itself
     mock_base_model.with_structured_output.return_value = mock_base_model
     with (
@@ -222,7 +227,7 @@ class TestJudgeEngine:
     # Model caching (with_structured_output applied)
     # -----------------------------------------------------
     def test_get_or_create_model_uses_cache(self):
-        mock_model = Mock(spec=BaseLanguageModel)
+        mock_model = Mock(spec=ChatModel)
 
         model_cfg = Mock()
         model_cfg.model_id = 'gpt-4o-mini'
@@ -276,13 +281,9 @@ class TestJudgeEngine:
     # -----------------------------------------------------
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
-    async def test_primary_model_succeeds(
-        self, mock_prompt_template, mock_emit_event, mock_init_chat_model
-    ):
+    async def test_primary_model_succeeds(self, mock_emit_event, mock_init_chat_model):
         """Primary model executes successfully and returns JudgeResult."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
         expected_result = JudgeResult(
             triggered=True,
             reasoning='Detected off-topic message',
@@ -300,8 +301,7 @@ class TestJudgeEngine:
             parsed=expected_result,
         )
 
-        mock_prompt.__or__.return_value = mock_chain
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(return_value=mock_chain)
 
         mock_model_cfg = Mock(
             model_id='gpt-4o', model='openai:gpt-4o', credentials=None
@@ -323,13 +323,11 @@ class TestJudgeEngine:
 
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
     async def test_primary_fails_fallback_succeeds(
-        self, mock_prompt_template, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_init_chat_model
     ):
         """Primary model fails, fallback model succeeds."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
 
         # Chain 1: Primary (Fails)
         mock_chain_primary = AsyncMock()
@@ -349,8 +347,9 @@ class TestJudgeEngine:
             parsed=fallback_result,
         )
 
-        mock_prompt.__or__.side_effect = [mock_chain_primary, mock_chain_fallback]
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(
+            side_effect=[mock_chain_primary, mock_chain_fallback]
+        )
 
         mock_model_cfg = Mock(
             model_id='gpt-4o', model='openai:gpt-4o', credentials=None
@@ -371,13 +370,9 @@ class TestJudgeEngine:
         assert not result.triggered
         assert result.reasoning == 'OK'
 
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
-    async def test_both_primary_and_fallback_fail(self, mock_prompt_template):
+    async def test_both_primary_and_fallback_fail(self):
         """Both models fail -> raises JudgeInternalError instead of returning silent default."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
-        mock_model_primary = MagicMock()
-        mock_model_fallback = MagicMock()
 
         mock_chain_primary = AsyncMock()
         mock_chain_primary.ainvoke.side_effect = Exception('Primary fail')
@@ -385,10 +380,9 @@ class TestJudgeEngine:
         mock_chain_fallback = AsyncMock()
         mock_chain_fallback.ainvoke.side_effect = Exception('Fallback fail')
 
-        mock_prompt.__or__.side_effect = [mock_model_primary, mock_model_fallback]
-        mock_model_primary.__or__.return_value = mock_chain_primary
-        mock_model_fallback.__or__.return_value = mock_chain_fallback
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(
+            side_effect=[mock_chain_primary, mock_chain_fallback]
+        )
 
         mock_model_cfg = Mock(
             model_id='gpt-4o', model='openai:gpt-4o', credentials=None
@@ -410,13 +404,11 @@ class TestJudgeEngine:
 
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
     async def test_execute_judge_without_reasoning(
-        self, mock_prompt_template, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_init_chat_model
     ):
         """Judge runs with include_reasoning=False -> reasoning=None."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
 
         expected_result = JudgeResult(
             triggered=True,
@@ -435,8 +427,7 @@ class TestJudgeEngine:
             parsed=expected_result,
         )
 
-        mock_prompt.__or__.return_value = mock_chain
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(return_value=mock_chain)
 
         mock_model_cfg = Mock(
             model_id='gpt-4o', model='openai:gpt-4o', credentials=None
@@ -465,13 +456,10 @@ class TestJudgeEngine:
     # -----------------------------------------------------
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
     async def test_execute_judge_output_uses_ai_content(
-        self, mock_prompt_template, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_init_chat_model
     ):
-        mock_prompt = MagicMock(spec=PromptTemplate)
-        mock_prompt_template.return_value = mock_prompt
 
         expected = JudgeResult(
             triggered=True, reasoning='Off-topic output', violation_type='irrelevant'
@@ -486,7 +474,7 @@ class TestJudgeEngine:
             raw_response=mock_raw_response,
             parsed=expected,
         )
-        mock_prompt.__or__.return_value = mock_chain
+        self.engine._get_or_create_model = MagicMock(return_value=mock_chain)
 
         mock_model_cfg = Mock(
             model_id='gpt-4o', model='openai:gpt-4o', credentials=None
@@ -512,13 +500,11 @@ class TestJudgeEngine:
     # -----------------------------------------------------
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
     async def test_raises_truncated_error_on_finish_reason_length(
-        self, mock_prompt_template, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_init_chat_model
     ):
         """Judge raises JudgeOutputTruncatedError when finish_reason is 'length'."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
 
         # Truncated response: finish_reason='length'
         truncated_response = AIMessage(
@@ -538,8 +524,7 @@ class TestJudgeEngine:
             parsing_error=ValueError('Truncated JSON'),
         )
 
-        mock_prompt.__or__.return_value = mock_chain
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(return_value=mock_chain)
 
         mock_model_cfg = Mock(
             model_id='gpt-4o', model='openai:gpt-4o', credentials=None
@@ -561,13 +546,11 @@ class TestJudgeEngine:
 
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
     async def test_raises_parsing_error_on_empty_parsed(
-        self, mock_prompt_template, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_init_chat_model
     ):
         """Judge raises JudgeParsingError when structured output parsed is None."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
 
         empty_response = AIMessage(
             content='',
@@ -581,8 +564,7 @@ class TestJudgeEngine:
             parsed=None,
         )
 
-        mock_prompt.__or__.return_value = mock_chain
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(return_value=mock_chain)
 
         mock_model_cfg = Mock(
             model_id='gpt-4o', model='openai:gpt-4o', credentials=None
@@ -603,13 +585,11 @@ class TestJudgeEngine:
 
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
     async def test_raises_parsing_error_on_invalid_json(
-        self, mock_prompt_template, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_init_chat_model
     ):
         """Judge raises JudgeParsingError when structured output has parsing_error."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
 
         invalid_json_response = AIMessage(
             content='This is not valid JSON at all',
@@ -628,8 +608,7 @@ class TestJudgeEngine:
             parsing_error=ValueError('Invalid JSON'),
         )
 
-        mock_prompt.__or__.return_value = mock_chain
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(return_value=mock_chain)
 
         mock_model_cfg = Mock(
             model_id='gpt-4o', model='openai:gpt-4o', credentials=None
@@ -648,21 +627,13 @@ class TestJudgeEngine:
 
         assert 'This is not valid JSON at all' in exc_info.value.raw_content
 
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
-    async def test_raises_error_when_no_fallback_and_primary_fails(
-        self, mock_prompt_template
-    ):
+    async def test_raises_error_when_no_fallback_and_primary_fails(self):
         """Judge raises JudgeInternalError when primary fails and no fallback is defined."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
-        mock_model = MagicMock()
-
         mock_chain = AsyncMock()
         mock_chain.ainvoke.side_effect = Exception('Network error')
 
-        mock_prompt.__or__.return_value = mock_model
-        mock_model.__or__.return_value = mock_chain
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(return_value=mock_chain)
 
         mock_model_cfg = Mock(
             model_id='gpt-4o', model='openai:gpt-4o', credentials=None
@@ -841,13 +812,9 @@ class TestJudgeEngine:
         assert result.triggered is False
 
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
-    async def test_execute_judge_text_only_uses_chain(
-        self, mock_prompt_template, mock_emit_event
-    ):
-        """With include_media=False (default), text-only path uses PromptTemplate chain."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
+    async def test_execute_judge_text_only_uses_chain(self, mock_emit_event):
+        """With include_media=False (default), the formatted prompt is sent as text."""
         expected_result = JudgeResult(
             triggered=False, reasoning=None, violation_type=None
         )
@@ -860,8 +827,7 @@ class TestJudgeEngine:
             raw_response=mock_raw_response,
             parsed=expected_result,
         )
-        mock_prompt.__or__.return_value = mock_chain
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(return_value=mock_chain)
 
         judge_parameter = JudgeParameter(
             model_id='gpt-4o-mini',
@@ -879,17 +845,18 @@ class TestJudgeEngine:
             cost_service=self.cost_service,
         )
 
-        mock_chain.ainvoke.assert_called_once_with({'content': 'Hello world'})
+        mock_chain.ainvoke.assert_called_once()
+        (sent,) = mock_chain.ainvoke.call_args[0][0]
+        assert isinstance(sent, HumanMessage)
+        assert sent.content.endswith('Text Under Review:\nHello world\n')
         assert result.triggered is False
 
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.PromptTemplate')
     @pytest.mark.asyncio
     async def test_execute_judge_include_media_true_no_blocks_uses_chain(
-        self, mock_prompt_template, mock_emit_event
+        self, mock_emit_event
     ):
         """With include_media=True but no media blocks in message, text-only chain is still used."""
-        mock_prompt = MagicMock(spec=PromptTemplate)
         expected_result = JudgeResult(
             triggered=False, reasoning=None, violation_type=None
         )
@@ -902,8 +869,7 @@ class TestJudgeEngine:
             raw_response=mock_raw_response,
             parsed=expected_result,
         )
-        mock_prompt.__or__.return_value = mock_chain
-        mock_prompt_template.return_value = mock_prompt
+        self.engine._get_or_create_model = MagicMock(return_value=mock_chain)
 
         judge_parameter = JudgeParameter(
             model_id='gpt-4o-mini',

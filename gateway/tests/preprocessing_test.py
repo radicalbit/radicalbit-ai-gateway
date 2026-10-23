@@ -1,6 +1,6 @@
-from langchain_core.messages import HumanMessage
 import pytest
 
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
