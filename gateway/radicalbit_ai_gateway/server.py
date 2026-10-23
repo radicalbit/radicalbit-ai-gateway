@@ -20,7 +20,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_client import start_http_server
 from starlette.middleware.cors import CORSMiddleware
-from traceloop.sdk import Instruments, Traceloop
+from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import workflow
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
@@ -49,6 +49,7 @@ from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
 from radicalbit_ai_gateway.limiting.project_budget_limiter import (
     load_project_budget_limiter,
 )
+from radicalbit_ai_gateway.llm.tracing import TRACELOOP_INSTRUMENTS
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
@@ -131,7 +132,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
     token_limiter_exception_handler,
     unhandled_exception_handler,
 )
-from radicalbit_ai_gateway.utils.filtering_exporter import FilteringExporter
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_project_route_registrar,
 )
@@ -155,7 +155,7 @@ from radicalbit_ai_gateway.utils.responses_streaming import (
 )
 from radicalbit_ai_gateway.utils.responses_translation import (
     chat_completion_to_response,
-    input_to_langchain_messages,
+    input_to_messages,
     responses_tools_to_chat_completions_tools,
     translate_tool_choice,
 )
@@ -341,7 +341,7 @@ async def lifespan(app: FastAPI):
     def _build_processor(exporter: OTLPSpanExporter) -> BatchSpanProcessor:
         for wrap in get_exporter_wrappers():
             exporter = wrap(exporter)
-        return BatchSpanProcessor(FilteringExporter(exporter))
+        return BatchSpanProcessor(exporter)
 
     if app_config.telemetry_config.collector_base_url:
         endpoint = _otlp_endpoint(app_config.telemetry_config.collector_base_url)
@@ -363,7 +363,7 @@ async def lifespan(app: FastAPI):
             app_name='radicalbit-ai-gateway',
             telemetry_enabled=False,
             processor=processors,
-            instruments={Instruments.LANGCHAIN},
+            instruments=TRACELOOP_INSTRUMENTS,
         )
     logger.info('AI Gateway initialized successfully')
     yield
@@ -658,13 +658,13 @@ async def chat_completions(
             project_name=route.project_name,
         )
 
-    langchain_messages = convert_openai_messages(messages)
+    chat_messages = convert_openai_messages(messages)
     if completion_create_params.get('stream'):
         prepared = await route.prepare_stream(
             request_uuid=request_uuid,
             api_key_uuid=key_details.api_key_uuid,
             api_key_name=key_details.api_key_name,
-            messages=langchain_messages,
+            messages=chat_messages,
             route_name=route_name,
             tools=tools,
             tool_choice=tool_choice,
@@ -762,7 +762,7 @@ async def chat_completions(
         request_uuid=request_uuid,
         api_key_uuid=key_details.api_key_uuid,
         api_key_name=key_details.api_key_name,
-        messages=langchain_messages,
+        messages=chat_messages,
         route_name=route_name,
         tools=tools,
         tool_choice=tool_choice,
@@ -1143,7 +1143,7 @@ async def responses(
     is_stream = bool(response_create_params.get('stream'))
 
     # Translate to Chat Completions-compatible formats
-    langchain_messages = input_to_langchain_messages(raw_input, instructions)
+    chat_messages = input_to_messages(raw_input, instructions)
     tools = responses_tools_to_chat_completions_tools(raw_tools)
     tool_choice = translate_tool_choice(raw_tool_choice)
 
@@ -1230,7 +1230,7 @@ async def responses(
             request_uuid=request_uuid,
             api_key_uuid=key_details.api_key_uuid,
             api_key_name=key_details.api_key_name,
-            messages=langchain_messages,
+            messages=chat_messages,
             route_name=route_name,
             tools=tools,
             tool_choice=tool_choice,
@@ -1303,7 +1303,7 @@ async def responses(
         request_uuid=request_uuid,
         api_key_uuid=key_details.api_key_uuid,
         api_key_name=key_details.api_key_name,
-        messages=langchain_messages,
+        messages=chat_messages,
         route_name=route_name,
         tools=tools,
         tool_choice=tool_choice,

@@ -6,8 +6,7 @@ in the context of guardrail judges.
 
 import logging
 
-from langchain_core.messages import AIMessage
-
+from radicalbit_ai_gateway.llm.messages import AIMessage
 from radicalbit_ai_gateway.models.judge_result import JudgeResult
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -56,7 +55,7 @@ def extract_judge_result(structured_response: dict, model_id: str) -> JudgeResul
 
     Args:
         structured_response: Dict with keys 'raw', 'parsed', 'parsing_error'
-            as returned by LangChain's with_structured_output(include_raw=True).
+            as returned by a model's with_structured_output(include_raw=True).
         model_id: The identifier of the model that generated the response.
 
     Returns:

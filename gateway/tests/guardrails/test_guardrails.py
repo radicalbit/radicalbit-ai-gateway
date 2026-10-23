@@ -3,7 +3,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from azure.identity import ClientSecretCredential, EnvironmentCredential
-from langchain_core.messages import HumanMessage
 from presidio_analyzer import EntityRecognizer
 import pytest
 
@@ -13,6 +12,7 @@ from tests.common.mocked_gateway_config_openai import get_default_gateway_openai
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.guardrails import (
     AhdsParams,
     CheckParameter,

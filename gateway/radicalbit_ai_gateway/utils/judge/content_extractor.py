@@ -1,11 +1,10 @@
 """Content extraction utilities for the Judge engine.
 
-This module provides functions for extracting text content from LangChain
+This module provides functions for extracting text content from gateway
 messages based on the guardrail phase (input vs output).
 """
 
-from langchain_core.messages import BaseMessage
-
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.guardrails import GuardrailWhereType
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
 
@@ -21,7 +20,7 @@ def extract_content_for_judge(messages: list[BaseMessage], **kwargs) -> str:
     For OUTPUT phase: extracts content from the last AI (assistant) message.
 
     Args:
-        messages: List of LangChain messages.
+        messages: List of gateway messages.
         **kwargs: Must include 'where' (GuardrailWhereType) to determine phase.
             Can include 'message_roles' to determine if role filtering is active.
 
@@ -95,7 +94,7 @@ def extract_media_blocks_for_judge(messages: list[BaseMessage], **kwargs) -> lis
     For OUTPUT phase: collects media blocks from the last AI message.
 
     Args:
-        messages: List of LangChain messages.
+        messages: List of gateway messages.
         **kwargs: Accepts 'where' (GuardrailWhereType) to determine phase.
             Can include 'message_roles'.
 

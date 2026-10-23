@@ -1,0 +1,757 @@
+"""Conversions shared by the OpenAI-compatible chat models.
+
+Messages, tools and usage are translated exactly as the LangChain OpenAI
+integration did, so the wire payloads and the parsed replies stay the same.
+"""
+
+import asyncio
+from collections.abc import AsyncIterator
+import contextlib
+import copy
+import json
+import logging
+from typing import Any, Literal
+
+from pydantic import BaseModel
+
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    FunctionMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+    UsageMetadata,
+    invalid_tool_call,
+    tool_call,
+    tool_call_chunk,
+)
+
+logger = logging.getLogger(__name__)
+
+Api = Literal['chat/completions', 'responses']
+
+# Data block types of the LangChain standard content format.
+_DATA_BLOCK_TYPES = ('image', 'video', 'audio', 'text-plain', 'file')
+
+# Tool types OpenAI defines besides plain functions; passed through untouched.
+WELL_KNOWN_TOOL_TYPES = (
+    'function',
+    'file_search',
+    'computer',
+    'computer_use_preview',
+    'code_interpreter',
+    'mcp',
+    'image_generation',
+    'web_search_preview',
+    'web_search',
+    'tool_search',
+    'apply_patch',
+    'namespace',
+)
+# Built-in tools that can be selected by name through ``tool_choice``.
+WELL_KNOWN_TOOL_CHOICES = (
+    'file_search',
+    'web_search_preview',
+    'web_search',
+    'computer_use_preview',
+    'code_interpreter',
+    'mcp',
+    'image_generation',
+    'tool_search',
+    'apply_patch',
+)
+
+
+class OutputParserError(ValueError):
+    """A reply could not be parsed into the requested structure."""
+
+    def __init__(self, message: str):
+        # Same message as LangChain's OutputParserException.
+        super().__init__(
+            f'{message}\nFor troubleshooting, visit: '
+            'https://docs.langchain.com/oss/python/langchain/errors/'
+            'OUTPUT_PARSING_FAILURE '
+        )
+
+
+class StreamChunkTimeoutError(TimeoutError):
+    """No streaming chunk arrived within ``stream_chunk_timeout`` seconds."""
+
+    def __init__(self, timeout: float, *, model_name: str | None, chunks_received: int):
+        super().__init__(
+            f'No streaming chunk received for {timeout}s from model {model_name!r} '
+            f'after {chunks_received} chunk(s).'
+        )
+
+
+# ── Request messages ─────────────────────────────────────────────────────────
+
+
+def is_data_content_block(block: dict) -> bool:
+    if block.get('type') not in _DATA_BLOCK_TYPES:
+        return False
+    if any(key in block for key in ('url', 'base64', 'file_id', 'text')):
+        return True
+    if 'source_type' in block:
+        source_type = block['source_type']
+        if (source_type == 'url' and 'url' in block) or (
+            source_type == 'base64' and 'data' in block
+        ):
+            return True
+        if (source_type == 'id' and 'id' in block) or (
+            source_type == 'text' and 'url' in block
+        ):
+            return True
+    return False
+
+
+def _image_block(block: dict) -> dict:
+    if 'url' in block:
+        return {'type': 'image_url', 'image_url': {'url': block['url']}}
+    if 'base64' in block or block.get('source_type') == 'base64':
+        if 'mime_type' not in block:
+            raise ValueError('mime_type key is required for base64 data.')
+        data = block['data'] if 'data' in block else block['base64']
+        return {
+            'type': 'image_url',
+            'image_url': {'url': f'data:{block["mime_type"]};base64,{data}'},
+        }
+    raise ValueError("Unsupported source type. Only 'url' and 'base64' are supported.")
+
+
+def convert_data_block(block: dict, api: Api = 'chat/completions') -> dict:
+    """Format a standard (image, file or audio) data block for OpenAI."""
+    if block['type'] == 'image':
+        image = _image_block(block)
+        if api != 'responses':
+            return image
+        formatted = {'type': 'input_image', 'image_url': image['image_url']['url']}
+        if image['image_url'].get('detail'):
+            formatted['detail'] = image['image_url']['detail']
+        return formatted
+    if block['type'] == 'file':
+        if block.get('source_type') == 'base64' or 'base64' in block:
+            data = block['data'] if 'source_type' in block else block['base64']
+            file = {'file_data': f'data:{block["mime_type"]};base64,{data}'}
+            extras = block.get('extras')
+            metadata = block.get('metadata')
+            if filename := block.get('filename'):
+                file['filename'] = filename
+            elif extras and 'filename' in extras:
+                file['filename'] = extras['filename']
+            elif metadata and 'filename' in metadata:  # noqa: SIM114
+                file['filename'] = metadata['filename']
+            else:
+                # OpenAI may require a filename; LangChain sent a placeholder.
+                file['filename'] = 'LC_AUTOGENERATED'
+        elif block.get('source_type') == 'id' or 'file_id' in block:
+            file_id = block['id'] if 'source_type' in block else block['file_id']
+            file = {'file_id': file_id}
+        elif 'url' in block:
+            if api == 'chat/completions':
+                raise ValueError('OpenAI Chat Completions does not support file URLs.')
+            return {'type': 'input_file', 'file_url': block['url']}
+        else:
+            raise ValueError('Keys base64, url, or file_id required for file blocks.')
+        if api == 'responses':
+            return {'type': 'input_file', **file}
+        return {'type': 'file', 'file': file}
+    if block['type'] == 'audio':
+        if 'base64' in block or block.get('source_type') == 'base64':
+            data = block['data'] if 'source_type' in block else block['base64']
+            return {
+                'type': 'input_audio',
+                'input_audio': {
+                    'data': data,
+                    'format': block['mime_type'].split('/')[-1],
+                },
+            }
+        raise ValueError('Key base64 is required for audio blocks.')
+    raise ValueError(f'Block of type {block["type"]} is not supported.')
+
+
+def _with_cache_breakpoint(source: dict, formatted: dict) -> dict:
+    if 'prompt_cache_breakpoint' in source:
+        formatted['prompt_cache_breakpoint'] = source['prompt_cache_breakpoint']
+    elif isinstance(extras := source.get('extras'), dict) and (
+        'prompt_cache_breakpoint' in extras
+    ):
+        formatted['prompt_cache_breakpoint'] = extras['prompt_cache_breakpoint']
+    return formatted
+
+
+def _format_content(content: Any, api: Api, role: str) -> Any:
+    if not (content and isinstance(content, list)):
+        return content
+    formatted: list = []
+    for block in content:
+        if (
+            isinstance(block, dict)
+            and 'type' in block
+            and (
+                block['type'] in ('tool_use', 'thinking', 'reasoning_content')
+                or (
+                    block['type'] in ('function_call', 'code_interpreter_call')
+                    and api == 'chat/completions'
+                )
+            )
+        ):
+            continue
+        if (
+            isinstance(block, dict)
+            and is_data_content_block(block)
+            and not (api == 'responses' and role.lower().startswith('ai'))
+        ):
+            formatted.append(
+                _with_cache_breakpoint(block, convert_data_block(block, api))
+            )
+        elif (
+            isinstance(block, dict)
+            and block.get('type') == 'text'
+            and 'text' in block
+            and isinstance(extras := block.get('extras'), dict)
+            and 'prompt_cache_breakpoint' in extras
+        ):
+            formatted.append(
+                _with_cache_breakpoint(block, {'type': 'text', 'text': block['text']})
+            )
+        elif (
+            isinstance(block, dict)
+            and block.get('type') == 'image'
+            and (source := block.get('source'))
+            and isinstance(source, dict)
+        ):
+            # Anthropic-style image blocks.
+            if source.get('type') == 'base64' and (
+                (media_type := source.get('media_type'))
+                and (data := source.get('data'))
+            ):
+                formatted.append(
+                    {
+                        'type': 'image_url',
+                        'image_url': {'url': f'data:{media_type};base64,{data}'},
+                    }
+                )
+            elif source.get('type') == 'url' and (url := source.get('url')):
+                formatted.append({'type': 'image_url', 'image_url': {'url': url}})
+        else:
+            formatted.append(block)
+    return formatted
+
+
+def _tool_call_to_openai(tc: dict) -> dict:
+    return {
+        'type': 'function',
+        'id': tc['id'],
+        'function': {
+            'name': tc['name'],
+            'arguments': json.dumps(tc['args'], ensure_ascii=False),
+        },
+    }
+
+
+def _invalid_tool_call_to_openai(tc: dict) -> dict:
+    return {
+        'type': 'function',
+        'id': tc['id'],
+        'function': {'name': tc['name'], 'arguments': tc['args']},
+    }
+
+
+def _sanitize_tool_content(content: Any) -> Any:
+    if not isinstance(content, list):
+        return content
+    sanitized = []
+    for block in content:
+        if isinstance(block, dict) and block.get('type') == 'text' and 'text' in block:
+            new_block = {'type': 'text', 'text': block['text']}
+            if 'prompt_cache_breakpoint' in block:
+                new_block['prompt_cache_breakpoint'] = block['prompt_cache_breakpoint']
+            sanitized.append(new_block)
+        else:
+            sanitized.append(block)
+    return sanitized
+
+
+def strip_v1_blocks(message: AIMessage) -> AIMessage:
+    """Drop the standard-format blocks Chat Completions does not accept."""
+    if not isinstance(message.content, list):
+        return message
+    content: list = []
+    for block in message.content:
+        if isinstance(block, dict):
+            block_type = block.get('type')
+            if block_type == 'text':
+                content.append({'type': 'text', 'text': block['text']})
+            elif block_type in ('reasoning', 'tool_call', 'invalid_tool_call'):
+                pass
+            else:
+                content.append(block)
+        else:
+            content.append(block)
+    return message.model_copy(update={'content': content})
+
+
+def message_to_dict(message: BaseMessage, api: Api = 'chat/completions') -> dict:
+    """Convert a message to an OpenAI message dict."""
+    message_dict: dict[str, Any] = {
+        'content': _format_content(message.content, api, message.type)
+    }
+    if (name := message.name or message.additional_kwargs.get('name')) is not None:
+        message_dict['name'] = name
+
+    if isinstance(message, HumanMessage):
+        message_dict['role'] = 'user'
+    elif isinstance(message, AIMessage):
+        message_dict['role'] = 'assistant'
+        if message.tool_calls or message.invalid_tool_calls:
+            message_dict['tool_calls'] = [
+                _tool_call_to_openai(tc) for tc in message.tool_calls
+            ] + [_invalid_tool_call_to_openai(tc) for tc in message.invalid_tool_calls]
+        elif 'tool_calls' in message.additional_kwargs:
+            message_dict['tool_calls'] = [
+                {k: v for k, v in tc.items() if k in ('id', 'type', 'function')}
+                for tc in message.additional_kwargs['tool_calls']
+            ]
+        elif 'function_call' in message.additional_kwargs:
+            # OpenAI rejects function_call and tool_calls in the same message.
+            message_dict['function_call'] = message.additional_kwargs['function_call']
+        # With tool calls an empty content is sent as null.
+        if 'function_call' in message_dict or 'tool_calls' in message_dict:
+            message_dict['content'] = message_dict['content'] or None
+
+        audio: dict | None = None
+        for block in message.content:
+            if (
+                isinstance(block, dict)
+                and block.get('type') == 'audio'
+                and (audio_id := block.get('id'))
+                and api != 'responses'
+            ):
+                # OpenAI only accepts the id of a previous audio reply.
+                audio = {'id': audio_id}
+        if not audio and 'audio' in message.additional_kwargs:
+            raw_audio = message.additional_kwargs['audio']
+            audio = {'id': raw_audio['id']} if 'id' in raw_audio else raw_audio
+        if audio:
+            message_dict['audio'] = audio
+    elif isinstance(message, SystemMessage):
+        message_dict['role'] = message.additional_kwargs.get(
+            '__openai_role__', 'system'
+        )
+    elif isinstance(message, FunctionMessage):
+        message_dict['role'] = 'function'
+    elif isinstance(message, ToolMessage):
+        message_dict['role'] = 'tool'
+        message_dict['tool_call_id'] = message.tool_call_id
+        message_dict['content'] = _sanitize_tool_content(message_dict['content'])
+        message_dict = {
+            k: v
+            for k, v in message_dict.items()
+            if k in ('content', 'role', 'tool_call_id')
+        }
+    else:
+        raise TypeError(f'Got unknown type {message}')
+    return message_dict
+
+
+# ── Tools and structured output ──────────────────────────────────────────────
+
+
+def _rm_titles(kv: dict, prev_key: str = '') -> dict:
+    new_kv = {}
+    for k, v in kv.items():
+        if k == 'title':
+            # A property may itself be named "title".
+            if isinstance(v, dict) and prev_key == 'properties':
+                new_kv[k] = _rm_titles(v, k)
+        elif isinstance(v, dict):
+            new_kv[k] = _rm_titles(v, k)
+        else:
+            new_kv[k] = v
+    return new_kv
+
+
+def _dereference(node: Any, defs: dict) -> Any:
+    if isinstance(node, dict):
+        ref = node.get('$ref')
+        if isinstance(ref, str) and ref.startswith('#/$defs/'):
+            target = _dereference(copy.deepcopy(defs[ref.split('/')[-1]]), defs)
+            rest = {k: _dereference(v, defs) for k, v in node.items() if k != '$ref'}
+            return {**target, **rest}
+        return {k: _dereference(v, defs) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_dereference(v, defs) for v in node]
+    return node
+
+
+def pydantic_to_function(schema: type[BaseModel]) -> dict:
+    """Describe a pydantic model as an OpenAI function definition."""
+    json_schema = schema.model_json_schema()
+    defs = json_schema.pop('$defs', {})
+    json_schema = _dereference(json_schema, defs)
+    title = json_schema.pop('title', '')
+    description = json_schema.pop('description', '')
+    return {
+        'name': title,
+        'description': description,
+        'parameters': _rm_titles(json_schema),
+    }
+
+
+def _set_additional_properties_false(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        properties = schema.get('properties')
+        if isinstance(properties, dict) and properties:
+            schema['required'] = list(properties.keys())
+        if (
+            'required' in schema
+            or ('properties' in schema and not schema['properties'])
+            or 'additionalProperties' in schema
+        ):
+            schema['additionalProperties'] = False
+        for key in ('anyOf', 'allOf'):
+            for sub_schema in schema.get(key, []):
+                _set_additional_properties_false(sub_schema)
+        if 'properties' in schema:
+            for sub_schema in schema['properties'].values():
+                _set_additional_properties_false(sub_schema)
+        if 'items' in schema:
+            _set_additional_properties_false(schema['items'])
+    return schema
+
+
+def to_openai_function(function: Any, strict: bool | None = None) -> dict:
+    if strict and isinstance(function, dict):
+        function = copy.deepcopy(function)
+    if isinstance(function, dict) and all(
+        k in function for k in ('name', 'input_schema')
+    ):
+        oai_function = {
+            'name': function['name'],
+            'parameters': function['input_schema'],
+        }
+        if 'description' in function:
+            oai_function['description'] = function['description']
+    elif isinstance(function, dict) and 'toolSpec' in function:
+        spec = function['toolSpec']
+        oai_function = {'name': spec['name'], 'parameters': spec['inputSchema']['json']}
+        if 'description' in spec:
+            oai_function['description'] = spec['description']
+    elif isinstance(function, dict) and 'name' in function:
+        oai_function = {
+            k: v
+            for k, v in function.items()
+            if k in ('name', 'description', 'parameters', 'strict')
+        }
+    elif isinstance(function, dict) and 'title' in function:
+        function_copy = function.copy()
+        oai_function = {'name': function_copy.pop('title')}
+        if 'description' in function_copy:
+            oai_function['description'] = function_copy.pop('description')
+        if function_copy and 'properties' in function_copy:
+            oai_function['parameters'] = function_copy
+    elif isinstance(function, type) and issubclass(function, BaseModel):
+        oai_function = pydantic_to_function(function)
+    else:
+        raise ValueError(
+            f'Unsupported function\n\n{function}\n\nFunctions must be passed in'
+            " as Dict or pydantic.BaseModel. If they're a dict they must"
+            ' either be in OpenAI function format or valid JSON schema with top-level'
+            " 'title' key."
+        )
+    if strict is not None:
+        if 'strict' in oai_function and oai_function['strict'] != strict:
+            raise ValueError(
+                f"Tool/function already has a 'strict' key with value "
+                f'{oai_function["strict"]} which is different from the explicit '
+                f'`strict` arg received {strict=}.'
+            )
+        oai_function['strict'] = strict
+        if strict:
+            oai_function['parameters'] = _set_additional_properties_false(
+                oai_function['parameters']
+            )
+    return oai_function
+
+
+def to_openai_tool(tool: Any, strict: bool | None = None) -> dict:
+    """Convert a tool definition to the OpenAI tool format."""
+    if isinstance(tool, dict):
+        if tool.get('type') in WELL_KNOWN_TOOL_TYPES:
+            return tool
+        if (tool.get('type') or '').startswith('web_search_preview'):
+            return tool
+    return {'type': 'function', 'function': to_openai_function(tool, strict=strict)}
+
+
+def to_response_format(schema: Any, strict: bool | None = None) -> Any:
+    """Build the ``response_format`` for a pydantic class or a JSON schema dict."""
+    if isinstance(schema, type) and issubclass(schema, BaseModel):
+        return schema
+    if (
+        isinstance(schema, dict)
+        and 'json_schema' in schema
+        and schema.get('type') == 'json_schema'
+    ):
+        response_format = schema
+    elif isinstance(schema, dict) and 'name' in schema and 'schema' in schema:
+        response_format = {'type': 'json_schema', 'json_schema': schema}
+    else:
+        if strict is None:
+            if isinstance(schema, dict) and isinstance(schema.get('strict'), bool):
+                strict = schema['strict']
+            else:
+                strict = False
+        function = to_openai_function(schema, strict=strict)
+        function['schema'] = function.pop('parameters')
+        response_format = {'type': 'json_schema', 'json_schema': function}
+    if (
+        strict is not None
+        and strict is not response_format['json_schema'].get('strict')
+        and isinstance(schema, dict)
+        and 'strict' in schema.get('json_schema', {})
+    ):
+        raise ValueError(
+            f"Output schema already has 'strict' value set to "
+            f"{schema['json_schema']['strict']} but 'strict' also passed in to "
+            f'with_structured_output as {strict}. Please make sure that '
+            f"'strict' is only specified in one place."
+        )
+    return response_format
+
+
+def tool_choice_kwarg(tool_choice: Any, tools: list[dict]) -> Any:
+    """Normalize ``tool_choice`` against the bound tools."""
+    tool_names = []
+    for tool in tools:
+        if 'function' in tool:
+            tool_names.append(tool['function']['name'])
+        elif 'name' in tool:
+            tool_names.append(tool['name'])
+    if isinstance(tool_choice, str):
+        if tool_choice in tool_names:
+            return {'type': 'function', 'function': {'name': tool_choice}}
+        if tool_choice in WELL_KNOWN_TOOL_CHOICES:
+            return {'type': tool_choice}
+        # 'any' is the name other providers use for 'required'.
+        if tool_choice == 'any':
+            return 'required'
+        return tool_choice
+    if isinstance(tool_choice, bool):
+        return 'required'
+    if isinstance(tool_choice, dict):
+        return tool_choice
+    raise ValueError(
+        f'Unrecognized tool_choice type. Expected str, bool or dict. '
+        f'Received: {tool_choice}'
+    )
+
+
+def parse_first_tool_call(message: AIMessage, schema: type[BaseModel]) -> Any:
+    """Parse the first tool call of ``message`` into ``schema``."""
+    if message.tool_calls:
+        calls = [{'args': tc['args'], 'type': tc['name']} for tc in message.tool_calls]
+    else:
+        raw_calls = copy.deepcopy(message.additional_kwargs.get('tool_calls'))
+        if raw_calls is None:
+            return None
+        calls = [
+            {'args': parsed['args'], 'type': parsed['name']}
+            for raw in raw_calls
+            if (parsed := parse_raw_tool_call(raw)) is not None
+        ]
+    if not calls:
+        return None
+    first = calls[0]
+    if not isinstance(first['args'], dict):
+        raise ValueError(  # noqa: TRY004 - LangChain raised ValueError
+            f'Tool arguments must be specified as a dict, received: {first["args"]}'
+        )
+    name = schema.model_config.get('title') or schema.__name__
+    if first['type'] != name:
+        raise OutputParserError(
+            f'Unknown tool type: {first["type"]!r}. Available tools: {name}'
+        )
+    return schema(**first['args'])
+
+
+# ── Replies ──────────────────────────────────────────────────────────────────
+
+
+def parse_raw_tool_call(raw: dict) -> dict | None:
+    """Parse an OpenAI tool call; raises ``OutputParserError`` on invalid JSON."""
+    if 'function' not in raw:
+        return None
+    arguments = raw['function']['arguments']
+    if not arguments:
+        args = {}
+    else:
+        try:
+            args = json.loads(arguments, strict=False)
+        except json.JSONDecodeError as e:
+            raise OutputParserError(
+                f'Function {raw["function"]["name"]} arguments:\n\n'
+                f'{arguments}\n\nare not valid JSON. '
+                f'Received JSONDecodeError {e}'
+            ) from e
+    return tool_call(
+        name=raw['function']['name'] or '', args=args or {}, id=raw.get('id')
+    )
+
+
+def dict_to_ai_message(data: dict) -> AIMessage:
+    """Build the assistant message of a Chat Completions choice."""
+    # Azure and tool-calling replies may carry a null content.
+    content = data.get('content', '') or ''
+    additional_kwargs: dict = {}
+    if function_call := data.get('function_call'):
+        additional_kwargs['function_call'] = dict(function_call)
+    tool_calls = []
+    invalid_tool_calls = []
+    for raw in data.get('tool_calls') or []:
+        try:
+            tool_calls.append(parse_raw_tool_call(raw))
+        except Exception as e:
+            invalid_tool_calls.append(
+                invalid_tool_call(
+                    name=raw['function']['name'],
+                    args=raw['function']['arguments'],
+                    id=raw.get('id'),
+                    error=str(e),
+                )
+            )
+    if audio := data.get('audio'):
+        additional_kwargs['audio'] = audio
+    return AIMessage(
+        content=content,
+        additional_kwargs=additional_kwargs,
+        name=data.get('name'),
+        id=data.get('id'),
+        tool_calls=tool_calls,
+        invalid_tool_calls=invalid_tool_calls,
+    )
+
+
+def delta_to_chunk(delta: dict) -> AIMessageChunk:
+    """Build the message chunk of a streamed Chat Completions delta."""
+    additional_kwargs: dict = {}
+    if delta.get('function_call'):
+        function_call = dict(delta['function_call'])
+        if 'name' in function_call and function_call['name'] is None:
+            function_call['name'] = ''
+        additional_kwargs['function_call'] = function_call
+    chunks = []
+    if raw_tool_calls := delta.get('tool_calls'):
+        # Malformed tool call deltas are dropped.
+        with contextlib.suppress(KeyError):
+            chunks = [
+                tool_call_chunk(
+                    name=rtc['function'].get('name'),
+                    args=rtc['function'].get('arguments'),
+                    id=rtc.get('id'),
+                    index=rtc['index'],
+                )
+                for rtc in raw_tool_calls
+            ]
+    return AIMessageChunk(
+        content=delta.get('content') or '',
+        additional_kwargs=additional_kwargs,
+        id=delta.get('id'),
+        tool_call_chunks=chunks,
+    )
+
+
+def usage_metadata(
+    usage: dict, service_tier: str | None = None, *, responses_api: bool = False
+) -> UsageMetadata:
+    """Translate OpenAI token usage into ``UsageMetadata``."""
+    if responses_api:
+        input_key, output_key = 'input_tokens', 'output_tokens'
+        input_details = usage.get('input_tokens_details') or {}
+        output_details = usage.get('output_tokens_details') or {}
+    else:
+        input_key, output_key = 'prompt_tokens', 'completion_tokens'
+        input_details = usage.get('prompt_tokens_details') or {}
+        output_details = usage.get('completion_tokens_details') or {}
+    input_tokens = usage.get(input_key)
+    input_tokens = input_tokens if input_tokens is not None else 0
+    output_tokens = usage.get(output_key)
+    output_tokens = output_tokens if output_tokens is not None else 0
+    total_tokens = usage.get('total_tokens')
+    if total_tokens is None:
+        total_tokens = input_tokens + output_tokens
+    if service_tier not in ('priority', 'flex'):
+        service_tier = None
+    prefix = f'{service_tier}_' if service_tier else ''
+    input_token_details: dict = {}
+    output_token_details: dict = {}
+    if not responses_api:
+        input_token_details['audio'] = input_details.get('audio_tokens')
+    input_token_details[f'{prefix}cache_read'] = input_details.get('cached_tokens')
+    input_token_details[f'{prefix}cache_creation'] = input_details.get(
+        'cache_write_tokens'
+    )
+    if not responses_api:
+        output_token_details['audio'] = output_details.get('audio_tokens')
+    output_token_details[f'{prefix}reasoning'] = output_details.get('reasoning_tokens')
+    if service_tier is not None:
+        # Cache reads and reasoning are priced apart from the tier tokens.
+        if responses_api:
+            output_token_details[service_tier] = output_tokens - (
+                output_token_details.get(f'{prefix}reasoning', 0) or 0
+            )
+            input_token_details[service_tier] = input_tokens - (
+                input_token_details.get(f'{prefix}cache_read', 0) or 0
+            )
+        else:
+            input_token_details[service_tier] = input_tokens - (
+                input_token_details.get(f'{prefix}cache_read', 0) or 0
+            )
+            output_token_details[service_tier] = output_tokens - (
+                output_token_details.get(f'{prefix}reasoning', 0) or 0
+            )
+    return UsageMetadata(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        input_token_details={
+            k: v for k, v in input_token_details.items() if v is not None
+        },
+        output_token_details={
+            k: v for k, v in output_token_details.items() if v is not None
+        },
+    )
+
+
+async def with_chunk_timeout(
+    source: AsyncIterator, timeout: float | None, model_name: str | None
+) -> AsyncIterator:
+    """Yield from ``source``, failing when one chunk takes over ``timeout`` s."""
+    if not timeout or timeout <= 0:
+        async for item in source:
+            yield item
+        return
+    received = 0
+    iterator = source.__aiter__()
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(iterator.__anext__(), timeout=timeout)
+            except StopAsyncIteration:
+                return
+            except TimeoutError as e:
+                raise StreamChunkTimeoutError(
+                    timeout, model_name=model_name, chunks_received=received
+                ) from e
+            received += 1
+            yield item
+    finally:
+        aclose = getattr(iterator, 'aclose', None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                logger.debug('Closing the stream after a chunk timeout failed')

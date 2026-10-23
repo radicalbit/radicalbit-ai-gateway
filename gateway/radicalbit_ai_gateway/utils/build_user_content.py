@@ -1,6 +1,6 @@
 import json
 
-from langchain_core.messages import BaseMessage
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 
 
 def build_user_content(messages: list[BaseMessage]) -> str:

@@ -5,7 +5,6 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
-from langchain_core.messages import HumanMessage, SystemMessage
 from openai.types.chat.chat_completion_chunk import (
     ChatCompletionChunk,
     Choice as ChunkChoice,
@@ -20,6 +19,7 @@ from tests.common.mocked_build_openai_chat_completion import (
 )
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.utils.ai_gateway_types import (
     InvokeResponse,

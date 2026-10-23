@@ -3,12 +3,12 @@
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from langchain_core.messages import AIMessage, AIMessageChunk
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
+from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.event_payload import InputTokenProcessedPayload
 from radicalbit_ai_gateway.models.model import Model

@@ -3,13 +3,13 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessageChunk, HumanMessage
 import pytest
 from starlette.requests import Request
 
 from tests.common import db_mock
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.llm.messages import AIMessageChunk, HumanMessage
 from radicalbit_ai_gateway.models.guardrails import GuardrailWhereType
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.utils.ai_gateway_types import PrepareAndValidateResult

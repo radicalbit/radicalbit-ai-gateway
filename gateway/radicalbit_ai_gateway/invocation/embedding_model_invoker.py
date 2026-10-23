@@ -1,13 +1,13 @@
 import logging
 import time
 
-from langchain.embeddings.base import init_embeddings
-from langchain_core.embeddings import Embeddings
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
+from radicalbit_ai_gateway.llm.embeddings import Embeddings
+from radicalbit_ai_gateway.llm.factory import init_embeddings
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import MockGatewayEmbeddings, Model
 from radicalbit_ai_gateway.services.cost_service import CostService
@@ -61,15 +61,14 @@ class EmbeddingModelInvoker(ModelInvoker):
             vector_size: int = int(params.get('vector_size', 5))
             return MockGatewayEmbeddings(latency_ms=latency_ms, vector_size=vector_size)
 
-        # Map gateway provider names to LangChain provider names
-        # LangChain uses underscore (google_genai) while gateway uses hyphen (google-genai)
-        langchain_provider = provider.replace('-', '_')
+        # Factory provider keys use underscores (google_genai) where the gateway
+        # config uses hyphens (google-genai)
+        factory_provider = provider.replace('-', '_')
 
-        # init_embeddings handles provider recognition and model initialization
-        # LangChain accepts api_key directly as an alias for provider-specific keys
+        # Every provider accepts api_key directly as an alias for its own key
         return init_embeddings(
             model=model_name,
-            provider=langchain_provider,
+            provider=factory_provider,
             http_async_client=self.httpx_client,
             **{**params, **credentials},
         )
