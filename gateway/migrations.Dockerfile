@@ -1,4 +1,4 @@
-FROM python:3.11.13-slim
+FROM python:3.11.16-slim
 
 # Apply Debian security updates (the pinned base tag is not rebuilt once a newer
 # Python patch is released)
