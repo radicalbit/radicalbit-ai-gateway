@@ -69,6 +69,10 @@ EMBEDDING = {
     'model_id': 'emb',
     'model': 'openai/text-embedding-3-small',
     'credentials': {'api_key': 'sk-123'},
+JEV_BACKUP = {
+    'model_id': 'jev-backup',
+    'model': 'typesafe/jev-backup',
+    'credentials': {'api_key': TYPESAFE_KEY},
 }
 INSTRUCTIONS = 'Is the user asking about something other than billing?'
 CRITERIA = {'true': 'Not about billing', 'false': 'About billing'}
@@ -136,7 +140,7 @@ def _build_routes(*guardrails: dict, prompt_manager=None) -> dict:
         {
             'chat_models': [GPT],
             'embedding_models': [EMBEDDING],
-            'decision_models': [JEV],
+            'decision_models': [JEV, JEV_BACKUP],
             'guardrails': list(guardrails),
             'routes': {
                 'chat': {'chat_models': ['gpt'], 'guardrails': names},
@@ -242,6 +246,7 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         status: int = 200,
         times: int = 1,
         raw_body: str | None = None,
+        model: str = 'jev-latest',
     ):
         expected_question = question or {
             'type': 'noul',
@@ -252,7 +257,7 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
             .header('Authorization', f'Bearer {TYPESAFE_KEY}')
             .json(
                 {
-                    'model': 'jev-latest',
+                    'model': model,
                     'state': state,
                     'questions': {'decision_judge': expected_question},
                 }
@@ -507,6 +512,135 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
 
         assert response.status_code == 200
         assert pook.isdone()
+
+    # Fallback
+
+    def _mock_backup(self, **kwargs):
+        return self._mock_typesafe(model='jev-backup', **kwargs)
+
+    def test_fallback_answers_when_the_primary_is_exhausted(self):
+        app.state.routes = _build_routes(
+            _decision_judge(threshold=0.7, fallback_model_id='jev-backup')
+        )
+        self._mock_typesafe(status=503, body={'detail': 'busy'}, times=4)
+        backup = self._mock_backup(noul=0.9)
+        openai = self._mock_openai()
+
+        response = self._chat()
+
+        assert response.status_code == 400
+        assert response.json()['error']['message'] == 'block by decision judge'
+        assert backup.isdone()
+        assert not openai.isdone()
+
+    def test_fallback_noul_below_threshold_passes(self):
+        app.state.routes = _build_routes(
+            _decision_judge(threshold=0.7, fallback_model_id='jev-backup')
+        )
+        self._mock_typesafe(status=503, body={'detail': 'busy'}, times=4)
+        self._mock_backup(noul=0.2)
+        self._mock_openai()
+
+        response = self._chat()
+
+        assert response.status_code == 200
+        assert pook.isdone()
+
+    def test_primary_and_fallback_exhausted_fail_closed(self):
+        app.state.routes = _build_routes(
+            _decision_judge(fallback_model_id='jev-backup')
+        )
+        self._mock_typesafe(status=503, body={'detail': 'busy'}, times=4)
+        backup = self._mock_backup(status=503, body={'detail': 'busy'}, times=4)
+        openai = self._mock_openai()
+
+        response = self._chat()
+
+        self._assert_fails_closed(response, openai)
+        assert backup.isdone()
+
+    def test_fallback_is_not_called_when_the_primary_answers(self):
+        app.state.routes = _build_routes(
+            _decision_judge(fallback_model_id='jev-backup')
+        )
+        self._mock_typesafe(noul=0.1)
+        backup = self._mock_backup(noul=0.9)
+        self._mock_openai()
+
+        response = self._chat()
+
+        assert response.status_code == 200
+        assert not backup.isdone()
+
+    def test_primary_client_error_fails_closed_without_the_fallback(self):
+        app.state.routes = _build_routes(
+            _decision_judge(fallback_model_id='jev-backup')
+        )
+        typesafe = self._mock_typesafe(status=422, body={'detail': 'bad'})
+        backup = self._mock_backup(noul=0.1)
+        openai = self._mock_openai()
+
+        response = self._chat()
+
+        self._assert_fails_closed(response, openai)
+        assert typesafe.isdone()
+        assert not backup.isdone()
+
+    def test_primary_rate_limited_after_retries_moves_to_the_fallback(self):
+        app.state.routes = _build_routes(
+            _decision_judge(fallback_model_id='jev-backup')
+        )
+        self._mock_typesafe(status=429, body={'detail': 'slow down'}, times=4)
+        backup = self._mock_backup(noul=0.9)
+        openai = self._mock_openai()
+
+        response = self._chat()
+
+        assert response.status_code == 400
+        assert backup.isdone()
+        assert not openai.isdone()
+
+    def test_primary_unreachable_moves_to_the_fallback(self):
+        app.state.routes = _build_routes(
+            _decision_judge(fallback_model_id='jev-backup')
+        )
+        pook.post(TYPESAFE_URL).times(4).error(httpx.ConnectError('refused'))
+        backup = self._mock_backup(noul=0.9)
+        openai = self._mock_openai()
+
+        response = self._chat()
+
+        assert response.status_code == 400
+        assert backup.isdone()
+        assert not openai.isdone()
+
+    def test_primary_answer_without_noul_moves_to_the_fallback(self):
+        app.state.routes = _build_routes(
+            _decision_judge(fallback_model_id='jev-backup')
+        )
+        self._mock_typesafe(body={'answers': {}, 'usage': {'input_tokens': 40}})
+        backup = self._mock_backup(noul=0.9)
+        openai = self._mock_openai()
+
+        response = self._chat()
+
+        assert response.status_code == 400
+        assert backup.isdone()
+        assert not openai.isdone()
+
+    def test_primary_invalid_noul_moves_to_the_fallback(self):
+        app.state.routes = _build_routes(
+            _decision_judge(fallback_model_id='jev-backup')
+        )
+        self._mock_typesafe(noul='high')
+        backup = self._mock_backup(noul=0.9)
+        openai = self._mock_openai()
+
+        response = self._chat()
+
+        assert response.status_code == 400
+        assert backup.isdone()
+        assert not openai.isdone()
 
     # LLM judge
 
