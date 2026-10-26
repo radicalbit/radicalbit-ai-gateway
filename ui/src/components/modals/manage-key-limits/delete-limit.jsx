@@ -1,5 +1,7 @@
 import { LIMIT_CATEGORY_LABELS } from '@Components/limits/constants';
-import { formatCount, formatLimitWindow, getRulesMadeStale } from '@Components/limits/helpers';
+import {
+  RuleScopeEnum, formatCount, formatLimitWindow, getRulesMadeStale,
+} from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
 import useModals from '@Hooks/use-modals';
 import { useGetAlertsQuery } from '@State/alerts/api';
@@ -79,7 +81,7 @@ function StaleRules({ limit }) {
   }
 
   const count = getRulesMadeStale({
-    credentialUuid: uuid, limit, limits, rules: rules ?? [],
+    limit, limits, rules: rules ?? [], scope: RuleScopeEnum.CREDENTIAL, targetUuid: uuid,
   }).length;
 
   if (!count) {

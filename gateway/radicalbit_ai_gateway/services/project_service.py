@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 import io
 import logging
 import re
@@ -56,6 +57,33 @@ def _sanitize_filename(name: str) -> str:
     return sanitized or 'config'
 
 
+def _route_budget_conflicts(
+    configs: Iterable[ProjectConfig],
+) -> ProjectBudgetLimitConflictsOut:
+    published: list[str] = []
+    draft: list[str] = []
+    budget_routing: list[str] = []
+    for config in configs:
+        if not config.config_file:
+            continue
+        try:
+            budgets = find_route_budgets(config.config_file)
+        except (ValidationError, TypeError, ValueError, yaml.YAMLError):
+            # Not a valid configuration yet (e.g. the seeded template): it
+            # can't be published, so it conflicts with nothing
+            continue
+        if config.config_status == ConfigStatus.SERVED.value:
+            published += budgets.budget_limiting
+        else:
+            draft += budgets.budget_limiting
+        budget_routing += budgets.budget_routing
+    return ProjectBudgetLimitConflictsOut(
+        published=list(dict.fromkeys(published)),
+        draft=list(dict.fromkeys(draft)),
+        budget_routing=list(dict.fromkeys(budget_routing)),
+    )
+
+
 class ProjectService:
     def __init__(
         self,
@@ -85,15 +113,18 @@ class ProjectService:
 
     def _build_out(self, project: Project, include_limits: bool = False) -> ProjectOut:
         configs = list(self.project_config_dao.list_by_project(project.uuid))
-        limits = None
-        if include_limits:
-            limits = [
-                ProjectBudgetLimitOut.from_project_budget_limit(limit)
-                for limit in self.project_budget_limit_dao.get_by_project_uuid(
-                    project.uuid
-                )
-            ]
-        return ProjectOut.from_project(project, configs, limits=limits)
+        if not include_limits:
+            return ProjectOut.from_project(project, configs)
+        limits = [
+            ProjectBudgetLimitOut.from_project_budget_limit(limit)
+            for limit in self.project_budget_limit_dao.get_by_project_uuid(project.uuid)
+        ]
+        return ProjectOut.from_project(
+            project,
+            configs,
+            limits=limits,
+            route_budgets=_route_budget_conflicts(configs),
+        )
 
     def _build_out_or_raise(
         self, project_uuid: UUID, include_limits: bool = False
@@ -137,8 +168,8 @@ class ProjectService:
             return
         if self.project_budget_limit_dao.get_by_project_uuid(project_uuid):
             raise ProjectConfigValidationError(
-                f'Project {project_uuid} already has a budget limit assigned; '
-                f'routes cannot configure budget_limiting: {", ".join(routes)}',
+                'The project has a budget: routes cannot configure '
+                f'budget_limiting: {", ".join(routes)}',
                 routes=routes,
             )
 
@@ -368,27 +399,8 @@ class ProjectService:
         self, project_uuid: UUID
     ) -> ProjectBudgetLimitConflictsOut:
         self._get_project_or_raise(project_uuid)
-        published: list[str] = []
-        draft: list[str] = []
-        budget_routing: list[str] = []
-        for config in self.project_config_dao.list_by_project(project_uuid):
-            if not config.config_file:
-                continue
-            try:
-                budgets = find_route_budgets(config.config_file)
-            except (ValidationError, TypeError, ValueError, yaml.YAMLError):
-                # Not a valid configuration yet (e.g. the seeded template): it
-                # can't be published, so it conflicts with nothing
-                continue
-            if config.config_status == ConfigStatus.SERVED.value:
-                published += budgets.budget_limiting
-            else:
-                draft += budgets.budget_limiting
-            budget_routing += budgets.budget_routing
-        return ProjectBudgetLimitConflictsOut(
-            published=list(dict.fromkeys(published)),
-            draft=list(dict.fromkeys(draft)),
-            budget_routing=list(dict.fromkeys(budget_routing)),
+        return _route_budget_conflicts(
+            self.project_config_dao.list_by_project(project_uuid)
         )
 
     def get_budget_limits_for_project(

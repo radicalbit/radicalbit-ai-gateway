@@ -7,7 +7,7 @@ export const projectsApiSlice = apiService.injectEndpoints({
     getProjects: builder.query({
       providesTags: () => [{ type: API_TAGS.PROJECTS, id: LIST_ID }],
       query: (params = {}) => {
-        const searchParams = new URLSearchParams();
+        const searchParams = new URLSearchParams({ include_limits: 'true' });
 
         Object.entries(params).forEach(([key, value]) => {
           if (value !== undefined && value !== null && value !== '') {
@@ -15,10 +15,8 @@ export const projectsApiSlice = apiService.injectEndpoints({
           }
         });
 
-        const queryString = searchParams.toString();
-
         return {
-          url: queryString ? `/projects?${queryString}` : '/projects',
+          url: `/projects?${searchParams.toString()}`,
           method: 'get',
         };
       },
@@ -27,7 +25,7 @@ export const projectsApiSlice = apiService.injectEndpoints({
     getProject: builder.query({
       providesTags: (result, error, uuid) => [{ type: API_TAGS.PROJECTS, id: uuid }],
       query: (uuid) => ({
-        url: `/projects/${uuid}`,
+        url: `/projects/${uuid}?include_limits=true`,
         method: 'get',
       }),
     }),
@@ -79,6 +77,35 @@ export const projectsApiSlice = apiService.injectEndpoints({
       invalidatesTags: (result, error) => {
         if (!error) {
           return [{ type: API_TAGS.PROJECTS, id: LIST_ID }];
+        }
+
+        return [];
+      },
+    }),
+
+    createProjectBudgetLimits: builder.mutation({
+      query: ({ data, uuid }) => ({
+        url: `/projects/${uuid}/budget-limits`,
+        method: 'post',
+        data,
+      }),
+      invalidatesTags: (result, _, { uuid }) => {
+        if (result) {
+          return [{ type: API_TAGS.PROJECTS, id: LIST_ID }, { type: API_TAGS.PROJECTS, id: uuid }, API_TAGS.ALERTS];
+        }
+
+        return [];
+      },
+    }),
+
+    deleteProjectBudgetLimit: builder.mutation({
+      query: ({ limitUuid, uuid }) => ({
+        url: `/projects/${uuid}/budget-limits/${limitUuid}`,
+        method: 'delete',
+      }),
+      invalidatesTags: (result, _, { uuid }) => {
+        if (result) {
+          return [{ type: API_TAGS.PROJECTS, id: LIST_ID }, { type: API_TAGS.PROJECTS, id: uuid }, API_TAGS.ALERTS];
         }
 
         return [];
@@ -244,6 +271,8 @@ export const {
   useGetTagValuesByProjectQuery,
   useCreateProjectMutation,
   useDeleteProjectMutation,
+  useCreateProjectBudgetLimitsMutation,
+  useDeleteProjectBudgetLimitMutation,
   useGenerateConfigMutation,
   useUpdateConfigMutation,
   useApproveConfigMutation,

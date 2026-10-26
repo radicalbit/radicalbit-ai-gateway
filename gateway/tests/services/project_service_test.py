@@ -557,6 +557,20 @@ class ProjectServiceTest(DatabaseIntegration):
         assert conflicts.draft == []
         assert conflicts.budget_routing == []
 
+    def test_project_with_limits_names_its_route_budgets(self):
+        out, a, _ = self._create(name='route-budgets-in-out')
+        self.svc.update_config(
+            out.uuid,
+            a,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        self.svc.approve_config(out.uuid, a)
+        self.svc.serve_config(out.uuid, a)
+        project = self.svc.get_by_uuid(out.uuid, include_limits=True)
+        assert project.route_budgets.published == ['test-route']
+        assert project.route_budgets.draft == []
+        assert self.svc.get_by_uuid(out.uuid).route_budgets is None
+
     def test_budget_limit_conflicts_project_not_found(self):
         with pytest.raises(ProjectNotFoundError):
             self.svc.get_budget_limit_conflicts(uuid.uuid4())

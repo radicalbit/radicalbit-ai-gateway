@@ -7,7 +7,15 @@ const CURRENCY_FORMAT = new Intl.NumberFormat('en-US', { style: 'currency', curr
 
 const NUMBER_FORMAT = new Intl.NumberFormat('en-US');
 
-const CREDENTIAL_SCOPE = 'credential';
+export const RuleScopeEnum = {
+  CREDENTIAL: 'credential',
+  PROJECT: 'project',
+};
+
+const RULE_TARGETS = {
+  [RuleScopeEnum.CREDENTIAL]: ({ credentialUuid }) => credentialUuid,
+  [RuleScopeEnum.PROJECT]: ({ project }) => project,
+};
 
 const getWindow = (windowSize) => LIMIT_WINDOWS.find(({ value }) => value === windowSize);
 
@@ -30,6 +38,8 @@ export const formatLimitValue = (category, value) => {
 export const formatCount = (count, noun) => (count === 1 ? `1 ${noun}` : `${count} ${noun}s`);
 
 export const formatLimitsCount = (count) => formatCount(count, 'limit');
+
+export const asBudgets = (limits = []) => limits.map((limit) => ({ ...limit, category: LimitCategoryEnum.BUDGET }));
 
 export const getLimitSignature = ({ algorithm, category, windowSize }) => `${category}|${algorithm}|${windowSize}`;
 
@@ -64,29 +74,31 @@ const getEventWindow = (windowSize) => {
 };
 
 // Alert rules name a limit by category and window, without window type: a rule on the deleted limit becomes stale
-// only when no other limit of the credential has the same category and window.
+// only when no other limit of the same credential or project has the same category and window.
 // e.g. `rate_limit-exceeded-1h` and `rate_limit-80pct-1h` both watch the hourly request limit.
-export const getRulesMadeStale = ({ credentialUuid, limit, limits, rules }) => {
+// A project only has budgets, so its limits carry no category.
+export const getRulesMadeStale = ({ limit, limits, rules, scope, targetUuid }) => {
   const eventWindow = getEventWindow(limit.windowSize);
+  const limitCategory = limit.category ?? LimitCategoryEnum.BUDGET;
 
   if (!eventWindow) {
     return [];
   }
 
-  const isStillWatched = limits.some(({ category, uuid, windowSize }) => uuid !== limit.uuid
-    && category === limit.category
+  const isStillWatched = limits.some(({ category = LimitCategoryEnum.BUDGET, uuid, windowSize }) => uuid !== limit.uuid
+    && category === limitCategory
     && getEventWindow(windowSize) === eventWindow);
 
   if (isStillWatched) {
     return [];
   }
 
-  const eventCategory = LIMIT_EVENT_CATEGORIES[limit.category];
+  const eventCategory = LIMIT_EVENT_CATEGORIES[limitCategory];
   const eventPattern = new RegExp(`^${eventCategory}-(exceeded|\\d+pct)-${eventWindow}$`);
 
-  return rules.filter(({ credentialUuid: ruleCredentialUuid, event, scope }) => scope === CREDENTIAL_SCOPE
-    && ruleCredentialUuid === credentialUuid
-    && eventPattern.test(event));
+  return rules.filter((rule) => rule.scope === scope
+    && RULE_TARGETS[scope](rule) === targetUuid
+    && eventPattern.test(rule.event));
 };
 
 export const getNewLimitsErrors = ({ limits, rows }) => {

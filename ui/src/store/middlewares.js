@@ -6,6 +6,7 @@ const { setNotificationMessage } = notificationActions;
 
 const errorWhiteList = {
   createKeyLimits: true,
+  createProjectBudgetLimits: true,
 };
 
 const successWhiteList = {};

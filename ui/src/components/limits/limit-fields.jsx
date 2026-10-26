@@ -14,7 +14,7 @@ const SELECT_PLACEHOLDER = 'Select';
 // The design system forces its own widths on these inputs: they fill flex-1 wrappers instead
 const FULL_WIDTH = { width: '100%' };
 
-function LimitFields({ limit, onChange }) {
+function LimitFields({ limit, onChange, withCategory = true }) {
   const category = limit?.category;
   const algorithm = limit?.algorithm;
   const windowSize = limit?.windowSize;
@@ -42,20 +42,23 @@ function LimitFields({ limit, onChange }) {
   const precision = isBudget ? 2 : 0;
   const prefix = isBudget ? '$' : undefined;
   const windowOptions = getWindowOptions(algorithm);
+  const categoryField = withCategory ? (
+    <Field label="Category">
+      <Select
+        onChange={handleOnChangeCategory}
+        options={CATEGORY_OPTIONS}
+        placeholder={SELECT_PLACEHOLDER}
+        popupMatchSelectWidth={false}
+        style={FULL_WIDTH}
+        value={category}
+      />
+    </Field>
+  ) : false;
   const maxLabel = MAX_LABELS[category] ?? MAX_LABEL;
 
   return (
     <div className="flex gap-2 items-end w-0 min-w-full">
-      <Field label="Category">
-        <Select
-          onChange={handleOnChangeCategory}
-          options={CATEGORY_OPTIONS}
-          placeholder={SELECT_PLACEHOLDER}
-          popupMatchSelectWidth={false}
-          style={FULL_WIDTH}
-          value={category}
-        />
-      </Field>
+      {categoryField}
 
       <Field label="Window type">
         <Select
