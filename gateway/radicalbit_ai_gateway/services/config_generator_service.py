@@ -1,10 +1,10 @@
 from importlib import resources
 import logging
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
+from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
+from radicalbit_ai_gateway.llm.providers.openai import ChatOpenAI
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     ProjectConfigValidationError,

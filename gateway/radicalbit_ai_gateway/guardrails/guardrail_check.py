@@ -6,13 +6,6 @@ import re
 from typing import Protocol
 
 import httpx
-from langchain_core.messages import (
-    AIMessage,
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-    ToolMessage,
-)
 from opentelemetry import trace
 from traceloop.sdk.decorators import task, workflow
 
@@ -25,6 +18,13 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import (
     JudgeUsageCounter,
 )
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
 from radicalbit_ai_gateway.models.event_payload import GuardrailEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
@@ -154,7 +154,7 @@ def _filter_messages_by_roles(
     messages: list[BaseMessage],
     roles: list[GuardrailMessageRole] | None,
 ) -> list[BaseMessage]:
-    """Return only the messages whose LangChain type matches the given roles.
+    """Return only the messages whose type matches the given roles.
 
     When *roles* is ``None`` (not configured) the function returns all messages
     unchanged — preserving the original gateway behavior where all messages in

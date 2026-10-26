@@ -1,9 +1,9 @@
 import logging
 
 import httpx
-from langchain_core.messages import BaseMessage
 
 from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.guardrails import DecisionJudgeParameter
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.services.cost_service import CostService

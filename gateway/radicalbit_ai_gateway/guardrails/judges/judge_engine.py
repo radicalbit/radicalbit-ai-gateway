@@ -2,12 +2,11 @@ from collections.abc import Awaitable, Callable
 import logging
 import time
 
-from langchain.chat_models.base import init_chat_model
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import Runnable
-
 from radicalbit_ai_gateway.events.events_processor import emit_event
+from radicalbit_ai_gateway.llm.chat_model import StructuredChatModel
+from radicalbit_ai_gateway.llm.factory import init_chat_model
+from radicalbit_ai_gateway.llm.messages import AIMessage, BaseMessage, HumanMessage
+from radicalbit_ai_gateway.llm.prompts import PromptTemplate
 from radicalbit_ai_gateway.metrics.define_metrics import (
     fallbacks_triggered_counter,
     invocations_latency_histogram,
@@ -69,7 +68,7 @@ class JudgeEngine:
         httpx_client=None,
     ):
         self.prompt_manager = prompt_manager
-        self._model_cache: dict[str, Runnable] = {}
+        self._model_cache: dict[str, StructuredChatModel] = {}
         self.httpx_client = httpx_client
 
     async def execute_judge(
@@ -296,8 +295,9 @@ class JudgeEngine:
                 [HumanMessage(content=human_content)]
             )
         else:
-            generation_chain = prompt_template | structured_model
-            result = await generation_chain.ainvoke({'content': content})
+            result = await structured_model.ainvoke(
+                [HumanMessage(content=prompt_template.format(content=content))]
+            )
         latency_ms = (time.monotonic() - start_time) * 1000
 
         raw_response = result.get('raw')
@@ -327,7 +327,7 @@ class JudgeEngine:
 
     def _get_or_create_model(
         self, config: JudgeRuntimeConfig, model: Model
-    ) -> Runnable:
+    ) -> StructuredChatModel:
         cache_key = f'{model.model_id}:{config.temperature}:{config.max_tokens}'
         if cache_key not in self._model_cache:
             provider, model_name = parse_provider_and_model(model.model)

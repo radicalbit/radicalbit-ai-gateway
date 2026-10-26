@@ -7,12 +7,17 @@ message_roles configuration field.
 
 from unittest.mock import MagicMock
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 import pytest
 
 from radicalbit_ai_gateway.guardrails.guardrail_check import (
     GuardrailCheck,
     _filter_messages_by_roles,
+)
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
 )
 from radicalbit_ai_gateway.models.guardrails import (
     CheckParameter,

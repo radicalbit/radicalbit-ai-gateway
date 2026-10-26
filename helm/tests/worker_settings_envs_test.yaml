@@ -1,0 +1,81 @@
+suite: test worker settings envs
+templates:
+  - worker/deployment.yaml
+tests:
+  - it: should pass the ClickHouse database to the worker
+    set:
+      clickhouse:
+        database: analytics
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CLICKHOUSE_DATABASE
+            value: analytics
+  - it: should set the worker log level
+    set:
+      metricsWorker:
+        logLevel: DEBUG
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOG_LEVEL
+            value: DEBUG
+  - it: should set the ClickHouse insert mode, false included
+    set:
+      metricsWorker:
+        clickhouse:
+          asyncInsert: false
+          waitForAsync: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CLICKHOUSE_ASYNC_INSERT
+            value: "false"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CLICKHOUSE_WAIT_FOR_ASYNC
+            value: "true"
+  - it: should set the metrics batching
+    set:
+      metricsWorker:
+        metrics:
+          prefetch: 8
+          batchSize: 500
+          flushIntervalMs: 1000
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: METRICS_WORKER_PREFETCH
+            value: "8"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: METRICS_BATCH_SIZE
+            value: "500"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: METRICS_FLUSH_INTERVAL_MS
+            value: "1000"
+  - it: should leave the worker defaults alone when nothing is set
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOG_LEVEL
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CLICKHOUSE_ASYNC_INSERT
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: METRICS_BATCH_SIZE
+          any: true

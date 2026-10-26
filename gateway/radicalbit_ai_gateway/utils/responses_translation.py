@@ -1,7 +1,7 @@
 """Translation utilities between Responses API and Chat Completions format.
 
 Translates:
-- ResponseCreateParams.input  → list[BaseMessage]  (LangChain format)
+- ResponseCreateParams.input  → list[BaseMessage]  (gateway messages)
 - ChatCompletion               → Response           (Responses API format)
 - Responses API tools          → ChatCompletionToolParam list
 """
@@ -11,13 +11,6 @@ from __future__ import annotations
 from typing import Any
 import uuid
 
-from langchain_core.messages import (
-    AIMessage,
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-    ToolMessage,
-)
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
 from openai.types.responses import (
@@ -32,12 +25,19 @@ from openai.types.responses.response_usage import (
     OutputTokensDetails,
 )
 
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from radicalbit_ai_gateway.models.chat_request import to_target_multimodal_parts
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
 
 
-def _input_content_to_lc_content(content: Any) -> str | list:
-    """Convert Responses API content (str or list of content parts) to LangChain format."""
+def _input_content_to_message_content(content: Any) -> str | list:
+    """Convert Responses API content (str or list of content parts) to message content."""
     if isinstance(content, str):
         return content
 
@@ -73,18 +73,18 @@ def _input_content_to_lc_content(content: Any) -> str | list:
     return parts
 
 
-def input_to_langchain_messages(
+def input_to_messages(
     input: str | list,
     instructions: str | None = None,
 ) -> list[BaseMessage]:
-    """Translate Responses API input to LangChain messages.
+    """Translate Responses API input to gateway messages.
 
     Args:
         input: The Responses API input — a plain string or list of message items.
         instructions: Optional system instructions prepended as a SystemMessage.
 
     Returns:
-        List of LangChain BaseMessage objects.
+        List of BaseMessage objects.
 
     """
     messages: list[BaseMessage] = []
@@ -108,30 +108,36 @@ def input_to_langchain_messages(
         if item_type == 'message':
             role = item.get('role', 'user')
             content = item.get('content', '')
-            lc_content = _input_content_to_lc_content(content)
+            message_content = _input_content_to_message_content(content)
 
             match role:
                 case 'system' | 'developer':
                     text = (
-                        lc_content if isinstance(lc_content, str) else str(lc_content)
+                        message_content
+                        if isinstance(message_content, str)
+                        else str(message_content)
                     )
                     messages.append(SystemMessage(content=text))
 
                 case 'user':
-                    if isinstance(lc_content, list):
+                    if isinstance(message_content, list):
                         # Normalise multimodal parts using the existing helper
-                        lc_content = to_target_multimodal_parts(lc_content)
-                    messages.append(HumanMessage(content=lc_content))
+                        message_content = to_target_multimodal_parts(message_content)
+                    messages.append(HumanMessage(content=message_content))
 
                 case 'assistant':
                     text = (
-                        lc_content if isinstance(lc_content, str) else str(lc_content)
+                        message_content
+                        if isinstance(message_content, str)
+                        else str(message_content)
                     )
                     messages.append(AIMessage(content=text))
 
                 case _:
                     text = (
-                        lc_content if isinstance(lc_content, str) else str(lc_content)
+                        message_content
+                        if isinstance(message_content, str)
+                        else str(message_content)
                     )
                     messages.append(HumanMessage(content=text))
 

@@ -7,7 +7,6 @@ route wiring have to carry the project.
 
 from unittest.mock import MagicMock, patch
 
-from langchain_core.messages import HumanMessage
 import pytest
 
 from tests.common.db_mock import (
@@ -27,6 +26,7 @@ from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.caching import CacheConfig, Caching
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig

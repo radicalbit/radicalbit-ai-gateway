@@ -5,7 +5,7 @@ import logging
 import logging.config
 from typing import Any
 
-from langchain_core.messages import (
+from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     BaseMessage,
     FunctionMessage,
@@ -13,7 +13,6 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
 
@@ -24,7 +23,7 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 
 
 def parse_tool_calls(tool_calls: list):
-    """Parse tool calls from the API to LangChain format."""
+    """Parse OpenAI tool calls into the gateway's tool-call format."""
     return [
         {
             'name': tc.get('function', {}).get('name'),
@@ -188,7 +187,7 @@ def select_message_by_role(
 
 
 def convert_openai_messages(messages: list) -> list[BaseMessage]:
-    """Convert OpenAI messages to LangChain messages, tolerando tipi atipici."""
+    """Convert OpenAI messages to gateway messages, tolerando tipi atipici."""
     openai_messages: list[BaseMessage] = []
     for m in messages:
         raw = m.get('content', '')

@@ -2,14 +2,13 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from langchain_core.messages import AIMessage
-from pydantic import ValidationError
 import pytest
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EmbeddingModelInvoker,
 )
+from radicalbit_ai_gateway.llm.messages import AIMessage
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.services.cost_service import CostService
@@ -64,8 +63,7 @@ class TestGeminiChatModelInvoker:
             credentials=Credentials(),
         )
         cost_service: CostService = MagicMock(spec_set=CostService)
-        # ValueError from pydantic model if credentials are missing
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError, match='API key required'):
             ChatModelInvoker([model], cost_service, None)
 
     @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
@@ -249,7 +247,5 @@ class TestGeminiEmbeddingModelInvoker:
             credentials=Credentials(),
         )
         cost_service: CostService = MagicMock(spec_set=CostService)
-        # init_embeddings doesn't support google_genai provider, raises ValueError
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match='API key required'):
             EmbeddingModelInvoker([model], cost_service, None)
-        assert 'value error' in str(exc_info.value).lower()

@@ -1,38 +1,36 @@
 import httpx
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
 from openai import AuthenticationError, RateLimitError
+
+from radicalbit_ai_gateway.llm.chat_model import ChatModel
+from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
 
 request = httpx.Request('GET', '/')
 response = httpx.Response(200, request=request)
 error = RateLimitError('rate limit', response=response, body='')
 
 
-class FailingChatModel(BaseChatModel):
-    def _generate(self, messages: list[BaseMessage], *args, **kwargs):
+class _MockChatModel(ChatModel):
+    """Streams by yielding the complete reply as a single chunk."""
+
+    async def _astream(self, messages: list[BaseMessage], **kwargs):
+        message = await self._agenerate(messages, **kwargs)
+        yield AIMessageChunk(**message.model_dump(exclude={'type'}))
+
+
+class FailingChatModel(_MockChatModel):
+    async def _agenerate(self, messages: list[BaseMessage], **kwargs):
         raise RuntimeError('This model is designed to fail.')
 
-    @property
-    def _llm_type(self) -> str:
-        return 'failing-chat-model'
 
-
-class WorkingChatModel(BaseChatModel):
-    def _generate(self, messages: list[BaseMessage], *args, **kwargs):
-        response_message = AIMessage(
+class WorkingChatModel(_MockChatModel):
+    async def _agenerate(self, messages: list[BaseMessage], **kwargs):
+        return AIMessage(
             content='This is a successful response from the WorkingChatModel.'
         )
-        generation = ChatGeneration(message=response_message)
-        return ChatResult(generations=[generation])
-
-    @property
-    def _llm_type(self) -> str:
-        return 'working-chat-model'
 
 
-class RateLimitedChatModel(BaseChatModel):
-    def _generate(self, messages: list[BaseMessage], *args, **kwargs) -> ChatResult:
+class RateLimitedChatModel(_MockChatModel):
+    async def _agenerate(self, messages: list[BaseMessage], **kwargs):
         error_body = {
             'error': {
                 'message': 'You exceeded your current quota, please check your plan and billing details.',
@@ -62,14 +60,9 @@ class RateLimitedChatModel(BaseChatModel):
             body=error_body,
         )
 
-    @property
-    def _llm_type(self) -> str:
-        """A required property that returns a unique name for the model class."""
-        return 'rate-limited-chat-model'
 
-
-class UnauthorizedChatModel(BaseChatModel):
-    def _generate(self, messages: list[BaseMessage], *args, **kwargs) -> ChatResult:
+class UnauthorizedChatModel(_MockChatModel):
+    async def _agenerate(self, messages: list[BaseMessage], **kwargs):
         error_body = {
             'error': {
                 'message': 'Incorrect API key provided: sk-123. You can find your API key at https://platform.openai.com/account/api-keys.',
@@ -99,8 +92,3 @@ class UnauthorizedChatModel(BaseChatModel):
             response=response,
             body=error_body,
         )
-
-    @property
-    def _llm_type(self) -> str:
-        """A required property that returns a unique name for the model class."""
-        return 'rate-limited-chat-model'

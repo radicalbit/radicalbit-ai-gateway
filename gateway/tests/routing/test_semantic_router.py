@@ -1,11 +1,11 @@
 from unittest.mock import AsyncMock
 
-from langchain_core.messages import HumanMessage, SystemMessage
 import numpy as np
 import pytest
 
 from tests.common.mocked_gateway_config_openai import get_gateway_routing_semantic
 
+from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.routing.semantic_router import SemanticRouter
 
 

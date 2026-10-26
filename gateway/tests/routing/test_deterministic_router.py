@@ -1,7 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from freezegun import freeze_time
-from langchain_core.messages import HumanMessage, SystemMessage
 import pytest
 
 from tests.common.mocked_gateway_config_openai import (
@@ -11,6 +10,7 @@ from tests.common.mocked_gateway_config_openai import (
     get_gateway_routing_token_length,
 )
 
+from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
