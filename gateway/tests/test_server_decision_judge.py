@@ -69,6 +69,7 @@ EMBEDDING = {
     'model_id': 'emb',
     'model': 'openai/text-embedding-3-small',
     'credentials': {'api_key': 'sk-123'},
+}
 JEV_BACKUP = {
     'model_id': 'jev-backup',
     'model': 'typesafe/jev-backup',
