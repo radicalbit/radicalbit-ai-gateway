@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
@@ -813,7 +813,7 @@ class TestJudgeEngine:
 
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
     @pytest.mark.asyncio
-    async def test_execute_judge_text_only_uses_chain(self, mock_emit_event):
+    async def test_execute_judge_text_only_uses_judge_model(self, mock_emit_event):
         """With include_media=False (default), the formatted prompt is sent as text."""
         expected_result = JudgeResult(
             triggered=False, reasoning=None, violation_type=None
@@ -853,7 +853,7 @@ class TestJudgeEngine:
 
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
     @pytest.mark.asyncio
-    async def test_execute_judge_include_media_true_no_blocks_uses_chain(
+    async def test_execute_judge_include_media_true_no_blocks_uses_judge_model(
         self, mock_emit_event
     ):
         """With include_media=True but no media blocks in message, text-only chain is still used."""
@@ -889,3 +889,106 @@ class TestJudgeEngine:
 
         mock_chain.ainvoke.assert_called_once()
         assert result.triggered is False
+
+
+# -----------------------------------------------------
+# Usage reported to the limiters
+# -----------------------------------------------------
+def _judge_answer(input_tokens: int | None, output_tokens: int | None) -> dict:
+    usage = (
+        {
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'total_tokens': input_tokens + output_tokens,
+        }
+        if input_tokens is not None
+        else None
+    )
+    return _build_structured_response(
+        raw_response=AIMessage(content='{"triggered": false}', usage_metadata=usage),
+        parsed=JudgeResult(triggered=False, reasoning='OK', violation_type=None),
+    )
+
+
+def _judge_model(**ainvoke_behaviour) -> AsyncMock:
+    """Build a structured judge model whose ainvoke returns or raises as told."""
+    model = AsyncMock()
+    for name, value in ainvoke_behaviour.items():
+        setattr(model.ainvoke, name, value)
+    return model
+
+
+class TestJudgeUsageCount:
+    def setup_method(self):
+        prompt_manager = Mock(spec=PromptManager)
+        prompt_manager.get_judge_prompt.return_value = 'Judge this.'
+        self.engine = JudgeEngine(prompt_manager=prompt_manager)
+        self.primary = Mock(model_id='primary', model='openai:a', credentials=None)
+        self.fallback = Mock(model_id='fallback', model='openai:b', credentials=None)
+        self.count_usage = AsyncMock()
+
+    async def _run(self, *models: AsyncMock, fallback: bool = False):
+        # One model per call, in order: primary first, then the fallback.
+        self.engine._get_or_create_model = MagicMock(side_effect=list(models))
+        with patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event'):
+            return await self.engine.execute_judge(
+                messages=[HumanMessage(content='Hello')],
+                judge_parameter=JudgeParameter(model_id='primary', prompt='Judge'),
+                primary_model=self.primary,
+                fallback_model=self.fallback if fallback else None,
+                cost_service=MagicMock(spec_set=CostService),
+                count_usage=self.count_usage,
+            )
+
+    @pytest.mark.asyncio
+    async def test_primary_answer_counts_its_tokens(self):
+        await self._run(_judge_model(return_value=_judge_answer(10, 5)))
+
+        self.count_usage.assert_awaited_once_with(self.primary, 10, 5)
+
+    @pytest.mark.asyncio
+    async def test_fallback_answer_counts_its_tokens_on_the_fallback_model(self):
+        await self._run(
+            _judge_model(side_effect=Exception('Primary crashed')),
+            _judge_model(return_value=_judge_answer(7, 3)),
+            fallback=True,
+        )
+
+        self.count_usage.assert_awaited_once_with(self.fallback, 7, 3)
+
+    @pytest.mark.asyncio
+    async def test_answer_without_usage_counts_nothing(self):
+        await self._run(_judge_model(return_value=_judge_answer(None, None)))
+
+        self.count_usage.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_limiter_error_is_raised_and_does_not_call_the_fallback(self):
+        self.count_usage.side_effect = ConnectionError('limiter storage down')
+        fallback_model = _judge_model(return_value=_judge_answer(7, 3))
+
+        with pytest.raises(ConnectionError, match='limiter storage down'):
+            await self._run(
+                _judge_model(return_value=_judge_answer(10, 5)),
+                fallback_model,
+                fallback=True,
+            )
+
+        fallback_model.ainvoke.assert_not_awaited()
+        self.count_usage.assert_awaited_once_with(self.primary, 10, 5)
+
+    @pytest.mark.asyncio
+    async def test_unparsable_primary_and_fallback_answer_are_both_counted(self):
+        unparsable = _judge_answer(10, 5)
+        unparsable['parsed'] = None
+
+        await self._run(
+            _judge_model(return_value=unparsable),
+            _judge_model(return_value=_judge_answer(7, 3)),
+            fallback=True,
+        )
+
+        assert self.count_usage.await_args_list == [
+            call(self.primary, 10, 5),
+            call(self.fallback, 7, 3),
+        ]

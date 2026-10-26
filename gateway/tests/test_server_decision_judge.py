@@ -135,8 +135,13 @@ def _decision_judge(
 
 
 def _build_routes(*guardrails: dict, prompt_manager=None) -> dict:
-    """One chat, one embedding and one decision route, each with `guardrails`."""
+    """One chat, one embedding and one decision route, each with `guardrails`.
+
+    Output guardrails go on the chat route only: a route without chat models
+    rejects them at load.
+    """
     names = [g['name'] for g in guardrails]
+    input_names = [g['name'] for g in guardrails if g.get('where') != 'output']
     config = GatewayConfig.model_validate(
         {
             'chat_models': [GPT],
@@ -145,8 +150,8 @@ def _build_routes(*guardrails: dict, prompt_manager=None) -> dict:
             'guardrails': list(guardrails),
             'routes': {
                 'chat': {'chat_models': ['gpt'], 'guardrails': names},
-                'embed': {'embedding_models': ['emb'], 'guardrails': names},
-                'agent': {'decision_models': ['jev'], 'guardrails': names},
+                'embed': {'embedding_models': ['emb'], 'guardrails': input_names},
+                'agent': {'decision_models': ['jev'], 'guardrails': input_names},
             },
         }
     )
@@ -889,15 +894,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
 
         self._assert_fails_closed(self._embed(), openai)
 
-    def test_output_judge_is_not_asked_on_embeddings(self):
-        app.state.routes = _build_routes(_decision_judge(where='output'))
-        self._mock_openai_embeddings()
-
-        response = self._embed()
-
-        assert response.status_code == 200
-        assert pook.isdone()
-
     # Decision input
 
     def _decide(self):
@@ -959,15 +955,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
 
         assert response.status_code == 200
         assert response.json() == DECISION_ANSWER
-        assert pook.isdone()
-
-    def test_output_judge_is_not_asked_on_decision_traffic(self):
-        app.state.routes = _build_routes(_decision_judge(where='output'))
-        self._mock_decision_model()
-
-        response = self._decide()
-
-        assert response.status_code == 200
         assert pook.isdone()
 
     def test_io_judge_reads_decision_input(self):

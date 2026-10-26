@@ -18,6 +18,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     DecisionJudgeParameter,
     Guardrail,
     GuardrailType,
+    GuardrailWhereType,
     JudgeParameter,
 )
 from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
@@ -379,6 +380,7 @@ class GatewayConfig(BaseModel):
         """Post-resolution:
         - no duplicates within a single route (explicit, redundant check)
         - consistency with global guardrails (should be guaranteed by the 'before' validator; here we assert defensively)
+        - no output guardrail on a route without chat models (it would never run)
         """
         if not self.routes:
             return self
@@ -405,6 +407,16 @@ class GatewayConfig(BaseModel):
                     f"Route '{r_name}': guardrails not declared in top-level config "
                     f'(names are case-sensitive): {", ".join(sorted(unknown))}'
                 )
+
+            # Only chat requests have an output phase. An io guardrail still runs on input.
+            if not route.chat_models:
+                for g in self.guardrails or []:
+                    if g.name in names and g.where == GuardrailWhereType.OUTPUT:
+                        raise ValueError(
+                            f"Route '{r_name}': guardrail '{g.name}' has where: "
+                            'output, but the route has no chat_models. The '
+                            'guardrail would never run.'
+                        )
 
         return self
 
