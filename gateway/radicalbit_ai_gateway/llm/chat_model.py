@@ -87,6 +87,26 @@ class ChatModel(ABC):
     ) -> AsyncIterator[AIMessageChunk]:
         """Call the provider in streaming mode and yield its reply chunks."""
 
+    # ── Native OpenAI Responses API ──────────────────────────────────────
+    # A provider that serves the Responses API takes a client's request body
+    # as is, so nothing is lost translating it to and from messages.
+
+    def supports_native_responses(self) -> bool:
+        """Whether this model can serve a Responses API request body as is."""
+        return False
+
+    async def ainvoke_native_responses(self, body: dict) -> dict:
+        """Send a Responses API request body and return the response object."""
+        raise NotImplementedError(
+            f'{type(self).__name__} does not serve the Responses API'
+        )
+
+    def astream_native_responses(self, body: dict) -> AsyncIterator[tuple[str, str]]:
+        """Send a streaming Responses API request; yield ``(event, data)`` pairs."""
+        raise NotImplementedError(
+            f'{type(self).__name__} does not serve the Responses API'
+        )
+
     def bind_tools(self, tools: list[dict], tool_choice: Any = None) -> 'ChatModel':
         """Return a model that offers ``tools`` on every call."""
         raise NotImplementedError(f'{type(self).__name__} does not support tools')

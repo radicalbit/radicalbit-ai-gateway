@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 import logging
 import time
 
+import openai
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
@@ -22,10 +23,17 @@ from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
 from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerBadRequest,
+    ModelInvokerError,
     ModelInvokerInternalError,
+    ModelInvokerUpstreamError,
 )
 from radicalbit_ai_gateway.utils.parse_provider_and_model import (
     parse_provider_and_model,
+)
+from radicalbit_ai_gateway.utils.responses_native import (
+    NativeResponsesEvent,
+    usage_token_counts,
+    without_reasoning,
 )
 
 app_config = get_app_config()
@@ -488,3 +496,190 @@ class ChatModelInvoker(ModelInvoker):
                 project_uuid=project_uuid,
                 project_name=project_name,
             )
+
+    # ── Responses API ────────────────────────────────────────────────────
+
+    def supports_responses(self, model_id: str) -> bool:
+        """Whether the model serves the Responses API."""
+        if model_id not in self.model_map:
+            return False
+        _, chat_model, _ = self.model_map[model_id]
+        return chat_model.supports_native_responses()
+
+    def _responses_candidates(
+        self, model_id: str, allow_fallback: bool
+    ) -> list[tuple[Model, ChatModel]]:
+        """Return the model, then its fallbacks that serve the Responses API."""
+        if not self.supports_responses(model_id):
+            raise ModelInvokerBadRequest(
+                f'Chat model {model_id} does not serve the Responses API'
+            )
+        model, chat_model, fallbacks = self.model_map[model_id]
+        candidates = [(model, chat_model)]
+        if allow_fallback:
+            candidates += [
+                (fallback, fallback_model)
+                for fallback, fallback_model in fallbacks or []
+                if fallback_model.supports_native_responses()
+            ]
+        return candidates
+
+    @staticmethod
+    def _responses_failure(route_name: str, error: Exception) -> ModelInvokerError:
+        """Return the error of a Responses request no model could serve.
+
+        An upstream's refusal (a too long context, a rate limit...) reaches the
+        client as the upstream sent it, so a Responses client handles it as it
+        would without the gateway.
+        """
+        if isinstance(error, openai.APIStatusError) and 400 <= error.status_code < 500:
+            try:
+                body = error.response.json()
+            except ValueError:
+                body = {'error': {'message': error.message}}
+            return ModelInvokerUpstreamError(error.message, error.status_code, body)
+        return ModelInvokerInternalError(
+            f'All chat models failed for model {route_name}: {error}'
+        )
+
+    async def _stream_responses_with_metrics(
+        self, chat_model: ChatModel, body: dict, stats: dict[str, int]
+    ) -> AsyncIterator[NativeResponsesEvent]:
+        async for event, data in chat_model.astream_native_responses(body):
+            native_event = NativeResponsesEvent.parse(event, data)
+            if native_event.is_final:
+                input_tokens, cached, output = usage_token_counts(native_event.usage)
+                stats['cached_token_count'] = cached
+                stats['token_input_count'] = input_tokens - cached
+                stats['token_output_count'] = output
+            yield native_event
+
+    @task(name='llm_stream_responses')
+    async def stream_responses(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        body: dict,
+        model_id: str,
+        allow_fallback: bool = True,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> AsyncIterator[NativeResponsesEvent]:
+        """Stream a Responses API request and yield the upstream's events.
+
+        A fallback is tried only while nothing has been yielded: once the
+        client has part of a reply, an error ends the stream.
+        """
+        candidates = self._responses_candidates(model_id, allow_fallback)
+        start_time = time.monotonic()
+        stats = dict.fromkeys(
+            ('token_input_count', 'token_output_count', 'cached_token_count'), 0
+        )
+        model_invoked = candidates[0][0]
+        fallback_triggered = False
+        first_error: Exception | None = None
+        try:
+            for position, (candidate, chat_model) in enumerate(candidates):
+                model_invoked = candidate
+                fallback_triggered = position > 0
+                stats.update(dict.fromkeys(stats, 0))
+                started = False
+                # Only the model that reasoned can resume its reasoning.
+                candidate_body = body if position == 0 else without_reasoning(body)
+                try:
+                    async for event in self._stream_responses_with_metrics(
+                        chat_model, candidate_body, stats
+                    ):
+                        started = True
+                        yield event
+                except Exception as error:
+                    if started:
+                        raise
+                    first_error = first_error or error
+                    logger.warning(
+                        'Responses model %s failed: %s', candidate.model_id, str(error)
+                    )
+                else:
+                    return
+            raise self._responses_failure(route_name, first_error) from first_error
+        finally:
+            self._record_metrics(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                route_name=route_name,
+                model=model_invoked,
+                target_model_id=model_id,
+                latency_ms=(time.monotonic() - start_time) * 1000,
+                model_type='chat-model',
+                token_input_count=stats['token_input_count'] or None,
+                token_output_count=stats['token_output_count'] or None,
+                cached_token_count=stats['cached_token_count'] or None,
+                cache_creation_5m_token_count=None,
+                cache_creation_1h_token_count=None,
+                fallback_triggered=fallback_triggered,
+                project_uuid=project_uuid,
+                project_name=project_name,
+            )
+
+    @task(name='llm_complete_responses')
+    async def complete_responses(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        body: dict,
+        model_id: str,
+        allow_fallback: bool = True,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> tuple[dict, Model]:
+        """Answer a Responses API request; return the upstream's response
+        object and the model that answered.
+        """
+        start_time = time.monotonic()
+        first_error: Exception | None = None
+        for position, (candidate, chat_model) in enumerate(
+            self._responses_candidates(model_id, allow_fallback)
+        ):
+            candidate_body = body if position == 0 else without_reasoning(body)
+            try:
+                result = await chat_model.ainvoke_native_responses(candidate_body)
+            except Exception as error:
+                first_error = first_error or error
+                logger.warning(
+                    'Responses model %s failed: %s', candidate.model_id, str(error)
+                )
+                continue
+            input_tokens, cached, output = usage_token_counts(result.get('usage'))
+            self._record_metrics(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                route_name=route_name,
+                model=candidate,
+                target_model_id=model_id,
+                latency_ms=(time.monotonic() - start_time) * 1000,
+                model_type='chat-model',
+                token_input_count=(input_tokens - cached) or None,
+                token_output_count=output or None,
+                cached_token_count=cached or None,
+                cache_creation_5m_token_count=None,
+                cache_creation_1h_token_count=None,
+                fallback_triggered=position > 0,
+                project_uuid=project_uuid,
+                project_name=project_name,
+            )
+            return result, candidate
+        raise self._responses_failure(route_name, first_error) from first_error

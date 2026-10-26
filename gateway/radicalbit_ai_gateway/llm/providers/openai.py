@@ -622,6 +622,61 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
                     is_first_chunk = False
                     yield chunk
 
+    # ── Native Responses API ─────────────────────────────────────────────
+
+    def _native_responses_payload(self, body: dict) -> dict:
+        """Merge the model's configured settings into a client's Responses body.
+
+        The client's values win; nested ``reasoning`` and ``text`` are merged
+        key by key. ``model`` is always the configured one.
+        """
+        reasoning = self.reasoning
+        if reasoning is None and self.reasoning_effort is not None:
+            reasoning = {'effort': self.reasoning_effort}
+        configured = {
+            'temperature': self.temperature,
+            'top_p': self.top_p,
+            'max_output_tokens': self.max_tokens,
+            'service_tier': self.service_tier,
+            'truncation': self.truncation,
+            'store': self.store,
+            'include': self.include,
+            'reasoning': reasoning,
+            'text': {'verbosity': self.verbosity} if self.verbosity else None,
+            **self.model_kwargs,
+        }
+        payload = {k: v for k, v in configured.items() if v is not None}
+        for key, value in body.items():
+            if isinstance(value, dict) and isinstance(payload.get(key), dict):
+                payload[key] = {**payload[key], **value}
+            else:
+                payload[key] = value
+        payload.pop('model', None)
+        payload.pop('stream', None)
+        return payload
+
+    async def ainvoke_native_responses(self, body: dict) -> dict:
+        response = await self._client.responses.with_raw_response.create(
+            model=self.model_name,
+            extra_body=self._native_responses_payload(body),
+        )
+        return response.http_response.json()
+
+    async def astream_native_responses(
+        self, body: dict
+    ) -> AsyncIterator[tuple[str, str]]:
+        async with self._client.responses.with_streaming_response.create(
+            model=self.model_name,
+            stream=True,
+            extra_body=self._native_responses_payload(body),
+        ) as response:
+            async for event in with_chunk_timeout(
+                responses_api.iter_sse_events(response.iter_lines()),
+                self.stream_chunk_timeout,
+                self.model_name,
+            ):
+                yield event
+
     # ── Tracing ──────────────────────────────────────────────────────────
 
     def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
@@ -788,6 +843,11 @@ class ChatOpenAI(_BaseChatOpenAI):
         if 'max_tokens' in params:
             params['max_completion_tokens'] = params.pop('max_tokens')
         return params
+
+    def supports_native_responses(self) -> bool:
+        # Only the official endpoint is known to serve the Responses API: an
+        # OpenAI-compatible server behind ``base_url`` may not.
+        return self.openai_api_base is None
 
     def _routes_stream_to_responses_api(self, kwargs: dict) -> bool:
         return self._use_responses_api({**kwargs, **self.model_kwargs})
