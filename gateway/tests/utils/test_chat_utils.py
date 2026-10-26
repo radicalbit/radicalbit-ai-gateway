@@ -1,5 +1,4 @@
-from langchain_core.messages import AIMessage
-
+from radicalbit_ai_gateway.llm.messages import AIMessage
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
 
 

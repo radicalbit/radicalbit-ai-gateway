@@ -3,7 +3,6 @@ from decimal import Decimal
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from freezegun import freeze_time
-from langchain_core.messages import HumanMessage, SystemMessage
 from openai.types import CreateEmbeddingResponse
 from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
@@ -36,6 +35,7 @@ from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
+from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback, FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig

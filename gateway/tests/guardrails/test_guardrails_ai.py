@@ -3,7 +3,6 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-from langchain_core.messages import HumanMessage
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
@@ -12,6 +11,7 @@ from tests.common.mocked_gateway_config_openai import get_default_gateway_openai
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.guardrails import (
     Guardrail,
     GuardrailBehaviorType,

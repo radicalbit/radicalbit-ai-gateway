@@ -2,9 +2,8 @@ import asyncio
 import unittest
 from unittest.mock import MagicMock
 
-from langchain_core.messages import AIMessageChunk
-
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
+from radicalbit_ai_gateway.llm.messages import AIMessageChunk
 from radicalbit_ai_gateway.models.model import Model
 
 

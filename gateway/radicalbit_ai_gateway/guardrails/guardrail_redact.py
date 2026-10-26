@@ -3,12 +3,12 @@ from collections.abc import Awaitable, Callable, Mapping
 import logging
 from typing import Any
 
-from langchain_core.messages import BaseMessage
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.guardrail_check import _filter_messages_by_roles
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
 from radicalbit_ai_gateway.models.event_payload import GuardrailEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
@@ -37,7 +37,7 @@ def _with_content(msg: BaseMessage, new_content: Any) -> BaseMessage:
     If not possible, falls back to mutating the instance (preserves special fields like tool_call_id).
     """
     if hasattr(msg, 'model_copy'):
-        # LangChain messages (pydantic v2)
+        # Gateway messages are pydantic models
         try:
             return msg.model_copy(update={'content': new_content})
         except Exception:
