@@ -1,4 +1,0 @@
-# Saved chat sessions and the session cookie key: local only.
-.sessions/
-.sesskey
-__pycache__/
