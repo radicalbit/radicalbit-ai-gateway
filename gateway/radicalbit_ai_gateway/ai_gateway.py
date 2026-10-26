@@ -2702,6 +2702,10 @@ class GatewayRoute:
             logger.warning('Guardrail BLOCK triggered: %s', e.log_message)
             raise
 
+        except JudgeInternalError:
+            # Its error handler logs it.
+            raise
+
         except Exception as e:
             logger.error('Unexpected error during guardrail application: %s', e)
             raise GatewayInternalError(

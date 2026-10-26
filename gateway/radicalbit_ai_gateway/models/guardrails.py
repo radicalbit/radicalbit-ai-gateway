@@ -224,6 +224,11 @@ class DecisionJudgeParameter(BaseModel):
         description='Decision model id, from the top-level decision_models.',
         examples=['jev'],
     )
+    fallback_model_id: str | None = Field(
+        default=None,
+        description='Decision model id that answers when model_id keeps failing.',
+        examples=['jev-backup'],
+    )
     instructions: str = Field(
         ...,
         description='The yes/no question asked about the text.',

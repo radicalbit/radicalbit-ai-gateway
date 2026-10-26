@@ -529,6 +529,7 @@ class GuardrailCheck:
                     'phase': getattr(phase, 'name', None),
                     # Extra fields (for logs), sanitized out from API responses
                     'model_id': params.model_id,
+                    'fallback_model_id': params.fallback_model_id,
                     'noul': noul,
                     'threshold': params.threshold,
                 }
@@ -887,7 +888,7 @@ class GuardrailCheck:
             return s
         elif kind == 'decision_judge':
             s = 'decision_judge'
-            for key in ('model_id', 'noul', 'threshold', 'phase'):
+            for key in ('model_id', 'fallback_model_id', 'noul', 'threshold', 'phase'):
                 value = reason_payload.get(key)
                 if value is not None:
                     s += f' {key}={_trunc(repr(value), max_len=120)}'

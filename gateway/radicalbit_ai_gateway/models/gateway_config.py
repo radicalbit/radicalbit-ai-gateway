@@ -421,10 +421,23 @@ class GatewayConfig(BaseModel):
                             'not declared in top-level chat_models.'
                         )
             elif isinstance(params, DecisionJudgeParameter):
-                if params.model_id not in self.decision_models_by_id:
+                # Any decision model of the project, not only those on the route.
+                for label, model_id in (
+                    ('model', params.model_id),
+                    ('fallback model', params.fallback_model_id),
+                ):
+                    if (
+                        model_id is not None
+                        and model_id not in self.decision_models_by_id
+                    ):
+                        raise ValueError(
+                            f"Guardrail '{guardrail.name}': decision judge {label} "
+                            f"'{model_id}' not declared in top-level decision_models."
+                        )
+                if params.fallback_model_id == params.model_id:
                     raise ValueError(
-                        f"Guardrail '{guardrail.name}': decision judge model "
-                        f"'{params.model_id}' not declared in top-level decision_models."
+                        f"Guardrail '{guardrail.name}': decision judge fallback model "
+                        f"'{params.fallback_model_id}' must differ from its model."
                     )
         return self
 
