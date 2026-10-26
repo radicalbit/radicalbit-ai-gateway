@@ -2,7 +2,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from radicalbit_ai_gateway.limiter.window_config import parse_window
+from radicalbit_ai_gateway.limiter.window_config import format_window, parse_window
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 
 # Valid window sizes for ALIGNED_FIXED_WINDOW (must divide evenly into 86400 seconds)
@@ -28,6 +28,60 @@ ALIGNED_FIXED_WINDOW_ALLOWED_SECONDS: frozenset[int] = frozenset(
 class LimitingAlgorithmType(str, Enum):
     FIXED_WINDOW = 'FIXED_WINDOW'
     ALIGNED_FIXED_WINDOW = 'ALIGNED_FIXED_WINDOW'
+
+
+# Windows a credential or project limit can have. Route limits in a
+# configuration are not bound to this list.
+LIMIT_WINDOW_ALLOWED_SECONDS: dict[LimitingAlgorithmType, frozenset[int]] = {
+    LimitingAlgorithmType.ALIGNED_FIXED_WINDOW: ALIGNED_FIXED_WINDOW_ALLOWED_SECONDS,
+    LimitingAlgorithmType.FIXED_WINDOW: ALIGNED_FIXED_WINDOW_ALLOWED_SECONDS
+    | {
+        604800,  # 1 week
+        2592000,  # 1 month
+    },
+}
+
+
+def normalize_limit_window(
+    value: float | str, algorithm: LimitingAlgorithmType | None
+) -> str:
+    """Return the window of a credential or project limit in its largest exact unit.
+
+    So '60 seconds', 60 and '1 minute' are stored, and compared, as one window.
+
+    Args:
+        value: Window as a string (e.g., '24 hours') or in seconds.
+        algorithm: Algorithm of the limit, whose allowed list the window must be
+            in. None when the algorithm failed its own validation: then only
+            the window itself is checked.
+
+    Returns:
+        The window in its largest exact unit, e.g. '1 day'.
+
+    Raises:
+        ValueError: If the window is not a positive whole number of seconds, or
+            not in the allowed list of the algorithm.
+
+    """
+    if isinstance(value, str):
+        window_seconds = parse_window(value)
+    elif isinstance(value, bool) or not float(value).is_integer():
+        raise ValueError(f"Window size '{value}' must be a whole number of seconds.")
+    else:
+        window_seconds = int(value)
+    if window_seconds <= 0:
+        raise ValueError(f"Window size '{value}' must be longer than 0.")
+    window_size = format_window(window_seconds)
+    if algorithm is None:
+        return window_size
+    allowed_seconds = LIMIT_WINDOW_ALLOWED_SECONDS[algorithm]
+    if window_seconds not in allowed_seconds:
+        allowed_sizes = ', '.join(format_window(s) for s in sorted(allowed_seconds))
+        raise ValueError(
+            f"Window size '{value}' is not allowed for {algorithm.value}. "
+            f'Allowed sizes: {allowed_sizes}'
+        )
+    return window_size
 
 
 class Limiting(BaseModel):

@@ -20,7 +20,9 @@ from radicalbit_ai_gateway.models.auth_dto import (
 )
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
+    CredentialLimitIn,
     CredentialLimitOut,
+    CredentialLimitsIn,
 )
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.services.key_service import KeyService
@@ -480,6 +482,26 @@ class KeyServiceTest(unittest.TestCase):
         # so it's actually readable to whoever hits this error.
         assert 'my-credential' in str(exc_info.value)
         assert str(key_uuid) not in str(exc_info.value)
+        self.key_limit_dao.insert_many.assert_not_called()
+
+    def test_add_limits_to_key_duplicate_written_in_another_unit_raises(self):
+        key_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(uuid=key_uuid, name='my-credential')
+        existing = db_mock.get_sample_key_limit(key_uuid=key_uuid, window_size='1 day')
+        self.key_dao.get_by_uuid = MagicMock(return_value=key)
+        self.key_limit_dao.get_by_key_uuid = MagicMock(return_value=[existing])
+        self.key_limit_dao.insert_many = MagicMock()
+        limits_in = CredentialLimitsIn(
+            limits=[
+                CredentialLimitIn(
+                    category=CredentialLimitCategory.BUDGET,
+                    window_size='24 hours',
+                    value=10,
+                )
+            ]
+        )
+        with pytest.raises(CredentialLimitAlreadyExistsError):
+            self.key_service.add_limits_to_key(key_uuid, limits_in)
         self.key_limit_dao.insert_many.assert_not_called()
 
     def test_add_limits_to_key_duplicate_of_group_derived_limit_also_raises(self):
