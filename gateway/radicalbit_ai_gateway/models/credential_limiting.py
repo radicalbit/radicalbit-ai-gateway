@@ -4,12 +4,23 @@ import datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic.alias_generators import to_camel
 
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.limiter.window_config import ScenarioType
-from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
+from radicalbit_ai_gateway.models.limiting import (
+    Limiting,
+    LimitingAlgorithmType,
+    normalize_limit_window,
+)
 
 
 class CredentialLimitCategory(str, Enum):
@@ -42,6 +53,12 @@ class CredentialLimitIn(BaseModel):
     )
 
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    # A field validator, not a model one, so a 422 points at windowSize
+    @field_validator('window_size', mode='before')
+    @classmethod
+    def normalize_window_size(cls, value: float | str, info: ValidationInfo) -> str:
+        return normalize_limit_window(value, info.data.get('algorithm'))
 
     @model_validator(mode='after')
     def validate_against_limiting_schema(self) -> CredentialLimitIn:
