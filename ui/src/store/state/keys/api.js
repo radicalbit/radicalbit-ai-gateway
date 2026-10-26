@@ -7,6 +7,7 @@ export const keysApiSlice = apiService.injectEndpoints({
       query: ({ onlyUnassigned = false } = {}) => {
         const params = new URLSearchParams();
         params.append('include_groups', 'true');
+        params.append('include_limits', 'true');
 
         if (onlyUnassigned) {
           params.append('only_unassigned', 'true');
@@ -34,7 +35,7 @@ export const keysApiSlice = apiService.injectEndpoints({
         return [`${API_TAGS.KEYS}-${uuid}`];
       },
       query: (uuid) => ({
-        url: `/keys/${uuid}?include_groups=true`,
+        url: `/keys/${uuid}?include_groups=true&include_limits=true`,
         method: 'get',
       }),
     }),
@@ -123,6 +124,37 @@ export const keysApiSlice = apiService.injectEndpoints({
       },
     }),
 
+    // A batch: every limit is created, or none
+    createKeyLimits: builder.mutation({
+      query: ({ data, uuid }) => ({
+        url: `/keys/${uuid}/limits`,
+        method: 'post',
+        data,
+      }),
+      invalidatesTags: (result, _, { uuid }) => {
+        if (result) {
+          return [API_TAGS.KEYS, `${API_TAGS.KEYS}-${uuid}`, API_TAGS.ALERTS];
+        }
+
+        return [];
+      },
+    }),
+
+    // Alert rules on the deleted limit can become stale: they are refetched too
+    deleteKeyLimit: builder.mutation({
+      query: ({ limitUuid, uuid }) => ({
+        url: `/keys/${uuid}/limits/${limitUuid}`,
+        method: 'delete',
+      }),
+      invalidatesTags: (result, _, { uuid }) => {
+        if (result) {
+          return [API_TAGS.KEYS, `${API_TAGS.KEYS}-${uuid}`, API_TAGS.ALERTS];
+        }
+
+        return [];
+      },
+    }),
+
     deleteKey: builder.mutation({
       query: ({ uuid }) => ({
         url: `/keys/${uuid}?include_groups=true`,
@@ -155,6 +187,8 @@ export const {
   useDeleteKeyMutation,
   useRotateKeyMutation,
   useEndGracePeriodMutation,
+  useCreateKeyLimitsMutation,
+  useDeleteKeyLimitMutation,
 } = keysApiSlice;
 
 export const selectors = {};

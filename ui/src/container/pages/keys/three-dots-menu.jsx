@@ -57,6 +57,16 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     showModal(modals.ROTATE_KEY, { uuid });
   };
 
+  const handleOnManageLimits = () => {
+    showModal(modals.MANAGE_KEY_LIMITS, { uuid });
+  };
+
+  // In every state: externally managed credentials can have limits too, expired ones open read-only
+  const manageLimitsItem = {
+    label: 'Manage limits',
+    onClick: handleOnManageLimits,
+  };
+
   if (!uuid) {
     return [];
   }
@@ -93,6 +103,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>Associate group</Tooltip>,
         disabled: true,
       },
+      manageLimitsItem,
       {
         type: 'divider',
       },
@@ -135,6 +146,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         type: 'divider',
       },
       expiredGroupItem,
+      manageLimitsItem,
       {
         type: 'divider',
       },
@@ -158,6 +170,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
       type: 'divider',
     },
     group ? removeGroupItem : associateGroupItem,
+    manageLimitsItem,
     {
       type: 'divider',
     },
