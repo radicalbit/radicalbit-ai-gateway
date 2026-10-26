@@ -1,3 +1,4 @@
+import Credential from '@Container/pages/alerts/detail/body/form-fields/credential';
 import Event from '@Container/pages/alerts/detail/body/form-fields/event';
 import Project from '@Container/pages/alerts/detail/body/form-fields/project';
 import Route from '@Container/pages/alerts/detail/body/form-fields/route';
@@ -12,6 +13,8 @@ function StepB() {
       <Scope />
 
       <Project />
+
+      <Credential />
 
       <Route />
 

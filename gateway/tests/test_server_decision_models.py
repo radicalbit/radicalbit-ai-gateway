@@ -501,7 +501,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert attributes['decision.response.fallback_triggered'] is True
         assert attributes['decision.response.model_id'] == 'jev-eu'
 
-    # Limits (AG-1000)
+    # Limits
 
     def test_route_rate_limit_applies(self):
         app.state.routes = _build_routes(
@@ -523,8 +523,10 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         key_record = SimpleNamespace(
             uuid=self.api_key.uuid,
             name=self.api_key.name,
+            hashed_key=self.api_key.hashed_key,
             group=self.api_key.group,
             limits=[CredentialLimitOut.from_key_limit(limit)],
+            expires_on=None,
         )
         key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
 
@@ -771,7 +773,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert response.status_code == 200
         assert pook.isdone()
 
-    # Exact cache (AG-1002)
+    # Exact cache
 
     def test_identical_request_is_served_from_cache_without_calling_typesafe(self):
         app.state.routes = _build_routes(JEV, **EXACT_CACHE)

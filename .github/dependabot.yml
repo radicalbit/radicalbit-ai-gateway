@@ -2,6 +2,15 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/ui"
+    ignore:
+      # typescript-eslint (via eslint-config-airbnb-extended) does not support TS 7
+      - dependency-name: "typescript"
+        versions: [">=7"]
+      # eslint-plugin-react crashes on ESLint 10; eslint-config-airbnb-extended peers eslint ^9
+      - dependency-name: "eslint"
+        versions: [">=10"]
+      - dependency-name: "@eslint/js"
+        versions: [">=10"]
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -24,6 +33,22 @@ updates:
         applies-to: version-updates
         update-types:
           - "major"
+
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/gateway"
+      - "/metrics-worker"
+      - "/clickhouse-migrations"
+    ignore:
+      # Patch releases only: a new Python or Node minor/major is a deliberate upgrade
+      - dependency-name: "python"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
 
   - package-ecosystem: "pip"
     directory: "/gateway"

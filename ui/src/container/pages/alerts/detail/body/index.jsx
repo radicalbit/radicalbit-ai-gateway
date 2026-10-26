@@ -1,5 +1,5 @@
 import Lucide from '@Components/lucide';
-import { PathsEnum } from '@Src/constants';
+import { AlertScopeEnum, AlertTimeAggregationEnum, PathsEnum } from '@Src/constants';
 import { useGetAlertQuery } from '@State/alerts/api';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
@@ -8,7 +8,9 @@ import {
 import { TriangleAlert } from 'lucide-react';
 import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import AlertHistory from './alert-history';
 import Channel from './form-fields/channel';
+import Credential from './form-fields/credential';
 import Description from './form-fields/description';
 import Event from './form-fields/event';
 import Name from './form-fields/name';
@@ -57,6 +59,8 @@ function AlertDetailForm() {
           size="small"
         />
 
+        <AlertHistory />
+
         <Collapse
           defaultActiveKey={['rule']}
           items={[{
@@ -67,6 +71,8 @@ function AlertDetailForm() {
                 <Scope />
 
                 <Project />
+
+                <Credential />
 
                 <Route />
 
@@ -209,9 +215,13 @@ const useInitializeForm = () => {
       initialize({
         name: data.name,
         description: data.description ?? '',
+        scope: data.scope ?? AlertScopeEnum.ROUTE,
         project: data.project,
         route: data.route,
+        credential: data.credentialUuid ?? undefined,
         event: data.event,
+        timeAggregation: data.timeAggregation ?? AlertTimeAggregationEnum.INSTANT,
+        windowSize: data.windowSize ?? undefined,
         recipients: data.recipients ?? [],
       });
     }

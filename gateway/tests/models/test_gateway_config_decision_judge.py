@@ -139,10 +139,15 @@ def test_unknown_fallback_model_id_is_rejected_naming_guardrail_and_id():
         _config(_decision_judge(fallback_model_id='missing'))
 
 
-@pytest.mark.parametrize('field', ['model_id', 'fallback_model_id'])
+@pytest.mark.parametrize(
+    ('field', 'label'),
+    [('model_id', 'model'), ('fallback_model_id', 'fallback model')],
+)
 @pytest.mark.parametrize('model_id', ['gpt', 'embed', 'whisper'])
-def test_non_decision_model_is_rejected(field, model_id):
-    with pytest.raises(ValueError, match=f"'off_topic': {field} '{model_id}'"):
+def test_non_decision_model_is_rejected(field, label, model_id):
+    with pytest.raises(
+        ValueError, match=f"'off_topic': decision judge {label} '{model_id}'"
+    ):
         _config(_decision_judge(**{field: model_id}))
 
 

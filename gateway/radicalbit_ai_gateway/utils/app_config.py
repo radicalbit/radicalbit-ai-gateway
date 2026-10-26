@@ -108,11 +108,16 @@ class AlertConfig(BaseSettings):
     ``alert_threshold_percentages`` are the percentages of a limit at which a
     threshold event fires, before the limit blocks anything. They are global,
     not per alert rule.
+
+    ``alert_window_tick_seconds`` is how often the gateway looks for tumbling
+    alert windows that have closed. A window's alert goes out at most this long
+    after the window ends.
     """
 
     alert_threshold_percentages: list[Annotated[int, Field(ge=1, le=99)]] = Field(
         default=[75, 98]
     )
+    alert_window_tick_seconds: float = Field(default=30, gt=0)
 
 
 class CorsConfig(BaseSettings):

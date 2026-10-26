@@ -1,6 +1,6 @@
 import datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from freezegun import freeze_time
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -41,6 +41,7 @@ from radicalbit_ai_gateway.models.fallback import Fallback, FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.limiting import AudioDurationLimiting, BudgetLimiting
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
     PreprocessingPlugin,
@@ -1688,7 +1689,16 @@ async def test_invoke_transcription_counts_budget_duration():
 
     budget_limiter.check_budget.assert_awaited_once()
     budget_limiter.count_duration.assert_awaited_once_with(
-        seconds=3, cost_per_second=0.0001
+        seconds=3,
+        cost_per_second=0.0001,
+        identity=RequestIdentity(
+            request_uuid=str(REQUEST_UUID),
+            route_name='rb-gateway',
+            api_key_uuid=str(API_KEY_UUID),
+            api_key_name='rb-key',
+            group_uuid=str(GROUP_UUID),
+            group_name='test-group',
+        ),
     )
     budget_limiter.count_input.assert_not_awaited()
     budget_limiter.count_output.assert_not_awaited()
@@ -1764,7 +1774,9 @@ async def test_invoke_transcription_counts_budget_tokens():
         (5, gpt4o_model.input_cost_per_token),
     }
     budget_limiter.count_output.assert_awaited_once_with(
-        token_count=38, output_cost_per_token=gpt4o_model.output_cost_per_token
+        token_count=38,
+        output_cost_per_token=gpt4o_model.output_cost_per_token,
+        identity=ANY,
     )
 
 
@@ -1874,7 +1886,9 @@ async def test_invoke_transcription_stream_relays_events_and_counts_usage_once()
         (5, gpt4o_model.input_cost_per_token),
     }
     budget_limiter.count_output.assert_awaited_once_with(
-        token_count=38, output_cost_per_token=gpt4o_model.output_cost_per_token
+        token_count=38,
+        output_cost_per_token=gpt4o_model.output_cost_per_token,
+        identity=ANY,
     )
 
 

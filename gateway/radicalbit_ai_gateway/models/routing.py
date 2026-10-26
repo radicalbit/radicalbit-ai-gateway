@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Annotated, Literal, Union
 
 from cron_converter import Cron
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 try:
     from typing import Self
@@ -19,22 +19,30 @@ class RoutingRuleType(str, Enum):
 
 
 class TokenLengthConditions(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     gte: int | None = Field(None, ge=0)
     lte: int | None = Field(None, ge=0)
     between: list[int] | None = Field(None, min_length=2, max_length=2)
 
 
 class BudgetConditions(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     threshold: float = Field(ge=0.0, le=1.0)
 
 
 class OutputMappingEntry(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     model_id: str
     conditions: list[str] | TokenLengthConditions | BudgetConditions
 
 
 class RoutingConfig(BaseModel):
     """Base class for all routing configurations."""
+
+    model_config = ConfigDict(extra='forbid')
 
     name: str
     default_model_id: str

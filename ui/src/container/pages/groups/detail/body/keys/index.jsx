@@ -12,7 +12,7 @@ import columns from './columns';
 function Keys() {
   const { uuid } = useParams();
   const { data } = useGetGroupQuery(uuid);
-  const keys = data?.routes || [];
+  const keys = data?.keys || [];
   const count = keys.length;
 
   return (

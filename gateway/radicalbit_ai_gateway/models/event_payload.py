@@ -103,7 +103,10 @@ class LimitScope(StrEnum):
 
 
 class LimitEventPayload(EventBase):
-    """A limit blocked a request. Names the exact limit and its window state.
+    """A limit blocked a request, or its consumption crossed a threshold.
+
+    Names the exact limit and its window state. A ``LIMIT_THRESHOLD`` event
+    carries the ``threshold_percentage`` it crossed; a block carries none.
 
     ``category`` is the limiter's scenario (``request_rate``, ``token_input``,
     ``token_output``, ``audio_duration``, ``budget``). ``maximum`` and
@@ -124,6 +127,7 @@ class LimitEventPayload(EventBase):
         EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT,
         EventType.CREDENTIAL_BUDGET_LIMIT,
         EventType.PROJECT_BUDGET_LIMIT,
+        EventType.LIMIT_THRESHOLD,
     ]
     limit_scope: LimitScope
     category: str

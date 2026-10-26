@@ -1,12 +1,12 @@
 import Lucide from '@Components/lucide';
 import { DETAIL_LAYOUT_CONFIGURATION, MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
-import { useGetAlertsQuery, useDeleteAlertMutation } from '@State/alerts/api';
+import { useGetAlertsHistoryQuery, useGetAlertsQuery, useDeleteAlertMutation } from '@State/alerts/api';
 import { PathsEnum } from '@Src/constants';
 import {
   Board, Button, DataTable, Spin, Void,
 } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useDispatch } from 'react-redux';
 import { useNavigate, useParams } from 'react-router-dom';
 import columns from './columns';
@@ -18,6 +18,8 @@ function AlertsList() {
   const {
     data = [], isLoading, isFetching, isError, isSuccess, refetch,
   } = useGetAlertsQuery();
+  const { data: history } = useGetAlertsHistoryQuery();
+  const rules = useMemo(() => withAlertTotals(data, history), [data, history]);
 
   useInitLayoutConfigurations();
 
@@ -50,7 +52,7 @@ function AlertsList() {
         clickable
         columns={columns}
         components={components}
-        dataSource={data}
+        dataSource={rules}
         onRow={(record) => ({
           onClick: () => {
             handleOnRowClick(record);
@@ -68,6 +70,22 @@ function AlertsList() {
     </>
   );
 }
+
+const withAlertTotals = (rules, history) => {
+  if (!history) {
+    return rules;
+  }
+
+  const totals = {};
+  history.forEach(({ ruleUuid, sent, failed }) => {
+    const current = totals[ruleUuid] ?? { sent: 0, failed: 0 };
+    totals[ruleUuid] = { sent: current.sent + sent, failed: current.failed + failed };
+  });
+
+  return rules.map((rule) => ({
+    ...rule, sent: 0, failed: 0, ...totals[rule.uuid],
+  }));
+};
 
 const useInitLayoutConfigurations = () => {
   const dispatch = useDispatch();
@@ -89,7 +107,7 @@ function RowWithSpinner({ children, ...other }) {
     ? (
       <tr {...other}>
         {/* IF scroll={{ y: 'calc(100vh - 10rem)' }} is defined, colSpan must be === columns.length */}
-        <td colSpan={13}>
+        <td colSpan={columns.length}>
           <Spin spinning />
         </td>
       </tr>

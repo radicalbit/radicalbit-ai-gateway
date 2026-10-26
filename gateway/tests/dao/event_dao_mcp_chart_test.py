@@ -397,7 +397,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
         assert self.buckets(res) == [(int(BASE_TIME.timestamp()), 'files', 1)]
 
     def test_the_total_equals_the_key_table_total(self):
-        """The chart sits above the key table (AG-955) and must agree with it."""
+        """The chart sits above the key table and must agree with it."""
         self.insert(
             [
                 mcp_event(api_key_uuid=KEY_1, mcp_alias='files'),

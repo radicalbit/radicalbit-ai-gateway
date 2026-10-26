@@ -37,7 +37,7 @@ RUN echo "VITE_GATEWAY_ORIGIN=''" > .env.production && \
 # ============================================
 # Stage 3: Final Runtime Image
 # ============================================
-FROM python:3.11.13-slim
+FROM python:3.11.16-slim
 
 ENV HTTP_INTERFACE=0.0.0.0
 ENV HTTP_PORT=9000
@@ -47,8 +47,10 @@ EXPOSE 9000
 
 WORKDIR /radicalbit_ai_gateway
 
-# Install system dependencies
+# Apply Debian security updates (the pinned base tag is not rebuilt once a newer
+# Python patch is released) and install system dependencies
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         gcc libpq-dev python3-dev curl tini && \
     rm -rf /var/lib/apt/lists/*
@@ -60,8 +62,9 @@ RUN apt-get update && \
 # the PyPI publish job, which does a full git checkout.
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_RADICALBIT_AI_GATEWAY=0.0.0
 COPY ./gateway/uv.lock ./gateway/pyproject.toml ./
-RUN pip install --no-cache-dir --no-compile uv==0.9.27 && \
+RUN pip install --no-cache-dir --no-compile uv==0.13.4 && \
     uv export --no-hashes --format requirements-txt > requirements.txt && \
+    pip uninstall -y uv && \
     pip install --no-cache-dir --no-compile -r requirements.txt && \
     rm -f requirements.txt uv.lock pyproject.toml && \
     rm -rf /root/.cache

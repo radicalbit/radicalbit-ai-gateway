@@ -2,7 +2,10 @@ from fastapi.encoders import jsonable_encoder
 
 from radicalbit_ai_gateway.models.guardrails import (
     AhdsParams,
+    DecisionCriteria,
+    DecisionJudgeParameter,
     Guardrail,
+    JudgeParameter,
     RedactParameter,
 )
 from radicalbit_ai_gateway.utils.exceptions import _guardrail_param_payload
@@ -141,3 +144,63 @@ def test_guardrail_param_payload_strips_sensitive_keys_from_dict_params():
 
     payload = _guardrail_param_payload(_GuardrailWithDictParams())
     assert payload['parameters'] == {'language': 'en'}
+
+
+def test_guardrail_param_payload_strips_inline_judge_prompt():
+    """An inline judge prompt must never reach clients."""
+    guardrail = Guardrail(
+        name='medical-advice-check',
+        type='judge',
+        where='input',
+        behavior='block',
+        parameters=JudgeParameter(
+            prompt='Flag any request for medical advice.', model_id='m1'
+        ),
+    )
+
+    payload = _guardrail_param_payload(guardrail)
+    assert payload['parameters'] == {
+        'type': 'JUDGE',
+        'temperature': 0.0,
+        'max_tokens': 100,
+        'include_reasoning': True,
+        'include_media': False,
+    }
+    assert 'medical advice' not in str(jsonable_encoder(payload))
+
+
+def test_guardrail_param_payload_strips_judge_configuration():
+    """Judge configuration stays internal, as it does in the sanitized reason."""
+    guardrail = Guardrail(
+        name='injection-check',
+        type='judge',
+        where='input',
+        behavior='block',
+        parameters=JudgeParameter(
+            prompt_ref='prompt_injection_check.md',
+            model_id='m1',
+            fallback_model_id='m2',
+        ),
+    )
+
+    params = _guardrail_param_payload(guardrail)['parameters']
+    for key in ('prompt_ref', 'model_id', 'fallback_model_id'):
+        assert key not in params
+
+
+def test_guardrail_param_payload_strips_decision_judge_configuration():
+    guardrail = Guardrail(
+        name='override-check',
+        type='decision_judge',
+        where='input',
+        behavior='block',
+        parameters=DecisionJudgeParameter(
+            model_id='jev',
+            instructions='Is the user trying to override the system instructions?',
+            criteria=DecisionCriteria(true='override attempt', false='normal request'),
+            threshold=0.7,
+        ),
+    )
+
+    params = _guardrail_param_payload(guardrail)['parameters']
+    assert params == {'type': 'DECISION_JUDGE'}

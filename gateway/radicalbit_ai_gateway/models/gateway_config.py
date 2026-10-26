@@ -18,6 +18,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     DecisionJudgeParameter,
     Guardrail,
     GuardrailType,
+    JudgeParameter,
 )
 from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
 from radicalbit_ai_gateway.models.routing import (
@@ -138,12 +139,12 @@ class GatewayConfig(BaseModel):
 
     def get_route_feature_flags(
         self, route_config: GatewayRouteConfig
-    ) -> tuple[bool, bool, bool, bool, bool]:
+    ) -> tuple[bool, bool, bool, bool, bool, bool]:
         """Detect route feature flags based on configuration.
 
         Returns:
             Tuple of (has_chat_models, has_judges, has_embedding_models,
-            has_semantic_cache, has_transcription_models)
+            has_semantic_cache, has_transcription_models, has_decision_models)
 
         """
         has_chat_models = bool(route_config.chat_models)
@@ -154,12 +155,14 @@ class GatewayConfig(BaseModel):
         )
         has_semantic_cache = isinstance(route_config.caching, SemanticCaching)
         has_transcription_models = bool(route_config.transcription_models)
+        has_decision_models = bool(route_config.decision_models)
         return (
             has_chat_models,
             has_judges,
             has_embedding_models,
             has_semantic_cache,
             has_transcription_models,
+            has_decision_models,
         )
 
     @model_validator(mode='before')
@@ -340,34 +343,6 @@ class GatewayConfig(BaseModel):
         return self
 
     @model_validator(mode='after')
-    def validate_decision_judges(self) -> Self:
-        """Check each decision judge points to declared decision models.
-
-        Any decision model of the project is fine, not only those on the route.
-        The fallback must be another model.
-        """
-        decision_defined = self.decision_models_by_id
-        for guardrail in self.guardrails or []:
-            if not isinstance(guardrail.parameters, DecisionJudgeParameter):
-                continue
-            params = guardrail.parameters
-            for field, model_id in (
-                ('model_id', params.model_id),
-                ('fallback_model_id', params.fallback_model_id),
-            ):
-                if model_id is not None and model_id not in decision_defined:
-                    raise ValueError(
-                        f"Guardrail '{guardrail.name}': {field} '{model_id}' is "
-                        'not declared in top-level decision_models.'
-                    )
-            if params.fallback_model_id == params.model_id:
-                raise ValueError(
-                    f"Guardrail '{guardrail.name}': fallback_model_id "
-                    f"'{params.fallback_model_id}' must differ from model_id."
-                )
-        return self
-
-    @model_validator(mode='after')
     def validate_cache_if_configured(self) -> Self:
         """Validate if cache is configured if enabled in routes"""
         if not self.cache:
@@ -411,7 +386,7 @@ class GatewayConfig(BaseModel):
         def norm(s: str) -> str:
             return s.strip().casefold()
 
-        global_names_norm = {norm(g.name) for g in (self.guardrails or [])}
+        global_names = {g.name for g in (self.guardrails or [])}
 
         for r_name, route in self.routes.items():
             names = route.guardrails or []
@@ -423,13 +398,47 @@ class GatewayConfig(BaseModel):
                     f"Route '{r_name}': duplicate guardrails: {', '.join(dup_originals)}"
                 )
 
-            unknown = [n for n in names if norm(n) not in global_names_norm]
+            # Guardrails are looked up by exact name at runtime.
+            unknown = [n for n in names if n not in global_names]
             if unknown:
-                # This should not happen if the 'before' validator resolved names correctly, but keep a clear message.
                 raise ValueError(
-                    f"Route '{r_name}': guardrails not declared in top-level config: {', '.join(sorted(unknown))}"
+                    f"Route '{r_name}': guardrails not declared in top-level config "
+                    f'(names are case-sensitive): {", ".join(sorted(unknown))}'
                 )
 
+        return self
+
+    @model_validator(mode='after')
+    def validate_judge_models(self) -> Self:
+        """Judges call models by id, so each id must be a top-level model."""
+        for guardrail in self.guardrails or []:
+            params = guardrail.parameters
+            if isinstance(params, JudgeParameter):
+                for model_id in (params.model_id, params.fallback_model_id):
+                    if model_id is not None and model_id not in self.chat_models_by_id:
+                        raise ValueError(
+                            f"Guardrail '{guardrail.name}': judge model '{model_id}' "
+                            'not declared in top-level chat_models.'
+                        )
+            elif isinstance(params, DecisionJudgeParameter):
+                # Any decision model of the project, not only those on the route.
+                for label, model_id in (
+                    ('model', params.model_id),
+                    ('fallback model', params.fallback_model_id),
+                ):
+                    if (
+                        model_id is not None
+                        and model_id not in self.decision_models_by_id
+                    ):
+                        raise ValueError(
+                            f"Guardrail '{guardrail.name}': decision judge {label} "
+                            f"'{model_id}' not declared in top-level decision_models."
+                        )
+                if params.fallback_model_id == params.model_id:
+                    raise ValueError(
+                        f"Guardrail '{guardrail.name}': decision judge fallback model "
+                        f"'{params.fallback_model_id}' must differ from its model."
+                    )
         return self
 
     @model_validator(mode='after')

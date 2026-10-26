@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.request_identity import IDENTITY
 
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.tables.project_budget_limit_table import (
@@ -69,16 +70,18 @@ class TestNoLimitsConfigured:
     async def test_all_calls_are_noop(self):
         limiter = _limiter([])
         await limiter.check_budget(**_CALL_ARGS)
-        await limiter.count_input(100, 0.01)
-        await limiter.count_output(100, 0.01)
-        await limiter.count_duration(10.0, 0.01)
+        await limiter.count_input(100, 0.01, identity=IDENTITY)
+        await limiter.count_output(100, 0.01, identity=IDENTITY)
+        await limiter.count_duration(10.0, 0.01, identity=IDENTITY)
 
 
 class TestBudgetLimiting:
     @pytest.mark.asyncio
     async def test_blocks_after_limit_reached(self):
         limiter = _limiter([_limit(1.0)])
-        await limiter.count_input(token_count=1000, input_cost_per_token=0.001)
+        await limiter.count_input(
+            token_count=1000, input_cost_per_token=0.001, identity=IDENTITY
+        )
         with pytest.raises(BudgetLimitExceededError) as exc:
             await limiter.check_budget(**_CALL_ARGS)
         assert 'my-project' in str(exc.value)
@@ -86,8 +89,12 @@ class TestBudgetLimiting:
     @pytest.mark.asyncio
     async def test_count_output_and_duration_consume_same_window(self):
         limiter = _limiter([_limit(10.0)])
-        await limiter.count_output(token_count=1000, output_cost_per_token=0.002)
-        await limiter.count_duration(seconds=5.0, cost_per_second=0.1)
+        await limiter.count_output(
+            token_count=1000, output_cost_per_token=0.002, identity=IDENTITY
+        )
+        await limiter.count_duration(
+            seconds=5.0, cost_per_second=0.1, identity=IDENTITY
+        )
         await limiter.check_budget(**_CALL_ARGS)  # still within limit
 
     @pytest.mark.asyncio
@@ -135,7 +142,9 @@ class TestProjectScoping:
         entry_b = limiter_b._entries[0]
         entry_b.limiter._storage = entry_a.limiter._storage
 
-        await limiter_a.count_input(token_count=1000, input_cost_per_token=0.001)
+        await limiter_a.count_input(
+            token_count=1000, input_cost_per_token=0.001, identity=IDENTITY
+        )
         with pytest.raises(BudgetLimitExceededError):
             await limiter_a.check_budget(**_CALL_ARGS)
 

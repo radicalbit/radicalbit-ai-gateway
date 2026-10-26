@@ -150,6 +150,11 @@ class InvalidApiKey(ApiKeyError):
         super().__init__(message, 'key_invalid_unauthorized', log_message=log_message)
 
 
+class ExpiredApiKey(ApiKeyError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(message, 'key_expired_unauthorized', log_message=log_message)
+
+
 class InvalidJwtToken(ApiKeyError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(message, 'invalid_jwt_token', log_message=log_message)
@@ -316,7 +321,19 @@ def _guardrail_param_payload(guardrail: Any) -> Any:
             return f'<unprintable {type(v).__name__}>'
 
     fallback = {'class': type(guardrail).__name__, 'repr': _safe_str(guardrail)}
-    _SENSITIVE_PARAM_KEYS = {'api_key', 'base_url', 'ahds'}
+    # Judge configuration is internal, as in the sanitized `reason` below.
+    _SENSITIVE_PARAM_KEYS = {
+        'api_key',
+        'base_url',
+        'ahds',
+        'prompt',
+        'prompt_ref',
+        'model_id',
+        'fallback_model_id',
+        'instructions',
+        'criteria',
+        'threshold',
+    }
 
     def _serialize_params(params: Any) -> Any:
         if isinstance(params, dict):
@@ -529,6 +546,16 @@ class KeyOperationNotAllowedError(AuthRegistryError):
             message,
             status.HTTP_405_METHOD_NOT_ALLOWED,
             'key_operation_method_not_allowed',
+            log_message=log_message,
+        )
+
+
+class KeyRotationConflictError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_409_CONFLICT,
+            'key_rotation_conflict',
             log_message=log_message,
         )
 
@@ -837,6 +864,17 @@ class AlertRuleInvalidEventError(AppError):
             client_message=message,
             status_code=status.HTTP_400_BAD_REQUEST,
             code='invalid_alert_rule_event',
+        )
+
+
+class AlertRuleInvalidTargetError(AppError):
+    """A rule's scope and target do not fit together, or the scope is not built yet."""
+
+    def __init__(self, message: str = 'Invalid target for alert rule scope'):
+        super().__init__(
+            client_message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code='invalid_alert_rule_target',
         )
 
 

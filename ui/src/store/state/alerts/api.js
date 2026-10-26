@@ -18,6 +18,34 @@ export const alertsApiSlice = apiService.injectEndpoints({
       providesTags: (result, error, uuid) => [`${API_TAGS.ALERTS}-${uuid}`],
     }),
 
+    getAlertsHistory: builder.query({
+      query: () => ({
+        url: '/rule/history',
+        method: 'get',
+      }),
+    }),
+
+    getAlertHistory: builder.query({
+      query: (uuid) => ({
+        url: `/rule/${uuid}/history`,
+        method: 'get',
+      }),
+    }),
+
+    getCredentialAlertableEvents: builder.query({
+      query: ({ credentialUuid } = {}) => ({
+        url: `/keys/${credentialUuid}/alertable-events`,
+        method: 'get',
+      }),
+    }),
+
+    getProjectAlertableEvents: builder.query({
+      query: ({ projectUuid } = {}) => ({
+        url: `/projects/${projectUuid}/alertable-events`,
+        method: 'get',
+      }),
+    }),
+
     getAlertableEvents: builder.query({
       query: ({ projectUuid, routeName } = {}) => ({
         url: `/projects/${projectUuid}/routes/${routeName}/alertable-events`,
@@ -89,7 +117,11 @@ export const alertsApiSlice = apiService.injectEndpoints({
 export const {
   useGetAlertsQuery,
   useGetAlertQuery,
+  useGetAlertsHistoryQuery,
+  useGetAlertHistoryQuery,
   useGetAlertableEventsQuery,
+  useGetCredentialAlertableEventsQuery,
+  useGetProjectAlertableEventsQuery,
   useCreateAlertMutation,
   useToggleAlertMutation,
   useEditAlertMutation,

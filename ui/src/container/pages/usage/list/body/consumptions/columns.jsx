@@ -34,6 +34,11 @@ const columns = [
     render: (value) => <TranscriptionCell value={value} />,
   },
   {
+    title: 'Decision models',
+    dataIndex: 'decision',
+    key: 'decision',
+  },
+  {
     title: 'Total',
     dataIndex: 'total',
     key: 'total',

@@ -2,13 +2,17 @@ import atexit
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from radicalbit_ai_gateway.events.buffer import CeleryBuffer
 from radicalbit_ai_gateway.models.event_payload import EventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
+
+if TYPE_CHECKING:
+    # The dispatcher imports this package's alert records: import it lazily.
+    from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
 
 logger = logging.getLogger('radicalbit-ai-gateway')
 app_config = get_app_config()
@@ -24,55 +28,18 @@ _alert_executor = ThreadPoolExecutor(
 )
 atexit.register(lambda: _alert_executor.shutdown(wait=False, cancel_futures=True))
 
-_alert_rule_service: Any = None
+_alert_dispatcher: 'AlertDispatcher | None' = None
 
 
-def set_alert_rule_service(service: Any) -> None:
-    """Set the alert rule service instance for event notification dispatch."""
-    global _alert_rule_service  # noqa: PLW0603
-    _alert_rule_service = service
+def set_alert_dispatcher(dispatcher: 'AlertDispatcher') -> None:
+    """Set the dispatcher every emitted event is handed to for alerting."""
+    global _alert_dispatcher  # noqa: PLW0603
+    _alert_dispatcher = dispatcher
 
 
-def _dispatch_alert_if_matching(service: Any, event: EventPayload) -> None:
-    event_type = getattr(event, 'event_type', None)
-    project_uuid = getattr(event, 'project_uuid', '')
-    project_name = getattr(event, 'project_name', '')
-    route_name = getattr(event, 'route_name', '')
-
-    if not project_uuid and not project_name:
-        logger.error(
-            'Cannot dispatch alert rule notification: project identification is missing for route %s',
-            route_name,
-        )
-        return
-
-    if not route_name:
-        return
-
-    event_name = None
-    if event_type == EventType.GUARDRAIL:
-        where = str(getattr(event, 'where', '')).lower()
-        name = str(getattr(event, 'name', '')).lower()
-        event_name = f'guardrail-{where}-{name}'
-    elif event_type == EventType.FALLBACK:
-        event_name = 'fallback-triggered'
-
-    if event_name:
-        details = (
-            event.model_dump(exclude_none=True) if hasattr(event, 'model_dump') else {}
-        )
-        service.dispatch_event_notification(
-            project_uuid=project_uuid,
-            project_name=project_name,
-            route_name=route_name,
-            event_name=event_name,
-            event_details=details,
-        )
-
-
-def _safe_dispatch_alert(service: Any, event: EventPayload) -> None:
+def _safe_dispatch_alert(dispatcher: 'AlertDispatcher', event: EventPayload) -> None:
     try:
-        _dispatch_alert_if_matching(service, event)
+        dispatcher.dispatch(event)
     except Exception:
         logger.exception('Error dispatching alert rule notification')
 
@@ -158,9 +125,9 @@ def _create_event_dict(
 
 def emit_event(event: EventPayload) -> None:
     """Emit a metrics event. Events are buffered and sent in batches."""
-    if _alert_rule_service is not None:
+    if _alert_dispatcher is not None:
         try:
-            _alert_executor.submit(_safe_dispatch_alert, _alert_rule_service, event)
+            _alert_executor.submit(_safe_dispatch_alert, _alert_dispatcher, event)
         except Exception:
             logger.exception('Failed to submit alert notification to executor')
 

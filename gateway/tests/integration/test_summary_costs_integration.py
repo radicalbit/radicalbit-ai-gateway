@@ -1253,3 +1253,76 @@ class TestSummaryCostsIntegration(DatabaseIntegrationClickhouse):
         approx_expected = apply_approx(expected_dict)
 
         assert result.model_dump() == approx_expected
+
+    def test_decision_route_costs(self):
+        """Decision spend reaches the breakdown, totals and the all-routes total.
+
+        Scenario: a decision-only route with one live call and one exact cache
+        hit. Typesafe bills input only, and the cache hit is recorded at $0.
+        """
+        route_name = 'test-decision-route'
+        config = GatewayConfig.model_validate(
+            {
+                'decision_models': [
+                    {
+                        'model_id': 'jev',
+                        'model': 'typesafe/jev-latest',
+                        'credentials': {'api_key': 'ts-dummy'},
+                    }
+                ],
+                'routes': {route_name: {'decision_models': ['jev']}},
+            }
+        )
+        timestamp = datetime.datetime(
+            2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        self.insert(
+            [
+                get_sample_event(
+                    event_type='INPUT_TOKEN_PROCESSED',
+                    route_name=route_name,
+                    timestamp=timestamp,
+                    value=260,
+                    model_id='jev',
+                    model_type='decision_model',
+                    cost=0.25,
+                ),
+                get_sample_event(
+                    event_type='OUTPUT_TOKEN_PROCESSED',
+                    route_name=route_name,
+                    timestamp=timestamp,
+                    value=0,
+                    model_id='jev',
+                    model_type='decision_model',
+                    cost=0.0,
+                ),
+                get_sample_event(
+                    event_type='CACHE_INPUT_TOKENS',
+                    route_name=route_name,
+                    timestamp=timestamp,
+                    value=260,
+                    model_id='jev',
+                    cache_type='exact',
+                    cost=0.0,
+                ),
+            ]
+        )
+
+        result = self.event_service.get_summary_costs(
+            None, config, route_names=[route_name]
+        )
+
+        assert result.decision_models.input == pytest.approx(0.25)
+        assert result.decision_models.total == pytest.approx(0.25)
+        assert result.chat_models is None
+        assert result.totals.input == pytest.approx(0.25)
+        assert result.totals.output == pytest.approx(0.0)
+        assert result.total == pytest.approx(0.25)
+
+        all_routes = self.event_service.get_all_routes_costs(None, config)
+        assert all_routes.total == pytest.approx(0.25)
+        summary = all_routes.routes[0].summary
+        assert summary.model_dump(by_alias=True)['decisionModels'] == {
+            'input': pytest.approx(0.25),
+            'total': pytest.approx(0.25),
+        }

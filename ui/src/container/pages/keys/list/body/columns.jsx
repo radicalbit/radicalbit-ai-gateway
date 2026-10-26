@@ -1,28 +1,24 @@
 import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
-import SuccessMessage from '@Components/success-message';
-import useModals, { modals } from '@Hooks/use-modals';
-import { DATE_FORMAT, GATEWAY_OWNER, PathsEnum, SEARCH_PARAMS } from '@Src/constants';
-import { useRemoveKeyFromGroupMutation } from '@State/groups/api';
-import { useGetKeyQuery } from '@State/keys/api';
+import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
+import {
+  CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum, SEARCH_PARAMS,
+} from '@Src/constants';
 import {
   Button,
   DataTableAction,
-  Popconfirm,
+  Dropdown,
   RelativeDateTime,
   SectionTitle,
-  Skeleton,
-  TextWithBold,
-  Tooltip, Truncate,
+  Tooltip,
+  Truncate,
 } from '@radicalbit/radicalbit-design-system';
-import { PencilLine, Plus, Trash, X } from 'lucide-react';
+import classNames from 'classnames';
+import dayjs from 'dayjs';
+import { EllipsisVertical } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import DeleteKey from '../delete-key';
 
-const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and cannot be modified';
-
-const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
-const NO_GROUPS_TOOLTIP = 'No groups are available to associate';
+const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
 
 const columns = [
   {
@@ -36,11 +32,7 @@ const columns = [
     title: 'Name',
     dataIndex: 'name',
     key: 'id',
-    render: (value) => (
-      <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
-      </Truncate>
-    ),
+    render: (_, record) => <Name record={record} />,
   },
   {
     title: 'Owner',
@@ -70,17 +62,90 @@ const columns = [
   },
   {
     title: '',
+    dataIndex: 'uuid',
+    key: 'actions',
+    width: '50px',
+    render: (uuid) => <DataTableAction noHide><Actions uuid={uuid} /></DataTableAction>,
+  },
+  {
+    title: '',
     dataIndex: 'margin-right',
     key: 'margin-right',
     width: '10px',
   },
-  {
-    title: '',
-    dataIndex: 'uuid',
-    key: 'uuid',
-    render: (uuid) => <DataTableAction noHide><Actions uuid={uuid} /></DataTableAction>,
-  },
 ];
+
+function Name({ record }) {
+  const {
+    expiresOn, graceEndsAt, lastRotatedAt, name, owner, rotationState, state,
+  } = record;
+  const className = classNames({ 'line-through': state === CredentialStateEnum.EXPIRED });
+
+  return (
+    <SectionTitle
+      size="small"
+      subtitle={(
+        <div className="flex flex-col">
+          <ExpiresOn expiresOn={expiresOn} owner={owner} state={state} />
+
+          <Rotation graceEndsAt={graceEndsAt} lastRotatedAt={lastRotatedAt} owner={owner} rotationState={rotationState} />
+        </div>
+      )}
+      title={(
+        <Truncate tooltip={{ title: name, placement: 'topLeft' }}>
+          <span className={className}>{name}</span>
+        </Truncate>
+      )}
+    />
+  );
+}
+
+function ExpiresOn({ expiresOn, owner, state }) {
+  // Externally managed credentials have no expiry: their lifecycle stays with the identity provider
+  if (owner !== GATEWAY_OWNER) {
+    return false;
+  }
+
+  if (!expiresOn) {
+    return 'Never expires';
+  }
+
+  // expiresOn is a calendar date: dayjs parses YYYY-MM-DD as a local date, so no timezone shift
+  const date = dayjs(expiresOn).format(DATE_FORMAT_SHORT.trim());
+  const isExpired = state === CredentialStateEnum.EXPIRED;
+  const label = isExpired ? `Expired on ${date}` : `Expires on ${date}`;
+  const className = classNames({
+    'text-[var(--coo-warning)]': state === CredentialStateEnum.EXPIRING,
+    'text-[var(--coo-error)]': isExpired,
+  });
+
+  return (
+    <Tooltip placement="topLeft" title={EXPIRES_ON_TOOLTIP}>
+      <span className={className}>{label}</span>
+    </Tooltip>
+  );
+}
+
+function Rotation({ graceEndsAt, lastRotatedAt, owner, rotationState }) {
+  const isGraceEnding = rotationState === RotationStateEnum.GRACE_ENDING;
+  const isGraceRunning = rotationState === RotationStateEnum.IN_GRACE || isGraceEnding;
+  const className = classNames({ 'text-[var(--coo-warning)]': isGraceEnding });
+
+  // Externally managed credentials are never rotated: their lifecycle stays with the identity provider
+  if (owner !== GATEWAY_OWNER) {
+    return false;
+  }
+
+  if (rotationState === RotationStateEnum.ROTATED) {
+    return <span className="text-[var(--coo-success)]">{`Rotated on ${dayjs(lastRotatedAt).format(ROTATION_FORMAT)}`}</span>;
+  }
+
+  if (isGraceRunning) {
+    return <span className={className}>{`Previous value works until ${dayjs(graceEndsAt).format(ROTATION_FORMAT)}`}</span>;
+  }
+
+  return false;
+}
 
 function AssociatedGroup({ group }) {
   const navigate = useNavigate();
@@ -101,258 +166,24 @@ function AssociatedGroup({ group }) {
 }
 
 function Actions({ uuid }) {
-  return (
-    <div className="flex justify-center items-center">
-      <ActionAssociateGroup uuid={uuid} />
+  const items = useGetThreeDotsMenuItems(uuid);
 
-      <ActionRemoveGroup uuid={uuid} />
-
-      <ActionEditKey uuid={uuid} />
-
-      <ActionDeleteKey uuid={uuid} />
-    </div>
-  );
-}
-
-function ActionAssociateGroup({ uuid }) {
-  const { showModal } = useModals();
-
-  const { data, isLoading, isError, isSuccess } = useGetKeyQuery(uuid);
-  const isAssociateGroupDisabled = data?.group;
-  const owner = data?.owner;
-  const isExternallyManaged = owner !== GATEWAY_OWNER;
-
-  const handleOnAdd = () => {
-    showModal(modals.ADD_GROUP_TO_KEY, { uuid });
+  const handleOnClick = (e) => {
+    e.stopPropagation();
   };
 
-  if (isLoading) {
-    return <IsLoadingAction />;
-  }
-
-  if (isError) {
-    return (
-      <Tooltip title={UNAVAILABLE_TOOLTIP}>
-        <div>
-          <Button aria-label="Associate group" disabled size="small" type="text">
-            <Lucide icon={Plus} />
-          </Button>
-        </div>
-      </Tooltip>
-    );
-  }
-
-  if (!isSuccess) {
+  if (!items.length) {
     return false;
   }
 
-  if (isAssociateGroupDisabled) {
-    return (
-      <Tooltip title={NO_GROUPS_TOOLTIP}>
-        <div>
-          <Button aria-label="Associate group" disabled size="small" type="text">
-            <Lucide icon={Plus} />
-          </Button>
-        </div>
-      </Tooltip>
-    );
-  }
-
-  if (isExternallyManaged) {
-    return (
-      <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
-        <div>
-          <Button aria-label="Associate group" disabled size="small" type="text">
-            <Lucide icon={Plus} />
-          </Button>
-        </div>
-      </Tooltip>
-    );
-  }
-
   return (
-    <Tooltip title="Associate group">
-      <Button aria-label="Associate group" onClick={handleOnAdd} size="small" type="text">
-        <Lucide icon={Plus} />
-      </Button>
-    </Tooltip>
-  );
-}
-
-function ActionRemoveGroup({ uuid }) {
-  const { data, isLoading, isError, isSuccess } = useGetKeyQuery(uuid);
-  const groupName = data?.group?.name;
-  const groupUuid = data?.group?.uuid;
-  const owner = data?.owner;
-  const isExternallyManaged = owner !== GATEWAY_OWNER;
-
-  const [trigger] = useRemoveKeyFromGroupMutation({ fixedCacheKey: `remove-key-${uuid}-from-group-${groupUuid}` });
-
-  const handleOnDelete = async () => {
-    const { error } = await trigger({
-      uuid: groupUuid,
-      keyUUID: uuid,
-      successMessage: <SuccessMessage prefix="Group" strong={groupName} suffix="removed" />,
-    });
-
-    if (error) {
-      console.error(error);
-    }
-  };
-
-  const handleOnCancel = (e) => { e.stopPropagation(); };
-
-  // The click is handled by the wrapping Popconfirm: the handler only keeps the Button clickable
-  const handleOnTriggerClick = () => {};
-
-  if (isLoading) {
-    return <IsLoadingAction />;
-  }
-
-  if (!groupName || !isSuccess || isError) {
-    return false;
-  }
-
-  if (isExternallyManaged) {
-    return (
-      <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
-        <div>
-          <Button aria-label="Remove group" disabled size="small" type="text">
-            <Lucide icon={X} />
-          </Button>
-        </div>
-      </Tooltip>
-    );
-  }
-
-  return (
-    <Tooltip title="Remove group">
-      <Popconfirm
-        cancelButtonProps={{ type: 'secondary-light' }}
-        description={<TextWithBold bold={groupName} isQuestion text="Are you sure you want to remove the credential from the group" />}
-        label={(
-          <Button aria-label="Remove group" onClick={handleOnTriggerClick} size="small" type="text">
-            <Lucide icon={X} />
-          </Button>
-          )}
-        okText={<div className="is-error">Remove</div>}
-        okType="error-light"
-        onCancel={handleOnCancel}
-        onConfirm={handleOnDelete}
-        title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
-      />
-    </Tooltip>
-  );
-}
-
-function ActionEditKey({ uuid }) {
-  const { showModal } = useModals();
-
-  const { data, isLoading, isError, isSuccess } = useGetKeyQuery(uuid);
-  const owner = data?.owner;
-  const isExternallyManaged = owner !== GATEWAY_OWNER;
-
-  const handleOnEditKey = () => {
-    showModal(modals.EDIT_KEY, { uuid });
-  };
-
-  if (isLoading) {
-    return <IsLoadingAction />;
-  }
-
-  if (isError) {
-    return (
-      <Tooltip title={UNAVAILABLE_TOOLTIP}>
-        <div>
-          <Button aria-label="Edit credential" disabled size="small" type="text">
-            <Lucide icon={PencilLine} />
-          </Button>
-        </div>
-      </Tooltip>
-    );
-  }
-
-  if (!isSuccess) {
-    return false;
-  }
-
-  if (isExternallyManaged) {
-    return (
-      <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
-        <div>
-          <Button aria-label="Edit credential" disabled size="small" type="text">
-            <Lucide icon={PencilLine} />
-          </Button>
-        </div>
-      </Tooltip>
-    );
-  }
-
-  return (
-    <Tooltip title="Edit credential">
-      <Button aria-label="Edit credential" onClick={handleOnEditKey} size="small" type="text">
-        <Lucide icon={PencilLine} />
-      </Button>
-    </Tooltip>
-  );
-}
-
-function ActionDeleteKey({ uuid }) {
-  const { data, isLoading, isError, isSuccess } = useGetKeyQuery(uuid);
-  const owner = data?.owner;
-  const isExternallyManaged = owner !== GATEWAY_OWNER;
-
-  // The click is handled by the wrapping DeleteKey (Popconfirm or modal): the handler only keeps the Button clickable
-  const handleOnTriggerClick = () => {};
-
-  if (isLoading) {
-    return <IsLoadingAction />;
-  }
-
-  if (isError) {
-    return (
-      <Tooltip title={UNAVAILABLE_TOOLTIP}>
-        <div>
-          <Button aria-label="Delete credential" disabled size="small" type="text">
-            <Lucide icon={Trash} />
-          </Button>
-        </div>
-      </Tooltip>
-    );
-  }
-
-  if (!isSuccess) {
-    return false;
-  }
-
-  if (isExternallyManaged) {
-    return (
-      <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>
-        <div>
-          <Button aria-label="Delete credential" disabled size="small" type="text">
-            <Lucide icon={Trash} />
-          </Button>
-        </div>
-      </Tooltip>
-    );
-  }
-
-  return (
-    <DeleteKey uuid={uuid}>
-      <Tooltip title="Delete credential">
-        <Button aria-label="Delete credential" onClick={handleOnTriggerClick} size="small" type="text">
-          <Lucide icon={Trash} type="error" />
+    <Tooltip title="More actions">
+      <Dropdown menu={{ items }}>
+        <Button aria-label="More actions" onClick={handleOnClick} type="text">
+          <Lucide icon={EllipsisVertical} />
         </Button>
-      </Tooltip>
-    </DeleteKey>
-  );
-}
-
-function IsLoadingAction() {
-  return (
-    <div className="p-4">
-      <Skeleton.Avatar active shape="square" size="small" />
-    </div>
+      </Dropdown>
+    </Tooltip>
   );
 }
 

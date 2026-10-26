@@ -12,6 +12,8 @@ class CacheType(Enum):
 
 
 class CacheConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     redis_host: str = Field(
         ...,
         description='Redis (or compatible) host',
@@ -44,6 +46,8 @@ class Caching(BaseModel):
 
 
 class SemanticCaching(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     enabled: bool = Field(
         default=True,
         description='Enable cache for route',

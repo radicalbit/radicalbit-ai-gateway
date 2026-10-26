@@ -117,11 +117,11 @@ function NoRoutesAlert() {
 
             <strong>{name}</strong>
 
-            {'. Please go to the '}
+            {'. To add a new route, go to the '}
 
-            <Link className="c-anchor light" to={`/${PathsEnum.ROUTES}`}><strong>routes section</strong></Link>
+            <Link className="c-anchor light" to={`/${PathsEnum.CONFIGURATIONS}`}><strong>configurations section</strong></Link>
 
-            {' and create a new route if needed.'}
+            {' and update the configuration.'}
           </span>
         )}
         type="info"

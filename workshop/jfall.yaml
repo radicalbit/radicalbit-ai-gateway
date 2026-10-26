@@ -1,0 +1,62 @@
+# AG-1025 / AG-1026: decision judge fallback.
+#
+# Paste this in the UI of a project named "jfall".
+# Calls look like: POST localhost:9000/v1/chat/completions with "model": "jfall/<route>"
+#
+# Both decision models are the fake Typesafe on :9996 (jev_fallback_upstream.py).
+# Markers in the user text choose what each model does. See that file.
+# The gateway runs in Docker (:9000), so it reaches your machine at
+# host.docker.internal.
+#
+# Neither decision model is listed on a route: a decision judge may use any
+# decision model of the project (AG-1026).
+
+chat_models:
+  - model_id: gpt
+    model: openai/gpt-4o-mini
+    credentials:
+      api_key: !secret OPENAI_API_KEY
+
+decision_models:
+  - model_id: jev-main
+    model: typesafe/jev-main
+    credentials:
+      api_key: !secret TYPESAFE_API_KEY
+      base_url: http://host.docker.internal:9996
+
+  - model_id: jev-backup
+    model: typesafe/jev-backup
+    credentials:
+      api_key: !secret TYPESAFE_API_KEY
+      base_url: http://host.docker.internal:9996
+
+guardrails:
+  - name: off_topic_fallback
+    type: decision_judge
+    where: input
+    behavior: block
+    parameters:
+      model_id: jev-main
+      fallback_model_id: jev-backup
+      instructions: Is the user asking about something other than billing?
+      threshold: 0.7
+    response_message: "I can only help with billing."
+
+  - name: off_topic_no_fallback
+    type: decision_judge
+    where: input
+    behavior: block
+    parameters:
+      model_id: jev-main
+      instructions: Is the user asking about something other than billing?
+      threshold: 0.7
+    response_message: "I can only help with billing."
+
+routes:
+  with-fallback:
+    chat_models: [gpt]
+    guardrails: [off_topic_fallback]
+
+  no-fallback:
+    chat_models: [gpt]
+    guardrails: [off_topic_no_fallback]

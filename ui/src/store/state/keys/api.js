@@ -93,6 +93,36 @@ export const keysApiSlice = apiService.injectEndpoints({
       },
     }),
 
+    // Returns the credential with the new value in full, once, as on creation
+    rotateKey: builder.mutation({
+      query: ({ data, uuid }) => ({
+        url: `/keys/${uuid}/rotation`,
+        method: 'post',
+        data,
+      }),
+      invalidatesTags: (result, _, { uuid }) => {
+        if (result) {
+          return [API_TAGS.KEYS, `${API_TAGS.KEYS}-${uuid}`];
+        }
+
+        return [];
+      },
+    }),
+
+    endGracePeriod: builder.mutation({
+      query: ({ uuid }) => ({
+        url: `/keys/${uuid}/rotation`,
+        method: 'delete',
+      }),
+      invalidatesTags: (result, _, { uuid }) => {
+        if (result) {
+          return [API_TAGS.KEYS, `${API_TAGS.KEYS}-${uuid}`];
+        }
+
+        return [];
+      },
+    }),
+
     deleteKey: builder.mutation({
       query: ({ uuid }) => ({
         url: `/keys/${uuid}?include_groups=true`,
@@ -123,6 +153,8 @@ export const {
   useEditKeyMutation,
   useAddGroupToKeyMutation,
   useDeleteKeyMutation,
+  useRotateKeyMutation,
+  useEndGracePeriodMutation,
 } = keysApiSlice;
 
 export const selectors = {};

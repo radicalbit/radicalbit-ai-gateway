@@ -1,3 +1,4 @@
+import { AlertScopeEnum, AlertTimeAggregationEnum } from '@Src/constants';
 import { useGetProjectsQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { FormField, Select, Skeleton } from '@radicalbit/radicalbit-design-system';
@@ -8,8 +9,11 @@ function Project() {
 
   const { error, form, write } = useFormbitContext();
   const project = form?.project;
+  const scope = form?.scope;
 
-  const { data = [], isError, isLoading } = useGetProjectsQuery();
+  const isCredentialScope = scope === AlertScopeEnum.CREDENTIAL;
+
+  const { data = [], isError, isLoading } = useGetProjectsQuery(undefined, { skip: isCredentialScope });
   const options = data.map(({ name, uuid }) => ({ label: name, value: uuid }));
 
   const errorMessage = isError ? 'Unable to load projects, please retry later' : undefined;
@@ -18,7 +22,12 @@ function Project() {
     write('project', value);
     write('route', undefined);
     write('event', undefined);
+    write('timeAggregation', AlertTimeAggregationEnum.INSTANT);
   };
+
+  if (isCredentialScope) {
+    return false;
+  }
 
   if (isLoading) {
     return <Skeleton.Input active block />;

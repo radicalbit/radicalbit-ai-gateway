@@ -93,6 +93,23 @@ gateway:
     externalConfigMap: ""
     source: "custom-prompts"
     mountPath: "/radicalbit_ai_gateway/radicalbit_ai_gateway/guardrails/judges/custom-prompts"
+  alerts:
+    thresholdPercentages: "[75, 98]"
+    windowTickSeconds: 30
+    # SMTP server the gateway sends alert emails through. An empty host keeps
+    # the gateway default, localhost.
+    smtp:
+      host: ""
+      port: 25
+      user: ""
+      fromEmail: "alerts@radicalbit.ai"
+      maxWorkers: 4
+      # Set either value (the chart stores it in a Secret) or existingSecret.
+      # With neither, no password is sent.
+      password:
+        value: ""
+        existingSecret: ""
+        existingSecretKey: password
   assistant:
     apiKey:
       value: ""
@@ -114,18 +131,3 @@ metricsWorker:
   migrations:
     image:
       repository: radicalbit/radicalbit-ai-gateway-clickhouse-migrations
-  notifications:
-    slack:
-      enabled: false
-      webhookMappings: "{}"
-      userMappings: "{}"
-    sendgrid:
-      enabled: false
-      apiKey:
-        value: ""
-        existingSecret:
-        existingSecretKey: sendgrid-api-key
-      fromEmail: ""
-      templateId: ""
-      emailMappings: "{}"
-    thresholds: "[75, 98]"

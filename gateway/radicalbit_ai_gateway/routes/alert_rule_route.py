@@ -1,10 +1,13 @@
+from datetime import UTC, datetime
 import logging
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Path
+from fastapi import APIRouter, Path, Query
 
 from radicalbit_ai_gateway.models.alert_rule_dto import (
     AlertableEventsOut,
+    AlertHistoryBucketOut,
     AlertRuleIn,
     AlertRuleOut,
     AlertRuleToggleIn,
@@ -16,6 +19,10 @@ from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+
+def _from_epoch(seconds: int | None) -> datetime | None:
+    return datetime.fromtimestamp(seconds, UTC) if seconds is not None else None
 
 
 class AlertRuleRoute:
@@ -30,6 +37,35 @@ class AlertRuleRoute:
         )
         def get_all_rules():
             return alert_rule_service.get_all_rules()
+
+        # Declared before '/rule/{rule_uuid}', which would otherwise read
+        # 'history' as a rule UUID.
+        @router.get(
+            '/rule/history',
+            status_code=200,
+            response_model=list[AlertHistoryBucketOut],
+        )
+        def get_history(
+            _from: Annotated[int | None, Query()] = None,
+            _to: Annotated[int | None, Query()] = None,
+        ):
+            return alert_rule_service.get_history(
+                _from=_from_epoch(_from), _to=_from_epoch(_to)
+            )
+
+        @router.get(
+            '/rule/{rule_uuid}/history',
+            status_code=200,
+            response_model=list[AlertHistoryBucketOut],
+        )
+        def get_rule_history(
+            rule_uuid: UUID = Path(...),
+            _from: Annotated[int | None, Query()] = None,
+            _to: Annotated[int | None, Query()] = None,
+        ):
+            return alert_rule_service.get_rule_history(
+                rule_uuid, _from=_from_epoch(_from), _to=_from_epoch(_to)
+            )
 
         @router.get(
             '/rule/{rule_uuid}',
@@ -80,6 +116,22 @@ class AlertRuleRoute:
         @route_meta(entity_type='ALERT_RULE', entity_uuid_param='rule_uuid')
         def delete_rule(rule_uuid: UUID = Path(...)):
             return alert_rule_service.delete_rule(rule_uuid)
+
+        @router.get(
+            '/keys/{key_uuid}/alertable-events',
+            status_code=200,
+            response_model=AlertableEventsOut,
+        )
+        def get_credential_alertable_events(key_uuid: UUID = Path(...)):
+            return alert_rule_service.get_alertable_events_for_credential(key_uuid)
+
+        @router.get(
+            '/projects/{project_uuid}/alertable-events',
+            status_code=200,
+            response_model=AlertableEventsOut,
+        )
+        def get_project_alertable_events(project_uuid: UUID = Path(...)):
+            return alert_rule_service.get_alertable_events_for_project(project_uuid)
 
         @router.get(
             '/projects/{project_uuid}/routes/{route_name}/alertable-events',

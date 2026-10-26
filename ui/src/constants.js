@@ -66,6 +66,9 @@ const DATE_FORMAT = ' DD MMM YYYY, HH:mm:ss';
 
 const DATE_FORMAT_SHORT = ' DD MMM YYYY';
 
+// Rotation instants (grace end, last rotation) are timestamps: shown in the browser's local time
+const ROTATION_FORMAT = 'DD MMM YYYY, HH:mm';
+
 const ConfigStatusEnum = {
   EMPTY: 'EMPTY',
   DRAFT: 'DRAFT',
@@ -92,24 +95,71 @@ const ProjectStatusEnum = {
   PROD: 'PROD',
 };
 
+// Derived by the API from the credential's expiry date (end of day UTC)
+const CredentialStateEnum = {
+  ACTIVE: 'active',
+  EXPIRING: 'expiring',
+  EXPIRED: 'expired',
+};
+
+// Derived by the API from the last rotation and the grace end
+const RotationStateEnum = {
+  NONE: 'none',
+  IN_GRACE: 'in_grace',
+  GRACE_ENDING: 'grace_ending',
+  ROTATED: 'rotated',
+};
+
+// expiresOn is a calendar date (YYYY-MM-DD), not an instant: never convert its timezone
+const EXPIRES_ON_FORMAT = 'YYYY-MM-DD';
+
 const SecretStatusEnum = {
   UNAVAILABLE: 'unavailable',
 };
 
 const AlertScopeEnum = {
-  ROUTE: 'ROUTE',
+  ROUTE: 'route',
+  PROJECT: 'project',
+  CREDENTIAL: 'credential',
 };
 
 const ALERT_SCOPE_LABELS = {
   [AlertScopeEnum.ROUTE]: 'Route',
+  [AlertScopeEnum.PROJECT]: 'Project',
+  [AlertScopeEnum.CREDENTIAL]: 'Credential',
 };
 
 const AlertTimeAggregationEnum = {
   INSTANT: 'instant',
+  LIMIT_WINDOW: 'limit_window',
+  WINDOW: 'window',
 };
 
 const ALERT_TIME_AGGREGATION_LABELS = {
   [AlertTimeAggregationEnum.INSTANT]: 'Instant',
+  [AlertTimeAggregationEnum.LIMIT_WINDOW]: 'Limit window',
+  [AlertTimeAggregationEnum.WINDOW]: 'Window',
+};
+
+const AlertWindowSizeEnum = {
+  FIVE_MINUTES: '5m',
+  FIFTEEN_MINUTES: '15m',
+  ONE_HOUR: '1h',
+  SIX_HOURS: '6h',
+  ONE_DAY: '24h',
+};
+
+const ALERT_WINDOW_SIZE_LABELS = {
+  [AlertWindowSizeEnum.FIVE_MINUTES]: '5 minutes',
+  [AlertWindowSizeEnum.FIFTEEN_MINUTES]: '15 minutes',
+  [AlertWindowSizeEnum.ONE_HOUR]: '1 hour',
+  [AlertWindowSizeEnum.SIX_HOURS]: '6 hours',
+  [AlertWindowSizeEnum.ONE_DAY]: '24 hours',
+};
+
+const AlertableEventAggregationEnum = {
+  SELECTABLE: 'selectable',
+  LIMIT_WINDOW: 'limit_window',
 };
 
 const AlertChannelEnum = {
@@ -141,15 +191,20 @@ export {
   ALERT_SCOPE_LABELS,
   AlertTimeAggregationEnum,
   ALERT_TIME_AGGREGATION_LABELS,
+  AlertWindowSizeEnum,
+  ALERT_WINDOW_SIZE_LABELS,
+  AlertableEventAggregationEnum,
   AlertChannelEnum,
   ALERT_CHANNEL_LABELS,
   ConfigListFilterEnum,
   CONFIG_LIST_FILTER_LABELS,
   ConfigStatusEnum,
+  CredentialStateEnum,
   CHART_COLORS,
   DATE_FORMAT,
   DATE_FORMAT_SHORT,
   DEFAULT_POLLING_INTERVAL,
+  EXPIRES_ON_FORMAT,
   GATEWAY_OWNER,
   FEATURE_FLAGS,
   SEARCH_PARAMS,
@@ -158,6 +213,8 @@ export {
   numberFormatterFloat,
   pageSize,
   PathsEnum,
+  ROTATION_FORMAT,
+  RotationStateEnum,
   ProjectStatusEnum,
   RequestTypeEnum,
   REQUEST_TYPE_LABELS,

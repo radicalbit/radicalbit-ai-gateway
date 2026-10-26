@@ -5,7 +5,9 @@ from freezegun import freeze_time
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.request_identity import IDENTITY
 
+from radicalbit_ai_gateway.limiter import Consumption
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType, RateLimiting
 from radicalbit_ai_gateway.utils.exceptions import RequestRateLimitExceeded
@@ -42,17 +44,11 @@ class TestRequestRateLimiter:
         )
         assert limiter.limiter is not None
 
-    def test_init_without_max_requests_raises_error(self):
-        """Test that initialization without max_requests raises ValueError."""
-        config = RateLimiting(window_size='1 minute')  # No max_requests set
+    def test_config_without_max_requests_is_rejected(self):
         with pytest.raises(
             ValueError, match='max_requests must be set for rate limiting'
         ):
-            RequestRateLimiter(
-                project_uuid=_PROJECT_UUID,
-                route_name='rb-gateway',
-                rate_limiting_config=config,
-            )
+            RateLimiting(window_size='1 minute')
 
     @pytest.mark.asyncio
     async def test_check_request_no_config(self):
@@ -69,7 +65,7 @@ class TestRequestRateLimiter:
             group_name='test-group',
         )
         # count_request with no config should also be a no-op
-        await limiter._count_request()
+        await limiter._count_request(identity=IDENTITY)
 
     @pytest.mark.asyncio
     async def test_check_request_within_limit_and_count_consumes(self):
@@ -82,7 +78,9 @@ class TestRequestRateLimiter:
         )
 
         # check_request should NOT consume
-        with patch.object(limiter.limiter, 'hit', new=AsyncMock()) as mock_hit:
+        with patch.object(
+            limiter.limiter, 'consume', new=AsyncMock(return_value=Consumption(1, 'w'))
+        ) as mock_consume:
             await limiter._check_request(
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
@@ -90,12 +88,14 @@ class TestRequestRateLimiter:
                 api_key_name='fake-name',
                 group_name='test-group',
             )
-            mock_hit.assert_not_called()
+            mock_consume.assert_not_called()
 
         # count_request should consume (hit)
-        with patch.object(limiter.limiter, 'hit', new=AsyncMock()) as mock_hit2:
-            await limiter._count_request()
-            mock_hit2.assert_called_once()
+        with patch.object(
+            limiter.limiter, 'consume', new=AsyncMock(return_value=Consumption(1, 'w'))
+        ) as mock_consume2:
+            await limiter._count_request(identity=IDENTITY)
+            mock_consume2.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_check_request_exceeds_limit(self):
@@ -115,7 +115,7 @@ class TestRequestRateLimiter:
             api_key_name='fake-name',
             group_name='test-group',
         )
-        await limiter._count_request()
+        await limiter._count_request(identity=IDENTITY)
 
         # Second request: check passes, then we consume
         await limiter._check_request(
@@ -125,7 +125,7 @@ class TestRequestRateLimiter:
             api_key_name='fake-name',
             group_name='test-group',
         )
-        await limiter._count_request()
+        await limiter._count_request(identity=IDENTITY)
 
         # Third: check should fail BEFORE consuming
         with pytest.raises(RequestRateLimitExceeded) as exc:
@@ -163,7 +163,7 @@ class TestRequestRateLimiter:
             api_key_name='fake-name',
             group_name='test-group',
         )
-        await limiter._count_request()
+        await limiter._count_request(identity=IDENTITY)
 
         await limiter._check_request(
             request_uuid=str(REQUEST_UUID),
@@ -172,7 +172,7 @@ class TestRequestRateLimiter:
             api_key_name='fake-name',
             group_name='test-group',
         )
-        await limiter._count_request()
+        await limiter._count_request(identity=IDENTITY)
 
         await limiter._check_request(
             request_uuid=str(REQUEST_UUID),
@@ -181,7 +181,7 @@ class TestRequestRateLimiter:
             api_key_name='fake-name',
             group_name='test-group',
         )
-        await limiter._count_request()
+        await limiter._count_request(identity=IDENTITY)
 
         # Fourth: check should fail BEFORE consuming
         with pytest.raises(RequestRateLimitExceeded):
@@ -215,7 +215,7 @@ class TestRequestRateLimiter:
                 api_key_name='fake-name',
                 group_name='test-group',
             )
-            await limiter._count_request()
+            await limiter._count_request(identity=IDENTITY)
 
             await limiter._check_request(
                 request_uuid=str(REQUEST_UUID),
@@ -224,7 +224,7 @@ class TestRequestRateLimiter:
                 api_key_name='fake-name',
                 group_name='test-group',
             )
-            await limiter._count_request()
+            await limiter._count_request(identity=IDENTITY)
 
             # Should be blocked
             with pytest.raises(RequestRateLimitExceeded):
@@ -247,7 +247,7 @@ class TestRequestRateLimiter:
                 api_key_name='fake-name',
                 group_name='test-group',
             )
-            await limiter._count_request()
+            await limiter._count_request(identity=IDENTITY)
 
     def test_window_size_formats(self):
         """Test different window size formats."""

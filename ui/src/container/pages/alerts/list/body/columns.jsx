@@ -1,4 +1,5 @@
 import Lucide from '@Components/lucide';
+import { ALERT_SCOPE_LABELS } from '@Src/constants';
 import { useToggleAlertMutation } from '@State/alerts/api';
 import { FCK_TOGGLE_ALERT } from '@State/alerts/fixed-cache-key';
 import {
@@ -27,6 +28,24 @@ const columns = [
     ),
   },
   {
+    title: <Last48hTitle title="Sent" />,
+    dataIndex: 'sent',
+    key: 'sent',
+    width: '100px',
+    align: 'right',
+    sorter: (a, b) => (a.sent ?? 0) - (b.sent ?? 0),
+    render: (value) => value ?? '--',
+  },
+  {
+    title: <Last48hTitle title="Failed" />,
+    dataIndex: 'failed',
+    key: 'failed',
+    width: '100px',
+    align: 'right',
+    sorter: (a, b) => (a.failed ?? 0) - (b.failed ?? 0),
+    render: (value) => <FailedCount failed={value} />,
+  },
+  {
     title: 'Active',
     dataIndex: 'enabled',
     key: 'enabled',
@@ -50,6 +69,7 @@ const columns = [
     title: 'Scope',
     dataIndex: 'scope',
     key: 'scope',
+    render: (value) => ALERT_SCOPE_LABELS[value] ?? value ?? '--',
   },
   {
     title: 'Project',
@@ -58,10 +78,10 @@ const columns = [
     render: (value) => value ?? '--',
   },
   {
-    title: 'Route',
-    dataIndex: 'route',
-    key: 'route',
-    render: (value) => value ?? '--',
+    title: 'Target',
+    dataIndex: 'scope',
+    key: 'target',
+    render: (_, record) => <Target record={record} />,
   },
   {
     title: 'Event',
@@ -95,6 +115,28 @@ const columns = [
     width: '10px',
   },
 ];
+
+function Last48hTitle({ title }) {
+  return (
+    <div className="flex flex-col leading-tight">
+      <span>{title}</span>
+
+      <span>(Last 48h)</span>
+    </div>
+  );
+}
+
+function FailedCount({ failed }) {
+  if (failed === undefined) {
+    return '--';
+  }
+
+  if (failed === 0) {
+    return 0;
+  }
+
+  return <span className="text-[var(--coo-error)] font-[var(--coo-font-weight-bold)]">{failed}</span>;
+}
 
 function Actions({ uuid, name }) {
   const handleOnClick = (e) => {
@@ -160,6 +202,26 @@ function StaleReason({ staleReason }) {
         <Lucide icon={TriangleAlert} type="warning" />
       </span>
     </Tooltip>
+  );
+}
+
+// The route, project or credential the rule watches, according to its scope
+function Target({ record }) {
+  const targetByScope = {
+    route: record.route,
+    project: record.projectName,
+    credential: record.credentialName,
+  };
+  const value = targetByScope[record.scope];
+
+  if (!value) {
+    return '--';
+  }
+
+  return (
+    <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
+      {value}
+    </Truncate>
   );
 }
 

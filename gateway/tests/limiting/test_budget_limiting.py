@@ -5,6 +5,7 @@ from freezegun import freeze_time
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.request_identity import IDENTITY
 
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
 from radicalbit_ai_gateway.models.limiting import Limiting, LimitingAlgorithmType
@@ -60,8 +61,8 @@ class TestBudgetLimiter:
     @pytest.mark.asyncio
     async def test_check_and_count_no_config(self):
         limiter = BudgetLimiter(project_uuid=_PROJECT_UUID, route_name='rb-gateway')
-        await limiter.count_input(10, 2.5e-06)
-        await limiter.count_output(10, 2.5e-06)
+        await limiter.count_input(10, 2.5e-06, identity=IDENTITY)
+        await limiter.count_output(10, 2.5e-06, identity=IDENTITY)
         await limiter.check_budget(**_CALL_ARGS)
 
     @pytest.mark.asyncio
@@ -70,8 +71,8 @@ class TestBudgetLimiter:
         limiter = BudgetLimiter(
             project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
         )
-        await limiter.count_input(10, 2.5e-06)
-        await limiter.count_output(10, 2.5e-06)
+        await limiter.count_input(10, 2.5e-06, identity=IDENTITY)
+        await limiter.count_output(10, 2.5e-06, identity=IDENTITY)
         await limiter.check_budget(**_CALL_ARGS)
 
     @pytest.mark.asyncio
@@ -82,7 +83,7 @@ class TestBudgetLimiter:
         )
 
         with pytest.raises(BudgetLimitExceededError) as exc:
-            await limiter.count_input(10_000_000, 2.5e-06)
+            await limiter.count_input(10_000_000, 2.5e-06, identity=IDENTITY)
             await limiter.check_budget(**_CALL_ARGS)
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
@@ -102,7 +103,7 @@ class TestBudgetLimiter:
             project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
         )
 
-        await limiter.count_output(100000, 2.51e-06)
+        await limiter.count_output(100000, 2.51e-06, identity=IDENTITY)
 
         with pytest.raises(BudgetLimitExceededError) as exc:
             await limiter.check_budget(**_CALL_ARGS)
@@ -128,7 +129,7 @@ class TestBudgetLimiter:
             project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
         )
 
-        await limiter.count_duration(8.25, 0.0001)
+        await limiter.count_duration(8.25, 0.0001, identity=IDENTITY)
 
         with pytest.raises(BudgetLimitExceededError) as exc:
             await limiter.check_budget(**_CALL_ARGS)
@@ -147,16 +148,16 @@ class TestBudgetLimiter:
         )
 
         # Each call spends ~0.25, three calls = 0.75 — still under 1.0
-        await limiter.count_input(100000, 2.5e-06)
+        await limiter.count_input(100000, 2.5e-06, identity=IDENTITY)
         await limiter.check_budget(**_CALL_ARGS)
-        await limiter.count_output(100000, 2.5e-06)
+        await limiter.count_output(100000, 2.5e-06, identity=IDENTITY)
         await limiter.check_budget(**_CALL_ARGS)
-        await limiter.count_input(100000, 2.5e-06)
+        await limiter.count_input(100000, 2.5e-06, identity=IDENTITY)
         await limiter.check_budget(**_CALL_ARGS)
 
         # 4th call puts combined total over 1.0
         with pytest.raises(BudgetLimitExceededError) as exc:
-            await limiter.count_output(100000, 2.51e-06)
+            await limiter.count_output(100000, 2.51e-06, identity=IDENTITY)
             await limiter.check_budget(**_CALL_ARGS)
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
@@ -175,17 +176,17 @@ class TestBudgetLimiter:
             project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
         )
 
-        await limiter.count_input(100000, 2.5e-06)
+        await limiter.count_input(100000, 2.5e-06, identity=IDENTITY)
         await limiter.check_budget(**_CALL_ARGS)
 
-        await limiter.count_output(100000, 2.5e-06)
+        await limiter.count_output(100000, 2.5e-06, identity=IDENTITY)
         await limiter.check_budget(**_CALL_ARGS)
 
-        await limiter.count_input(100000, 2.5e-06)
+        await limiter.count_input(100000, 2.5e-06, identity=IDENTITY)
         await limiter.check_budget(**_CALL_ARGS)
 
         with pytest.raises(BudgetLimitExceededError) as exc:
-            await limiter.count_input(100000, 2.51e-06)
+            await limiter.count_input(100000, 2.51e-06, identity=IDENTITY)
             await limiter.check_budget(**_CALL_ARGS)
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
@@ -206,9 +207,9 @@ class TestBudgetLimiter:
         with freeze_time(initial_datetime) as frozen_datetime:
             assert frozen_datetime() == initial_datetime
 
-            await limiter.count_output(100000, 2.5e-06)
-            await limiter.count_output(100000, 2.5e-06)
-            await limiter.count_output(100000, 5.1e-06)
+            await limiter.count_output(100000, 2.5e-06, identity=IDENTITY)
+            await limiter.count_output(100000, 2.5e-06, identity=IDENTITY)
+            await limiter.count_output(100000, 5.1e-06, identity=IDENTITY)
 
             with pytest.raises(BudgetLimitExceededError) as exc:
                 await limiter.check_budget(**_CALL_ARGS)
@@ -241,11 +242,11 @@ class TestBudgetLimiter:
                 project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
             )
 
-            await limiter.count_input(100000, 2.4e-06)
+            await limiter.count_input(100000, 2.4e-06, identity=IDENTITY)
             await limiter.check_budget(**_CALL_ARGS)
 
             with pytest.raises(BudgetLimitExceededError) as exc1:
-                await limiter.count_input(100000, 2.4e-06)
+                await limiter.count_input(100000, 2.4e-06, identity=IDENTITY)
                 await limiter.check_budget(**_CALL_ARGS)
 
             msg1 = getattr(exc1.value, 'log_message', str(exc1.value))
@@ -262,7 +263,7 @@ class TestBudgetLimiter:
             frozen_datetime.tick(3)
 
             with pytest.raises(BudgetLimitExceededError) as exc2:
-                await limiter.count_input(100000, 2.4e-06)
+                await limiter.count_input(100000, 2.4e-06, identity=IDENTITY)
                 await limiter.check_budget(**_CALL_ARGS)
 
             msg2 = getattr(exc2.value, 'log_message', str(exc2.value))
@@ -276,5 +277,5 @@ class TestBudgetLimiter:
             assert '[action=BLOCK]' in msg2
 
             frozen_datetime.tick(7)
-            await limiter.count_input(100000, 2.4e-06)
+            await limiter.count_input(100000, 2.4e-06, identity=IDENTITY)
             await limiter.check_budget(**_CALL_ARGS)

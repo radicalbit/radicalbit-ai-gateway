@@ -75,6 +75,7 @@ class JudgeEngine:
             fallback_model_id=judge_parameter.fallback_model_id,
             temperature=judge_parameter.temperature,
             max_tokens=judge_parameter.max_tokens,
+            prompt=judge_parameter.prompt,
             prompt_ref=judge_parameter.prompt_ref,
             include_reasoning=judge_parameter.include_reasoning,
         )
@@ -90,7 +91,7 @@ class JudgeEngine:
 
         logger.debug(
             'Invoking judge with prompt_ref=%s, include_reasoning=%s, media_blocks=%d',
-            judge_parameter.prompt_ref,
+            judge_parameter.prompt_ref or '<inline>',
             judge_parameter.include_reasoning,
             len(media_blocks),
         )
@@ -109,7 +110,9 @@ class JudgeEngine:
     def _build_prompt_template(
         self, config: JudgeRuntimeConfig, include_media: bool = False
     ) -> PromptTemplate:
-        base_template = self.prompt_manager.get_judge_prompt(config.prompt_ref)
+        base_template = config.prompt or self.prompt_manager.get_judge_prompt(
+            config.prompt_ref
+        )
         reasoning_note = (
             "You may include a short reasoning in the 'reasoning' field."
             if config.include_reasoning

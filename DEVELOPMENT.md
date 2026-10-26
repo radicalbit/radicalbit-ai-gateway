@@ -71,6 +71,8 @@ SMTP_FROM_EMAIL=alerts@radicalbit.ai
 
 # Alerts: limit percentages (1-99) that raise a threshold event
 ALERT_THRESHOLD_PERCENTAGES='[75, 98]'
+# Alerts: seconds between checks for closed tumbling windows
+ALERT_WINDOW_TICK_SECONDS=30
 
 # CORS
 CORS_ALLOW_ORIGINS='["http://localhost:5173"]'

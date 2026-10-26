@@ -387,7 +387,7 @@ def get_gateway_with_judge_and_semantic_cache(
         where=GuardrailWhereType.OUTPUT,
         behavior=GuardrailBehaviorType.BLOCK,
         parameters=JudgeParameter(
-            prompt_ref='test_prompt.md',
+            prompt_ref='toxicity_check.md',
             model_id=judge_model_id,
         ),
     )

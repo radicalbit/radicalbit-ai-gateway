@@ -1,4 +1,5 @@
 from enum import Enum
+import re
 from typing import Annotated, Literal, Union
 
 from pydantic import (
@@ -9,6 +10,11 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.utils.app_config import get_app_config
+
+app_config = get_app_config()
 
 
 class GuardrailClass(str, Enum):
@@ -58,6 +64,8 @@ class GuardrailBehaviorType(str, Enum):
 
 
 class CheckParameter(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     type: Literal['CHECK'] = Field(default='CHECK')
     values: list[str] = Field(
         ...,
@@ -66,6 +74,9 @@ class CheckParameter(BaseModel):
     )
     ignore_case: bool = Field(default=False, description='Ignore case.')
 
+
+# Languages the Presidio engine loads a spaCy model for.
+PRESIDIO_LANGUAGES = ['en', 'it']
 
 PresidioBackend = Annotated[
     Literal['local', 'ahds'],
@@ -77,6 +88,8 @@ PresidioBackend = Annotated[
 
 
 class AhdsParams(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     endpoint: str | None = Field(
         default=None,
         description='AHDS de-identification endpoint URL.',
@@ -99,6 +112,8 @@ class AhdsParams(BaseModel):
 
 
 class RedactParameter(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     type: Literal['REDACT'] = Field(default='REDACT')
     language: str = Field(
         default='en',
@@ -116,12 +131,30 @@ class RedactParameter(BaseModel):
         description='Azure Health Data Services connection settings (used only when backend="ahds").',
     )
 
+    @model_validator(mode='after')
+    def validate_language_and_backend(self) -> 'RedactParameter':
+        if self.language not in PRESIDIO_LANGUAGES:
+            raise ValueError(
+                f"Language '{self.language}' is not supported, use one of: "
+                f'{", ".join(PRESIDIO_LANGUAGES)}.'
+            )
+        if self.backend == 'ahds' and not (self.ahds and self.ahds.endpoint):
+            raise ValueError("ahds.endpoint must be set when backend is 'ahds'.")
+        return self
+
 
 class JudgeParameter(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     type: Literal['JUDGE'] = Field(default='JUDGE')
-    prompt_ref: str = Field(
-        ...,
-        description='Reference to the judge prompt (file path or template)',
+    prompt: str | None = Field(
+        default=None,
+        description='Judge prompt written inline. Mutually exclusive with prompt_ref.',
+        examples=['Flag any message that asks for medical advice.'],
+    )
+    prompt_ref: str | None = Field(
+        default=None,
+        description='Reference to the judge prompt file. Mutually exclusive with prompt.',
         examples=['prompt_injection_check.md', 'toxicity_check.txt'],
     )
     model_id: str = Field(
@@ -147,6 +180,30 @@ class JudgeParameter(BaseModel):
         default=False,
         description='If True, image and file blocks from the input are forwarded to the judge model alongside the text',
     )
+
+    @model_validator(mode='after')
+    def validate_prompt_source(self) -> 'JudgeParameter':
+        has_prompt = bool(self.prompt and self.prompt.strip())
+        has_prompt_ref = bool(self.prompt_ref and self.prompt_ref.strip())
+        if has_prompt and has_prompt_ref:
+            raise ValueError("Only one between 'prompt' and 'prompt_ref' can be set.")
+        if not has_prompt and not has_prompt_ref:
+            raise ValueError("One between 'prompt' and 'prompt_ref' must be set.")
+        return self
+
+    @model_validator(mode='after')
+    def resolve_prompt_ref(self) -> 'JudgeParameter':
+        if not self.prompt_ref:
+            return self
+
+        prompt_manager = PromptManager.get_global() or PromptManager(
+            conf=app_config.prompt_manager_config
+        )
+        try:
+            prompt_manager.get_judge_prompt(self.prompt_ref)
+        except FileNotFoundError as e:
+            raise ValueError(f'Prompt file not found: {self.prompt_ref}') from e
+        return self
 
 
 class DecisionCriteria(BaseModel):
@@ -190,6 +247,8 @@ class DecisionJudgeParameter(BaseModel):
 
 
 class GuardrailsAIParameter(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     type: Literal['GUARDRAILS_AI'] = Field(default='GUARDRAILS_AI')
     guard_name: str = Field(
         ...,
@@ -215,8 +274,23 @@ GuardrailParameter = Union[
     GuardrailsAIParameter,
 ]
 
+# Mapping GuardrailType → parameters.type
+PARAMETERS_TYPE_BY_GUARDRAIL_TYPE = {
+    GuardrailType.JUDGE: 'JUDGE',
+    GuardrailType.DECISION_JUDGE: 'DECISION_JUDGE',
+    GuardrailType.GUARDRAILS_AI: 'GUARDRAILS_AI',
+    GuardrailType.PRESIDIO_ANONYMIZER: 'REDACT',
+    GuardrailType.PRESIDIO_ANALYZER: 'REDACT',
+    GuardrailType.STARTS_WITH: 'CHECK',
+    GuardrailType.ENDS_WITH: 'CHECK',
+    GuardrailType.CONTAINS: 'CHECK',
+    GuardrailType.REGEX: 'CHECK',
+}
+
 
 class Guardrail(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     name: str = Field(
         ...,
         description='Unique name for the guardrail.',
@@ -246,7 +320,8 @@ class Guardrail(BaseModel):
         examples=['block', 'warn', 'soft_block'],
     )
     parameters: GuardrailParameter = Field(
-        description='Parameters for the guardrail check, based on the guardrail to be used'
+        description='Parameters for the guardrail check, based on the guardrail to be used',
+        discriminator='type',
     )
     response_message: str | None = Field(
         default=None,
@@ -275,19 +350,24 @@ class Guardrail(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def set_decision_judge_parameters_type(cls, data):
-        # Parameters are matched by shape. Pin the decision judge ones, so a
-        # stray LLM judge field is rejected instead of matching JudgeParameter.
-        if (
-            isinstance(data, dict)
-            and str(data.get('type', '')).upper() == GuardrailType.DECISION_JUDGE
-            and isinstance(data.get('parameters'), dict)
-        ):
-            data = {
-                **data,
-                'parameters': {'type': 'DECISION_JUDGE', **data['parameters']},
-            }
-        return data
+    def set_parameters_type(cls, data):
+        # The guardrail type picks the parameter class, so an invalid guardrail
+        # reports only the errors of its own parameters.
+        if not isinstance(data, dict) or not isinstance(data.get('parameters'), dict):
+            return data
+        guardrail_type = data.get('type', GuardrailType.STARTS_WITH)
+        if not isinstance(guardrail_type, str):
+            return data
+        try:
+            parameters_type = PARAMETERS_TYPE_BY_GUARDRAIL_TYPE[
+                GuardrailType(guardrail_type.upper())
+            ]
+        except ValueError:
+            return data
+        return {
+            **data,
+            'parameters': {'type': parameters_type, **data['parameters']},
+        }
 
     @field_validator('type', 'where', 'behavior', mode='before')
     def validate_lower_case_enum(cls, value: GuardrailBehaviorType) -> str:
@@ -321,22 +401,21 @@ class Guardrail(BaseModel):
 
     @model_validator(mode='after')
     def validate_config_type(self):
-        # Mapping GuardrailType → GuardrailConfig.config_type
-        mapping = {
-            GuardrailType.JUDGE: 'JUDGE',
-            GuardrailType.DECISION_JUDGE: 'DECISION_JUDGE',
-            GuardrailType.GUARDRAILS_AI: 'GUARDRAILS_AI',
-            GuardrailType.PRESIDIO_ANONYMIZER: 'REDACT',
-            GuardrailType.PRESIDIO_ANALYZER: 'REDACT',
-            GuardrailType.STARTS_WITH: 'CHECK',
-            GuardrailType.ENDS_WITH: 'CHECK',
-            GuardrailType.CONTAINS: 'CHECK',
-            GuardrailType.REGEX: 'CHECK',
-        }
-        expected = mapping.get(self.type)
+        expected = PARAMETERS_TYPE_BY_GUARDRAIL_TYPE.get(self.type)
         if expected and self.parameters.type != expected:
             raise ValueError(
                 f'Guardrail type {self.type} requires parameters.config_type={expected}, '
                 f'got {self.parameters.type}'
             )
+        return self
+
+    @model_validator(mode='after')
+    def validate_regex_values(self):
+        if self.type != GuardrailType.REGEX:
+            return self
+        for pattern in self.parameters.values:
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                raise ValueError(f"Invalid regex '{pattern}': {e}") from e
         return self

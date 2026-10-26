@@ -1,6 +1,7 @@
 import pytest
 
-from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.utils.app_config import PromptManagerConfig, get_app_config
 from radicalbit_ai_gateway.utils.exceptions import ProjectConfigValidationError
 from radicalbit_ai_gateway.utils.yaml_utils import (
     check_no_literal_secrets,
@@ -55,6 +56,47 @@ def test_validate_gateway_config_pydantic_error_includes_field_path():
     message = str(exc_info.value)
     assert 'chat_models' in message
     assert 'error(s)' in message
+
+
+def test_validate_gateway_config_rejects_missing_judge_prompt_file():
+    yaml_with_missing_prompt = (
+        'chat_models:\n'
+        '  - model_id: gpt\n'
+        '    model: openai/gpt-4o-mini\n'
+        'routes: {}\n'
+        'guardrails:\n'
+        '  - name: judge\n'
+        '    type: judge\n'
+        '    where: input\n'
+        '    behavior: block\n'
+        '    parameters:\n'
+        '      prompt_ref: non_existent_prompt.md\n'
+        '      model_id: gpt\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_missing_prompt, check_secrets=False)
+    assert 'Prompt file not found: non_existent_prompt.md' in str(exc_info.value)
+
+
+def test_validate_gateway_config_rejects_missing_model_prompt_file(tmp_path):
+    PromptManager.set_global(
+        PromptManager(PromptManagerConfig(prompts_dir=str(tmp_path)))
+    )
+    yaml_with_missing_prompt = (
+        'chat_models:\n'
+        '  - model_id: gpt\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    prompt_ref: non_existent_prompt.md\n'
+        'routes: {}\n'
+    )
+    try:
+        with pytest.raises(ProjectConfigValidationError) as exc_info:
+            validate_gateway_config(yaml_with_missing_prompt, check_secrets=False)
+    finally:
+        PromptManager._global_instance = None
+    message = str(exc_info.value)
+    assert 'Prompt file not found: non_existent_prompt.md' in message
+    assert str(tmp_path) not in message
 
 
 def test_validate_gateway_config_secret_violation_includes_line_number():
@@ -135,6 +177,57 @@ def test_validate_gateway_config_extra_field_includes_line():
     with pytest.raises(ProjectConfigValidationError) as exc_info:
         validate_gateway_config(yaml_with_typo, check_secrets=False)
     assert "'rout' (line 6)" in str(exc_info.value)
+
+
+def test_validate_gateway_config_suggests_field_with_reordered_words():
+    yaml_with_reordered_field = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    cached_input_cost_per_million_tokens: 0.5\n'
+        'routes: {}\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_reordered_field, check_secrets=False)
+    message = str(exc_info.value)
+    assert "'chat_models.0.cached_input_cost_per_million_tokens' (line 4)" in message
+    assert "did you mean 'input_cached_cost_per_million_tokens'?" in message
+
+
+def test_validate_gateway_config_suggests_nested_field_on_typo():
+    yaml_with_typo = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        '    retry_attemps: 5\n'
+        'routes: {}\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_typo, check_secrets=False)
+    assert "did you mean 'retry_attempts'?" in str(exc_info.value)
+
+
+def test_validate_gateway_config_reports_only_the_guardrail_own_parameters():
+    yaml_with_both_prompts = (
+        'chat_models:\n'
+        '  - model_id: m1\n'
+        '    model: openai/gpt-4o-mini\n'
+        'guardrails:\n'
+        '  - name: j\n'
+        '    type: judge\n'
+        '    parameters:\n'
+        '      model_id: m1\n'
+        '      prompt: hi\n'
+        '      prompt_ref: toxicity_check.md\n'
+        'routes:\n'
+        '  default-route:\n'
+        '    chat_models: [m1]\n'
+    )
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config(yaml_with_both_prompts, check_secrets=False)
+    message = str(exc_info.value)
+    assert 'Invalid gateway configuration - 1 error(s)' in message
+    assert "Only one between 'prompt' and 'prompt_ref' can be set." in message
 
 
 # ---------------------------------------------------------------------------

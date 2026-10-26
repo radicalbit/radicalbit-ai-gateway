@@ -16,7 +16,14 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_deepseek import ChatDeepSeek
-from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.prompt_manager import PromptManager
@@ -31,6 +38,8 @@ ENABLE_PROMPT_CACHE_PARAM = 'enable_prompt_cache'
 
 
 class Model(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     model_id: str = Field(
         ...,
         description='Unique name for the model configuration.',
@@ -67,7 +76,7 @@ class Model(BaseModel):
         default=None,
         description=(
             'Reference (path/filename) to a Markdown file containing the system prompt. '
-            'If set, the file content is loaded at startup and overrides the inline `prompt`.'
+            'The file content is loaded at startup. Mutually exclusive with `prompt`.'
         ),
         examples=['customer_service.md', 'prompts/system_prompt.md'],
     )
@@ -259,7 +268,10 @@ class Model(BaseModel):
         prompt_manager = PromptManager.get_global() or PromptManager(
             conf=app_config.prompt_manager_config
         )
-        prompt_manager.get_model_prompt(self.prompt_ref)
+        try:
+            prompt_manager.get_model_prompt(self.prompt_ref)
+        except FileNotFoundError as e:
+            raise ValueError(f'Prompt file not found: {self.prompt_ref}') from e
         return self
 
 

@@ -208,7 +208,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         mock_span.set_attribute.assert_any_call(
             'transcription.response.fallback_triggered', False
         )
-        # AG-895: never the raw audio content, only its size.
+        # never the raw audio content, only its size.
         for call in mock_span.set_attribute.call_args_list:
             assert b'fake-audio' not in call.args
 

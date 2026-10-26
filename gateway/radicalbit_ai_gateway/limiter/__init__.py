@@ -7,6 +7,7 @@ from radicalbit_ai_gateway.limiter.storage import Storage
 from radicalbit_ai_gateway.limiter.storage.memory import InMemoryStorage
 from radicalbit_ai_gateway.limiter.storage.redis import RedisStorage
 from radicalbit_ai_gateway.limiter.window_config import (
+    Consumption,
     ScenarioType,
     WindowConfig,
     WindowStats,
@@ -16,6 +17,7 @@ from radicalbit_ai_gateway.limiter.window_config import (
 __all__ = [
     'AlignedFixedWindowLimiter',
     'BaseFixedWindowLimiter',
+    'Consumption',
     'FixedWindowLimiter',
     'InMemoryStorage',
     'RedisStorage',

@@ -7,6 +7,7 @@ import pytest
 from tests.common.audio import make_wav_bytes
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 
+from radicalbit_ai_gateway.limiter import Consumption
 from radicalbit_ai_gateway.limiting.duration_limiter import (
     DurationLimiter,
     estimate_audio_duration_seconds,
@@ -59,14 +60,11 @@ class TestDurationLimiter:
         )
         assert limiter.limiter is not None
 
-    def test_init_without_max_duration_seconds_raises_error(self):
-        config = AudioDurationLimiting(window_size='1 minute')
+    def test_config_without_max_duration_seconds_is_rejected(self):
         with pytest.raises(
             ValueError, match='max_duration_seconds must be set for duration limiting'
         ):
-            DurationLimiter(
-                project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
-            )
+            AudioDurationLimiting(window_size='1 minute')
 
     @pytest.mark.asyncio
     async def test_check_and_count_duration_no_config_is_noop(self):
@@ -87,7 +85,9 @@ class TestDurationLimiter:
             project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
         )
 
-        with patch.object(limiter.limiter, 'hit', new=AsyncMock()) as mock_hit:
+        with patch.object(
+            limiter.limiter, 'consume', new=AsyncMock(return_value=Consumption(1, 'w'))
+        ) as mock_consume:
             await limiter.check_and_count_duration(
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
@@ -96,8 +96,8 @@ class TestDurationLimiter:
                 group_name='test-group',
                 audio_bytes=make_wav_bytes(10.0),
             )
-            mock_hit.assert_called_once()
-            assert mock_hit.call_args.kwargs['cost'] == 10
+            mock_consume.assert_called_once()
+            assert mock_consume.call_args.kwargs['cost'] == 10
 
     @pytest.mark.asyncio
     async def test_check_and_count_duration_exceeds_limit_raises(self):
@@ -139,7 +139,9 @@ class TestDurationLimiter:
             project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
         )
 
-        with patch.object(limiter.limiter, 'hit', new=AsyncMock()) as mock_hit:
+        with patch.object(
+            limiter.limiter, 'consume', new=AsyncMock(return_value=Consumption(1, 'w'))
+        ) as mock_consume:
             await limiter.check_and_count_duration(
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
@@ -148,7 +150,7 @@ class TestDurationLimiter:
                 group_name='test-group',
                 audio_bytes=b'not-an-audio-file' * 20,
             )
-            mock_hit.assert_not_called()
+            mock_consume.assert_not_called()
 
         # A follow-up call with a real, large file must still be evaluated
         # against the (still-empty) window rather than being blocked by the

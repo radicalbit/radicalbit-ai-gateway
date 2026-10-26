@@ -31,7 +31,7 @@ class LimitingAlgorithmType(str, Enum):
 
 
 class Limiting(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(extra='forbid', populate_by_name=True)
 
     algorithm: LimitingAlgorithmType = Field(
         default=LimitingAlgorithmType.FIXED_WINDOW,
@@ -147,10 +147,16 @@ class Limiting(BaseModel):
 
 
 class RateLimiting(Limiting):
-    pass
+    @model_validator(mode='after')
+    def max_requests_set(self):
+        if not self.max_requests:
+            raise ValueError('max_requests must be set for rate limiting.')
+        return self
 
 
 class TokenLimiting(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     input: Limiting | None = Field(
         default=None, description='Rate limiting for input tokens.'
     )
@@ -158,10 +164,26 @@ class TokenLimiting(BaseModel):
         default=None, description='Rate limiting for output tokens.'
     )
 
+    @model_validator(mode='after')
+    def max_tokens_set(self):
+        for side, limiting in (('input', self.input), ('output', self.output)):
+            if limiting is not None and not limiting.max_tokens:
+                raise ValueError(f'{side}.max_tokens must be set for token limiting.')
+        return self
+
 
 class BudgetLimiting(Limiting):
-    pass
+    @model_validator(mode='after')
+    def max_budget_set(self):
+        # 0 is a valid budget: it blocks every request.
+        if self.max_budget is None:
+            raise ValueError('max_budget must be set for budget limiting.')
+        return self
 
 
 class AudioDurationLimiting(Limiting):
-    pass
+    @model_validator(mode='after')
+    def max_duration_seconds_set(self):
+        if not self.max_duration_seconds:
+            raise ValueError('max_duration_seconds must be set for duration limiting.')
+        return self

@@ -21,14 +21,18 @@ export default () => {
     }
 
     submitForm(async ({ form: formData }, setError) => {
+      const isWindow = formData.timeAggregation === AlertTimeAggregationEnum.WINDOW;
+
       const data = {
         name: formData.name,
         description: formData.description ?? null,
-        project: formData.project,
-        route: formData.route,
-        scope: AlertScopeEnum.ROUTE,
+        project: formData.scope === AlertScopeEnum.CREDENTIAL ? null : formData.project,
+        route: formData.scope === AlertScopeEnum.ROUTE ? formData.route : null,
+        credential: formData.scope === AlertScopeEnum.CREDENTIAL ? formData.credential : null,
+        scope: formData.scope,
         event: formData.event,
-        timeAggregation: AlertTimeAggregationEnum.INSTANT,
+        timeAggregation: formData.timeAggregation,
+        windowSize: isWindow ? formData.windowSize : null,
         channel: AlertChannelEnum.EMAIL,
         recipients: formData.recipients,
       };

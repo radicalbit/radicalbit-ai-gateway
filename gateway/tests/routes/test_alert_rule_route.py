@@ -1,22 +1,35 @@
 import datetime
 import json
+from types import SimpleNamespace
+from unittest.mock import patch
 import uuid
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import yaml
 
+from tests.common import db_mock  # noqa: F401  (registers every table Key relates to)
 from tests.common.db_integration import DatabaseIntegration
+from tests.common.db_mock import (
+    get_sample_group_limit,
+    get_sample_group_plain,
+    get_sample_key_limit,
+)
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
+from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
+from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
+from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
     AlertRuleInvalidEventError,
+    AlertRuleInvalidTargetError,
     AlertRuleNotFoundError,
     AlertRuleUnsupportedTimeAggregationError,
     alert_rule_exception_handler,
@@ -31,6 +44,9 @@ chat_models:
     model: openai/gpt-4
   - model_id: gpt-3.5
     model: openai/gpt-3.5
+transcription_models:
+  - model_id: whisper
+    model: openai/whisper-1
 """
 
 
@@ -39,10 +55,12 @@ def route_config(
     fallback: bool = False,
     caching: bool = False,
     pii_values: tuple[str, ...] = ('secret',),
+    limits: dict | None = None,
 ) -> GatewayConfig:
     """Build a published configuration with one route, `chat`.
 
     `guardrails` maps each guardrail attached to the route to its phase.
+    `limits` holds the route's limiting sections, as in the YAML.
     """
     raw = yaml.safe_load(MODELS)
     route: dict = {'chat_models': ['gpt-4', 'gpt-3.5']}
@@ -62,8 +80,51 @@ def route_config(
     if caching:
         raw['cache'] = {'redis_host': 'localhost', 'redis_port': 6379}
         route['caching'] = {'type': 'exact', 'ttl': 60}
+    route.update(limits or {})
     raw['routes'] = {'chat': route}
     return GatewayConfig.model_validate(raw)
+
+
+def rate_limit(window_size='1 minute', max_requests=10) -> dict:
+    return {'rate_limiting': {'window_size': window_size, 'max_requests': max_requests}}
+
+
+EVERY_LIMIT = {
+    'rate_limiting': {'window_size': '1 minute', 'max_requests': 10},
+    'token_limiting': {
+        'input': {'window_size': '1 hour', 'max_token': 1000},
+        'output': {'window_size': '1 day', 'max_token': 500},
+    },
+    'budget_limiting': {'window_size': '1 month', 'max_budget': 5.0},
+    'duration_limiting': {'window_size': '90 minutes', 'max_duration_seconds': 600},
+    'transcription_models': ['whisper'],
+}
+
+
+class FakeProjectBudgets:
+    """The project budget limits stored in the DB, by project uuid."""
+
+    def __init__(self):
+        self.limits: dict[str, list[SimpleNamespace]] = {}
+
+    def add(self, project_uuid, window_size: str, max_value: float = 10.0) -> None:
+        self.limits.setdefault(str(project_uuid), []).append(
+            SimpleNamespace(window_size=window_size, max_value=max_value)
+        )
+
+    def get_by_project_uuid(self, project_uuid):
+        return list(self.limits.get(str(project_uuid), []))
+
+
+class FakeProjects:
+    """The projects that are not deleted, by uuid."""
+
+    def __init__(self):
+        self.names: dict[str, str] = {}
+
+    def get_by_uuid(self, project_uuid):
+        name = self.names.get(str(project_uuid))
+        return SimpleNamespace(name=name) if name else None
 
 
 class TestAlertRuleRoute(DatabaseIntegration):
@@ -71,14 +132,21 @@ class TestAlertRuleRoute(DatabaseIntegration):
     def setUpClass(cls):
         super().setUpClass()
         cls.project_configs: dict[str, ProjectEntry] = {}
+        cls.project_budgets = FakeProjectBudgets()
+        cls.projects = FakeProjects()
         service = AlertRuleService(
             alert_rule_dao=AlertRuleDAO(cls.db),
             project_configs=cls.project_configs,
+            project_dao=cls.projects,
+            key_dao=KeyDAO(cls.db),
+            project_budget_limit_dao=cls.project_budgets,
+            key_limit_dao=KeyLimitDAO(cls.db),
         )
         app = FastAPI()
         for err in (
             AlertRuleNotFoundError,
             AlertRuleInvalidEventError,
+            AlertRuleInvalidTargetError,
             AlertRuleUnsupportedTimeAggregationError,
             AlertRuleInternalError,
         ):
@@ -88,6 +156,8 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
     def setUp(self):
         self.project_configs.clear()
+        self.project_budgets.limits.clear()
+        self.projects.names = {str(PROJECT_UUID): PROJECT_NAME}
 
     def publish(self, config: GatewayConfig) -> None:
         self.project_configs[PROJECT_NAME] = ProjectEntry(
@@ -97,7 +167,7 @@ class TestAlertRuleRoute(DatabaseIntegration):
     def unpublish(self) -> None:
         self.project_configs.pop(PROJECT_NAME, None)
 
-    def create(self, event: str, route: str = 'chat'):
+    def create(self, event: str, route: str = 'chat', **overrides):
         payload = {
             'name': 'rule',
             'project': str(PROJECT_UUID),
@@ -105,29 +175,49 @@ class TestAlertRuleRoute(DatabaseIntegration):
             'event': event,
             'recipients': ['ops@example.com'],
             'enabled': True,
+            **overrides,
         }
         return self.client.post('/rule', json=payload)
 
-    def created(self, event: str) -> dict:
-        response = self.create(event)
+    def rejected(self, response) -> str:
+        assert response.status_code == 400, response.text
+        return response.json()['error']['message']
+
+    def created(self, event: str, **overrides) -> dict:
+        response = self.create(event, **overrides)
         assert response.status_code == 201, response.text
         return response.json()
 
-    def insert_rule(self, event: str, route: str = 'chat') -> AlertRule:
+    def insert_rule(self, event: str, route: str = 'chat', **columns) -> AlertRule:
         """Store a rule bypassing validation, as an older release could have."""
         now = datetime.datetime.now(tz=datetime.UTC)
         return self.insert(
             AlertRule(
-                name='legacy',
-                project=str(PROJECT_UUID),
-                route=route,
-                scope='route',
-                event=event,
-                time_aggregation='instant',
-                channel='email',
-                recipients=json.dumps(['ops@example.com']),
-                enabled=True,
-                deleted=False,
+                **{
+                    'name': 'legacy',
+                    'project': str(PROJECT_UUID),
+                    'route': route,
+                    'scope': 'route',
+                    'event': event,
+                    'time_aggregation': 'instant',
+                    'channel': 'email',
+                    'recipients': json.dumps(['ops@example.com']),
+                    'enabled': True,
+                    'deleted': False,
+                    'created_at': now,
+                    'updated_at': now,
+                    **columns,
+                }
+            )
+        )
+
+    def insert_credential(self, name: str) -> Key:
+        now = datetime.datetime.now(tz=datetime.UTC)
+        return self.insert(
+            Key(
+                name=name,
+                hashed_key=uuid.uuid4().hex,
+                obscured_key='sk-...abcd',
                 created_at=now,
                 updated_at=now,
             )
@@ -173,7 +263,12 @@ class TestAlertRuleRoute(DatabaseIntegration):
     def test_alertable_events_never_offer_cache_events(self):
         self.publish(route_config(caching=True))
 
-        assert self.alertable_events() == {'guardrail': [], 'fallback': []}
+        assert self.alertable_events() == {
+            'guardrail': [],
+            'fallback': [],
+            'limit': [],
+            'threshold': [],
+        }
 
     def test_alertable_events_empty_for_unpublished_route(self):
         self.publish(route_config(fallback=True))
@@ -181,7 +276,682 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert self.alertable_events(route='missing') == {
             'guardrail': [],
             'fallback': [],
+            'limit': [],
+            'threshold': [],
         }
+
+    # --- limit and threshold events ---
+
+    def test_alertable_events_offer_every_route_limit(self):
+        self.publish(route_config(limits=EVERY_LIMIT))
+
+        events = self.alertable_events()
+
+        assert [e['event'] for e in events['limit']] == [
+            'rate_limit-exceeded-1m',
+            'token_input_limit-exceeded-1h',
+            'token_output_limit-exceeded-1d',
+            'budget_limit-exceeded-1mo',
+            'audio_duration_limit-exceeded-90m',
+        ]
+
+    def test_alertable_events_offer_one_threshold_per_global_percentage(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        with patch.object(
+            get_app_config().alert_config, 'alert_threshold_percentages', [50, 90]
+        ):
+            events = self.alertable_events()
+
+        assert [e['event'] for e in events['threshold']] == [
+            'rate_limit-50pct-1m',
+            'rate_limit-90pct-1m',
+        ]
+
+    def test_limit_and_threshold_events_use_the_limit_window_aggregation(self):
+        self.publish(route_config(limits=EVERY_LIMIT))
+
+        events = self.alertable_events()
+
+        items = events['limit'] + events['threshold']
+        assert len(events['threshold']) == 2 * len(events['limit'])
+        assert {item['aggregation'] for item in items} == {'limit_window'}
+
+    def test_limit_events_carry_a_label(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        [exceeded] = self.alertable_events()['limit']
+
+        assert exceeded['label']
+
+    def test_the_window_is_named_by_the_largest_unit_that_divides_it(self):
+        cases = {
+            '1 month': '1mo',
+            '30 days': '1mo',
+            '2 weeks': '2w',
+            '14 days': '2w',
+            '8 days': '8d',
+            '90 minutes': '90m',
+            '120 minutes': '2h',
+            '45 seconds': '45s',
+            3600: '1h',
+        }
+        for window_size, name in cases.items():
+            with self.subTest(window_size=window_size):
+                self.publish(route_config(limits=rate_limit(window_size)))
+
+                [exceeded] = self.alertable_events()['limit']
+
+                assert exceeded['event'] == f'rate_limit-exceeded-{name}'
+
+    def test_the_algorithm_is_not_part_of_the_name(self):
+        self.publish(
+            route_config(
+                limits={
+                    'rate_limiting': {
+                        'algorithm': 'ALIGNED_FIXED_WINDOW',
+                        'window_size': '1 hour',
+                        'max_requests': 10,
+                    }
+                }
+            )
+        )
+
+        [exceeded] = self.alertable_events()['limit']
+
+        assert exceeded['event'] == 'rate_limit-exceeded-1h'
+
+    def test_route_budget_is_not_offered_when_the_project_has_a_budget(self):
+        self.publish(route_config(limits=EVERY_LIMIT))
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        events = self.alertable_events()
+
+        offered = [e['event'] for e in events['limit'] + events['threshold']]
+        assert offered
+        assert not [e for e in offered if e.startswith('budget_limit-')]
+
+    def test_create_rule_on_a_limit_event_with_limit_window(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        rule = self.created('rate_limit-exceeded-1m', timeAggregation='limit_window')
+
+        assert rule['timeAggregation'] == 'limit_window'
+
+    def test_create_rule_on_a_threshold_event_with_limit_window(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        rule = self.created('rate_limit-75pct-1m', timeAggregation='limit_window')
+
+        assert rule['event'] == 'rate_limit-75pct-1m'
+
+    def test_a_limit_event_takes_only_the_limit_window_aggregation(self):
+        self.publish(route_config(limits=rate_limit()))
+
+        message = self.rejected(self.create('rate_limit-exceeded-1m'))
+
+        assert 'limit_window' in message
+
+    def test_limit_window_is_only_for_limit_and_threshold_events(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(
+            self.create('fallback-triggered', timeAggregation='limit_window')
+        )
+
+        assert 'limit_window' in message
+
+    def test_update_keeps_a_limit_rule_on_limit_window(self):
+        self.publish(route_config(limits=rate_limit()))
+        rule = self.created('rate_limit-exceeded-1m', timeAggregation='limit_window')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'timeAggregation': 'instant'}
+        )
+
+        assert 'limit_window' in self.rejected(response)
+
+    def test_a_limit_rule_is_stale_when_the_limit_is_removed(self):
+        self.publish(route_config(limits=rate_limit()))
+        rule = self.created('rate_limit-exceeded-1m', timeAggregation='limit_window')
+
+        self.publish(route_config())
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'rate limit' in listed['staleReason'].lower()
+
+    def test_a_limit_rule_is_stale_when_the_window_changes(self):
+        self.publish(route_config(limits=rate_limit('1 minute')))
+        rule = self.created('rate_limit-exceeded-1m', timeAggregation='limit_window')
+
+        self.publish(route_config(limits=rate_limit('1 hour')))
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert '1m' in listed['staleReason']
+
+    def test_a_limit_rule_is_not_stale_when_the_maximum_changes(self):
+        self.publish(route_config(limits=rate_limit(max_requests=10)))
+        rule = self.created('rate_limit-75pct-1m', timeAggregation='limit_window')
+
+        self.publish(route_config(limits=rate_limit(max_requests=99)))
+
+        assert self.listed(rule['uuid'])['stale'] is False
+
+    def test_a_route_budget_rule_is_stale_once_the_project_has_a_budget(self):
+        self.publish(route_config(limits=EVERY_LIMIT))
+        rule = self.created('budget_limit-exceeded-1mo', timeAggregation='limit_window')
+
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'project' in listed['staleReason'].lower()
+
+    def test_a_threshold_rule_is_stale_when_its_percentage_is_dropped(self):
+        self.publish(route_config(limits=rate_limit()))
+        rule = self.created('rate_limit-75pct-1m', timeAggregation='limit_window')
+
+        with patch.object(
+            get_app_config().alert_config, 'alert_threshold_percentages', [90]
+        ):
+            listed = self.listed(rule['uuid'])
+
+        assert listed['stale'] is True
+        assert '75%' in listed['staleReason']
+
+    # --- project budget ---
+
+    def project_events(self, project_uuid=PROJECT_UUID) -> dict:
+        response = self.client.get(f'/projects/{project_uuid}/alertable-events')
+        assert response.status_code == 200
+        return response.json()
+
+    def create_project_rule(self, event: str = 'budget_limit-exceeded-1d', **overrides):
+        return self.create(
+            event,
+            **{
+                'scope': 'project',
+                'route': None,
+                'timeAggregation': 'limit_window',
+                **overrides,
+            },
+        )
+
+    def created_project_rule(self, event: str = 'budget_limit-exceeded-1d') -> dict:
+        response = self.create_project_rule(event)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def test_project_events_offer_each_budget_limit_and_its_thresholds(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.project_budgets.add(PROJECT_UUID, '30 days')
+
+        events = self.project_events()
+
+        assert [e['event'] for e in events['limit']] == [
+            'budget_limit-exceeded-1d',
+            'budget_limit-exceeded-1mo',
+        ]
+        assert [e['event'] for e in events['threshold']] == [
+            'budget_limit-75pct-1d',
+            'budget_limit-98pct-1d',
+            'budget_limit-75pct-1mo',
+            'budget_limit-98pct-1mo',
+        ]
+        assert events['guardrail'] == []
+        assert events['fallback'] == []
+
+    def test_budget_limits_on_the_same_window_offer_their_events_once(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.project_budgets.add(PROJECT_UUID, '24 hours')
+        self.project_budgets.add(PROJECT_UUID, '86400')
+
+        events = self.project_events()
+
+        assert [e['event'] for e in events['limit']] == ['budget_limit-exceeded-1d']
+
+    def test_an_unreadable_stored_window_is_skipped(self):
+        self.project_budgets.add(PROJECT_UUID, 'whenever')
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        events = self.project_events()
+
+        assert [e['event'] for e in events['limit']] == ['budget_limit-exceeded-1d']
+
+    def test_project_events_use_the_limit_window_aggregation(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        events = self.project_events()
+
+        items = events['limit'] + events['threshold']
+        assert items
+        assert {item['aggregation'] for item in items} == {'limit_window'}
+        assert all(item['label'] for item in items)
+
+    def test_project_events_are_empty_without_a_budget_limit(self):
+        events = self.project_events()
+
+        assert events['limit'] == []
+        assert events['threshold'] == []
+
+    def test_project_events_are_empty_for_a_deleted_project(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.projects.names.clear()
+
+        assert self.project_events()['limit'] == []
+
+    def test_project_events_do_not_need_a_published_configuration(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.unpublish()
+
+        assert self.project_events()['limit']
+
+    def test_create_a_project_rule_on_a_budget_event(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        rule = self.created_project_rule('budget_limit-98pct-1d')
+
+        assert rule['scope'] == 'project'
+        assert rule['project'] == str(PROJECT_UUID)
+        assert rule['projectName'] == PROJECT_NAME
+        assert rule['route'] is None
+        assert rule['timeAggregation'] == 'limit_window'
+        assert rule['stale'] is False
+
+    def test_a_project_rule_rejects_an_event_the_project_does_not_offer(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        message = self.rejected(self.create_project_rule('budget_limit-exceeded-1h'))
+
+        assert 'budget_limit-exceeded-1h' in message
+
+    def test_a_project_rule_rejects_a_route_event(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        response = self.create_project_rule('rate_limit-exceeded-1d')
+
+        assert response.status_code == 400
+
+    def test_a_project_rule_takes_only_the_limit_window_aggregation(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+
+        response = self.create_project_rule(timeAggregation='instant')
+
+        assert 'limit_window' in self.rejected(response)
+
+    def test_update_moves_a_project_rule_to_another_offered_event(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        self.project_budgets.add(PROJECT_UUID, '1 month')
+        rule = self.created_project_rule()
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'event': 'budget_limit-75pct-1mo'}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['event'] == 'budget_limit-75pct-1mo'
+
+    def test_update_rejects_a_project_event_that_is_not_offered(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        rule = self.created_project_rule()
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'event': 'budget_limit-exceeded-1w'}
+        )
+
+        assert response.status_code == 400
+
+    def test_a_project_rule_is_stale_once_the_project_is_deleted(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        rule = self.created_project_rule()
+
+        self.projects.names.clear()
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'project' in listed['staleReason'].lower()
+
+    def test_a_project_rule_is_stale_without_a_budget_limit_on_its_window(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        rule = self.created_project_rule()
+
+        self.project_budgets.limits.clear()
+        self.project_budgets.add(PROJECT_UUID, '1 week')
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert '1d' in listed['staleReason']
+
+    def test_a_project_rule_is_not_stale_when_the_maximum_changes(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day', max_value=10)
+        rule = self.created_project_rule()
+
+        self.project_budgets.limits.clear()
+        self.project_budgets.add(PROJECT_UUID, '1 day', max_value=500)
+
+        assert self.listed(rule['uuid'])['stale'] is False
+
+    def test_a_project_rule_does_not_depend_on_the_published_configuration(self):
+        self.project_budgets.add(PROJECT_UUID, '1 day')
+        rule = self.created_project_rule()
+
+        self.unpublish()
+
+        assert self.listed(rule['uuid'])['stale'] is False
+
+    # --- credential limits ---
+
+    def credential_events(self, credential_uuid) -> dict:
+        response = self.client.get(f'/keys/{credential_uuid}/alertable-events')
+        assert response.status_code == 200
+        return response.json()
+
+    def add_credential_limit(
+        self, credential, category: str, window_size: str, max_value: float = 10.0
+    ):
+        return self.insert(
+            get_sample_key_limit(
+                uuid=uuid.uuid4(),
+                key_uuid=credential.uuid,
+                category=category,
+                window_size=window_size,
+                max_value=max_value,
+            )
+        )
+
+    def add_group_limit(self, credential, category: str, window_size: str):
+        """Give the credential a limit propagated from a group."""
+        group = self.insert(get_sample_group_plain(uuid=uuid.uuid4()))
+        group_limit = self.insert(
+            get_sample_group_limit(
+                uuid=uuid.uuid4(),
+                group_uuid=group.uuid,
+                category=category,
+                window_size=window_size,
+            )
+        )
+        return self.insert(
+            get_sample_key_limit(
+                uuid=uuid.uuid4(),
+                key_uuid=credential.uuid,
+                category=category,
+                window_size=window_size,
+                group_limit_uuid=group_limit.uuid,
+            )
+        )
+
+    def create_credential_rule(self, credential, event: str, **overrides):
+        return self.create(
+            event,
+            **{
+                'scope': 'credential',
+                'project': None,
+                'route': None,
+                'credential': str(credential.uuid),
+                'timeAggregation': 'limit_window',
+                **overrides,
+            },
+        )
+
+    def created_credential_rule(self, credential, event: str) -> dict:
+        response = self.create_credential_rule(credential, event)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def test_credential_events_offer_one_event_per_limit_and_window(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        self.add_credential_limit(credential, 'request_rate', '1 day')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == [
+            'rate_limit-exceeded-1m',
+            'rate_limit-exceeded-1d',
+        ]
+
+    def test_credential_events_cover_every_credential_category(self):
+        credential = self.insert_credential('billing-service')
+        for category in ('budget', 'token_output', 'token_input', 'request_rate'):
+            self.add_credential_limit(credential, category, '1 hour')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == [
+            'rate_limit-exceeded-1h',
+            'token_input_limit-exceeded-1h',
+            'token_output_limit-exceeded-1h',
+            'budget_limit-exceeded-1h',
+        ]
+
+    def test_credential_events_offer_one_threshold_per_global_percentage(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['threshold']] == [
+            'rate_limit-75pct-1m',
+            'rate_limit-98pct-1m',
+        ]
+        items = events['limit'] + events['threshold']
+        assert {item['aggregation'] for item in items} == {'limit_window'}
+        assert all(item['label'] for item in items)
+        assert events['guardrail'] == []
+        assert events['fallback'] == []
+
+    def test_a_limit_propagated_from_a_group_counts_like_a_direct_one(self):
+        credential = self.insert_credential('billing-service')
+        self.add_group_limit(credential, 'token_input', '1 day')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == [
+            'rate_limit-exceeded-1m',
+            'token_input_limit-exceeded-1d',
+        ]
+
+    def test_direct_and_group_limits_on_the_same_window_offer_their_events_once(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        self.add_group_limit(credential, 'request_rate', '60 seconds')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == ['rate_limit-exceeded-1m']
+
+    def test_credential_events_are_empty_without_limits(self):
+        credential = self.insert_credential('billing-service')
+
+        events = self.credential_events(credential.uuid)
+
+        assert events['limit'] == []
+        assert events['threshold'] == []
+
+    def test_credential_events_are_empty_for_an_unknown_credential(self):
+        assert self.credential_events(uuid.uuid4())['limit'] == []
+
+    def test_create_a_credential_rule_on_a_limit_event(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        rule = self.created_credential_rule(credential, 'rate_limit-75pct-1m')
+
+        assert rule['scope'] == 'credential'
+        assert rule['credentialUuid'] == str(credential.uuid)
+        assert rule['credentialName'] == 'billing-service'
+        assert rule['project'] is None
+        assert rule['projectName'] is None
+        assert rule['route'] is None
+        assert rule['stale'] is False
+
+    def test_a_credential_rule_rejects_an_event_the_credential_does_not_offer(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        response = self.create_credential_rule(credential, 'rate_limit-exceeded-1d')
+
+        assert 'rate_limit-exceeded-1d' in self.rejected(response)
+
+    def test_a_credential_rule_takes_only_the_limit_window_aggregation(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        response = self.create_credential_rule(
+            credential, 'rate_limit-exceeded-1m', timeAggregation='instant'
+        )
+
+        assert 'limit_window' in self.rejected(response)
+
+    def test_update_moves_a_credential_rule_to_another_offered_event(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        self.add_credential_limit(credential, 'budget', '1 day')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'event': 'budget_limit-98pct-1d'}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['event'] == 'budget_limit-98pct-1d'
+
+    def test_update_rejects_a_credential_event_that_is_not_offered(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}', json={'event': 'budget_limit-exceeded-1m'}
+        )
+
+        assert response.status_code == 400
+
+    def test_a_credential_rule_is_stale_once_the_credential_is_deleted(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        KeyDAO(self.db).delete_by_uuid(credential.uuid)
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'credential' in listed['staleReason'].lower()
+
+    def test_a_credential_rule_is_stale_when_its_limit_is_removed(self):
+        credential = self.insert_credential('billing-service')
+        limit = self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        KeyLimitDAO(self.db).delete_by_uuid(limit.uuid)
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert 'rate limit' in listed['staleReason'].lower()
+        assert '1m' in listed['staleReason']
+
+    def test_a_credential_rule_is_stale_when_the_window_changes(self):
+        credential = self.insert_credential('billing-service')
+        limit = self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        KeyLimitDAO(self.db).delete_by_uuid(limit.uuid)
+        self.add_credential_limit(credential, 'request_rate', '1 hour')
+
+        listed = self.listed(rule['uuid'])
+        assert listed['stale'] is True
+        assert '1m' in listed['staleReason']
+
+    def test_a_credential_rule_is_not_stale_when_the_maximum_changes(self):
+        credential = self.insert_credential('billing-service')
+        limit = self.add_credential_limit(
+            credential, 'request_rate', '1 minute', max_value=100
+        )
+        rule = self.created_credential_rule(credential, 'rate_limit-exceeded-1m')
+
+        KeyLimitDAO(self.db).delete_by_uuid(limit.uuid)
+        self.add_credential_limit(credential, 'request_rate', '1 minute', max_value=5)
+
+        assert self.listed(rule['uuid'])['stale'] is False
+
+    def test_a_rule_on_a_group_limit_is_stale_once_the_group_limit_is_gone(self):
+        credential = self.insert_credential('billing-service')
+        key_limit = self.add_group_limit(credential, 'budget', '1 day')
+        rule = self.created_credential_rule(credential, 'budget_limit-exceeded-1d')
+
+        KeyLimitDAO(self.db).delete_by_uuid(key_limit.uuid)
+
+        assert self.listed(rule['uuid'])['stale'] is True
+
+    def test_an_unreadable_credential_limit_is_skipped(self):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', 'whenever')
+        self.add_credential_limit(credential, 'mystery', '1 hour')
+        self.add_credential_limit(credential, 'budget', '1 day')
+
+        events = self.credential_events(credential.uuid)
+
+        assert [e['event'] for e in events['limit']] == ['budget_limit-exceeded-1d']
+
+    def test_credential_events_are_empty_when_credentials_are_not_wired(self):
+        service = AlertRuleService(alert_rule_dao=AlertRuleDAO(self.db))
+        app = FastAPI()
+        app.include_router(AlertRuleRoute.get_alert_rule_router(service))
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+
+        response = TestClient(app).get(f'/keys/{credential.uuid}/alertable-events')
+
+        assert response.status_code == 200
+        assert response.json()['limit'] == []
+
+    def test_a_credential_rule_without_a_credential_is_stale(self):
+        rule = self.insert_rule(
+            'rate_limit-exceeded-1m',
+            scope='credential',
+            project=None,
+            route=None,
+            credential_uuid=None,
+            time_aggregation='limit_window',
+        )
+
+        listed = self.listed(rule.uuid)
+
+        assert listed['stale'] is True
+        assert 'credential' in listed['staleReason'].lower()
+
+    def test_a_credential_rule_on_an_event_that_is_not_a_limit_is_stale(self):
+        credential = self.insert_credential('billing-service')
+        rule = self.insert_rule(
+            'fallback-triggered',
+            scope='credential',
+            project=None,
+            route=None,
+            credential_uuid=credential.uuid,
+        )
+
+        listed = self.listed(rule.uuid)
+
+        assert listed['stale'] is True
+        assert 'fallback-triggered' in listed['staleReason']
+
+    def test_a_credential_threshold_rule_is_stale_when_its_percentage_is_dropped(
+        self,
+    ):
+        credential = self.insert_credential('billing-service')
+        self.add_credential_limit(credential, 'request_rate', '1 minute')
+        rule = self.created_credential_rule(credential, 'rate_limit-75pct-1m')
+
+        with patch.object(
+            get_app_config().alert_config, 'alert_threshold_percentages', [90]
+        ):
+            listed = self.listed(rule['uuid'])
+
+        assert listed['stale'] is True
+        assert '75%' in listed['staleReason']
 
     # --- create / update validation ---
 
@@ -371,3 +1141,237 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert response.status_code == 200
         assert self.client.get(f'/rule/{rule["uuid"]}').status_code == 404
         assert all(r['uuid'] != rule['uuid'] for r in self.client.get('/rule').json())
+
+    # --- scopes and aggregations ---
+
+    def test_alertable_guardrail_and_fallback_events_let_the_user_pick_the_aggregation(
+        self,
+    ):
+        self.publish(route_config(guardrails={'pii': 'input'}, fallback=True))
+
+        events = self.alertable_events()
+
+        items = events['guardrail'] + events['fallback']
+        assert items
+        assert {item['aggregation'] for item in items} == {'selectable'}
+
+    def test_a_route_rule_carries_its_scope_and_no_credential_or_window(self):
+        self.publish(route_config(fallback=True))
+
+        rule = self.created('fallback-triggered')
+
+        assert rule['scope'] == 'route'
+        assert rule['project'] == str(PROJECT_UUID)
+        assert rule['route'] == 'chat'
+        assert rule['credentialUuid'] is None
+        assert rule['credentialName'] is None
+        assert rule['timeAggregation'] == 'instant'
+        assert rule['windowSize'] is None
+
+    def test_route_scope_requires_a_route(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(self.create('fallback-triggered', route=None))
+
+        assert 'route' in message.lower()
+
+    def test_route_scope_requires_a_project(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(self.create('fallback-triggered', project=None))
+
+        assert 'project' in message.lower()
+
+    def test_route_scope_takes_no_credential(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(
+            self.create('fallback-triggered', credential=str(uuid.uuid4()))
+        )
+
+        assert 'credential' in message.lower()
+
+    def test_project_scope_requires_a_project(self):
+        message = self.rejected(
+            self.create(
+                'budget_limit-exceeded-1mo', scope='project', project=None, route=None
+            )
+        )
+
+        assert 'project' in message.lower()
+
+    def test_project_scope_takes_no_route(self):
+        message = self.rejected(
+            self.create('budget_limit-exceeded-1mo', scope='project')
+        )
+
+        assert 'route' in message.lower()
+
+    def test_credential_scope_requires_a_credential(self):
+        message = self.rejected(
+            self.create(
+                'rate_limit-exceeded-1m', scope='credential', project=None, route=None
+            )
+        )
+
+        assert 'credential' in message.lower()
+
+    def test_credential_scope_takes_no_project_or_route(self):
+        message = self.rejected(
+            self.create(
+                'rate_limit-exceeded-1m',
+                scope='credential',
+                credential=str(uuid.uuid4()),
+            )
+        )
+
+        assert 'project' in message.lower()
+
+    def test_window_aggregation_requires_a_window_size(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(
+            self.create('fallback-triggered', timeAggregation='window')
+        )
+
+        assert 'window size' in message.lower()
+
+    def test_a_window_size_is_rejected_without_window_aggregation(self):
+        self.publish(route_config(fallback=True))
+
+        message = self.rejected(self.create('fallback-triggered', windowSize='5m'))
+
+        assert 'window size' in message.lower()
+
+    def test_an_unknown_window_size_is_invalid(self):
+        self.publish(route_config(fallback=True))
+
+        response = self.create(
+            'fallback-triggered', timeAggregation='window', windowSize='10m'
+        )
+
+        assert response.status_code == 422
+
+    def test_a_fallback_rule_can_use_a_window(self):
+        self.publish(route_config(fallback=True))
+
+        response = self.create(
+            'fallback-triggered', timeAggregation='window', windowSize='15m'
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()['timeAggregation'] == 'window'
+        assert response.json()['windowSize'] == '15m'
+
+    def test_a_guardrail_rule_can_use_a_window(self):
+        self.publish(route_config(guardrails={'pii': 'input'}))
+
+        response = self.create(
+            'guardrail-input-pii', timeAggregation='window', windowSize='24h'
+        )
+
+        assert response.status_code == 201, response.text
+
+    def test_a_window_is_only_for_guardrail_and_fallback_events(self):
+        message = self.rejected(
+            self.create(
+                'budget_limit-exceeded-1mo',
+                scope='project',
+                route=None,
+                timeAggregation='window',
+                windowSize='1h',
+            )
+        )
+
+        assert 'guardrail and fallback' in message.lower()
+
+    def test_update_switches_a_rule_to_a_window(self):
+        self.publish(route_config(fallback=True))
+        rule = self.created('fallback-triggered')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}',
+            json={'timeAggregation': 'window', 'windowSize': '6h'},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['windowSize'] == '6h'
+
+    def test_update_switches_a_window_rule_back_to_instant(self):
+        self.publish(route_config(fallback=True))
+        rule = self.create(
+            'fallback-triggered', timeAggregation='window', windowSize='5m'
+        ).json()
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}',
+            json={'timeAggregation': 'instant', 'windowSize': None},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['timeAggregation'] == 'instant'
+        assert response.json()['windowSize'] is None
+
+    def test_update_validates_the_merged_rule(self):
+        self.publish(route_config(fallback=True))
+        rule = self.created('fallback-triggered')
+
+        response = self.client.patch(
+            f'/rule/{rule["uuid"]}',
+            json={'scope': 'credential', 'credential': str(uuid.uuid4())},
+        )
+
+        assert 'project' in self.rejected(response).lower()
+
+    def test_update_rejects_a_window_size_on_an_instant_rule(self):
+        self.publish(route_config(fallback=True))
+        rule = self.created('fallback-triggered')
+
+        response = self.client.patch(f'/rule/{rule["uuid"]}', json={'windowSize': '1h'})
+
+        assert 'window size' in self.rejected(response).lower()
+
+    def test_a_rule_still_holding_a_project_name_is_stale(self):
+        self.publish(route_config(fallback=True))
+        rule = self.insert_rule('fallback-triggered', project=PROJECT_NAME)
+
+        listed = self.listed(rule.uuid)
+
+        assert listed['stale'] is True
+
+    def test_a_credential_rule_shows_the_credential_and_no_project(self):
+        credential = self.insert_credential('billing-service')
+        rule = self.insert_rule(
+            'rate_limit-exceeded-1m',
+            scope='credential',
+            project=None,
+            route=None,
+            credential_uuid=credential.uuid,
+            time_aggregation='limit_window',
+        )
+
+        listed = self.listed(rule.uuid)
+
+        assert listed['scope'] == 'credential'
+        assert listed['credentialUuid'] == str(credential.uuid)
+        assert listed['credentialName'] == 'billing-service'
+        assert listed['project'] is None
+        assert listed['projectName'] is None
+        assert listed['route'] is None
+        assert listed['timeAggregation'] == 'limit_window'
+
+    def test_a_rule_still_holding_a_project_name_can_be_renamed(self):
+        self.publish(route_config(fallback=True))
+        rule = self.insert_rule('fallback-triggered', project=PROJECT_NAME)
+
+        response = self.client.patch(f'/rule/{rule.uuid}', json={'name': 'renamed'})
+
+        assert response.status_code == 200, response.text
+        assert response.json()['name'] == 'renamed'
+
+    def test_a_project_given_by_name_is_rejected_with_a_400(self):
+        self.publish(route_config(fallback=True))
+
+        assert (
+            self.create('fallback-triggered', project=PROJECT_NAME).status_code == 400
+        )

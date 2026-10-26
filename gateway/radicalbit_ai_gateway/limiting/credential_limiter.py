@@ -8,7 +8,10 @@ from radicalbit_ai_gateway.limiter import (
     WindowConfig,
 )
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
-from radicalbit_ai_gateway.limiting.limit_event import limit_fields
+from radicalbit_ai_gateway.limiting.limit_event import (
+    consume_and_emit_thresholds,
+    limit_fields,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import (
     rate_limiting_counter,
     token_input_limiting_counter,
@@ -21,6 +24,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -130,9 +134,13 @@ class CredentialLimiter:
                 return entry, stats
         return None
 
-    async def _hit(self, category: CredentialLimitCategory, cost: int) -> None:
+    async def _hit(
+        self, category: CredentialLimitCategory, cost: int, identity: RequestIdentity
+    ) -> None:
         for entry in self._entries.get(category, []):
-            await entry.limiter.hit(entry.window, cost=cost)
+            await consume_and_emit_thresholds(
+                entry.limiter, entry.window, cost, LimitScope.CREDENTIAL, identity
+            )
 
     def _emit_block_event(
         self,
@@ -207,7 +215,20 @@ class CredentialLimiter:
                 ),
                 route_name=route_name,
             )
-        await self._hit(CredentialLimitCategory.RATE, cost=1)
+        await self._hit(
+            CredentialLimitCategory.RATE,
+            cost=1,
+            identity=RequestIdentity(
+                request_uuid=request_uuid,
+                route_name=route_name,
+                api_key_uuid=self.credential_uuid,
+                api_key_name=self.credential_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                project_uuid=project_uuid,
+                project_name=project_name,
+            ),
+        )
 
     async def check_input_tokens(
         self,
@@ -308,8 +329,10 @@ class CredentialLimiter:
                 ),
             )
 
-    async def count_input_tokens(self, tokens: int) -> None:
-        await self._hit(CredentialLimitCategory.TOKEN_INPUT, cost=tokens)
+    async def count_input_tokens(self, tokens: int, identity: RequestIdentity) -> None:
+        await self._hit(
+            CredentialLimitCategory.TOKEN_INPUT, cost=tokens, identity=identity
+        )
 
     async def check_output_tokens(
         self,
@@ -361,8 +384,10 @@ class CredentialLimiter:
                 ),
             )
 
-    async def count_output_tokens(self, tokens: int) -> None:
-        await self._hit(CredentialLimitCategory.TOKEN_OUTPUT, cost=tokens)
+    async def count_output_tokens(self, tokens: int, identity: RequestIdentity) -> None:
+        await self._hit(
+            CredentialLimitCategory.TOKEN_OUTPUT, cost=tokens, identity=identity
+        )
 
     async def check_budget(
         self,
@@ -408,22 +433,28 @@ class CredentialLimiter:
             )
 
     async def count_budget_input(
-        self, token_count: int, input_cost_per_token: float
+        self,
+        token_count: int,
+        input_cost_per_token: float,
+        identity: RequestIdentity,
     ) -> None:
         cost = int(token_count * input_cost_per_token * BUDGET_MULTIPLIER)
-        await self._hit(CredentialLimitCategory.BUDGET, cost=cost)
+        await self._hit(CredentialLimitCategory.BUDGET, cost=cost, identity=identity)
 
     async def count_budget_output(
-        self, token_count: int, output_cost_per_token: float
+        self,
+        token_count: int,
+        output_cost_per_token: float,
+        identity: RequestIdentity,
     ) -> None:
         cost = int(token_count * output_cost_per_token * BUDGET_MULTIPLIER)
-        await self._hit(CredentialLimitCategory.BUDGET, cost=cost)
+        await self._hit(CredentialLimitCategory.BUDGET, cost=cost, identity=identity)
 
     async def count_budget_duration(
-        self, seconds: float, cost_per_second: float
+        self, seconds: float, cost_per_second: float, identity: RequestIdentity
     ) -> None:
         cost = int(seconds * cost_per_second * BUDGET_MULTIPLIER)
-        await self._hit(CredentialLimitCategory.BUDGET, cost=cost)
+        await self._hit(CredentialLimitCategory.BUDGET, cost=cost, identity=identity)
 
 
 async def clear_limit_counter(

@@ -1,6 +1,8 @@
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
-import { DATE_FORMAT, GATEWAY_OWNER } from '@Src/constants';
+import {
+  CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, ROTATION_FORMAT, RotationStateEnum,
+} from '@Src/constants';
 import { useGetGroupQuery, useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import {
   Button,
@@ -9,8 +11,12 @@ import {
   Tooltip,
   Truncate,
 } from '@radicalbit/radicalbit-design-system';
+import classNames from 'classnames';
+import dayjs from 'dayjs';
 import { Trash } from 'lucide-react';
 import { useParams } from 'react-router-dom';
+
+const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
 
 const columns = [
   {
@@ -18,11 +24,7 @@ const columns = [
     dataIndex: 'name',
     width: '40%',
     key: 'id',
-    render: (value) => (
-      <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
-      </Truncate>
-    ),
+    render: (_, record) => <Name record={record} />,
   },
   {
     title: 'Created',
@@ -49,6 +51,78 @@ const columns = [
 
 const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
 
+function Name({ record }) {
+  const {
+    expiresOn, graceEndsAt, lastRotatedAt, name, owner, rotationState, state,
+  } = record;
+  const className = classNames({ 'line-through': state === CredentialStateEnum.EXPIRED });
+
+  return (
+    <SectionTitle
+      size="small"
+      subtitle={(
+        <div className="flex flex-col">
+          <ExpiresOn expiresOn={expiresOn} owner={owner} state={state} />
+
+          <Rotation graceEndsAt={graceEndsAt} lastRotatedAt={lastRotatedAt} owner={owner} rotationState={rotationState} />
+        </div>
+      )}
+      title={(
+        <Truncate tooltip={{ title: name, placement: 'topLeft' }}>
+          <span className={className}>{name}</span>
+        </Truncate>
+      )}
+    />
+  );
+}
+
+function ExpiresOn({ expiresOn, owner, state }) {
+  // Externally managed credentials have no expiry: their lifecycle stays with the identity provider
+  if (owner !== GATEWAY_OWNER) {
+    return false;
+  }
+
+  if (!expiresOn) {
+    return 'Never expires';
+  }
+
+  // expiresOn is a calendar date: dayjs parses YYYY-MM-DD as a local date, so no timezone shift
+  const date = dayjs(expiresOn).format(DATE_FORMAT_SHORT.trim());
+  const isExpired = state === CredentialStateEnum.EXPIRED;
+  const label = isExpired ? `Expired on ${date}` : `Expires on ${date}`;
+  const className = classNames({
+    'text-[var(--coo-warning)]': state === CredentialStateEnum.EXPIRING,
+    'text-[var(--coo-error)]': isExpired,
+  });
+
+  return (
+    <Tooltip placement="topLeft" title={EXPIRES_ON_TOOLTIP}>
+      <span className={className}>{label}</span>
+    </Tooltip>
+  );
+}
+
+function Rotation({ graceEndsAt, lastRotatedAt, owner, rotationState }) {
+  const isGraceEnding = rotationState === RotationStateEnum.GRACE_ENDING;
+  const isGraceRunning = rotationState === RotationStateEnum.IN_GRACE || isGraceEnding;
+  const className = classNames({ 'text-[var(--coo-warning)]': isGraceEnding });
+
+  // Externally managed credentials are never rotated: their lifecycle stays with the identity provider
+  if (owner !== GATEWAY_OWNER) {
+    return false;
+  }
+
+  if (rotationState === RotationStateEnum.ROTATED) {
+    return <span className="text-[var(--coo-success)]">{`Rotated on ${dayjs(lastRotatedAt).format(ROTATION_FORMAT)}`}</span>;
+  }
+
+  if (isGraceRunning) {
+    return <span className={className}>{`Previous value works until ${dayjs(graceEndsAt).format(ROTATION_FORMAT)}`}</span>;
+  }
+
+  return false;
+}
+
 function Actions({ uuid: keyUUID, record: { name } }) {
   const { uuid } = useParams();
   const { data: groupData, isLoading, isError, isSuccess } = useGetGroupQuery(uuid);
@@ -60,7 +134,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
     const { error } = await trigger({
       uuid,
       keyUUID,
-      successMessage: <SuccessMessage prefix="Group" strong={name} suffix="removed" />,
+      successMessage: <SuccessMessage prefix="Credential" strong={name} suffix="removed from the group" />,
     });
 
     if (error) {
@@ -97,7 +171,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
     <Tooltip title="Remove">
       <Popconfirm
         cancelButtonProps={{ type: 'secondary-light' }}
-        description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove the group from the credential" />}
+        description={<TextWithBold bold={name} isQuestion text="Are you sure you want to remove the credential" />}
         label={(
           <Button aria-label="Remove" onClick={handleOnTriggerClick} size="small" type="text">
             <Lucide icon={Trash} type="error" />
@@ -107,7 +181,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
         okType="error-light"
         onCancel={handleOnCancel}
         onConfirm={handleOnDelete}
-        title={<SectionTitle size="small" title="Remove group" titleColor="error" />}
+        title={<SectionTitle size="small" title="Remove from group" titleColor="error" />}
       />
     </Tooltip>
   );

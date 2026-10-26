@@ -5,7 +5,9 @@ from freezegun import freeze_time
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.request_identity import IDENTITY
 
+from radicalbit_ai_gateway.limiter import Consumption
 from radicalbit_ai_gateway.limiter.fixed_aligned import AlignedFixedWindowLimiter
 from radicalbit_ai_gateway.limiter.fixed_window import FixedWindowLimiter
 from radicalbit_ai_gateway.limiting.token_limiter import (
@@ -21,30 +23,10 @@ TEST_MODEL = 'openai/gpt-4o'
 
 
 @pytest.fixture(autouse=True)
-def mock_emit_functions():
-    """Mock emit_event and emit_notification for all tests to prevent real Celery calls."""
-    mock_event = Mock()
-    mock_notification = Mock()
-    with (
-        patch(
-            'radicalbit_ai_gateway.limiting.token_limiter.emit_event',
-            new=mock_event,
-        ),
-        patch(
-            'radicalbit_ai_gateway.limiting.token_limiter.emit_notification',
-            new=mock_notification,
-        ),
-    ):
-        yield {
-            'emit_event': mock_event,
-            'emit_notification': mock_notification,
-        }
-
-
-@pytest.fixture
-def emit_notification_mock(mock_emit_functions):
-    """Return the notification mock for tests that need to verify calls."""
-    return mock_emit_functions['emit_notification']
+def mock_emit_event():
+    """Mock emit_event for all tests to prevent real Celery calls."""
+    with patch('radicalbit_ai_gateway.limiting.token_limiter.emit_event', new=Mock()):
+        yield
 
 
 class TestTokenLimiter:
@@ -122,7 +104,7 @@ class TestTokenLimiter:
             model_string=TEST_MODEL,
         )
         # count_input with no config should also be a no-op
-        await limiter.count_input(prompt_tokens=10)
+        await limiter.count_input(prompt_tokens=10, identity=IDENTITY)
 
     @pytest.mark.asyncio
     async def test_check_input_within_limit_and_count_consumes(self):
@@ -141,8 +123,10 @@ class TestTokenLimiter:
         ):
             # check_input should NOT consume
             with patch.object(
-                limiter.input_limiter, 'hit', new=AsyncMock()
-            ) as mock_hit:
+                limiter.input_limiter,
+                'consume',
+                new=AsyncMock(return_value=Consumption(1, 'w')),
+            ) as mock_consume:
                 await limiter.check_input(
                     request_uuid=str(REQUEST_UUID),
                     api_key_uuid=str(API_KEY_UUID),
@@ -152,14 +136,16 @@ class TestTokenLimiter:
                     text='Hello world',
                     model_string=TEST_MODEL,
                 )
-                mock_hit.assert_not_called()
+                mock_consume.assert_not_called()
 
             # count_input should consume (hit)
             with patch.object(
-                limiter.input_limiter, 'hit', new=AsyncMock()
-            ) as mock_hit2:
-                await limiter.count_input(prompt_tokens=5)
-                mock_hit2.assert_called_once()
+                limiter.input_limiter,
+                'consume',
+                new=AsyncMock(return_value=Consumption(1, 'w')),
+            ) as mock_consume2:
+                await limiter.count_input(prompt_tokens=5, identity=IDENTITY)
+                mock_consume2.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_check_input_exceeds_limit(self):
@@ -177,7 +163,11 @@ class TestTokenLimiter:
                 'radicalbit_ai_gateway.limiting.token_limiter.count_tokens',
                 return_value=17,
             ),
-            patch.object(limiter.input_limiter, 'hit', new=AsyncMock()) as mock_hit,
+            patch.object(
+                limiter.input_limiter,
+                'consume',
+                new=AsyncMock(return_value=Consumption(1, 'w')),
+            ) as mock_consume,
         ):
             with pytest.raises(InputTokenLimitExceeded) as exc:
                 await limiter.check_input(
@@ -190,7 +180,7 @@ class TestTokenLimiter:
                     model_string=TEST_MODEL,
                 )
 
-            mock_hit.assert_not_called()
+            mock_consume.assert_not_called()
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[TOKEN LIMIT]' in msg
@@ -228,7 +218,7 @@ class TestTokenLimiter:
                 text='A',
                 model_string=TEST_MODEL,
             )
-            await limiter.count_input(prompt_tokens=6)
+            await limiter.count_input(prompt_tokens=6, identity=IDENTITY)
 
             await limiter.check_input(
                 request_uuid=str(REQUEST_UUID),
@@ -239,7 +229,7 @@ class TestTokenLimiter:
                 text='B',
                 model_string=TEST_MODEL,
             )
-            await limiter.count_input(prompt_tokens=6)
+            await limiter.count_input(prompt_tokens=6, identity=IDENTITY)
 
             await limiter.check_input(
                 request_uuid=str(REQUEST_UUID),
@@ -250,7 +240,7 @@ class TestTokenLimiter:
                 text='C',
                 model_string=TEST_MODEL,
             )
-            await limiter.count_input(prompt_tokens=6)
+            await limiter.count_input(prompt_tokens=6, identity=IDENTITY)
 
             # Fourth: check should fail BEFORE consuming
             with pytest.raises(InputTokenLimitExceeded) as exc:
@@ -281,6 +271,7 @@ class TestTokenLimiter:
         # Should not raise any exception
         await limiter.count_output(
             token_count=100,
+            identity=IDENTITY,
         )
         await limiter.check_output(
             request_uuid=str(REQUEST_UUID),
@@ -303,6 +294,7 @@ class TestTokenLimiter:
         # Should be within limit
         await limiter.count_output(
             token_count=50,
+            identity=IDENTITY,
         )
         await limiter.check_output(
             request_uuid=str(REQUEST_UUID),
@@ -324,6 +316,7 @@ class TestTokenLimiter:
 
         await limiter.count_output(
             token_count=100,
+            identity=IDENTITY,
         )
 
         with pytest.raises(OutputTokenLimitExceeded) as exc:
@@ -364,12 +357,15 @@ class TestTokenLimiter:
 
             await limiter.count_output(
                 token_count=50,
+                identity=IDENTITY,
             )
             await limiter.count_output(
                 token_count=100,
+                identity=IDENTITY,
             )
             await limiter.count_output(
                 token_count=50,
+                identity=IDENTITY,
             )
 
             with pytest.raises(OutputTokenLimitExceeded) as exc:
@@ -435,7 +431,7 @@ class TestTokenLimiter:
                     text='Hello world test message',
                     model_string=TEST_MODEL,
                 )
-                await limiter.count_input(prompt_tokens=4)
+                await limiter.count_input(prompt_tokens=4, identity=IDENTITY)
 
                 # 2) Blocked (no consume)
                 with pytest.raises(InputTokenLimitExceeded) as exc1:
@@ -497,7 +493,7 @@ class TestTokenLimiter:
                     text='This will work',
                     model_string=TEST_MODEL,
                 )
-                await limiter.count_input(prompt_tokens=3)
+                await limiter.count_input(prompt_tokens=3, identity=IDENTITY)
 
     def test_window_size_formats(self):
         """Test different window size formats."""
@@ -544,49 +540,3 @@ class TestTokenLimiter:
         )
         assert limiter.input_limiter is not None
         assert isinstance(limiter.input_limiter, FixedWindowLimiter)
-
-    @pytest.mark.asyncio
-    async def test_count_input_sends_notification(self, emit_notification_mock):
-        """Test that count_input sends notification with correct parameters after deduction."""
-        input_config = Limiting(max_tokens=100, window_size='1 minute')
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name='rb-gateway',
-            input_config=input_config,
-        )
-
-        await limiter.count_input(prompt_tokens=42)
-
-        # Verify emit_notification was called with correct parameters
-        emit_notification_mock.assert_called_once()
-        call_kwargs = emit_notification_mock.call_args.kwargs
-        assert call_kwargs['route_name'] == 'rb-gateway'
-        assert call_kwargs['direction'] == 'input'
-        assert call_kwargs['window_size'] == 60
-        assert call_kwargs['max_tokens'] == 100
-        assert call_kwargs['current_usage'] == 42
-        # reset_time is dynamic
-        assert 'reset_time' in call_kwargs
-
-    @pytest.mark.asyncio
-    async def test_count_output_sends_notification(self, emit_notification_mock):
-        """Test that count_output sends notification with correct parameters after deduction."""
-        output_config = Limiting(max_tokens=50, window_size='1 minute')
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name='rb-gateway',
-            output_config=output_config,
-        )
-
-        await limiter.count_output(token_count=17)
-
-        # Verify emit_notification was called with correct parameters
-        emit_notification_mock.assert_called_once()
-        call_kwargs = emit_notification_mock.call_args.kwargs
-        assert call_kwargs['route_name'] == 'rb-gateway'
-        assert call_kwargs['direction'] == 'output'
-        assert call_kwargs['window_size'] == 60
-        assert call_kwargs['max_tokens'] == 50
-        assert call_kwargs['current_usage'] == 17
-        # reset_time is dynamic
-        assert 'reset_time' in call_kwargs
