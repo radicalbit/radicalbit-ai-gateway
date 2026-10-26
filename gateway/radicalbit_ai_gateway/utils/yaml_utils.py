@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from dataclasses import dataclass
 import difflib
 from importlib.resources import files
 import re
@@ -235,14 +236,33 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
     return yaml_str
 
 
-def config_has_route_budget_limiting(yaml_str: str) -> bool:
-    """Whether any route in *yaml_str* sets `budget_limiting`.
+@dataclass(frozen=True)
+class RouteBudgets:
+    """The routes of a configuration that have a budget of their own."""
+
+    budget_limiting: list[str]
+    # The subset that routes by budget: their budget can't simply be removed
+    budget_routing: list[str]
+
+
+def find_route_budgets(yaml_str: str) -> RouteBudgets:
+    """Name the routes in *yaml_str* that have a budget of their own.
 
     Assumes *yaml_str* already passed :func:`validate_gateway_config`.
     """
     parsed = parse_yaml_with_secret_placeholders(yaml_str)
     config = GatewayConfig.model_validate(parsed)
-    return any(route.budget_limiting is not None for route in config.routes.values())
+    budget_limiting = [
+        name
+        for name, route in config.routes.items()
+        if route.budget_limiting is not None
+    ]
+    budget_routing = [
+        name
+        for name in budget_limiting
+        if config.uses_budget_routing(config.routes[name])
+    ]
+    return RouteBudgets(budget_limiting=budget_limiting, budget_routing=budget_routing)
 
 
 def get_default_config_template() -> str:

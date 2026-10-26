@@ -4,7 +4,9 @@ import re
 from uuid import UUID
 import zipfile
 
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
+import yaml
 
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
@@ -17,6 +19,7 @@ from radicalbit_ai_gateway.limiting.project_budget_limiter import (
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_budget_limiting import (
+    ProjectBudgetLimitConflictsOut,
     ProjectBudgetLimitOut,
     ProjectBudgetLimitsIn,
 )
@@ -39,7 +42,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ProjectNotFoundError,
 )
 from radicalbit_ai_gateway.utils.yaml_utils import (
-    config_has_route_budget_limiting,
+    find_route_budgets,
     get_default_config_template,
     validate_gateway_config,
 )
@@ -129,12 +132,14 @@ class ProjectService:
     def _reject_route_budget_limiting_conflict(
         self, project_uuid: UUID, yaml_str: str
     ) -> None:
-        if not config_has_route_budget_limiting(yaml_str):
+        routes = find_route_budgets(yaml_str).budget_limiting
+        if not routes:
             return
         if self.project_budget_limit_dao.get_by_project_uuid(project_uuid):
             raise ProjectConfigValidationError(
                 f'Project {project_uuid} already has a budget limit assigned; '
-                'routes cannot configure budget_limiting'
+                f'routes cannot configure budget_limiting: {", ".join(routes)}',
+                routes=routes,
             )
 
     def update_config(
@@ -323,15 +328,17 @@ class ProjectService:
         project = self._get_project_or_raise(project_uuid)
 
         served = self.project_config_dao.get_served_by_project(project_uuid)
-        if (
-            served
-            and served.config_file
-            and config_has_route_budget_limiting(served.config_file)
-        ):
+        routes = (
+            find_route_budgets(served.config_file).budget_limiting
+            if served and served.config_file
+            else []
+        )
+        if routes:
             raise ProjectBudgetLimitConflictError(
-                f'Project "{project.name}" has a published route with '
-                'budget_limiting configured; remove it before assigning a '
-                'project-level budget limit'
+                f'Project "{project.name}" has published routes with '
+                f'budget_limiting configured ({", ".join(routes)}); remove them '
+                'before assigning a project-level budget limit',
+                routes=routes,
             )
 
         try:
@@ -339,10 +346,12 @@ class ProjectService:
                 limits_in.to_project_budget_limits(project_uuid)
             )
         except IntegrityError as e:
-            if 'uq_project_budget_limit_PROJECT_UUID_WINDOW_SIZE' in str(e.orig):
+            if 'uq_project_budget_limit_PROJECT_UUID_ALGORITHM_WINDOW_SIZE' in str(
+                e.orig
+            ):
                 raise ProjectBudgetLimitAlreadyExistsError(
-                    f'Project "{project.name}" already has a budget limit for '
-                    'one of the requested time windows'
+                    f'Project "{project.name}" already has a budget limit with '
+                    'the same algorithm and window as one of the requested ones'
                 ) from e
             raise ProjectInternalError(
                 f'An error occurred while adding the budget limits: {e}'
@@ -354,6 +363,33 @@ class ProjectService:
         return [
             ProjectBudgetLimitOut.from_project_budget_limit(limit) for limit in inserted
         ]
+
+    def get_budget_limit_conflicts(
+        self, project_uuid: UUID
+    ) -> ProjectBudgetLimitConflictsOut:
+        self._get_project_or_raise(project_uuid)
+        published: list[str] = []
+        draft: list[str] = []
+        budget_routing: list[str] = []
+        for config in self.project_config_dao.list_by_project(project_uuid):
+            if not config.config_file:
+                continue
+            try:
+                budgets = find_route_budgets(config.config_file)
+            except (ValidationError, TypeError, ValueError, yaml.YAMLError):
+                # Not a valid configuration yet (e.g. the seeded template): it
+                # can't be published, so it conflicts with nothing
+                continue
+            if config.config_status == ConfigStatus.SERVED.value:
+                published += budgets.budget_limiting
+            else:
+                draft += budgets.budget_limiting
+            budget_routing += budgets.budget_routing
+        return ProjectBudgetLimitConflictsOut(
+            published=list(dict.fromkeys(published)),
+            draft=list(dict.fromkeys(draft)),
+            budget_routing=list(dict.fromkeys(budget_routing)),
+        )
 
     def get_budget_limits_for_project(
         self, project_uuid: UUID

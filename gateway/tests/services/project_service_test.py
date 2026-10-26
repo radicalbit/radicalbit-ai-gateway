@@ -15,6 +15,11 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
+from radicalbit_ai_gateway.models.project_budget_limiting import (
+    ProjectBudgetLimitIn,
+    ProjectBudgetLimitsIn,
+)
 from radicalbit_ai_gateway.models.project_dto import (
     ConfigListFilter,
     ProjectConfigFileIn,
@@ -482,6 +487,80 @@ class ProjectServiceTest(DatabaseIntegration):
                 out.uuid, db_mock.get_sample_project_budget_limits_in()
             )
 
+    def test_add_budget_limits_conflict_names_the_published_routes(self):
+        out, a, _ = self._create(name='budget-conflict-routes')
+        self.svc.update_config(
+            out.uuid,
+            a,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        self.svc.approve_config(out.uuid, a)
+        self.svc.serve_config(out.uuid, a)
+        with pytest.raises(ProjectBudgetLimitConflictError) as exc_info:
+            self.svc.add_budget_limits_to_project(
+                out.uuid, db_mock.get_sample_project_budget_limits_in()
+            )
+        assert exc_info.value.routes == ['test-route']
+
+    def test_add_budget_limits_allowed_when_only_a_draft_has_route_budgets(self):
+        out, _, b = self._create(name='budget-draft-only')
+        self.svc.update_config(
+            out.uuid,
+            b,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        added = self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        assert len(added) == 1
+
+    def test_budget_limits_with_the_same_window_and_another_algorithm_coexist(self):
+        out, _, _ = self._create(name='budget-same-window')
+        added = self.svc.add_budget_limits_to_project(
+            out.uuid,
+            ProjectBudgetLimitsIn(
+                limits=[
+                    ProjectBudgetLimitIn(window_size='1 day', value=10),
+                    ProjectBudgetLimitIn(
+                        algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
+                        window_size='1 day',
+                        value=20,
+                    ),
+                ]
+            ),
+        )
+        assert len(added) == 2
+
+    def test_budget_limit_conflicts_lists_published_and_draft_routes(self):
+        out, a, b = self._create(name='budget-conflicts')
+        self.svc.update_config(
+            out.uuid,
+            a,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        self.svc.approve_config(out.uuid, a)
+        self.svc.serve_config(out.uuid, a)
+        self.svc.update_config(
+            out.uuid,
+            b,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
+        assert conflicts.published == ['test-route']
+        assert conflicts.draft == ['test-route']
+        assert conflicts.budget_routing == []
+
+    def test_budget_limit_conflicts_is_empty_without_route_budgets(self):
+        out, _, _ = self._create(name='budget-no-conflicts')
+        conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
+        assert conflicts.published == []
+        assert conflicts.draft == []
+        assert conflicts.budget_routing == []
+
+    def test_budget_limit_conflicts_project_not_found(self):
+        with pytest.raises(ProjectNotFoundError):
+            self.svc.get_budget_limit_conflicts(uuid.uuid4())
+
     def test_get_budget_limits_for_project_not_found(self):
         with pytest.raises(ProjectNotFoundError):
             self.svc.get_budget_limits_for_project(uuid.uuid4())
@@ -532,12 +611,13 @@ class ProjectServiceTest(DatabaseIntegration):
         self.svc.add_budget_limits_to_project(
             out.uuid, db_mock.get_sample_project_budget_limits_in()
         )
-        with pytest.raises(ProjectConfigValidationError):
+        with pytest.raises(ProjectConfigValidationError) as exc_info:
             self.svc.update_config(
                 out.uuid,
                 a,
                 ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
             )
+        assert exc_info.value.routes == ['test-route']
 
     def test_approve_config_rejected_when_project_has_budget_limit_and_route_sets_it(
         self,

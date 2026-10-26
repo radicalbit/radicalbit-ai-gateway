@@ -7,6 +7,7 @@ from radicalbit_ai_gateway.utils.yaml_utils import (
     check_no_literal_secrets,
     check_secret_references,
     extract_secret_references,
+    find_route_budgets,
     parse_yaml_with_secret_placeholders,
     validate_gateway_config,
 )
@@ -442,3 +443,54 @@ def test_mcp_secrets_skipped_when_check_disabled():
         '      Authorization: Bearer literal-pat\n'
     )
     validate_gateway_config(yaml_str, check_secrets=False)
+
+
+_ROUTE_BUDGETS_YAML = """\
+chat_models:
+  - model_id: cheap
+    model: mock/gateway
+  - model_id: smart
+    model: mock/gateway
+routing:
+  - name: by-budget
+    type: deterministic
+    rule: budget
+    default_model_id: smart
+    output_mapping:
+      - model_id: cheap
+        conditions:
+          threshold: 0.8
+routes:
+  plain:
+    chat_models:
+      - cheap
+  capped:
+    chat_models:
+      - cheap
+    budget_limiting:
+      window_size: "1 day"
+      max_budget: 5.0
+  routed:
+    chat_models:
+      - cheap
+      - smart
+    routing: by-budget
+    budget_limiting:
+      window_size: "1 day"
+      max_budget: 10.0
+"""
+
+
+def test_find_route_budgets_names_the_routes_with_their_own_budget():
+    budgets = find_route_budgets(_ROUTE_BUDGETS_YAML)
+    assert budgets.budget_limiting == ['capped', 'routed']
+    assert budgets.budget_routing == ['routed']
+
+
+def test_find_route_budgets_is_empty_without_find_route_budgets():
+    budgets = find_route_budgets(
+        'chat_models:\n  - model_id: cheap\n    model: mock/gateway\n'
+        'routes:\n  plain:\n    chat_models:\n      - cheap\n'
+    )
+    assert budgets.budget_limiting == []
+    assert budgets.budget_routing == []
