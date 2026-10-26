@@ -3,8 +3,6 @@
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.runnables import RunnableLambda
 import pook
 import pytest
 
@@ -19,6 +17,7 @@ from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
+from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.judge_result import JudgeResult
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
@@ -116,7 +115,7 @@ def _judge_llm() -> MagicMock:
         'parsing_error': None,
     }
     llm = MagicMock()
-    llm.with_structured_output.return_value = RunnableLambda(lambda _: answer)
+    llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=answer)
     return llm
 
 
@@ -259,12 +258,7 @@ INPUT_LIMIT = {'input': {'window_size': '1 hour', 'max_tokens': 30}}  # < JUDGE_
 
 @pytest.fixture
 def judge_calls():
-    calls = []
     llm = _judge_llm()
-    answer = llm.with_structured_output.return_value
-    llm.with_structured_output.return_value = RunnableLambda(
-        lambda prompt: calls.append(prompt) or answer.invoke(prompt)
-    )
     with (
         patch(
             'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
@@ -274,7 +268,7 @@ def judge_calls():
         patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event'),
         patch('radicalbit_ai_gateway.limiting.token_limiter.emit_event'),
     ):
-        yield calls
+        yield llm.with_structured_output.return_value.ainvoke.await_args_list
 
 
 def _gateway_with_input_limit() -> GatewayRoute:
