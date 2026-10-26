@@ -5,10 +5,6 @@ import {
   formatLimitValue, formatLimitWindow, formatLimitsCount, sortLimits,
 } from './helpers';
 
-/**
- * One line for a list row: "3 limits", every limit in a popover, and a link to manage them.
- * `onManage` is left out where the viewer can't change the limits.
- */
 function LimitsSummary({ limits = [], onManage }) {
   const handleOnClick = (e) => {
     e.stopPropagation();
@@ -50,7 +46,6 @@ function Content({ limits, onManage }) {
   );
 }
 
-// "Requests · 100 requests / 1 h · Fixed"
 function LimitLine({ limit }) {
   const algorithm = limit?.algorithm;
   const category = limit?.category;

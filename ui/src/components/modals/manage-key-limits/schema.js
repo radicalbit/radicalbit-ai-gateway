@@ -6,7 +6,6 @@ const ScreenEnum = {
   ADD: 'add',
 };
 
-// Rows are added and removed: each keeps its own React key, dropped from the payload
 const newRow = () => ({ ...EMPTY_LIMIT, rowKey: `${Date.now()}-${Math.random()}` });
 
 const getInitialValues = () => ({

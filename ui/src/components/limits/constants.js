@@ -1,4 +1,3 @@
-// Limits of a credential or a project, as the backend names them (models/credential_limiting.py)
 export const LimitCategoryEnum = {
   REQUEST_RATE: 'request_rate',
   TOKEN_INPUT: 'token_input',
@@ -41,8 +40,6 @@ export const WINDOW_TYPE_LABELS = {
 
 export const WINDOW_TYPE_HELP = 'Fixed: the window starts at the first request and lasts its full length. Aligned: the window follows the UTC clock (1 day runs from midnight to midnight).';
 
-// The windows the backend accepts (models/limiting.py), in its canonical form. An aligned window is at most one
-// day long; a month is always 30 days.
 export const LIMIT_WINDOWS = [
   { value: '1 minute', label: '1 min', aligned: true },
   { value: '5 minutes', label: '5 min', aligned: true },
@@ -61,7 +58,6 @@ export const LIMIT_WINDOWS = [
   { value: '1 month', label: '1 month (30 days)', aligned: false },
 ];
 
-// How alert rules name each category in their events, e.g. `rate_limit-exceeded-1h`
 export const LIMIT_EVENT_CATEGORIES = {
   [LimitCategoryEnum.REQUEST_RATE]: 'rate_limit',
   [LimitCategoryEnum.TOKEN_INPUT]: 'token_input_limit',
@@ -75,7 +71,6 @@ export const DUPLICATE_ROW_ERROR = 'Same limit as a row above.';
 
 export const EXPIRED_LIMITS_MESSAGE = 'This credential has expired: its limits can no longer be changed.';
 
-// Nothing preselected: a default would read as a suggested configuration
 export const EMPTY_LIMIT = {
   category: undefined,
   algorithm: undefined,

@@ -57,7 +57,6 @@ function DeleteLimit({ limit }) {
   );
 }
 
-// Q28: only a warning, the rules are not touched. Shown only once the rules are loaded.
 function StaleRules({ limit }) {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
@@ -67,7 +66,6 @@ function StaleRules({ limit }) {
 
   const { data: rules, isError, isLoading, isSuccess } = useGetAlertsQuery();
 
-  // A warning only: while the rules load, or if they can't, the delete goes ahead without it
   if (isLoading) {
     return false;
   }

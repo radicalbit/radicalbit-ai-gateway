@@ -10,7 +10,6 @@ import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
 import { getInitialValues, newRow } from './schema';
 
-// Flush with the content below: no horizontal padding on the icon button
 const FLUSH_BUTTON = '!min-w-0 !px-0';
 
 function AddScreen() {
@@ -100,7 +99,6 @@ function Row({
     onRemove(index);
   };
 
-  // A duplicate is known before saving; anything else wrong with the row comes back from the backend
   const message = error ?? formError(`silent.limits.${index}`);
   const errorField = message ? <FormField message={message} /> : false;
 

@@ -14,10 +14,6 @@ const SELECT_PLACEHOLDER = 'Select';
 // The design system forces its own widths on these inputs: they fill flex-1 wrappers instead
 const FULL_WIDTH = { width: '100%' };
 
-/**
- * One limit, controlled: `limit` is { category, algorithm, windowSize, value }, where `value` is the max, and
- * `onChange` gets the whole limit back.
- */
 function LimitFields({ limit, onChange }) {
   const category = limit?.category;
   const algorithm = limit?.algorithm;
@@ -29,7 +25,6 @@ function LimitFields({ limit, onChange }) {
     onChange({ ...limit, category: next });
   };
 
-  // Switching to Aligned drops the week and month windows: a window no longer offered is cleared
   const handleOnChangeAlgorithm = (next) => {
     const isWindowAllowed = getWindowOptions(next).some((option) => option.value === windowSize);
     onChange({ ...limit, algorithm: next, windowSize: isWindowAllowed ? windowSize : undefined });

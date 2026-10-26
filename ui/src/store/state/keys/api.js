@@ -124,7 +124,6 @@ export const keysApiSlice = apiService.injectEndpoints({
       },
     }),
 
-    // A batch: every limit is created, or none
     createKeyLimits: builder.mutation({
       query: ({ data, uuid }) => ({
         url: `/keys/${uuid}/limits`,
@@ -140,7 +139,6 @@ export const keysApiSlice = apiService.injectEndpoints({
       },
     }),
 
-    // Alert rules on the deleted limit can become stale: they are refetched too
     deleteKeyLimit: builder.mutation({
       query: ({ limitUuid, uuid }) => ({
         url: `/keys/${uuid}/limits/${limitUuid}`,

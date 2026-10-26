@@ -9,13 +9,11 @@ import { getInitialValues } from './schema';
 
 const METHOD_NOT_ALLOWED = 405;
 
-// A 422 points at the field: ['body', 'limits', <row>, <field>]
 const ROW_LOC_INDEX = 2;
 
 // pydantic prefixes the messages of its validators with "Value error, "
 const getValidationMessage = ({ msg }) => msg.replace(/^Value error, /, '');
 
-// Where each error goes: under its row when the backend names one, above the actions otherwise
 const getBackendErrors = (queryError) => {
   if (queryError?.status === METHOD_NOT_ALLOWED) {
     return { message: EXPIRED_LIMITS_MESSAGE, rows: {} };
@@ -48,7 +46,6 @@ export default () => {
 
   const [trigger, args] = useCreateKeyLimitsMutation({ fixedCacheKey: `create-key-limits-${uuid}` });
 
-  // The backend refuses duplicates too: checked here so the user sees which row
   const hasRowErrors = getNewLimitsErrors({ limits, rows }).some(Boolean);
   const isSubmitDisabled = isFormInvalid() || hasRowErrors || !rows.every(isLimitComplete) || args.isLoading;
 
@@ -79,7 +76,6 @@ export default () => {
         return;
       }
 
-      // Back to the list, with a fresh empty row for the next time
       initialize(getInitialValues());
     });
   };

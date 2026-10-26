@@ -61,7 +61,6 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     showModal(modals.MANAGE_KEY_LIMITS, { uuid });
   };
 
-  // In every state: externally managed credentials can have limits too, expired ones open read-only
   const manageLimitsItem = {
     label: 'Manage limits',
     onClick: handleOnManageLimits,

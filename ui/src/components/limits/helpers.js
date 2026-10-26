@@ -15,7 +15,6 @@ export const getWindowOptions = (algorithm) => LIMIT_WINDOWS
   .filter(({ aligned }) => algorithm !== WindowTypeEnum.ALIGNED || aligned)
   .map(({ label, value }) => ({ label, value }));
 
-// A window saved before the list existed is shown as the backend wrote it
 export const formatLimitWindow = (windowSize) => getWindow(windowSize)?.label ?? windowSize;
 
 export const formatLimitValue = (category, value) => {
@@ -32,7 +31,6 @@ export const formatCount = (count, noun) => (count === 1 ? `1 ${noun}` : `${coun
 
 export const formatLimitsCount = (count) => formatCount(count, 'limit');
 
-// Two limits with the same signature are the same limit: the backend refuses the second
 export const getLimitSignature = ({ algorithm, category, windowSize }) => `${category}|${algorithm}|${windowSize}`;
 
 export const sortLimits = (limits) => [...limits].sort((a, b) => {
@@ -46,14 +44,12 @@ export const sortLimits = (limits) => [...limits].sort((a, b) => {
     - LIMIT_WINDOWS.findIndex(({ value }) => value === b.windowSize);
 });
 
-// Largest first, as the backend names an alert event's window (alerting/limit_event_names.py)
 const EVENT_WINDOW_UNITS = [['mo', 2592000], ['w', 604800], ['d', 86400], ['h', 3600], ['m', 60], ['s', 1]];
 
 const WINDOW_UNIT_SECONDS = {
   second: 1, minute: 60, hour: 3600, day: 86400, week: 604800, month: 2592000,
 };
 
-// '24 hours' → '1d': any saved window, also one outside the list
 const getEventWindow = (windowSize) => {
   const [, count, unit] = /^(\d+)\s*([a-z]+?)s?$/i.exec(windowSize?.trim() ?? '') ?? [];
   const seconds = Number(count) * WINDOW_UNIT_SECONDS[unit?.toLowerCase()];
@@ -93,12 +89,10 @@ export const getRulesMadeStale = ({ credentialUuid, limit, limits, rules }) => {
     && eventPattern.test(event));
 };
 
-// The error of each new row: the same limit as a saved one, or as a row above it
 export const getNewLimitsErrors = ({ limits, rows }) => {
   const savedSignatures = new Set(limits.map(getLimitSignature));
 
   return rows.map((row, index) => {
-    // A row still being filled in is the same as nothing yet
     if (!row.category || !row.algorithm || !row.windowSize) {
       return undefined;
     }

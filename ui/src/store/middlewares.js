@@ -5,7 +5,6 @@ import { isFulfilled, isRejectedWithValue } from '@reduxjs/toolkit';
 const { setNotificationMessage } = notificationActions;
 
 const errorWhiteList = {
-  // Shown inside the Limits modal, under the row it belongs to
   createKeyLimits: true,
 };
 

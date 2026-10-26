@@ -21,7 +21,6 @@ const EXPIRED_MESSAGE = 'This credential has expired: its limits can no longer b
 
 const NO_LIMITS_MESSAGE = 'This credential has no limits: only route and project limits apply.';
 
-// Window rows sit under their category, past the chevron
 const WINDOW_INDENT = 'pl-6';
 
 const getRowClassName = ({ header }) => (header ? 'cursor-pointer' : DataTable.ROW_NOT_CLICKABLE);
@@ -64,7 +63,6 @@ function ListScreen() {
   );
 }
 
-// Grouped by category like the Span latencies table: a header row per category, its limits below when expanded
 function LimitsTable() {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
