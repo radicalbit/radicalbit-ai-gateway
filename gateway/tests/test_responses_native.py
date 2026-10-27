@@ -172,6 +172,14 @@ async def test_sse_events_without_event_lines_take_the_data_type():
     ]
 
 
+async def test_sse_done_terminator_is_skipped():
+    async def lines():
+        for line in ['data: {"type":"a"}', '', 'data: [DONE]', '']:
+            yield line
+
+    assert await _collect(iter_sse_events(lines())) == [('a', '{"type":"a"}')]
+
+
 def test_native_event_reports_the_route_as_model():
     created = json.dumps(UPSTREAM_EVENTS[0], separators=(',', ':'))
     delta = json.dumps(UPSTREAM_EVENTS[1], separators=(',', ':'))

@@ -58,6 +58,46 @@ class TestResponsesRequest:
 
         assert messages == [HumanMessage(content='Hi')]
 
+    def test_prompt_variable_texts_are_read_and_written_back(self):
+        body = {
+            'prompt': {
+                'id': 'pmpt_0',
+                'variables': {
+                    'city': 'Milan',
+                    'topic': {'type': 'input_text', 'text': 'weather'},
+                    'photo': {'type': 'input_image', 'image_url': 'https://x/y.png'},
+                },
+            },
+            'input': 'Hi',
+        }
+        request = ResponsesRequest(body)
+
+        messages = request.messages()
+        assert messages == [
+            HumanMessage(
+                content=[
+                    {'type': 'text', 'text': 'Milan'},
+                    {'type': 'text', 'text': 'weather'},
+                ]
+            ),
+            HumanMessage(content='Hi'),
+        ]
+
+        request.write_back(
+            [
+                HumanMessage(
+                    content=[
+                        {'type': 'text', 'text': '[CITY]'},
+                        {'type': 'text', 'text': 'weather'},
+                    ]
+                ),
+                HumanMessage(content='Hi'),
+            ]
+        )
+        variables = request.body['prompt']['variables']
+        assert variables['city'] == '[CITY]'
+        assert variables['photo'] == body['prompt']['variables']['photo']
+
     def test_several_text_parts_read_as_one_message(self):
         body = {
             'input': [
@@ -167,9 +207,45 @@ class TestGovernance:
 
     def test_client_tools_are_always_allowed(self):
         settings = ResponsesSettings(allowed_hosted_tools=[])
-        tools = [{'type': 'function', 'name': 'read'}, {'type': 'custom', 'name': 'x'}]
+        tools = [
+            {'type': 'function', 'name': 'read'},
+            {'type': 'custom', 'name': 'x'},
+            {'type': 'namespace', 'name': 'fs', 'tools': []},
+            {'type': 'local_shell'},
+            {'type': 'shell'},
+            {'type': 'shell', 'environment': {'type': 'local'}},
+            {'type': 'apply_patch'},
+            {'type': 'computer_use_preview'},
+            {'type': 'tool_search', 'execution': 'client'},
+        ]
 
         apply_governance(_body(tools=tools), settings, 'route')
+
+    @pytest.mark.parametrize(
+        'tool',
+        [
+            {'type': 'shell', 'environment': {'type': 'container_auto'}},
+            {'type': 'tool_search'},
+        ],
+    )
+    def test_tools_the_provider_runs_are_hosted(self, tool):
+        settings = ResponsesSettings(allowed_hosted_tools=[])
+
+        with pytest.raises(GatewayBadRequest, match=tool['type']):
+            apply_governance(_body(tools=[tool]), settings, 'route')
+
+    def test_a_dated_tool_type_is_governed_as_its_type(self):
+        settings = ResponsesSettings(allowed_hosted_tools=['web_search'])
+
+        apply_governance(
+            _body(tools=[{'type': 'web_search_2025_08_26'}]), settings, 'route'
+        )
+        with pytest.raises(GatewayBadRequest, match='web_search_preview'):
+            apply_governance(
+                _body(tools=[{'type': 'web_search_preview_2025_03_11'}]),
+                settings,
+                'route',
+            )
 
     def test_forced_store_false(self):
         settings = ResponsesSettings(force_store_false=True)

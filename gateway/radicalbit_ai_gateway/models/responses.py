@@ -17,8 +17,9 @@ class ResponsesSettings(BaseModel):
     allowed_hosted_tools: list[str] | None = Field(
         default=None,
         description=(
-            'Tool types other than function and custom a request may use '
-            '(web_search, file_search, code_interpreter, mcp...). '
+            'Hosted tool types a request may use (web_search, file_search, '
+            'code_interpreter, mcp...); tools the client runs (function, custom, '
+            'local shell, apply_patch, computer...) are always allowed. '
             'Not set: all are allowed. Empty: none is.'
         ),
         examples=[['web_search', 'file_search']],

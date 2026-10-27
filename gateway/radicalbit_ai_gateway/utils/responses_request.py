@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from radicalbit_ai_gateway.llm.messages import (
@@ -35,8 +36,21 @@ _MESSAGE_TYPES: dict[str, type[BaseMessage]] = {
 }
 _TEXT_PART_TYPES = frozenset({'input_text', 'output_text'})
 _TOOL_OUTPUT_TYPES = frozenset({'function_call_output', 'custom_tool_call_output'})
-# Tools the client runs: any other tool type runs at the provider (hosted).
-_CLIENT_TOOL_TYPES = frozenset({'function', 'custom'})
+# Tools the client runs: any other tool type runs at the provider (hosted),
+# except a shell in a local environment and a tool search the client executes.
+_CLIENT_TOOL_TYPES = frozenset(
+    {
+        'function',
+        'custom',
+        'namespace',
+        'local_shell',
+        'apply_patch',
+        'computer',
+        'computer_use_preview',
+    }
+)
+# A tool type's dated version (web_search_2025_08_26) is governed as the type.
+_TOOL_TYPE_DATE = re.compile(r'_\d{4}_\d{2}_\d{2}$')
 # Request fields that do not change the reply, left out of the cache key.
 _UNCACHED_FIELDS = frozenset({'input', 'instructions', 'stream', 'stream_options'})
 
@@ -109,10 +123,31 @@ def _input_items(body: dict) -> list:
     return raw_input if isinstance(raw_input, list) else []
 
 
+def _prompt_variable_texts(body: dict) -> list[_Text]:
+    """Return the texts a reusable prompt's variables put in the prompt."""
+    prompt = body.get('prompt')
+    variables = prompt.get('variables') if isinstance(prompt, dict) else None
+    if not isinstance(variables, dict):
+        return []
+    texts = []
+    for name, value in variables.items():
+        if isinstance(value, str):
+            texts.append(_Text(variables, name))
+        elif (
+            isinstance(value, dict)
+            and value.get('type') == 'input_text'
+            and isinstance(value.get('text'), str)
+        ):
+            texts.append(_Text(value, 'text'))
+    return texts
+
+
 def _slots(body: dict) -> list[_Slot]:
     slots = []
     if isinstance(body.get('instructions'), str):
         slots.append(_Slot(SystemMessage, [_Text(body, 'instructions')]))
+    if variable_texts := _prompt_variable_texts(body):
+        slots.append(_Slot(HumanMessage, variable_texts))
     if isinstance(body.get('input'), str):
         slots.append(_Slot(HumanMessage, [_Text(body, 'input')]))
     for item in _input_items(body):
@@ -207,6 +242,21 @@ def check_supported(body: dict) -> None:
         )
 
 
+def hosted_tool_type(tool: Any) -> str | None:
+    """Return the type of a tool the provider runs, ``None`` for one the client runs."""
+    tool_type = tool.get('type') if isinstance(tool, dict) else None
+    if tool_type in _CLIENT_TOOL_TYPES:
+        return None
+    if tool_type == 'shell' and (tool.get('environment') or {}).get('type') in (
+        None,
+        'local',
+    ):
+        return None
+    if tool_type == 'tool_search' and tool.get('execution') == 'client':
+        return None
+    return _TOOL_TYPE_DATE.sub('', tool_type) if isinstance(tool_type, str) else None
+
+
 def apply_governance(
     body: dict, settings: ResponsesSettings | None, route_name: str
 ) -> None:
@@ -216,10 +266,8 @@ def apply_governance(
 
     if settings.allowed_hosted_tools is not None:
         for tool in body.get('tools') or []:
-            tool_type = tool.get('type') if isinstance(tool, dict) else None
-            if tool_type in _CLIENT_TOOL_TYPES:
-                continue
-            if tool_type not in settings.allowed_hosted_tools:
+            tool_type = hosted_tool_type(tool)
+            if tool_type is not None and tool_type not in settings.allowed_hosted_tools:
                 raise GatewayBadRequest(
                     f'The hosted tool {tool_type} is not allowed on route {route_name}'
                 )
