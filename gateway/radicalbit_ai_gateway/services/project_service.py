@@ -57,7 +57,7 @@ def _sanitize_filename(name: str) -> str:
     return sanitized or 'config'
 
 
-def _route_budget_conflicts(
+def route_budget_conflicts(
     configs: Iterable[ProjectConfig],
 ) -> ProjectBudgetLimitConflictsOut:
     published: list[str] = []
@@ -123,7 +123,7 @@ class ProjectService:
             project,
             configs,
             limits=limits,
-            route_budgets=_route_budget_conflicts(configs),
+            route_budgets=route_budget_conflicts(configs),
         )
 
     def _build_out_or_raise(
@@ -399,7 +399,7 @@ class ProjectService:
         self, project_uuid: UUID
     ) -> ProjectBudgetLimitConflictsOut:
         self._get_project_or_raise(project_uuid)
-        return _route_budget_conflicts(
+        return route_budget_conflicts(
             self.project_config_dao.list_by_project(project_uuid)
         )
 
