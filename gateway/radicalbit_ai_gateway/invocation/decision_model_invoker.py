@@ -234,6 +234,32 @@ class DecisionModelInvoker(ModelInvoker):
         model, upstream, _ = self.model_map[model_id]
         return await self._call_with_retries(model, upstream, body)
 
+    def record_judge_call(
+        self,
+        model_id: str,
+        target_model_id: str,
+        input_tokens: int,
+        latency_ms: float,
+        identity: dict[str, str],
+    ) -> Model:
+        """Record a decision judge call as judge spend. Return the model.
+
+        Input tokens only, at the model's input price: output is recorded as 0.
+        """
+        model = self.model_map[model_id][0]
+        self._record_metrics(
+            **identity,
+            target_model_id=target_model_id,
+            model=model,
+            latency_ms=latency_ms,
+            model_type=DECISION_MODEL_TYPE,
+            token_input_count=input_tokens,
+            token_output_count=0,
+            fallback_triggered=model_id != target_model_id,
+            is_judge=True,
+        )
+        return model
+
     async def _call_with_retries(
         self, model: Model, upstream: DecisionUpstream, body: dict
     ) -> httpx.Response | None:

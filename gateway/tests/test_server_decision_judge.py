@@ -5,12 +5,14 @@ Typesafe and OpenAI are mocked with pook.
 """
 
 import json
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 import httpx
 import pook
+import pytest
 from starlette.requests import Request
 
 from tests.common import db_mock
@@ -26,9 +28,24 @@ from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiter import InMemoryStorage
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitCategory,
+    CredentialLimitOut,
+)
+from radicalbit_ai_gateway.models.event_payload import (
+    FallbackEventPayload,
+    InputTokenProcessedPayload,
+    ModelInvocationPayload,
+    OutputTokenProcessedPayload,
+)
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import app, group_service, key_service
+from radicalbit_ai_gateway.server import (
+    app,
+    group_service,
+    key_service,
+    project_budget_limit_dao,
+)
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
@@ -141,11 +158,16 @@ def _decision_judge(
     }
 
 
-def _build_routes(*guardrails: dict, prompt_manager=None) -> dict:
+def _build_routes(
+    *guardrails: dict,
+    prompt_manager=None,
+    decision_models: tuple[dict, ...] = (JEV, JEV_BACKUP),
+    **chat_route,
+) -> dict:
     """One chat, one embedding and one decision route, each with `guardrails`.
 
     Output guardrails go on the chat route only: a route without chat models
-    rejects them at load.
+    rejects them at load. `chat_route` adds to the chat route's config.
     """
     names = [g['name'] for g in guardrails]
     input_names = [g['name'] for g in guardrails if g.get('where') != 'output']
@@ -153,10 +175,10 @@ def _build_routes(*guardrails: dict, prompt_manager=None) -> dict:
         {
             'chat_models': [GPT],
             'embedding_models': [EMBEDDING],
-            'decision_models': [JEV, JEV_BACKUP],
+            'decision_models': list(decision_models),
             'guardrails': list(guardrails),
             'routes': {
-                'chat': {'chat_models': ['gpt'], 'guardrails': names},
+                'chat': {'chat_models': ['gpt'], 'guardrails': names, **chat_route},
                 'embed': {'embedding_models': ['emb'], 'guardrails': input_names},
                 'agent': {'decision_models': ['jev'], 'guardrails': input_names},
             },
@@ -193,11 +215,11 @@ def _build_routes(*guardrails: dict, prompt_manager=None) -> dict:
     return {f'proj/{name}': route for name, route in routes.items()}
 
 
-def _noul_answer(noul) -> dict:
+def _noul_answer(noul, input_tokens: int = 40) -> dict:
     return {
         'model': 'jev-1.13.0',
         'answers': {'decision_judge': {'type': 'noul', 'noul': noul}},
-        'usage': {'input_tokens': 40, 'output_tokens': 1},
+        'usage': {'input_tokens': input_tokens, 'output_tokens': 1},
     }
 
 
@@ -217,13 +239,14 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
             setattr, app.state, 'token_validator', app.state.token_validator
         )
         app.state.token_validator = ApiKeyValidator(key_service=key_service)
-        api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-        key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
+        self.api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
+        key_service.get_key_by_hashed_key = MagicMock(return_value=self.api_key)
         group_service.check_key_uuid_for_route = MagicMock(return_value=True)
 
+        self.emitted = []
         self.guardrail_events = []
         for patcher in (
-            patch(MODEL_INVOKER_EMIT),
+            patch(MODEL_INVOKER_EMIT, side_effect=self.emitted.append),
             patch(GATEWAY_EMIT),
             patch(REQUEST_EVENT_EMIT),
             patch(GUARDRAIL_EMIT, side_effect=self.guardrail_events.append),
@@ -654,6 +677,157 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         assert response.status_code == 400
         assert backup.isdone()
         assert not openai.isdone()
+
+    # Cost and limits
+
+    # 312 judge tokens fill a 100 token limit on their own.
+    JUDGE_TOKENS = 312
+    # 312 tokens at 1000 per million cost 0.312, over a 0.1 budget.
+    PRICEY_JEV = {**JEV, 'input_cost_per_million_tokens': 1000}
+    PRICEY_BACKUP = {**JEV_BACKUP, 'input_cost_per_million_tokens': 2000}
+
+    def _judge_events(self, payload_type: type) -> list:
+        return [e for e in self.emitted if isinstance(e, payload_type) and e.is_judge]
+
+    def test_judge_call_emits_cost_events_flagged_as_judge(self):
+        app.state.routes = _build_routes(
+            _decision_judge(), decision_models=(self.PRICEY_JEV, JEV_BACKUP)
+        )
+        self._mock_typesafe(body=_noul_answer(0.1, input_tokens=self.JUDGE_TOKENS))
+        self._mock_openai()
+
+        self._chat()
+
+        [invocation] = self._judge_events(ModelInvocationPayload)
+        [input_tokens] = self._judge_events(InputTokenProcessedPayload)
+        [output_tokens] = self._judge_events(OutputTokenProcessedPayload)
+        assert (invocation.model_id, invocation.model_type) == ('jev', 'decision_model')
+        assert input_tokens.model_type == 'decision_model'
+        assert input_tokens.value == self.JUDGE_TOKENS
+        assert input_tokens.cost == pytest.approx(0.312)
+        assert (output_tokens.value, output_tokens.cost) == (0, 0)
+
+    def test_fallback_answer_is_costed_at_the_fallback_price(self):
+        app.state.routes = _build_routes(
+            _decision_judge(fallback_model_id='jev-backup'),
+            decision_models=(self.PRICEY_JEV, self.PRICEY_BACKUP),
+        )
+        self._mock_typesafe(status=503, body={'detail': 'busy'}, times=4)
+        self._mock_backup(body=_noul_answer(0.1, input_tokens=self.JUDGE_TOKENS))
+        self._mock_openai()
+
+        self._chat()
+
+        [invocation] = self._judge_events(ModelInvocationPayload)
+        [input_tokens] = self._judge_events(InputTokenProcessedPayload)
+        [fallback] = self._judge_events(FallbackEventPayload)
+        assert invocation.model_id == 'jev-backup'
+        assert input_tokens.model_id == 'jev-backup'
+        assert input_tokens.cost == pytest.approx(0.624)
+        assert (fallback.target, fallback.fallback) == ('jev', 'jev-backup')
+
+    def test_judge_call_failed_without_usage_counts_nothing(self):
+        app.state.routes = _build_routes(
+            _decision_judge(), token_limiting={'input': {'max_tokens': 100}}
+        )
+        self._mock_typesafe(status=503, body={'detail': 'busy'}, times=8)
+
+        first = self._chat()
+        second = self._chat()
+
+        # Nothing was counted: the second request reaches the judge again.
+        assert (first.status_code, second.status_code) == (500, 500)
+        assert self._judge_events(InputTokenProcessedPayload) == []
+        assert pook.isdone()
+
+    def test_answer_without_noul_still_counts_its_usage(self):
+        # A bad answer still spent tokens.
+        app.state.routes = _build_routes(
+            _decision_judge(), token_limiting={'input': {'max_tokens': 100}}
+        )
+        self._mock_typesafe(
+            body={'answers': {}, 'usage': {'input_tokens': self.JUDGE_TOKENS}}
+        )
+
+        first = self._chat()
+        second = self._chat()
+
+        assert (first.status_code, second.status_code) == (500, 429)
+
+    def _assert_judge_usage_blocks_the_next_request(self):
+        # The judge blocks the first request before the chat model, so only
+        # the judge's usage is counted. Nothing is estimated: the call passes
+        # though its 312 tokens (or their cost) exceed the limit. They fill
+        # the counter, so the second request is rejected before the judge.
+        typesafe = self._mock_typesafe(
+            body=_noul_answer(0.9, input_tokens=self.JUDGE_TOKENS)
+        )
+
+        first = self._chat()
+        second = self._chat()
+
+        assert (first.status_code, second.status_code) == (400, 429)
+        assert typesafe.isdone()
+
+    def _limit_credential(self, category: CredentialLimitCategory, value: float):
+        # A plain record: the ORM `limits` relationship only takes KeyLimit rows.
+        limit = db_mock.get_sample_key_limit(
+            category=category.value, window_size='1 minute', max_value=value
+        )
+        key_record = SimpleNamespace(
+            uuid=self.api_key.uuid,
+            name=self.api_key.name,
+            hashed_key=self.api_key.hashed_key,
+            group=self.api_key.group,
+            limits=[CredentialLimitOut.from_key_limit(limit)],
+            expires_on=None,
+        )
+        key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
+
+    def test_route_input_token_limit_counts_judge_usage(self):
+        app.state.routes = _build_routes(
+            _decision_judge(), token_limiting={'input': {'max_tokens': 100}}
+        )
+
+        self._assert_judge_usage_blocks_the_next_request()
+
+    def test_route_budget_counts_judge_cost(self):
+        app.state.routes = _build_routes(
+            _decision_judge(),
+            decision_models=(self.PRICEY_JEV, JEV_BACKUP),
+            budget_limiting={'max_budget': 0.1},
+        )
+
+        self._assert_judge_usage_blocks_the_next_request()
+
+    def test_credential_input_token_limit_counts_judge_usage(self):
+        app.state.routes = _build_routes(_decision_judge())
+        self._limit_credential(CredentialLimitCategory.TOKEN_INPUT, 100)
+
+        self._assert_judge_usage_blocks_the_next_request()
+
+    def test_credential_budget_counts_judge_cost(self):
+        app.state.routes = _build_routes(
+            _decision_judge(), decision_models=(self.PRICEY_JEV, JEV_BACKUP)
+        )
+        self._limit_credential(CredentialLimitCategory.BUDGET, 0.1)
+
+        self._assert_judge_usage_blocks_the_next_request()
+
+    def test_project_budget_counts_judge_cost(self):
+        app.state.routes = _build_routes(
+            _decision_judge(), decision_models=(self.PRICEY_JEV, JEV_BACKUP)
+        )
+        app.state.routes[CHAT_ROUTE_KEY].project_uuid = str(db_mock.RANDOM_UUID)
+        dao = MagicMock(
+            return_value=[
+                db_mock.get_sample_project_budget_limit(
+                    window_size='1 minute', max_value=0.1
+                )
+            ]
+        )
+        with patch.object(project_budget_limit_dao, 'get_by_project_uuid', dao):
+            self._assert_judge_usage_blocks_the_next_request()
 
     # Tracing
 

@@ -1,9 +1,12 @@
+from dataclasses import dataclass
 import json
 import logging
+import time
 
 import httpx
 from opentelemetry import trace
 
+from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeUsageCounter
 from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.guardrails import DecisionJudgeParameter
@@ -21,6 +24,18 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 
 # A decision judge asks one question: its id only has to match the answer.
 QUESTION_ID = 'decision_judge'
+
+# The guardrail kwargs that name the request on its cost events.
+_IDENTITY_KEYS = (
+    'request_uuid',
+    'api_key_uuid',
+    'api_key_name',
+    'group_uuid',
+    'group_name',
+    'route_name',
+    'project_uuid',
+    'project_name',
+)
 
 
 def _set_judge_request_attributes(params: DecisionJudgeParameter, state: str) -> None:
@@ -60,6 +75,15 @@ def _set_judge_answer_attributes(
         pass
 
 
+@dataclass(frozen=True)
+class _JudgeSpend:
+    """Who a judge call bills, and the limits it consumes."""
+
+    target_model_id: str
+    identity: dict[str, str]
+    count_usage: JudgeUsageCounter | None
+
+
 class _RejectedByModel(JudgeInternalError):
     """The model rejected the request (a 4xx other than 429).
 
@@ -93,6 +117,7 @@ class DecisionJudgeEngine:
         self,
         messages: list[BaseMessage],
         params: DecisionJudgeParameter,
+        count_judge_usage: JudgeUsageCounter | None = None,
         **kwargs,
     ) -> float:
         """Return the probability that the answer is yes, between 0 and 1.
@@ -100,6 +125,9 @@ class DecisionJudgeEngine:
         When the model is still failing after retries, or gives no valid noul,
         the fallback model (if any) answers instead. A 4xx other than 429 does
         not fall back. Fail closed: any failure left raises JudgeInternalError.
+
+        Every answer with usage is judge spend: it emits cost events and
+        consumes the request's limits through `count_judge_usage`.
         """
         question: dict = {'type': 'noul', 'instructions': params.instructions}
         if params.criteria:
@@ -113,8 +141,13 @@ class DecisionJudgeEngine:
 
         if self._invoker is None:
             raise self._error(params.model_id, 'no decision models are configured')
+        spend = _JudgeSpend(
+            target_model_id=params.model_id,
+            identity={k: kwargs.get(k, '') for k in _IDENTITY_KEYS},
+            count_usage=count_judge_usage,
+        )
         try:
-            noul = await self._ask_model(params.model_id, body)
+            noul = await self._ask_model(params.model_id, body, spend)
         except _RejectedByModel:
             raise
         except JudgeInternalError:
@@ -130,17 +163,19 @@ class DecisionJudgeEngine:
             params.model_id,
             params.fallback_model_id,
         )
-        noul = await self._ask_model(params.fallback_model_id, body)
+        noul = await self._ask_model(params.fallback_model_id, body, spend)
         _set_judge_answer_attributes(
             params.fallback_model_id, fallback_triggered=True, noul=noul
         )
         return noul
 
-    async def _ask_model(self, model_id: str, body: dict) -> float:
+    async def _ask_model(self, model_id: str, body: dict, spend: _JudgeSpend) -> float:
+        start_time = time.monotonic()
         try:
             response = await self._invoker.call(model_id, body)
         except ModelInvokerBadRequest as e:
             raise self._error(model_id, str(e)) from e
+        latency_ms = (time.monotonic() - start_time) * 1000
         if response is None:
             raise self._error(model_id, 'no answer after retries')
         if not response.is_success:
@@ -152,12 +187,46 @@ class DecisionJudgeEngine:
                 _RejectedByModel if rejected else JudgeInternalError,
             )
 
-        return self._read_noul(response, model_id)
-
-    def _read_noul(self, response: httpx.Response, model_id: str) -> float:
         try:
-            noul = response.json()['answers'][QUESTION_ID]['noul']
-        except (ValueError, KeyError, TypeError):
+            payload = response.json()
+        except ValueError:
+            payload = None
+        # Count before reading the noul. A bad answer still spent tokens.
+        await self._count_spend(model_id, payload, latency_ms, spend)
+        return self._read_noul(payload, model_id)
+
+    async def _count_spend(
+        self,
+        model_id: str,
+        payload: object,
+        latency_ms: float,
+        spend: _JudgeSpend,
+    ) -> None:
+        """Emit the call's cost events and consume the request's limits.
+
+        Typesafe bills input tokens only. No usage, nothing to count.
+        """
+        usage = payload.get('usage') if isinstance(payload, dict) else None
+        input_tokens = usage.get('input_tokens') if isinstance(usage, dict) else None
+        # bool is an int: reject it, as any non-number.
+        if isinstance(input_tokens, bool) or not isinstance(input_tokens, int):
+            return
+        if input_tokens <= 0:
+            return
+        model = self._invoker.record_judge_call(
+            model_id=model_id,
+            target_model_id=spend.target_model_id,
+            input_tokens=input_tokens,
+            latency_ms=latency_ms,
+            identity=spend.identity,
+        )
+        if spend.count_usage:
+            await spend.count_usage(model, input_tokens, 0)
+
+    def _read_noul(self, payload: object, model_id: str) -> float:
+        try:
+            noul = payload['answers'][QUESTION_ID]['noul']
+        except (KeyError, TypeError):
             raise self._error(model_id, 'the answer has no noul') from None
         # bool is an int: reject it, as any non-number.
         if isinstance(noul, bool) or not isinstance(noul, int | float):
