@@ -3,7 +3,6 @@ import * as yup from 'yup';
 
 const newRow = () => ({ ...EMPTY_LIMIT, rowKey: `${Date.now()}-${Math.random()}` });
 
-// overwrite: the preview items (see getPreview) the user chose to overwrite; every other conflict is skipped
 const getInitialValues = () => ({
   limits: [newRow()],
   overwrite: [],

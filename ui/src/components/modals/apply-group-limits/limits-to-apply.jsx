@@ -36,7 +36,6 @@ function Rows() {
   const formLimits = form?.limits;
 
   const rows = useMemo(() => formLimits ?? [], [formLimits]);
-  // Only rows repeating each other: a limit a credential already has is a conflict, shown in the preview
   const rowErrors = useMemo(() => getNewLimitsErrors({ limits: [], rows }), [rows]);
 
   const handleOnChange = useCallback((index, next) => {

@@ -146,7 +146,6 @@ export const groupsApiSlice = apiService.injectEndpoints({
         method: 'post',
         data,
       }),
-      // The limits land on each member, not on the group
       invalidatesTags: (result) => {
         const members = result?.members || [];
 

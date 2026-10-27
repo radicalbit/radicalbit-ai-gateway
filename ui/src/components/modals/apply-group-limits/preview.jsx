@@ -181,7 +181,6 @@ function NameCell({ isCollapsed, record }) {
   );
 }
 
-// Expired credentials still receive the limits: say so
 function ExpiredMark({ member }) {
   if (member.state !== CredentialStateEnum.EXPIRED) {
     return false;
@@ -221,7 +220,6 @@ function ChoiceCell({ record }) {
     write('overwrite', value === ChoiceEnum.OVERWRITE ? [...others, key] : others);
   };
 
-  // Every conflict starts as Skip: nothing is overwritten silently
   const value = overwrite.includes(key) ? ChoiceEnum.OVERWRITE : ChoiceEnum.SKIP;
 
   return <Segmented onChange={handleOnChange} options={CHOICE_OPTIONS} size="small" value={value} />;

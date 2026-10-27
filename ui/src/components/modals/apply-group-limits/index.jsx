@@ -28,10 +28,8 @@ function ApplyGroupLimits() {
   const uuid = modalPayload?.data?.uuid;
 
   const group = useGetGroupQuery(uuid, { skip: !uuid });
-  // Fresh limits, so the preview shows every conflict the apply would meet
   const keys = useGetKeysQuery(undefined, { refetchOnMountOrArgChange: true });
 
-  // The result is kept under a fixed cache key: forget it when the modal closes
   const [, { reset }] = useApplyGroupLimitsMutation({ fixedCacheKey: getFixedCacheKey(uuid) });
 
   useEffect(() => reset, [reset]);
@@ -115,7 +113,6 @@ function ApplyForm() {
   );
 }
 
-// The group owns nothing (ADR 0009): say so before anything is applied
 function CopyExplanation({ count }) {
   const description = `These limits are copied onto the ${formatCount(count, 'credential')} in this group right now, each with its own counter. Credentials added to the group later won't receive them, and removing a credential from the group keeps its limits. Change or delete them from each credential.`;
 

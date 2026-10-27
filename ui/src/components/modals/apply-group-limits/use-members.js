@@ -3,7 +3,6 @@ import { useGetGroupQuery } from '@State/groups/api';
 import { useGetKeysQuery } from '@State/keys/api';
 import { useMemo } from 'react';
 
-// The credentials in the group, with the limits each one already has (from the credentials list)
 export default () => {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;

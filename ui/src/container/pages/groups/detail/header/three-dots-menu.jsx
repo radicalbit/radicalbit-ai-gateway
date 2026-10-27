@@ -27,7 +27,6 @@ function ThreeDotsMenu() {
 
 const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
 
-// Limits are copied onto the credentials in the group: an empty group has nobody to copy them to
 const NO_CREDENTIALS_TOOLTIP = 'Add at least one credential: limits are applied to the credentials in the group, not to the group';
 
 export const useGetThreeDotsMenuItems = (uuid) => {
@@ -60,7 +59,6 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     return [];
   }
 
-  // Enabled on externally managed groups too: the limits land on each credential
   const applyLimitsItem = hasCredentials
     ? { label: 'Apply limits to credentials', onClick: handleOnApplyLimits }
     : { label: <Tooltip title={NO_CREDENTIALS_TOOLTIP}>Apply limits to credentials</Tooltip>, disabled: true };

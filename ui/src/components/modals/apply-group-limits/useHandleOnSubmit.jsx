@@ -10,7 +10,6 @@ import useMembers from './use-members';
 
 const ROW_LOC_INDEX = 2;
 
-// pydantic prefixes the messages of its validators with "Value error, "
 const getValidationMessage = ({ msg }) => msg.replace(/^Value error, /, '');
 
 const isLimitsLoc = (loc) => loc?.[1] === 'limits' && Number.isInteger(loc?.[ROW_LOC_INDEX]);
@@ -42,13 +41,11 @@ export default () => {
 
   const { members, limitsByKey } = useMembers();
 
-  // Until the credentials are fresh, a conflict could be missing from the preview, and so from skip
   const { isFetching } = useGetKeysQuery();
 
   const [trigger, args] = useApplyGroupLimitsMutation({ fixedCacheKey: getFixedCacheKey(uuid) });
 
   const isValid = areRowsValid(rows);
-  // With invalid rows nothing can be previewed yet: count every member
   const touchedCount = isValid ? getTouchedMembers(getPreview({ limitsByKey, members, rows }), overwrite).length : members.length;
 
   const isSubmitDisabled = isFormInvalid() || !isValid || !touchedCount || isFetching || args.isLoading;
@@ -63,7 +60,6 @@ export default () => {
       const limits = formData.limits.map(({ algorithm, category, value, windowSize }) => ({
         algorithm, category, value, windowSize,
       }));
-      // A conflict the user didn't choose to overwrite is skipped: the backend overwrites what is not listed
       const skip = getConflicts(getPreview({ limitsByKey, members, rows: limits }))
         .filter(({ key }) => !overwritten.has(key))
         .map(({ limit, member }) => ({
