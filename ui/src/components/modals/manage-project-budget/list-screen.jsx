@@ -123,13 +123,13 @@ function AddBudget() {
     return (
       <Tooltip title={BLOCKED_TOOLTIP}>
         <span>
-          <Button disabled prefix={<Lucide icon={Plus} />} type="secondary">Add budget</Button>
+          <Button disabled prefix={<Lucide icon={Plus} />} type="secondary">Add budgets</Button>
         </span>
       </Tooltip>
     );
   }
 
-  return <Button onClick={handleOnAdd} prefix={<Lucide icon={Plus} />} type="secondary">Add budget</Button>;
+  return <Button onClick={handleOnAdd} prefix={<Lucide icon={Plus} />} type="secondary">Add budgets</Button>;
 }
 
 function Window({ limit }) {
