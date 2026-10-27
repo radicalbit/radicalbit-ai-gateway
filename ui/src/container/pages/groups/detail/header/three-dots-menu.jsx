@@ -27,10 +27,14 @@ function ThreeDotsMenu() {
 
 const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
 
+// Limits are copied onto the credentials in the group: an empty group has nobody to copy them to
+const NO_CREDENTIALS_TOOLTIP = 'Add at least one credential: limits are applied to the credentials in the group, not to the group';
+
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { showModal } = useModals();
   const { data, isLoading, isError, isSuccess } = useGetGroupQuery(uuid, { skip: !uuid });
   const isExternallyManaged = data?.owner !== GATEWAY_OWNER;
+  const hasCredentials = !!data?.keys?.length;
 
   const handleOnAssociateRoutes = () => {
     showModal(modals.ADD_ROUTES_TO_GROUP, { uuid });
@@ -38,6 +42,10 @@ export const useGetThreeDotsMenuItems = (uuid) => {
 
   const handleOnAssociateKeys = () => {
     showModal(modals.ADD_KEYS_TO_GROUP, { uuid });
+  };
+
+  const handleOnApplyLimits = () => {
+    showModal(modals.APPLY_GROUP_LIMITS, { uuid });
   };
 
   const handleOnEditKey = () => {
@@ -51,6 +59,11 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   if (isLoading || !isSuccess || isError) {
     return [];
   }
+
+  // Enabled on externally managed groups too: the limits land on each credential
+  const applyLimitsItem = hasCredentials
+    ? { label: 'Apply limits to credentials', onClick: handleOnApplyLimits }
+    : { label: <Tooltip title={NO_CREDENTIALS_TOOLTIP}>Apply limits to credentials</Tooltip>, disabled: true };
 
   if (isExternallyManaged) {
     return [
@@ -69,6 +82,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         label: <Tooltip title={DISABLED_GROUP_TOOLTIP}>Associate credentials</Tooltip>,
         disabled: true,
       },
+      applyLimitsItem,
       {
         type: 'divider',
       },
@@ -95,6 +109,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
       label: 'Associate credentials',
       onClick: handleOnAssociateKeys,
     },
+    applyLimitsItem,
     {
       type: 'divider',
     },

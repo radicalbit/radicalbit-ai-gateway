@@ -140,6 +140,28 @@ export const groupsApiSlice = apiService.injectEndpoints({
       },
     }),
 
+    applyGroupLimits: builder.mutation({
+      query: ({ data, uuid }) => ({
+        url: `/groups/${uuid}/limits`,
+        method: 'post',
+        data,
+      }),
+      // The limits land on each member, not on the group
+      invalidatesTags: (result) => {
+        const members = result?.members || [];
+
+        if (result) {
+          return [
+            API_TAGS.KEYS,
+            ...members.map(({ keyUuid }) => `${API_TAGS.KEYS}-${keyUuid}`),
+            API_TAGS.ALERTS,
+          ];
+        }
+
+        return [];
+      },
+    }),
+
     addRoutesToGroup: builder.mutation({
       query: ({ data, uuid, projectUuid }) => ({
         url: `/groups/${uuid}/projects/${projectUuid}/routes`,
@@ -197,6 +219,7 @@ export const {
   useDeleteGroupMutation,
   useAddKeysToGroupMutation,
   useRemoveKeyFromGroupMutation,
+  useApplyGroupLimitsMutation,
   useAddRoutesToGroupMutation,
   useRemoveRouteFromGroupMutation,
 } = groupsApiSlice;

@@ -10,11 +10,7 @@ import yaml
 
 from tests.common import db_mock  # noqa: F401  (registers every table Key relates to)
 from tests.common.db_integration import DatabaseIntegration
-from tests.common.db_mock import (
-    get_sample_group_limit,
-    get_sample_group_plain,
-    get_sample_key_limit,
-)
+from tests.common.db_mock import get_sample_key_limit
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
@@ -661,27 +657,6 @@ class TestAlertRuleRoute(DatabaseIntegration):
             )
         )
 
-    def add_group_limit(self, credential, category: str, window_size: str):
-        """Give the credential a limit propagated from a group."""
-        group = self.insert(get_sample_group_plain(uuid=uuid.uuid4()))
-        group_limit = self.insert(
-            get_sample_group_limit(
-                uuid=uuid.uuid4(),
-                group_uuid=group.uuid,
-                category=category,
-                window_size=window_size,
-            )
-        )
-        return self.insert(
-            get_sample_key_limit(
-                uuid=uuid.uuid4(),
-                key_uuid=credential.uuid,
-                category=category,
-                window_size=window_size,
-                group_limit_uuid=group_limit.uuid,
-            )
-        )
-
     def create_credential_rule(self, credential, event: str, **overrides):
         return self.create(
             event,
@@ -742,22 +717,11 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert events['guardrail'] == []
         assert events['fallback'] == []
 
-    def test_a_limit_propagated_from_a_group_counts_like_a_direct_one(self):
-        credential = self.insert_credential('billing-service')
-        self.add_group_limit(credential, 'token_input', '1 day')
-        self.add_credential_limit(credential, 'request_rate', '1 minute')
-
-        events = self.credential_events(credential.uuid)
-
-        assert [e['event'] for e in events['limit']] == [
-            'rate_limit-exceeded-1m',
-            'token_input_limit-exceeded-1d',
-        ]
-
-    def test_direct_and_group_limits_on_the_same_window_offer_their_events_once(self):
+    def test_limits_saved_on_the_same_window_offer_their_events_once(self):
         credential = self.insert_credential('billing-service')
         self.add_credential_limit(credential, 'request_rate', '1 minute')
-        self.add_group_limit(credential, 'request_rate', '60 seconds')
+        # A window saved in another unit, before windows were canonical
+        self.add_credential_limit(credential, 'request_rate', '60 seconds')
 
         events = self.credential_events(credential.uuid)
 
@@ -876,15 +840,6 @@ class TestAlertRuleRoute(DatabaseIntegration):
         self.add_credential_limit(credential, 'request_rate', '1 minute', max_value=5)
 
         assert self.listed(rule['uuid'])['stale'] is False
-
-    def test_a_rule_on_a_group_limit_is_stale_once_the_group_limit_is_gone(self):
-        credential = self.insert_credential('billing-service')
-        key_limit = self.add_group_limit(credential, 'budget', '1 day')
-        rule = self.created_credential_rule(credential, 'budget_limit-exceeded-1d')
-
-        KeyLimitDAO(self.db).delete_by_uuid(key_limit.uuid)
-
-        assert self.listed(rule['uuid'])['stale'] is True
 
     def test_an_unreadable_credential_limit_is_skipped(self):
         credential = self.insert_credential('billing-service')

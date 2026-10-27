@@ -1,13 +1,10 @@
-import datetime
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
-from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
-from radicalbit_ai_gateway.db.tables.group_limit_table import GroupLimit
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     GroupIn,
@@ -20,7 +17,6 @@ from radicalbit_ai_gateway.models.auth_dto import (
     RouteGroupsIn,
 )
 from radicalbit_ai_gateway.models.group_limiting import (
-    GroupLimitOut,
     GroupLimitsApplyOut,
     GroupLimitsIn,
 )
@@ -28,9 +24,8 @@ from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
     GroupAlreadyExistsError,
+    GroupHasNoCredentialsError,
     GroupInternalError,
-    GroupLimitAlreadyExistsError,
-    GroupLimitNotFoundError,
     GroupNotFoundError,
     GroupOperationNotAllowedError,
     KeyNotFoundError,
@@ -44,13 +39,11 @@ class GroupService:
         group_dao: GroupDAO,
         group_route_dao: GroupRouteDAO,
         key_service: KeyService,
-        group_limit_dao: GroupLimitDAO,
         project_configs: dict[str, ProjectEntry] | None = None,
     ):
         self.group_dao = group_dao
         self.key_service = key_service
         self.group_route_dao = group_route_dao
-        self.group_limit_dao = group_limit_dao
         self._project_configs = project_configs if project_configs is not None else {}
 
     def _validate_group(self, group_uuid: UUID) -> None:
@@ -369,87 +362,21 @@ class GroupService:
     def get_names_by_uuids(self, uuids: list[UUID]) -> dict[UUID, str]:
         return self.group_dao.get_names_by_uuids(uuids)
 
-    def add_limits_to_group(
+    def apply_limits_to_group(
         self, group_uuid: UUID, limits_in: GroupLimitsIn
     ) -> GroupLimitsApplyOut:
+        """Copy the limits onto the credentials in the group now (ADR 0009).
+
+        Externally managed groups too: the limits land on each credential.
+        """
         group = self.group_dao.get_by_uuid(group_uuid)
         if not group:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
-        # The last limit applied always wins here too: re-submitting a
-        # category/algorithm/window the group already has updates it in
-        # place instead of colliding with the unique constraint.
-        existing_by_signature = {
-            (limit.category, limit.algorithm, limit.window_size): limit
-            for limit in self.group_limit_dao.get_by_group_uuid(group_uuid)
-        }
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
-        now = datetime.datetime.now(tz=UTC)
-        to_insert: list[GroupLimit] = []
-        to_update: list[GroupLimit] = []
-        for limit_in in limits_in.limits:
-            signature = (
-                limit_in.category.value,
-                limit_in.algorithm.value,
-                str(limit_in.window_size),
+        if not group.keys:
+            raise GroupHasNoCredentialsError(
+                f'Group "{group.name}" has no credentials: limits are applied to '
+                'the credentials in the group, not to the group'
             )
-            existing = existing_by_signature.get(signature)
-            if existing is None:
-                to_insert.append(limit_in.to_group_limit(group_uuid))
-            else:
-                existing.max_value = limit_in.value
-                existing.updated_at = now
-                to_update.append(existing)
-        try:
-            inserted = self.group_limit_dao.insert_many(to_insert) if to_insert else []
-            updated = self.group_limit_dao.update_many(to_update) if to_update else []
-        except IntegrityError as e:
-            if 'uq_group_limit_GROUP_UUID_CATEGORY_ALGORITHM_WINDOW_SIZE' in str(
-                e.orig
-            ):
-                categories = ', '.join(
-                    limit.category.value for limit in limits_in.limits
-                )
-                raise GroupLimitAlreadyExistsError(
-                    f'One of the requested limits ({categories}) already exists '
-                    f'on group "{group.name}" with the same algorithm and window'
-                ) from e
-            raise GroupInternalError(
-                f'An error occurred while adding the limits: {e}'
-            ) from e
-        except Exception as e:
-            raise GroupInternalError(
-                f'An error occurred while adding the limits: {e}'
-            ) from e
-        applied = inserted + updated
-        _, overwritten = self.key_service.propagate_group_limits(
-            group_limits=applied, keys=group.keys
-        )
         return GroupLimitsApplyOut(
-            limits=[GroupLimitOut.from_group_limit(limit) for limit in applied],
-            overwritten=overwritten,
+            members=self.key_service.apply_limits_to_keys(group.keys, limits_in)
         )
-
-    def get_limits_for_group(self, group_uuid: UUID) -> list[GroupLimitOut]:
-        self._validate_group(group_uuid)
-        return [
-            GroupLimitOut.from_group_limit(limit)
-            for limit in self.group_limit_dao.get_by_group_uuid(group_uuid)
-        ]
-
-    async def delete_limit_from_group(
-        self, group_uuid: UUID, limit_uuid: UUID
-    ) -> GroupLimitOut:
-        group = self.group_dao.get_by_uuid(group_uuid)
-        if not group:
-            raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
-        limit = self.group_limit_dao.get_by_uuid(limit_uuid)
-        if not limit or limit.group_uuid != group_uuid:
-            raise GroupLimitNotFoundError(
-                f'Limit {limit_uuid} not found for group "{group.name}"'
-            )
-        out = GroupLimitOut.from_group_limit(limit)
-        await self.key_service.clear_propagated_limit_counters(limit_uuid)
-        # Cascades: deleting the group limit also removes every key_limit row
-        # that was propagated from it.
-        self.group_limit_dao.delete_by_uuid(limit_uuid)
-        return out
