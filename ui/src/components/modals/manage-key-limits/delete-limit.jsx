@@ -6,7 +6,9 @@ import SuccessMessage from '@Components/success-message';
 import useModals from '@Hooks/use-modals';
 import { useGetAlertsQuery } from '@State/alerts/api';
 import { useDeleteKeyLimitMutation, useGetKeyQuery } from '@State/keys/api';
-import { Popconfirm, SectionTitle, TextWithBold } from '@radicalbit/radicalbit-design-system';
+import { Popconfirm, SectionTitle, Skeleton, TextWithBold } from '@radicalbit/radicalbit-design-system';
+
+const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this limit.';
 
 const DESCRIPTION_WIDTH = 'max-w-80';
 
@@ -69,11 +71,11 @@ function StaleRules({ limit }) {
   const { data: rules, isError, isLoading, isSuccess } = useGetAlertsQuery();
 
   if (isLoading) {
-    return false;
+    return <Skeleton.Input active block size="small" />;
   }
 
   if (isError) {
-    return false;
+    return <span className="text-[var(--coo-warning)]">{STALE_RULES_UNAVAILABLE}</span>;
   }
 
   if (!isSuccess) {

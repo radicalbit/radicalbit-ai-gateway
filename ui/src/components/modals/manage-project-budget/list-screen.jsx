@@ -7,14 +7,16 @@ import useModals from '@Hooks/use-modals';
 import { useGetProjectQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
-  Button, DataTable, Dropdown, Tooltip,
+  Board, Button, DataTable, Dropdown, Tooltip, Void,
 } from '@radicalbit/radicalbit-design-system';
 import { EllipsisVertical, Plus } from 'lucide-react';
 import Conflicts from './conflicts';
 import DeleteBudget from './delete-budget';
 import { ScreenEnum } from './schema';
 
-const NO_BUDGET_MESSAGE = 'This project has no budget: spending is capped only by route and credential budgets, if any.';
+const NO_BUDGET_TITLE = 'This project has no budget';
+
+const NO_BUDGET_DESCRIPTION = 'Spending is capped only by route and credential budgets, if any.';
 
 const BLOCKED_TOOLTIP = 'Routes of the published configuration have their own budget';
 
@@ -46,33 +48,38 @@ function ListScreen() {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { write } = useFormbitContext();
+  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const limits = data?.limits ?? [];
+
+  if (!limits.length) {
+    return <IsEmpty />;
+  }
+
+  return <IsSuccess />;
+}
+
+function IsEmpty() {
+  return (
+    <div className="flex flex-col gap-4">
+      <Conflicts />
+
+      <Board
+        main={<Void actions={<AddBudget />} description={NO_BUDGET_DESCRIPTION} size="small" title={NO_BUDGET_TITLE} />}
+        width="100%"
+      />
+    </div>
+  );
+}
+
+function IsSuccess() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
 
   const { data } = useGetProjectQuery(uuid, { skip: !uuid });
   const limits = data?.limits ?? [];
-  const isBlocked = (data?.routeBudgets?.published ?? []).length > 0;
 
-  const handleOnAdd = () => {
-    write('__metadata.screen', ScreenEnum.ADD);
-  };
-
-  const addButton = (
-    <Button disabled={isBlocked} onClick={handleOnAdd} prefix={<Lucide icon={Plus} />} type="secondary">Add budget</Button>
-  );
-  const addAction = isBlocked ? <Tooltip title={BLOCKED_TOOLTIP}><span>{addButton}</span></Tooltip> : addButton;
-  const count = limits.length ? formatCount(limits.length, 'budget') : 'No budget';
+  const count = formatCount(limits.length, 'budget');
   const sortedLimits = sortLimits(limits);
-  const content = limits.length ? (
-    <DataTable
-      columns={columns}
-      dataSource={sortedLimits}
-      pagination={false}
-      rowClassName={getRowClassName}
-      rowKey={getRowKey}
-      showHeader={false}
-      size="small"
-    />
-  ) : <span className="opacity-70">{NO_BUDGET_MESSAGE}</span>;
 
   return (
     <div className="flex flex-col gap-4">
@@ -81,12 +88,46 @@ function ListScreen() {
       <div className="flex items-center justify-between">
         <strong>{count}</strong>
 
-        {addAction}
+        <AddBudget />
       </div>
 
-      {content}
+      <DataTable
+        columns={columns}
+        dataSource={sortedLimits}
+        pagination={false}
+        rowClassName={getRowClassName}
+        rowKey={getRowKey}
+        showHeader={false}
+        size="small"
+      />
     </div>
   );
+}
+
+function AddBudget() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { write } = useFormbitContext();
+
+  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const isBlocked = (data?.routeBudgets?.published ?? []).length > 0;
+
+  const handleOnAdd = () => {
+    write('__metadata.screen', ScreenEnum.ADD);
+  };
+
+  if (isBlocked) {
+    return (
+      <Tooltip title={BLOCKED_TOOLTIP}>
+        <span>
+          <Button disabled prefix={<Lucide icon={Plus} />} type="secondary">Add budget</Button>
+        </span>
+      </Tooltip>
+    );
+  }
+
+  return <Button onClick={handleOnAdd} prefix={<Lucide icon={Plus} />} type="secondary">Add budget</Button>;
 }
 
 function Window({ limit }) {
