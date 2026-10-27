@@ -10,7 +10,10 @@ from tests.common import db_mock
 
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
-from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitOut
+from radicalbit_ai_gateway.models.project_budget_limiting import (
+    ProjectBudgetLimitConflictsOut,
+    ProjectBudgetLimitOut,
+)
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute
 from radicalbit_ai_gateway.services.config_generator_service import (
@@ -444,6 +447,36 @@ class TestProjectRoute(unittest.TestCase):
             json=jsonable_encoder(db_mock.get_sample_project_budget_limits_in()),
         )
         assert res.status_code == 400
+
+    def test_add_budget_limits_conflict_names_the_routes(self):
+        pid = uuid.uuid4()
+        self.project_service.add_budget_limits_to_project = MagicMock(
+            side_effect=ProjectBudgetLimitConflictError(
+                'conflict', routes=['chat', 'search']
+            )
+        )
+        res = self.client.post(
+            f'{self.prefix}/projects/{pid}/budget-limits',
+            json=jsonable_encoder(db_mock.get_sample_project_budget_limits_in()),
+        )
+        assert res.status_code == 400
+        assert res.json()['error']['routes'] == ['chat', 'search']
+
+    def test_get_budget_limit_conflicts(self):
+        pid = uuid.uuid4()
+        self.project_service.get_budget_limit_conflicts = MagicMock(
+            return_value=ProjectBudgetLimitConflictsOut(
+                published=['chat'], draft=['chat', 'search'], budget_routing=['chat']
+            )
+        )
+        res = self.client.get(f'{self.prefix}/projects/{pid}/budget-limits/conflicts')
+        assert res.status_code == 200
+        assert res.json() == {
+            'published': ['chat'],
+            'draft': ['chat', 'search'],
+            'budgetRouting': ['chat'],
+        }
+        self.project_service.get_budget_limit_conflicts.assert_called_once_with(pid)
 
     def test_get_budget_limits_for_project_success(self):
         pid = uuid.uuid4()

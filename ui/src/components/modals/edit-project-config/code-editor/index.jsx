@@ -1,6 +1,7 @@
 import { Board } from '@radicalbit/radicalbit-design-system';
 import useGetActiveConfig from '../useGetActiveConfig';
 import Actions from './actions';
+import BudgetBanner from './budget-banner';
 import Editor from './editor';
 import Feedbacks from './feedbacks';
 import Header from './header';
@@ -14,6 +15,8 @@ function CodeEditor() {
 
   return (
     <div className="flex flex-col min-h-0 gap-4 h-full">
+
+      <BudgetBanner projectUuid={projectUuid} />
 
       <Feedbacks config={activeConfig} />
 

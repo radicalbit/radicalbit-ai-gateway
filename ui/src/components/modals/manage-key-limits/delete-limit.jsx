@@ -1,10 +1,14 @@
-import { LIMIT_CATEGORY_LABELS } from '@Components/limits/constants';
-import { formatCount, formatLimitWindow, getRulesMadeStale } from '@Components/limits/helpers';
+import { LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
+import {
+  RuleScopeEnum, formatCount, formatLimitWindow, getRulesMadeStale,
+} from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
 import useModals from '@Hooks/use-modals';
 import { useGetAlertsQuery } from '@State/alerts/api';
 import { useDeleteKeyLimitMutation, useGetKeyQuery } from '@State/keys/api';
-import { Popconfirm, SectionTitle, TextWithBold } from '@radicalbit/radicalbit-design-system';
+import { Popconfirm, SectionTitle, Skeleton, TextWithBold } from '@radicalbit/radicalbit-design-system';
+
+const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this limit.';
 
 const DESCRIPTION_WIDTH = 'max-w-80';
 
@@ -16,7 +20,7 @@ function DeleteLimit({ limit }) {
   const name = data?.name;
 
   const limitUuid = limit?.uuid;
-  const label = `${LIMIT_CATEGORY_LABELS[limit?.category]} ${formatLimitWindow(limit?.windowSize)}`;
+  const label = `${LIMIT_CATEGORY_LABELS[limit?.category]} ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
 
   const [trigger] = useDeleteKeyLimitMutation({ fixedCacheKey: `delete-key-limit-${limitUuid}` });
 
@@ -41,7 +45,7 @@ function DeleteLimit({ limit }) {
       arrow={false}
       cancelButtonProps={{ type: 'secondary-light' }}
       description={(
-        <div className={`flex flex-col gap-1 ${DESCRIPTION_WIDTH}`}>
+        <div className={`flex flex-col gap-2 ${DESCRIPTION_WIDTH}`}>
           <TextWithBold bold={label} isQuestion text="Are you sure you want to delete the limit" />
 
           <StaleRules limit={limit} />
@@ -67,11 +71,11 @@ function StaleRules({ limit }) {
   const { data: rules, isError, isLoading, isSuccess } = useGetAlertsQuery();
 
   if (isLoading) {
-    return false;
+    return <Skeleton.Input active block size="small" />;
   }
 
   if (isError) {
-    return false;
+    return <span className="text-[var(--coo-warning)]">{STALE_RULES_UNAVAILABLE}</span>;
   }
 
   if (!isSuccess) {
@@ -79,7 +83,7 @@ function StaleRules({ limit }) {
   }
 
   const count = getRulesMadeStale({
-    credentialUuid: uuid, limit, limits, rules: rules ?? [],
+    limit, limits, rules: rules ?? [], scope: RuleScopeEnum.CREDENTIAL, targetUuid: uuid,
   }).length;
 
   if (!count) {

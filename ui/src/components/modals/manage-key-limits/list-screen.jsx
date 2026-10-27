@@ -8,7 +8,7 @@ import { CredentialStateEnum } from '@Src/constants';
 import { useGetKeyQuery } from '@State/keys/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
-  Alert, Button, DataTable, Dropdown,
+  Alert, Board, Button, DataTable, Dropdown, Void,
 } from '@radicalbit/radicalbit-design-system';
 import {
   ChevronDown, ChevronRight, EllipsisVertical, Plus,
@@ -19,7 +19,9 @@ import { ScreenEnum } from './schema';
 
 const EXPIRED_MESSAGE = 'This credential has expired: its limits can no longer be changed.';
 
-const NO_LIMITS_MESSAGE = 'This credential has no limits: only route and project limits apply.';
+const NO_LIMITS_TITLE = 'This credential has no limits';
+
+const NO_LIMITS_DESCRIPTION = 'Only route and project limits apply.';
 
 const WINDOW_INDENT = 'pl-6';
 
@@ -31,36 +33,87 @@ function ListScreen() {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { write } = useFormbitContext();
+  const { data } = useGetKeyQuery(uuid, { skip: !uuid });
+  const limits = data?.limits ?? [];
+
+  if (!limits.length) {
+    return <IsEmpty />;
+  }
+
+  return <IsSuccess />;
+}
+
+function IsEmpty() {
+  return (
+    <div className="flex flex-col gap-6">
+      <ExpiredAlert />
+
+      <Board
+        main={<Void actions={<AddLimits />} description={NO_LIMITS_DESCRIPTION} size="small" title={NO_LIMITS_TITLE} />}
+        width="100%"
+      />
+    </div>
+  );
+}
+
+function IsSuccess() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
 
   const { data } = useGetKeyQuery(uuid, { skip: !uuid });
   const limits = data?.limits ?? [];
+
+  const count = formatLimitsCount(limits.length);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <ExpiredAlert />
+
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <strong>{count}</strong>
+
+          <AddLimits />
+        </div>
+
+        <LimitsTable />
+      </div>
+    </div>
+  );
+}
+
+function ExpiredAlert() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { data } = useGetKeyQuery(uuid, { skip: !uuid });
+  const isExpired = data?.state === CredentialStateEnum.EXPIRED;
+
+  if (!isExpired) {
+    return false;
+  }
+
+  return <Alert title={EXPIRED_MESSAGE} type="info" />;
+}
+
+function AddLimits() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { write } = useFormbitContext();
+
+  const { data } = useGetKeyQuery(uuid, { skip: !uuid });
   const isExpired = data?.state === CredentialStateEnum.EXPIRED;
 
   const handleOnAdd = () => {
     write('__metadata.screen', ScreenEnum.ADD);
   };
 
-  const expiredAlert = isExpired ? <Alert title={EXPIRED_MESSAGE} type="info" /> : false;
-  const addButton = isExpired ? false : (
-    <Button onClick={handleOnAdd} prefix={<Lucide icon={Plus} />} type="secondary">Add limits</Button>
-  );
-  const content = limits.length ? <LimitsTable /> : <span className="opacity-70">{NO_LIMITS_MESSAGE}</span>;
-  const count = limits.length ? formatLimitsCount(limits.length) : 'No limits';
+  if (isExpired) {
+    return false;
+  }
 
-  return (
-    <div className="flex flex-col gap-4">
-      {expiredAlert}
-
-      <div className="flex items-center justify-between">
-        <strong>{count}</strong>
-
-        {addButton}
-      </div>
-
-      {content}
-    </div>
-  );
+  return <Button icon={<Lucide icon={Plus} />} onClick={handleOnAdd}>Add limits</Button>;
 }
 
 function LimitsTable() {

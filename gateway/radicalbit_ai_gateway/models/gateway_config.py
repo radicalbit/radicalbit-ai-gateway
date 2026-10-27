@@ -453,6 +453,14 @@ class GatewayConfig(BaseModel):
                     )
         return self
 
+    def uses_budget_routing(self, route: GatewayRouteConfig) -> bool:
+        """Whether *route* picks its model by how much of its budget is used."""
+        routing_config = self.routing_by_name.get(route.routing)
+        return (
+            isinstance(routing_config, DeterministicRoutingConfig)
+            and routing_config.rule == RoutingRuleType.BUDGET
+        )
+
     @model_validator(mode='after')
     def validate_routing(self) -> Self:
         """Validate routing configurations and their references."""
@@ -514,11 +522,7 @@ class GatewayConfig(BaseModel):
                     )
 
             # budget routing requires budget_limiting to be configured on the route
-            if (
-                isinstance(routing_config, DeterministicRoutingConfig)
-                and routing_config.rule == RoutingRuleType.BUDGET
-                and route.budget_limiting is None
-            ):
+            if self.uses_budget_routing(route) and route.budget_limiting is None:
                 raise ValueError(
                     f"Route '{route_name}': budget routing requires budget_limiting to be configured."
                 )

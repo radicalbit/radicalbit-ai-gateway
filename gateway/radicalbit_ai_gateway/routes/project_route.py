@@ -13,6 +13,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
 )
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_budget_limiting import (
+    ProjectBudgetLimitConflictsOut,
     ProjectBudgetLimitOut,
     ProjectBudgetLimitsIn,
 )
@@ -337,6 +338,14 @@ class ProjectRoute:
         )
         def get_budget_limits_for_project(project_uuid: UUID):
             return project_service.get_budget_limits_for_project(project_uuid)
+
+        @router.get(
+            '/projects/{project_uuid}/budget-limits/conflicts',
+            status_code=200,
+            response_model=ProjectBudgetLimitConflictsOut,
+        )
+        def get_budget_limit_conflicts(project_uuid: UUID):
+            return project_service.get_budget_limit_conflicts(project_uuid)
 
         @router.delete(
             '/projects/{project_uuid}/budget-limits/{limit_uuid}',

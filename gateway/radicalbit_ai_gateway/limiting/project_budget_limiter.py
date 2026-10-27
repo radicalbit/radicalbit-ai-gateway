@@ -23,6 +23,7 @@ from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
+from radicalbit_ai_gateway.utils.money import format_usd
 
 app_config = get_app_config()
 
@@ -149,7 +150,7 @@ class ProjectBudgetLimiter:
             )
             raise BudgetLimitExceededError(
                 message=(
-                    f'Project budget limit exceeded: {entry.limit_out.value:g} '
+                    f'Project budget limit exceeded: {format_usd(entry.limit_out.value)} '
                     f'per {entry.limit_out.window_size} on project '
                     f'"{self.project_name}". Please retry after '
                     f'{stats.remaining_time} seconds.'
