@@ -655,14 +655,14 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         payload.pop('stream', None)
         return payload
 
-    async def ainvoke_native_responses(self, body: dict) -> dict:
+    async def _ainvoke_native_responses(self, body: dict) -> dict:
         response = await self._client.responses.with_raw_response.create(
             model=self.model_name,
             extra_body=self._native_responses_payload(body),
         )
         return response.http_response.json()
 
-    async def astream_native_responses(
+    async def _astream_native_responses(
         self, body: dict
     ) -> AsyncIterator[tuple[str, str]]:
         async with self._client.responses.with_streaming_response.create(
@@ -678,6 +678,9 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
                 yield event
 
     # ── Tracing ──────────────────────────────────────────────────────────
+
+    def _server_url(self) -> str | None:
+        return str(self._client.base_url)
 
     def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
         return {

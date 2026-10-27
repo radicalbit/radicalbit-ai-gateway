@@ -1434,3 +1434,424 @@ async def test_mock_model_spans(spans, metrics):
     assert not any(k.startswith('gen_ai.usage.') for k in invoke_span.attributes)
     assert stream_span.attributes['gen_ai.usage.output_tokens'] == 2
     assert _token_points(metrics) == {'output': ('mock', 'echo', 2)}
+
+
+# ── Native Responses API ─────────────────────────────────────────────────────
+
+
+class _ResponsesModel(_Model):
+    """A model serving the Responses API with canned events or a response."""
+
+    def __init__(self, response=None, events=(), error=None, **settings: Any):
+        super().__init__(error=error, **settings)
+        self.response = response
+        self.events = list(events)
+
+    async def _ainvoke_native_responses(self, body: dict) -> dict:
+        if self.error:
+            raise self.error
+        return self.response
+
+    async def _astream_native_responses(
+        self, body: dict
+    ) -> AsyncIterator[tuple[str, str]]:
+        for event in self.events:
+            yield event['type'], json.dumps(event)
+        if self.error:
+            raise self.error
+
+
+RESPONSES_BODY = {
+    'instructions': 'Be terse.',
+    'input': [
+        {'role': 'developer', 'content': 'Use tools.'},
+        {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Weather?'}]},
+        {
+            'type': 'reasoning',
+            'id': 'rs_1',
+            'summary': [{'type': 'summary_text', 'text': 'Need a tool.'}],
+            'encrypted_content': 'gAAAA',
+        },
+        {
+            'type': 'function_call',
+            'call_id': 'call_1',
+            'name': 'weather',
+            'arguments': '{"city":"Paris"}',
+        },
+        {'type': 'function_call_output', 'call_id': 'call_1', 'output': 'rainy'},
+    ],
+    'tools': [
+        {
+            'type': 'function',
+            'name': 'weather',
+            'description': 'The weather',
+            'parameters': {'type': 'object'},
+        },
+        {'type': 'web_search'},
+    ],
+    'temperature': 0.5,
+}
+
+RESPONSE = {
+    'id': 'resp_1',
+    'model': 'gpt-6-luna-2026',
+    'status': 'completed',
+    'output': [
+        {'type': 'reasoning', 'id': 'rs_2', 'summary': [], 'encrypted_content': 'x'},
+        {'type': 'web_search_call', 'id': 'ws_1', 'status': 'completed'},
+        {
+            'type': 'message',
+            'role': 'assistant',
+            'content': [{'type': 'output_text', 'text': 'Rainy.'}],
+        },
+        {
+            'type': 'function_call',
+            'call_id': 'call_2',
+            'name': 'weather',
+            'arguments': '{"city":"Rome"}',
+        },
+    ],
+    'usage': {
+        'input_tokens': 100,
+        'input_tokens_details': {'cached_tokens': 40, 'cache_write_tokens': 0},
+        'output_tokens': 7,
+        'output_tokens_details': {'reasoning_tokens': 3},
+        'total_tokens': 107,
+    },
+}
+
+
+def _stream_events(response: dict) -> list[dict]:
+    final = {
+        'completed': 'response.completed',
+        'incomplete': 'response.incomplete',
+        'failed': 'response.failed',
+    }[response['status']]
+    return [
+        {'type': 'response.created', 'response': {**response, 'status': 'in_progress'}},
+        {'type': 'response.output_text.delta', 'delta': 'Rainy.'},
+        {'type': final, 'response': response},
+    ]
+
+
+async def test_responses_reply_span(spans, metrics):
+    model = _ResponsesModel(RESPONSE, model_name='gpt-6-luna', temperature=0.2)
+
+    assert await model.ainvoke_native_responses(RESPONSES_BODY) == RESPONSE
+
+    span = _only_span(spans)
+    assert span.name == '_ResponsesModel.chat'
+    assert span.kind == SpanKind.CLIENT
+    attributes = dict(span.attributes)
+    assert attributes['gen_ai.provider.name'] == 'fake'
+    assert attributes['gen_ai.operation.name'] == 'chat'
+    assert attributes['gen_ai.request.model'] == 'gpt-6-luna'
+    assert attributes['gen_ai.response.model'] == 'gpt-6-luna-2026'
+    assert attributes['gen_ai.response.id'] == 'resp_1'
+    # The client's value wins over the model's setting.
+    assert attributes['gen_ai.request.temperature'] == 0.5
+    assert attributes['gen_ai.usage.input_tokens'] == 100
+    assert attributes['gen_ai.usage.output_tokens'] == 7
+    assert attributes['gen_ai.usage.total_tokens'] == 107
+    assert attributes['gen_ai.usage.cache_read.input_tokens'] == 40
+    assert attributes['gen_ai.usage.reasoning.output_tokens'] == 3
+    assert 'gen_ai.usage.cache_creation.input_tokens' not in attributes
+    assert attributes['gen_ai.response.finish_reasons'] == ('tool_call',)
+    assert json.loads(attributes['gen_ai.tool.definitions']) == [
+        {
+            'name': 'weather',
+            'description': 'The weather',
+            'parameters': {'type': 'object'},
+        },
+        {'name': 'web_search'},
+    ]
+    assert json.loads(attributes['gen_ai.system_instructions']) == [
+        {'type': 'text', 'content': 'Be terse.'},
+        {'type': 'text', 'content': 'Use tools.'},
+    ]
+    assert _input_messages(span) == [
+        {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather?'}]},
+        {
+            'role': 'assistant',
+            'parts': [
+                {'type': 'reasoning', 'content': 'Need a tool.'},
+                {
+                    'type': 'tool_call',
+                    'id': 'call_1',
+                    'name': 'weather',
+                    'arguments': {'city': 'Paris'},
+                },
+            ],
+        },
+        {
+            'role': 'tool',
+            'parts': [
+                {'type': 'tool_call_response', 'id': 'call_1', 'response': 'rainy'}
+            ],
+        },
+    ]
+    assert _output(span) == {
+        'role': 'assistant',
+        'parts': [
+            {'type': 'web_search_call', 'id': 'ws_1', 'status': 'completed'},
+            {'type': 'text', 'content': 'Rainy.'},
+            {
+                'type': 'tool_call',
+                'id': 'call_2',
+                'name': 'weather',
+                'arguments': {'city': 'Rome'},
+            },
+        ],
+        'finish_reason': 'tool_call',
+    }
+    assert _token_points(metrics) == {
+        'input': ('fake', 'gpt-6-luna-2026', 100),
+        'output': ('fake', 'gpt-6-luna-2026', 7),
+    }
+    (duration,) = _points(metrics)['gen_ai.client.operation.duration']
+    assert duration[0] == {
+        'gen_ai.provider.name': 'fake',
+        'gen_ai.response.model': 'gpt-6-luna-2026',
+    }
+
+
+async def test_responses_settings_fill_what_the_client_left_out(spans):
+    response = {'id': 'r', 'status': 'completed', 'output': []}
+    model = _ResponsesModel(response, model_name='m', max_tokens=50, top_p=0.9)
+
+    await model.ainvoke_native_responses({'input': 'Hi', 'max_output_tokens': 10})
+
+    attributes = _only_span(spans).attributes
+    assert attributes['gen_ai.request.max_tokens'] == 10
+    assert attributes['gen_ai.request.top_p'] == 0.9
+    # No model in the response: the request model stands.
+    assert attributes['gen_ai.response.model'] == 'm'
+    assert attributes['gen_ai.response.finish_reasons'] == ('stop',)
+    assert _input_messages(_only_span(spans)) == [
+        {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hi'}]}
+    ]
+
+
+async def test_responses_stream_span_reads_the_final_response(spans, metrics):
+    model = _ResponsesModel(events=_stream_events(RESPONSE), model_name='gpt-6-luna')
+
+    events = await _collect(model.astream_native_responses(RESPONSES_BODY))
+
+    assert len(events) == 3
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.UNSET
+    assert span.attributes['gen_ai.response.id'] == 'resp_1'
+    assert span.attributes['gen_ai.usage.output_tokens'] == 7
+    assert _output(span)['finish_reason'] == 'tool_call'
+    assert _token_points(metrics)['output'] == ('fake', 'gpt-6-luna-2026', 7)
+
+
+async def test_responses_incomplete_reason_is_the_finish_reason(spans):
+    response = {
+        'id': 'r',
+        'status': 'incomplete',
+        'incomplete_details': {'reason': 'max_output_tokens'},
+        'output': [],
+    }
+    model = _ResponsesModel(events=_stream_events(response), model_name='m')
+
+    await _collect(model.astream_native_responses({'input': 'Hi'}))
+
+    assert _only_span(spans).attributes['gen_ai.response.finish_reasons'] == ('length',)
+
+
+async def test_responses_failed_response_fails_the_span(spans):
+    response = {
+        'id': 'r',
+        'status': 'failed',
+        'error': {'code': 'server_error', 'message': 'Upstream broke'},
+        'output': [],
+    }
+    model = _ResponsesModel(events=_stream_events(response), model_name='m')
+
+    await _collect(model.astream_native_responses({'input': 'Hi'}))
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.status.description == 'Upstream broke'
+    assert span.attributes['error.type'] == 'server_error'
+
+
+async def test_responses_error_event_fails_the_span(spans):
+    error = {'type': 'error', 'code': 'rate_limit_exceeded', 'message': 'Slow down'}
+    model = _ResponsesModel(events=[error], model_name='m')
+
+    await _collect(model.astream_native_responses({'input': 'Hi'}))
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes['error.type'] == 'rate_limit_exceeded'
+
+
+async def test_responses_call_error_fails_the_span(spans):
+    model = _ResponsesModel(error=ValueError('boom'), model_name='m')
+
+    with pytest.raises(ValueError, match='boom'):
+        await model.ainvoke_native_responses({'input': 'Hi'})
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes['error.type'] == 'ValueError'
+    assert span.attributes['gen_ai.task.status'] == 'failure'
+
+
+async def test_responses_stream_stopped_early_fails_the_span(spans):
+    model = _ResponsesModel(events=_stream_events(RESPONSE), model_name='m')
+
+    stream = model.astream_native_responses({'input': 'Hi'})
+    await anext(stream)
+    await stream.aclose()
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes['error.type'] == 'GeneratorExit'
+
+
+async def test_responses_content_tracing_switch(spans, content_tracing_off):
+    model = _ResponsesModel(RESPONSE, model_name='m')
+
+    await model.ainvoke_native_responses(RESPONSES_BODY)
+
+    attributes = _only_span(spans).attributes
+    assert not any(key in attributes for key in CONTENT_KEYS)
+    assert 'gen_ai.tool.definitions' in attributes
+
+
+# ── Stream and server attributes ─────────────────────────────────────────────
+
+
+class _ServerModel(_ResponsesModel):
+    def __init__(self, url, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.url = url
+
+    def _server_url(self) -> str | None:
+        return self.url
+
+
+@pytest.mark.parametrize(
+    ('url', 'address', 'port'),
+    [
+        ('https://api.openai.com/v1/', 'api.openai.com', 443),
+        ('http://vllm:8000/v1', 'vllm', 8000),
+        ('http://ollama/v1', 'ollama', 80),
+    ],
+)
+async def test_server_of_the_call(spans, url, address, port):
+    model = _ServerModel(url, reply=AIMessage('Hi'), model='m')
+
+    await model.ainvoke(MESSAGES)
+
+    attributes = _only_span(spans).attributes
+    assert attributes['server.address'] == address
+    assert attributes['server.port'] == port
+
+
+async def test_no_server_when_the_model_has_none(spans):
+    await _Model(reply=AIMessage('Hi'), model='m').ainvoke(MESSAGES)
+
+    attributes = _only_span(spans).attributes
+    assert 'server.address' not in attributes
+    assert 'server.port' not in attributes
+
+
+async def test_a_failing_server_hook_does_not_stop_the_trace(spans):
+    class _Broken(_Model):
+        def _server_url(self) -> str | None:
+            raise RuntimeError('no client')
+
+    await _Broken(reply=AIMessage('Hi'), model='m').ainvoke(MESSAGES)
+
+    assert 'server.address' not in _only_span(spans).attributes
+
+
+async def test_streams_report_stream_and_time_to_first_chunk(spans):
+    chunks = [AIMessageChunk('a'), AIMessageChunk('b')]
+    await _Model(reply=AIMessage('Hi'), model='m').ainvoke(MESSAGES)
+    await _collect(_Model(chunks=chunks, model='m').astream(MESSAGES))
+    await _ResponsesModel(RESPONSE, model_name='m').ainvoke_native_responses(
+        {'input': 'Hi'}
+    )
+    await _collect(
+        _ResponsesModel(
+            events=_stream_events(RESPONSE), model_name='m'
+        ).astream_native_responses({'input': 'Hi'})
+    )
+
+    reply, stream, responses_reply, responses_stream = spans.get_finished_spans()
+    for span in (reply, responses_reply):
+        assert 'gen_ai.request.stream' not in span.attributes
+        assert 'gen_ai.response.time_to_first_chunk' not in span.attributes
+    for span in (stream, responses_stream):
+        assert span.attributes['gen_ai.request.stream'] is True
+        assert 0 <= span.attributes['gen_ai.response.time_to_first_chunk'] < 1
+
+
+async def test_responses_request_state_and_reasoning(spans):
+    body = {
+        'input': 'Hi',
+        'previous_response_id': 'resp_0',
+        'conversation': {'id': 'conv_1'},
+        'reasoning': {'summary': 'auto'},
+    }
+    model = _ResponsesModel(RESPONSE, model_name='m', reasoning_effort='low')
+
+    await model.ainvoke_native_responses(body)
+    await model.ainvoke_native_responses(
+        {'input': 'Hi', 'conversation': 'conv_2', 'reasoning': {'effort': 'high'}}
+    )
+
+    first, second = spans.get_finished_spans()
+    assert first.attributes['gen_ai.request.previous_response.id'] == 'resp_0'
+    assert first.attributes['gen_ai.conversation.id'] == 'conv_1'
+    # The model's setting, as the client sent none.
+    assert first.attributes['gen_ai.request.reasoning.level'] == 'low'
+    assert 'gen_ai.request.previous_response.id' not in second.attributes
+    assert second.attributes['gen_ai.conversation.id'] == 'conv_2'
+    assert second.attributes['gen_ai.request.reasoning.level'] == 'high'
+
+
+@pytest.mark.parametrize(
+    ('spec', 'settings', 'url'),
+    [
+        ('openai:gpt-6-luna', {}, 'https://api.openai.com/v1/'),
+        ('openai:m', {'base_url': 'http://vllm:8000/v1'}, 'http://vllm:8000/v1/'),
+        ('deepseek:deepseek-chat', {}, 'https://api.deepseek.com/v1/'),
+        ('anthropic:claude-x', {}, 'https://api.anthropic.com'),
+        ('mistralai:m', {}, 'https://api.mistral.ai/v1'),
+        ('google_genai:gemini-x', {}, 'https://generativelanguage.googleapis.com/'),
+    ],
+)
+def test_provider_server_urls(monkeypatch, spec, settings, url):
+    for name in ('OPENAI_API_BASE', 'ANTHROPIC_API_URL', 'ANTHROPIC_BASE_URL'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv('MISTRAL_BASE_URL', raising=False)
+    model = init_chat_model(
+        spec, api_key='sk', http_async_client=HttpxAiohttpClient(), **settings
+    )
+
+    assert model._server_url() == url
+
+
+async def test_responses_stream_stopped_after_its_final_event_succeeds(spans, metrics):
+    # A client that closes the connection once it has response.completed
+    # cancels the stream before the upstream closes it.
+    model = _ResponsesModel(events=_stream_events(RESPONSE), model_name='m')
+
+    stream = model.astream_native_responses({'input': 'Hi'})
+    async for event, _ in stream:
+        if event == 'response.completed':
+            break
+    await stream.aclose()
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.UNSET
+    assert 'error.type' not in span.attributes
+    assert span.attributes['gen_ai.response.id'] == 'resp_1'
+    assert span.attributes['gen_ai.usage.output_tokens'] == 7
+    assert _token_points(metrics)['output'] == ('fake', 'gpt-6-luna-2026', 7)

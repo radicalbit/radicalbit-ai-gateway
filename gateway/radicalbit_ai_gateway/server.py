@@ -158,6 +158,7 @@ from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     ensure_endpoint_category,
+    in_request_trace,
     set_operation_category,
     set_trace_attributes,
 )
@@ -764,7 +765,9 @@ async def chat_completions(
 
         set_operation_category(OperationCategory.ENDPOINT)
         return StreamingResponseWithStatusCode(
-            event_generator(), media_type='text/event-stream', headers=headers
+            in_request_trace(event_generator()),
+            media_type='text/event-stream',
+            headers=headers,
         )
 
     invoke_response = await route.invoke(
@@ -1059,7 +1062,7 @@ async def audio_transcriptions(
                 yield error_body, 500
 
         return StreamingResponseWithStatusCode(
-            event_generator(), media_type='text/event-stream'
+            in_request_trace(event_generator()), media_type='text/event-stream'
         )
 
     result = await route.invoke_transcription(
@@ -1212,7 +1215,7 @@ async def responses(
             source = route.stream_responses(prepared, **identity)
         set_operation_category(OperationCategory.ENDPOINT)
         return StreamingResponseWithStatusCode(
-            serve_stream(source),
+            in_request_trace(serve_stream(source)),
             media_type='text/event-stream',
             headers=headers,
         )

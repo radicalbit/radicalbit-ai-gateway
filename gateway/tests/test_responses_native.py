@@ -211,7 +211,7 @@ class FakeChatModel(ChatModel):
     def supports_native_responses(self):
         return self.native
 
-    async def astream_native_responses(self, body):
+    async def _astream_native_responses(self, body):
         self.bodies.append(body)
         if self.error:
             raise self.error
@@ -220,7 +220,7 @@ class FakeChatModel(ChatModel):
                 raise RuntimeError('connection reset')
             yield event['type'], json.dumps(event)
 
-    async def ainvoke_native_responses(self, body):
+    async def _ainvoke_native_responses(self, body):
         self.bodies.append(body)
         if self.error:
             raise self.error
