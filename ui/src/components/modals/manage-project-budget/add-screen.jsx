@@ -29,7 +29,7 @@ function AddScreen() {
   const backendErrorField = backendError ? <FormField message={backendError} /> : false;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <Conflicts />
 
       <div className="flex items-center justify-between">
@@ -44,11 +44,13 @@ function AddScreen() {
         <Button onClick={handleOnAddRow} prefix={<Lucide icon={Plus} />} type="secondary">Add budget</Button>
       </div>
 
-      <span className="text-xs opacity-70">{WINDOW_TYPE_HELP}</span>
+      <div className="flex flex-col gap-2">
+        <span className="text-xs opacity-70">{WINDOW_TYPE_HELP}</span>
 
-      <Rows />
+        <Rows />
 
-      {backendErrorField}
+        {backendErrorField}
+      </div>
     </div>
   );
 }

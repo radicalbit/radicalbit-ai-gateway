@@ -51,8 +51,10 @@ function Content({ limits, onManage, withCategory }) {
   const manageLink = onManage ? <HtmlAnchor onClick={handleOnManage}>{manageLabel}</HtmlAnchor> : false;
 
   return (
-    <div className="flex flex-col gap-2">
-      {lines}
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        {lines}
+      </div>
 
       {manageLink}
     </div>

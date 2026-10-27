@@ -60,7 +60,7 @@ function ListScreen() {
 
 function IsEmpty() {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <Conflicts />
 
       <Board
@@ -82,24 +82,26 @@ function IsSuccess() {
   const sortedLimits = sortLimits(limits);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <Conflicts />
 
-      <div className="flex items-center justify-between">
-        <strong>{count}</strong>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <strong>{count}</strong>
 
-        <AddBudget />
+          <AddBudget />
+        </div>
+
+        <DataTable
+          columns={columns}
+          dataSource={sortedLimits}
+          pagination={false}
+          rowClassName={getRowClassName}
+          rowKey={getRowKey}
+          showHeader={false}
+          size="small"
+        />
       </div>
-
-      <DataTable
-        columns={columns}
-        dataSource={sortedLimits}
-        pagination={false}
-        rowClassName={getRowClassName}
-        rowKey={getRowKey}
-        showHeader={false}
-        size="small"
-      />
     </div>
   );
 }

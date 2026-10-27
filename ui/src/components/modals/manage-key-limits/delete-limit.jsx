@@ -45,7 +45,7 @@ function DeleteLimit({ limit }) {
       arrow={false}
       cancelButtonProps={{ type: 'secondary-light' }}
       description={(
-        <div className={`flex flex-col gap-1 ${DESCRIPTION_WIDTH}`}>
+        <div className={`flex flex-col gap-2 ${DESCRIPTION_WIDTH}`}>
           <TextWithBold bold={label} isQuestion text="Are you sure you want to delete the limit" />
 
           <StaleRules limit={limit} />

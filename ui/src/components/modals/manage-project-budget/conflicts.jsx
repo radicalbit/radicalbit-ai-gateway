@@ -43,18 +43,20 @@ function PublishedConflict() {
   return (
     <Alert
       description={(
-        <div className="flex flex-col gap-2">
-          <span>
-            A project budget and route budgets exclude each other. Remove budget_limiting from
-            {' '}
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <span>
+              A project budget and route budgets exclude each other. Remove budget_limiting from
+              {' '}
 
-            <RouteNames routes={published} />
+              <RouteNames routes={published} />
 
-            {' '}
-            of the published configuration, then add the project budget.
-          </span>
+              {' '}
+              of the published configuration, then add the project budget.
+            </span>
 
-          <BudgetRouting routes={routingByBudget} />
+            <BudgetRouting routes={routingByBudget} />
+          </div>
 
           <div>
             <Button onClick={handleOnOpenConfiguration} size="small" type="secondary">Open configuration</Button>
@@ -86,7 +88,7 @@ function DraftConflict() {
   return (
     <Alert
       description={(
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-4">
           <span>
             A draft can&apos;t be published while
             {' '}
