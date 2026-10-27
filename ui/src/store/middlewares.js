@@ -9,6 +9,7 @@ const errorWhiteList = {
   cancelApproval: true,
   createKeyLimits: true,
   createProjectBudgetLimits: true,
+  generateConfig: true,
   serveConfig: true,
   unserveConfig: true,
   updateConfig: true,

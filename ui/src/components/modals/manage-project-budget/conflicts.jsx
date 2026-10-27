@@ -1,5 +1,6 @@
 import useModals, { modals } from '@Hooks/use-modals';
 import { formatCount } from '@Components/limits/helpers';
+import { ConfigStatusEnum } from '@Src/constants';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { Alert, Button } from '@radicalbit/radicalbit-design-system';
 import { Fragment } from 'react';
@@ -68,11 +69,17 @@ function PublishedConflict() {
 }
 
 function DraftConflict() {
-  const { modalPayload } = useModals();
+  const { modalPayload, showModal } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
   const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const draft = data?.routeBudgets?.draft ?? [];
+  const configs = data?.configs ?? [];
+
+  const handleOnOpenConfiguration = () => {
+    const draftConfig = configs.find(({ configStatus }) => configStatus !== ConfigStatusEnum.SERVED);
+    showModal(modals.EDIT_PROJECT_CONFIG, { uuid, activeConfigUuid: draftConfig?.uuid });
+  };
 
   const verb = draft.length === 1 ? 'declares' : 'declare';
 
@@ -93,6 +100,10 @@ function DraftConflict() {
             {' '}
             budget_limiting and the project has a budget.
           </span>
+
+          <div>
+            <Button onClick={handleOnOpenConfiguration} size="small" type="secondary">Open configuration</Button>
+          </div>
         </div>
       )}
       showIcon
