@@ -41,7 +41,7 @@ function AddScreen() {
           <strong>Budget limits</strong>
         </div>
 
-        <Button onClick={handleOnAddRow} prefix={<Lucide icon={Plus} />} type="secondary">Add another budget</Button>
+        <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another budget</Button>
       </div>
 
       <div className="flex flex-col gap-2">

@@ -38,7 +38,7 @@ function AddScreen() {
           <strong>Limits</strong>
         </div>
 
-        <Button onClick={handleOnAddRow} prefix={<Lucide icon={Plus} />} type="secondary">Add another limit</Button>
+        <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another limit</Button>
       </div>
 
       <div className="flex flex-col gap-2">

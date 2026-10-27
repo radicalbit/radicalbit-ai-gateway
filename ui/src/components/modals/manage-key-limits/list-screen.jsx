@@ -113,7 +113,7 @@ function AddLimits() {
     return false;
   }
 
-  return <Button onClick={handleOnAdd} prefix={<Lucide icon={Plus} />} type="secondary">Add limits</Button>;
+  return <Button icon={<Lucide icon={Plus} />} onClick={handleOnAdd}>Add limits</Button>;
 }
 
 function LimitsTable() {
