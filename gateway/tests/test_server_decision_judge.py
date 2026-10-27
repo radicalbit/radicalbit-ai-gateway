@@ -756,6 +756,19 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         ]
         assert 'guardrail.decision_judge.criteria' not in attributes
 
+    def test_span_errors_do_not_break_the_judge(self):
+        span = self._record_span()
+        span.set_attribute.side_effect = RuntimeError('exporter down')
+        app.state.routes = _build_routes(_decision_judge(threshold=0.7))
+        self._mock_typesafe(noul=0.9)
+        openai = self._mock_openai()
+
+        response = self._chat()
+
+        # Tracing is best effort: the judge still blocks.
+        assert response.status_code == 400
+        assert not openai.isdone()
+
     # LLM judge
 
     def test_llm_judge_failure_is_a_judge_internal_error(self):
