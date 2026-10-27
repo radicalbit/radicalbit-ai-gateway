@@ -1,10 +1,11 @@
+import { DUPLICATE_BUDGET_ERROR } from '@Components/limits/constants';
 import {
   asBudgets, formatCount, getNewLimitsErrors, isLimitComplete,
 } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
-import { useCreateProjectBudgetLimitsMutation, useGetProjectQuery } from '@State/projects/api';
+import { useCreateProjectBudgetLimitsMutation, useGetProjectBudgetQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { getInitialValues } from './schema';
 
@@ -35,14 +36,14 @@ export default () => {
   const { form, initialize, isFormInvalid, submitForm } = useFormbitContext();
   const rows = form?.limits ?? [];
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const name = data?.name;
   const limits = asBudgets(data?.limits);
   const isBlocked = (data?.routeBudgets?.published ?? []).length > 0;
 
   const [trigger, args] = useCreateProjectBudgetLimitsMutation({ fixedCacheKey: `create-project-budget-${uuid}` });
 
-  const hasRowErrors = getNewLimitsErrors({ limits, rows }).some(Boolean);
+  const hasRowErrors = getNewLimitsErrors({ duplicateError: DUPLICATE_BUDGET_ERROR, limits, rows }).some(Boolean);
   const isSubmitDisabled = isBlocked || isFormInvalid() || hasRowErrors || !rows.every(isLimitComplete) || args.isLoading;
 
   const handleOnSubmit = () => {

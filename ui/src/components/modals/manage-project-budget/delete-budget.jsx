@@ -1,11 +1,11 @@
-import { LimitCategoryEnum } from '@Components/limits/constants';
+import { LimitCategoryEnum, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import {
   RuleScopeEnum, formatCount, formatLimitValue, formatLimitWindow, getRulesMadeStale,
 } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
 import useModals from '@Hooks/use-modals';
 import { useGetAlertsQuery } from '@State/alerts/api';
-import { useDeleteProjectBudgetLimitMutation, useGetProjectQuery } from '@State/projects/api';
+import { useDeleteProjectBudgetLimitMutation, useGetProjectBudgetQuery } from '@State/projects/api';
 import { Popconfirm, SectionTitle, Skeleton, TextWithBold } from '@radicalbit/radicalbit-design-system';
 
 const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this budget.';
@@ -18,12 +18,12 @@ function DeleteBudget({ limit }) {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const name = data?.name;
   const isLastBudget = (data?.limits ?? []).length === 1;
 
   const limitUuid = limit?.uuid;
-  const label = `${formatLimitValue(LimitCategoryEnum.BUDGET, limit?.value)} / ${formatLimitWindow(limit?.windowSize)}`;
+  const label = `${formatLimitValue(LimitCategoryEnum.BUDGET, limit?.value)} / ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
 
   const [trigger] = useDeleteProjectBudgetLimitMutation({ fixedCacheKey: `delete-project-budget-${limitUuid}` });
 
@@ -72,7 +72,7 @@ function StaleRules({ limit }) {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data: project } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data: project } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const limits = project?.limits ?? [];
 
   const { data: rules, isError, isLoading, isSuccess } = useGetAlertsQuery();

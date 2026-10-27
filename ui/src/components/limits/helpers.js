@@ -101,7 +101,7 @@ export const getRulesMadeStale = ({ limit, limits, rules, scope, targetUuid }) =
     && eventPattern.test(rule.event));
 };
 
-export const getNewLimitsErrors = ({ limits, rows }) => {
+export const getNewLimitsErrors = ({ duplicateError = DUPLICATE_LIMIT_ERROR, limits, rows }) => {
   const savedSignatures = new Set(limits.map(getLimitSignature));
 
   return rows.map((row, index) => {
@@ -112,7 +112,7 @@ export const getNewLimitsErrors = ({ limits, rows }) => {
     const signature = getLimitSignature(row);
 
     if (savedSignatures.has(signature)) {
-      return DUPLICATE_LIMIT_ERROR;
+      return duplicateError;
     }
 
     if (rows.slice(0, index).some((above) => getLimitSignature(above) === signature)) {

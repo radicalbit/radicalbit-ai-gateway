@@ -1,10 +1,10 @@
-import { useGetProjectQuery } from '@State/projects/api';
+import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { Alert } from '@radicalbit/radicalbit-design-system';
 
 const MESSAGE = 'This project has a project budget: routes can\'t declare budget_limiting.';
 
 function BudgetBanner({ projectUuid }) {
-  const { data, isError, isLoading, isSuccess } = useGetProjectQuery(projectUuid, { skip: !projectUuid });
+  const { data, isError, isLoading, isSuccess } = useGetProjectBudgetQuery(projectUuid, { skip: !projectUuid });
   const hasBudget = (data?.limits ?? []).length > 0;
 
   if (isLoading) {

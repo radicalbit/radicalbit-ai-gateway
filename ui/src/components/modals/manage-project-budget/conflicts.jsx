@@ -1,6 +1,6 @@
 import useModals, { modals } from '@Hooks/use-modals';
 import { formatCount } from '@Components/limits/helpers';
-import { useGetProjectQuery } from '@State/projects/api';
+import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { Alert, Button } from '@radicalbit/radicalbit-design-system';
 import { Fragment } from 'react';
 
@@ -8,7 +8,7 @@ function Conflicts() {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const published = data?.routeBudgets?.published ?? [];
   const draft = data?.routeBudgets?.draft ?? [];
 
@@ -27,7 +27,7 @@ function PublishedConflict() {
   const { modalPayload, showModal } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const published = data?.routeBudgets?.published ?? [];
   const budgetRouting = data?.routeBudgets?.budgetRouting ?? [];
   const servedConfigUuid = data?.servedConfigUuid;
@@ -71,7 +71,7 @@ function DraftConflict() {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const draft = data?.routeBudgets?.draft ?? [];
 
   const verb = draft.length === 1 ? 'declares' : 'declare';

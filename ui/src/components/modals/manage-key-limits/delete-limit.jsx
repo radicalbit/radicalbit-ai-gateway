@@ -1,4 +1,4 @@
-import { LIMIT_CATEGORY_LABELS } from '@Components/limits/constants';
+import { LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import {
   RuleScopeEnum, formatCount, formatLimitWindow, getRulesMadeStale,
 } from '@Components/limits/helpers';
@@ -20,7 +20,7 @@ function DeleteLimit({ limit }) {
   const name = data?.name;
 
   const limitUuid = limit?.uuid;
-  const label = `${LIMIT_CATEGORY_LABELS[limit?.category]} ${formatLimitWindow(limit?.windowSize)}`;
+  const label = `${LIMIT_CATEGORY_LABELS[limit?.category]} ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
 
   const [trigger] = useDeleteKeyLimitMutation({ fixedCacheKey: `delete-key-limit-${limitUuid}` });
 

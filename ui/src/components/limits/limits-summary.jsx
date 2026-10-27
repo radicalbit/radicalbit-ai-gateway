@@ -1,13 +1,21 @@
 import HtmlAnchor from '@Components/html-anchor';
 import { Popover } from '@radicalbit/radicalbit-design-system';
+import { useState } from 'react';
 import { LIMIT_CATEGORY_LABELS, LimitCategoryEnum, WINDOW_TYPE_LABELS } from './constants';
 import {
   formatCount, formatLimitValue, formatLimitWindow, sortLimits,
 } from './helpers';
 
 function LimitsSummary({ limits = [], noun = 'limit', onManage, withCategory = true }) {
+  const [isOpen, setIsOpen] = useState(false);
+
   const handleOnClick = (e) => {
     e.stopPropagation();
+  };
+
+  const handleOnManage = () => {
+    setIsOpen(false);
+    onManage();
   };
 
   if (!limits.length) {
@@ -16,11 +24,14 @@ function LimitsSummary({ limits = [], noun = 'limit', onManage, withCategory = t
 
   const count = formatCount(limits.length, noun);
   const title = withCategory ? 'Limits' : 'Budgets';
+  const contentOnManage = onManage ? handleOnManage : undefined;
 
   return (
     <Popover
       arrow={false}
-      content={<Content limits={limits} onManage={onManage} withCategory={withCategory} />}
+      content={<Content limits={limits} onManage={contentOnManage} withCategory={withCategory} />}
+      onOpenChange={setIsOpen}
+      open={isOpen}
       placement="bottomLeft"
       title={<strong>{title}</strong>}
     >

@@ -1,9 +1,9 @@
 import Lucide from '@Components/lucide';
-import { WINDOW_TYPE_HELP } from '@Components/limits/constants';
+import { DUPLICATE_BUDGET_ERROR, WINDOW_TYPE_HELP } from '@Components/limits/constants';
 import { asBudgets, getNewLimitsErrors } from '@Components/limits/helpers';
 import LimitFields from '@Components/limits/limit-fields';
 import useModals from '@Hooks/use-modals';
-import { useGetProjectQuery } from '@State/projects/api';
+import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button, FormField } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
@@ -60,11 +60,12 @@ function Rows() {
   const { form, write } = useFormbitContext();
   const formLimits = form?.limits;
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const savedLimits = data?.limits;
 
   const rows = useMemo(() => formLimits ?? [], [formLimits]);
   const rowErrors = useMemo(() => getNewLimitsErrors({
+    duplicateError: DUPLICATE_BUDGET_ERROR,
     limits: asBudgets(savedLimits),
     rows,
   }), [rows, savedLimits]);

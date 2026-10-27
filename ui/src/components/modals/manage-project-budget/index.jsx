@@ -1,6 +1,6 @@
 import { formatCount } from '@Components/limits/helpers';
 import useModals from '@Hooks/use-modals';
-import { useGetProjectQuery } from '@State/projects/api';
+import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
   Alert, Button, RbitModal, SectionTitle, Spinner,
@@ -19,7 +19,7 @@ function ManageProjectBudget() {
   const uuid = modalPayload?.data?.uuid;
   const screen = modalPayload?.data?.screen;
 
-  const { isError, isLoading, isSuccess } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { isError, isLoading, isSuccess } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
 
   if (isLoading) {
     return (
@@ -55,7 +55,7 @@ function ManageProjectBudgetInner() {
   const { form } = useFormbitContext();
   const isAddScreen = form?.__metadata?.screen === ScreenEnum.ADD;
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const name = data?.name;
 
   const body = isAddScreen ? <AddScreen /> : <ListScreen />;

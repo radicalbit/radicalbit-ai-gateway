@@ -25,6 +25,14 @@ export const projectsApiSlice = apiService.injectEndpoints({
     getProject: builder.query({
       providesTags: (result, error, uuid) => [{ type: API_TAGS.PROJECTS, id: uuid }],
       query: (uuid) => ({
+        url: `/projects/${uuid}`,
+        method: 'get',
+      }),
+    }),
+
+    getProjectBudget: builder.query({
+      providesTags: (result, error, uuid) => [{ type: API_TAGS.PROJECTS, id: uuid }],
+      query: (uuid) => ({
         url: `/projects/${uuid}?include_limits=true`,
         method: 'get',
       }),
@@ -266,6 +274,7 @@ export const projectsApiSlice = apiService.injectEndpoints({
 export const {
   useGetProjectsQuery,
   useGetProjectQuery,
+  useGetProjectBudgetQuery,
   useVerifyProjectQuery,
   useGetTagKeysByProjectQuery,
   useGetTagValuesByProjectQuery,

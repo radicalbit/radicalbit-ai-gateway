@@ -67,6 +67,8 @@ export const LIMIT_EVENT_CATEGORIES = {
 
 export const DUPLICATE_LIMIT_ERROR = 'A limit with the same category, window type and window already exists.';
 
+export const DUPLICATE_BUDGET_ERROR = 'A budget with the same window type and window already exists.';
+
 export const DUPLICATE_ROW_ERROR = 'Same limit as a row above.';
 
 export const EXPIRED_LIMITS_MESSAGE = 'This credential has expired: its limits can no longer be changed.';

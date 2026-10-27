@@ -4,7 +4,7 @@ import {
   formatCount, formatLimitValue, formatLimitWindow, sortLimits,
 } from '@Components/limits/helpers';
 import useModals from '@Hooks/use-modals';
-import { useGetProjectQuery } from '@State/projects/api';
+import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
   Board, Button, DataTable, Dropdown, Tooltip, Void,
@@ -48,7 +48,7 @@ function ListScreen() {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const limits = data?.limits ?? [];
 
   if (!limits.length) {
@@ -75,7 +75,7 @@ function IsSuccess() {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const limits = data?.limits ?? [];
 
   const count = formatCount(limits.length, 'budget');
@@ -110,7 +110,7 @@ function AddBudget() {
 
   const { write } = useFormbitContext();
 
-  const { data } = useGetProjectQuery(uuid, { skip: !uuid });
+  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
   const isBlocked = (data?.routeBudgets?.published ?? []).length > 0;
 
   const handleOnAdd = () => {
