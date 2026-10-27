@@ -114,3 +114,20 @@ class ProjectBudgetLimitOut(BaseModel):
             created_at=str(project_budget_limit.created_at),
             updated_at=str(project_budget_limit.updated_at),
         )
+
+
+class ProjectBudgetLimitConflictsOut(BaseModel):
+    """The routes that have a budget of their own, which a project budget excludes."""
+
+    published: list[str] = Field(
+        description='Routes of the published configuration: a project budget is refused.'
+    )
+    draft: list[str] = Field(
+        description='Routes of the other configurations: they cannot be published '
+        'once the project has a budget.'
+    )
+    budget_routing: list[str] = Field(
+        description='Routes of either list that route by budget.'
+    )
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)

@@ -13,6 +13,7 @@ import EditGroup from './edit-group';
 import EditKey from './edit-key';
 import EditProjectConfig from './edit-project-config';
 import ManageKeyLimits from './manage-key-limits';
+import ManageProjectBudget from './manage-project-budget';
 import RotateKey from './rotate-key';
 import RouteAnalytics from './route-analytics';
 import TraceDetail from './trace-detail';
@@ -63,6 +64,9 @@ export default function ModalsProvider() {
 
     case modals.MANAGE_KEY_LIMITS:
       return <ManageKeyLimits />;
+
+    case modals.MANAGE_PROJECT_BUDGET:
+      return <ManageProjectBudget />;
 
     case modals.ROTATE_KEY:
       return <RotateKey />;
