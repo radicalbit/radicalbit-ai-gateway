@@ -23,3 +23,8 @@ export const getPreview = ({ limitsByKey, members, rows }) => members.map((membe
 export const getConflicts = (preview) => preview.flatMap(({ items, member }) => items
   .filter(({ existing }) => existing)
   .map((item) => ({ ...item, member })));
+
+// The members the apply writes on: a new limit, or a conflict chosen to be overwritten. Skipped ones are untouched
+export const getTouchedMembers = (preview, overwrite) => preview
+  .filter(({ items }) => items.some(({ existing, key }) => !existing || overwrite.includes(key)))
+  .map(({ member }) => member);

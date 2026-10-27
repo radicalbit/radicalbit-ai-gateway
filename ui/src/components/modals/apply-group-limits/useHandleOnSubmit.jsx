@@ -3,7 +3,9 @@ import useModals from '@Hooks/use-modals';
 import { useApplyGroupLimitsMutation } from '@State/groups/api';
 import { useGetKeysQuery } from '@State/keys/api';
 import { useFormbitContext } from '@radicalbit/formbit';
-import { areRowsValid, getConflicts, getPreview } from './helpers';
+import {
+  areRowsValid, getConflicts, getPreview, getTouchedMembers,
+} from './helpers';
 import useMembers from './use-members';
 
 const ROW_LOC_INDEX = 2;
@@ -36,6 +38,7 @@ export default () => {
 
   const { form, isFormInvalid, submitForm } = useFormbitContext();
   const rows = form?.limits ?? [];
+  const overwrite = form?.overwrite ?? [];
 
   const { members, limitsByKey } = useMembers();
 
@@ -44,7 +47,11 @@ export default () => {
 
   const [trigger, args] = useApplyGroupLimitsMutation({ fixedCacheKey: getFixedCacheKey(uuid) });
 
-  const isSubmitDisabled = isFormInvalid() || !areRowsValid(rows) || !members.length || isFetching || args.isLoading;
+  const isValid = areRowsValid(rows);
+  // With invalid rows nothing can be previewed yet: count every member
+  const touchedCount = isValid ? getTouchedMembers(getPreview({ limitsByKey, members, rows }), overwrite).length : members.length;
+
+  const isSubmitDisabled = isFormInvalid() || !isValid || !touchedCount || isFetching || args.isLoading;
 
   const handleOnSubmit = () => {
     if (isSubmitDisabled) {
@@ -52,13 +59,13 @@ export default () => {
     }
 
     submitForm(async ({ form: formData }, setError) => {
-      const overwrite = new Set(formData.overwrite);
+      const overwritten = new Set(formData.overwrite);
       const limits = formData.limits.map(({ algorithm, category, value, windowSize }) => ({
         algorithm, category, value, windowSize,
       }));
       // A conflict the user didn't choose to overwrite is skipped: the backend overwrites what is not listed
       const skip = getConflicts(getPreview({ limitsByKey, members, rows: limits }))
-        .filter(({ key }) => !overwrite.has(key))
+        .filter(({ key }) => !overwritten.has(key))
         .map(({ limit, member }) => ({
           keyUuid: member.uuid,
           category: limit.category,
@@ -79,5 +86,7 @@ export default () => {
     });
   };
 
-  return { handleOnSubmit, args, isSubmitDisabled };
+  return {
+    handleOnSubmit, args, isSubmitDisabled, touchedCount,
+  };
 };

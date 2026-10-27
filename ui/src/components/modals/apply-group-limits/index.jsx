@@ -132,11 +132,9 @@ function CopyExplanation({ count }) {
 function ApplyActions() {
   const { hideModal } = useModals();
 
-  const { members } = useMembers();
+  const { handleOnSubmit, args: { isLoading }, isSubmitDisabled, touchedCount } = useHandleOnSubmit();
 
-  const { handleOnSubmit, args: { isLoading }, isSubmitDisabled } = useHandleOnSubmit();
-
-  const applyLabel = `Apply to ${formatCount(members.length, 'credential')}`;
+  const applyLabel = `Apply to ${formatCount(touchedCount, 'credential')}`;
 
   return (
     <div className="flex gap-2 justify-end">
