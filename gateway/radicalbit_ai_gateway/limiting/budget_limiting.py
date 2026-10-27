@@ -22,6 +22,7 @@ from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
+from radicalbit_ai_gateway.utils.money import format_usd
 
 app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
@@ -169,7 +170,8 @@ class BudgetLimiter:
             )
 
             user_message = (
-                f'Budget limit exceeded: {self.config.max_budget} per {self.config.window_size}.'
+                f'Budget limit exceeded: {format_usd(self.config.max_budget)} per '
+                f'{self.config.window_size} on route "{self.route_name}".'
                 f' Please retry after {state.remaining_time} seconds.'
             )
 

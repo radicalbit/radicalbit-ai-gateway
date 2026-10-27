@@ -3,7 +3,8 @@ import {
   WindowTypeEnum,
 } from './constants';
 
-const CURRENCY_FORMAT = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+// Budgets are stored in billionths of a dollar: nine decimals show any saved value
+const CURRENCY_FORMAT = new Intl.NumberFormat('en-US', { currency: 'USD', maximumFractionDigits: 9, style: 'currency' });
 
 const NUMBER_FORMAT = new Intl.NumberFormat('en-US');
 

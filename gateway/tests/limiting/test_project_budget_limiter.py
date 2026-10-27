@@ -87,6 +87,16 @@ class TestBudgetLimiting:
         assert 'my-project' in str(exc.value)
 
     @pytest.mark.asyncio
+    async def test_message_shows_the_amount_in_usd(self):
+        limiter = _limiter([_limit(0.00002)])
+        await limiter.count_input(
+            token_count=1000, input_cost_per_token=0.001, identity=IDENTITY
+        )
+        with pytest.raises(BudgetLimitExceededError) as exc:
+            await limiter.check_budget(**_CALL_ARGS)
+        assert 'Project budget limit exceeded: $0.00002 per' in exc.value.client_message
+
+    @pytest.mark.asyncio
     async def test_count_output_and_duration_consume_same_window(self):
         limiter = _limiter([_limit(10.0)])
         await limiter.count_output(
