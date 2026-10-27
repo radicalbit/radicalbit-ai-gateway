@@ -49,6 +49,13 @@ GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
 REQUEST_EVENT_EMIT = (
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
 )
+JUDGE_SPAN = (
+    'radicalbit_ai_gateway.guardrails.judges.decision_judge_engine'
+    '.trace.get_current_span'
+)
+GUARDRAIL_SPAN = (
+    'radicalbit_ai_gateway.guardrails.guardrail_check.trace.get_current_span'
+)
 BACKOFF_SLEEP = 'radicalbit_ai_gateway.invocation.decision_model_invoker.asyncio.sleep'
 CREDENTIAL_STORAGE = 'radicalbit_ai_gateway.limiting.credential_limiter.InMemoryStorage'
 PROJECT_STORAGE = (
@@ -646,6 +653,120 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
 
         assert response.status_code == 400
         assert backup.isdone()
+        assert not openai.isdone()
+
+    # Tracing
+
+    def _record_span(self) -> MagicMock:
+        """One recording span for the judge and the triggered guardrail."""
+        span = MagicMock()
+        span.is_recording.return_value = True
+        for target in (JUDGE_SPAN, GUARDRAIL_SPAN):
+            patcher = patch(target, return_value=span)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return span
+
+    @staticmethod
+    def _span_attributes(span: MagicMock) -> dict:
+        return {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
+
+    @staticmethod
+    def _question_with_criteria() -> dict:
+        return {'type': 'noul', 'instructions': INSTRUCTIONS, 'criteria': CRITERIA}
+
+    def _assert_judge_recorded(self, attributes: dict, noul: float):
+        assert attributes['guardrail.decision_judge.model_id'] == 'jev'
+        assert attributes['guardrail.decision_judge.instructions'] == INSTRUCTIONS
+        assert json.loads(attributes['guardrail.decision_judge.criteria']) == CRITERIA
+        assert attributes['guardrail.decision_judge.threshold'] == 0.7
+        assert attributes['guardrail.decision_judge.noul'] == noul
+        assert attributes['guardrail.decision_judge.state'] == USER_TEXT
+
+    def test_passing_call_records_the_judge_on_the_span(self):
+        span = self._record_span()
+        app.state.routes = _build_routes(
+            _decision_judge(threshold=0.7, criteria=CRITERIA)
+        )
+        self._mock_typesafe(noul=0.2, question=self._question_with_criteria())
+        self._mock_openai()
+
+        response = self._chat()
+
+        assert response.status_code == 200
+        attributes = self._span_attributes(span)
+        self._assert_judge_recorded(attributes, noul=0.2)
+        assert attributes['guardrail.decision_judge.answered_model_id'] == 'jev'
+        assert attributes['guardrail.decision_judge.fallback_triggered'] is False
+        assert 'guardrail.triggered.name' not in attributes
+
+    def test_triggering_call_records_the_judge_and_the_triggered_guardrail(self):
+        span = self._record_span()
+        app.state.routes = _build_routes(
+            _decision_judge(threshold=0.7, criteria=CRITERIA)
+        )
+        self._mock_typesafe(noul=0.9, question=self._question_with_criteria())
+        self._mock_openai()
+
+        response = self._chat()
+
+        assert response.status_code == 400
+        attributes = self._span_attributes(span)
+        self._assert_judge_recorded(attributes, noul=0.9)
+        assert attributes['guardrail.decision_judge.answered_model_id'] == 'jev'
+        assert attributes['guardrail.decision_judge.fallback_triggered'] is False
+        assert attributes['guardrail.triggered.name'] == 'off_topic_block'
+        assert attributes['guardrail.triggered.type'] == 'DECISION_JUDGE'
+        assert attributes['guardrail.triggered.where'] == 'INPUT'
+        assert attributes['guardrail.triggered.behavior'] == 'BLOCK'
+
+    def test_fallback_answer_is_recorded_on_the_span(self):
+        span = self._record_span()
+        app.state.routes = _build_routes(
+            _decision_judge(
+                threshold=0.7, criteria=CRITERIA, fallback_model_id='jev-backup'
+            )
+        )
+        question = self._question_with_criteria()
+        self._mock_typesafe(
+            status=503, body={'detail': 'busy'}, times=4, question=question
+        )
+        self._mock_backup(noul=0.9, question=question)
+        self._mock_openai()
+
+        self._chat()
+
+        attributes = self._span_attributes(span)
+        self._assert_judge_recorded(attributes, noul=0.9)
+        assert attributes['guardrail.decision_judge.answered_model_id'] == 'jev-backup'
+        assert attributes['guardrail.decision_judge.fallback_triggered'] is True
+
+    def test_state_lives_under_one_dedicated_key(self):
+        span = self._record_span()
+        app.state.routes = _build_routes(_decision_judge())
+        self._mock_typesafe(noul=0.2)
+        self._mock_openai()
+
+        self._chat()
+
+        attributes = self._span_attributes(span)
+        # The EE privacy plugin drops this one key: nothing else may hold it.
+        assert [k for k in attributes if 'state' in k] == [
+            'guardrail.decision_judge.state'
+        ]
+        assert 'guardrail.decision_judge.criteria' not in attributes
+
+    def test_span_errors_do_not_break_the_judge(self):
+        span = self._record_span()
+        span.set_attribute.side_effect = RuntimeError('exporter down')
+        app.state.routes = _build_routes(_decision_judge(threshold=0.7))
+        self._mock_typesafe(noul=0.9)
+        openai = self._mock_openai()
+
+        response = self._chat()
+
+        # Tracing is best effort: the judge still blocks.
+        assert response.status_code == 400
         assert not openai.isdone()
 
     # LLM judge
