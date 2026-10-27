@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY uv.lock pyproject.toml ./
 RUN pip install --no-cache-dir --no-compile uv==0.13.4 && \
-    uv export --no-hashes --format requirements-txt > requirements.txt && \
+    uv export --no-dev --no-hashes --format requirements-txt > requirements.txt && \
     rm -f uv.lock pyproject.toml && \
     rm -rf /root/.cache
 
