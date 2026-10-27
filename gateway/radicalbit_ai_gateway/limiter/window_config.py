@@ -93,6 +93,34 @@ def parse_window(window_string: str) -> int:
     return period * _TIME_UNITS[unit]
 
 
+# Largest first, so the first unit dividing a window exactly names it
+_CANONICAL_UNITS: tuple[tuple[str, int], ...] = (
+    ('month', _MONTH),
+    ('week', _WEEK),
+    ('day', _DAY),
+    ('hour', _HOUR),
+    ('minute', _MINUTE),
+    ('second', _SECOND),
+)
+
+
+def format_window(window_seconds: int) -> str:
+    """Format a window duration in its largest exact unit.
+
+    Args:
+        window_seconds: Positive duration in seconds.
+
+    Returns:
+        String like '1 minute' for 60 or '2 days' for 172800.
+
+    """
+    for unit, seconds in _CANONICAL_UNITS:
+        if window_seconds % seconds == 0:
+            count = window_seconds // seconds
+            return f'{count} {unit}' if count == 1 else f'{count} {unit}s'
+    raise ValueError(f'Window of {window_seconds} seconds has no unit')
+
+
 @dataclass
 class WindowConfig:
     """Configuration for a fixed window limit.

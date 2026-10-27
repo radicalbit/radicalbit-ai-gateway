@@ -97,6 +97,22 @@ class TestBudgetLimiter:
         assert '[action=BLOCK]' in msg
 
     @pytest.mark.asyncio
+    async def test_message_names_the_route_and_the_amount_in_usd(self):
+        config = Limiting(max_budget=0.00002, window_size='1 day')
+        limiter = BudgetLimiter(
+            project_uuid=_PROJECT_UUID, route_name='rb-gateway', config=config
+        )
+
+        with pytest.raises(BudgetLimitExceededError) as exc:
+            await limiter.count_input(10_000_000, 2.5e-06, identity=IDENTITY)
+            await limiter.check_budget(**_CALL_ARGS)
+
+        assert (
+            'Budget limit exceeded: $0.00002 per 1 day on route "rb-gateway".'
+            in exc.value.client_message
+        )
+
+    @pytest.mark.asyncio
     async def test_count_output_exceeds_limit(self):
         config = Limiting(max_budget=0.25, window_size='1 minute')
         limiter = BudgetLimiter(

@@ -1,6 +1,8 @@
 import HtmlAnchor from '@Components/html-anchor';
+import LimitsSummary from '@Components/limits/limits-summary';
 import Lucide from '@Components/lucide';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
+import useModals, { modals } from '@Hooks/use-modals';
 import {
   CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum, SEARCH_PARAMS,
 } from '@Src/constants';
@@ -44,6 +46,12 @@ const columns = [
     dataIndex: 'group',
     align: 'center',
     render: (group) => <AssociatedGroup group={group} />,
+  },
+  {
+    title: 'Limits',
+    dataIndex: 'limits',
+    key: 'limits',
+    render: (limits, { uuid }) => <Limits limits={limits} uuid={uuid} />,
   },
   {
     title: 'Created',
@@ -163,6 +171,16 @@ function AssociatedGroup({ group }) {
   }
 
   return '--';
+}
+
+function Limits({ limits, uuid }) {
+  const { showModal } = useModals();
+
+  const handleOnManage = () => {
+    showModal(modals.MANAGE_KEY_LIMITS, { uuid });
+  };
+
+  return <LimitsSummary limits={limits} onManage={handleOnManage} />;
 }
 
 function Actions({ uuid }) {

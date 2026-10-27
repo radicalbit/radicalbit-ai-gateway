@@ -699,13 +699,20 @@ class ProjectAlreadyExistsError(AuthRegistryError):
 
 
 class ProjectConfigValidationError(AuthRegistryError):
-    def __init__(self, message: str, *, log_message: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_message: str | None = None,
+        routes: list[str] | None = None,
+    ):
         super().__init__(
             message,
             status.HTTP_400_BAD_REQUEST,
             'project_config_validation_error',
             log_message=log_message,
         )
+        self.routes = routes
 
 
 class ProjectBudgetLimitAlreadyExistsError(AuthRegistryError):
@@ -719,13 +726,20 @@ class ProjectBudgetLimitAlreadyExistsError(AuthRegistryError):
 
 
 class ProjectBudgetLimitConflictError(AuthRegistryError):
-    def __init__(self, message: str, *, log_message: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_message: str | None = None,
+        routes: list[str] | None = None,
+    ):
         super().__init__(
             message,
             status.HTTP_400_BAD_REQUEST,
             'project_budget_limit_conflict_bad_request',
             log_message=log_message,
         )
+        self.routes = routes
 
 
 class ProjectBudgetLimitNotFoundError(AuthRegistryError):
@@ -778,7 +792,11 @@ class BudgetLimitExceededError(BudgetLimitExceeded):
 
 
 def _log_and_json_response(
-    err: AppError, error_type: str, *, param_override: Any = None
+    err: AppError,
+    error_type: str,
+    *,
+    param_override: Any = None,
+    extra: dict[str, Any] | None = None,
 ) -> JSONResponse:
     level = logging.ERROR if err.status_code >= 500 else logging.WARNING
     logger.log(
@@ -791,18 +809,16 @@ def _log_and_json_response(
             'param': param_override if param_override is not None else err.param,
         },
     )
+    error = ErrorOut(
+        err.client_message,
+        type_=error_type,
+        code=err.code if err.code is not None else err.status_code,
+        param=param_override if param_override is not None else err.param,
+    ).error
+    error.update(extra or {})
     return JSONResponse(
         status_code=err.status_code,
-        content=jsonable_encoder(
-            {
-                'error': ErrorOut(
-                    err.client_message,
-                    type_=error_type,
-                    code=err.code if err.code is not None else err.status_code,
-                    param=param_override if param_override is not None else err.param,
-                ).error
-            }
-        ),
+        content=jsonable_encoder({'error': error}),
     )
 
 
@@ -852,7 +868,9 @@ def api_key_exception_handler(request: Request, err: ApiKeyError):
 
 def auth_registry_exception_handler(request: Request, err: AuthRegistryError):
     set_request_error_info(request, err)
-    return _log_and_json_response(err, 'auth_registry_error')
+    routes = getattr(err, 'routes', None)
+    extra = {'routes': routes} if routes is not None else None
+    return _log_and_json_response(err, 'auth_registry_error', extra=extra)
 
 
 def mcp_transport_exception_handler(request: Request, err: McpTransportError):

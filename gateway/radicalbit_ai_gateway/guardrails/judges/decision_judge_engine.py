@@ -1,6 +1,8 @@
+import json
 import logging
 
 import httpx
+from opentelemetry import trace
 
 from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
 from radicalbit_ai_gateway.llm.messages import BaseMessage
@@ -19,6 +21,43 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 
 # A decision judge asks one question: its id only has to match the answer.
 QUESTION_ID = 'decision_judge'
+
+
+def _set_judge_request_attributes(params: DecisionJudgeParameter, state: str) -> None:
+    try:
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute('guardrail.decision_judge.model_id', params.model_id)
+            span.set_attribute(
+                'guardrail.decision_judge.instructions', params.instructions
+            )
+            if params.criteria:
+                span.set_attribute(
+                    'guardrail.decision_judge.criteria',
+                    json.dumps(params.criteria.model_dump()),
+                )
+            span.set_attribute('guardrail.decision_judge.threshold', params.threshold)
+            # The text sent to Typesafe. Its own key, so EE privacy can drop it.
+            span.set_attribute('guardrail.decision_judge.state', state)
+    except Exception:
+        pass
+
+
+def _set_judge_answer_attributes(
+    answered_model_id: str, fallback_triggered: bool, noul: float
+) -> None:
+    try:
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute(
+                'guardrail.decision_judge.answered_model_id', answered_model_id
+            )
+            span.set_attribute(
+                'guardrail.decision_judge.fallback_triggered', fallback_triggered
+            )
+            span.set_attribute('guardrail.decision_judge.noul', noul)
+    except Exception:
+        pass
 
 
 class _RejectedByModel(JudgeInternalError):
@@ -70,21 +109,32 @@ class DecisionJudgeEngine:
             'questions': {QUESTION_ID: question},
         }
 
+        _set_judge_request_attributes(params, body['state'])
+
         if self._invoker is None:
             raise self._error(params.model_id, 'no decision models are configured')
         try:
-            return await self._ask_model(params.model_id, body)
+            noul = await self._ask_model(params.model_id, body)
         except _RejectedByModel:
             raise
         except JudgeInternalError:
             if not params.fallback_model_id:
                 raise
+        else:
+            _set_judge_answer_attributes(
+                params.model_id, fallback_triggered=False, noul=noul
+            )
+            return noul
         logger.warning(
             'Decision judge falls back from model %s to model %s',
             params.model_id,
             params.fallback_model_id,
         )
-        return await self._ask_model(params.fallback_model_id, body)
+        noul = await self._ask_model(params.fallback_model_id, body)
+        _set_judge_answer_attributes(
+            params.fallback_model_id, fallback_triggered=True, noul=noul
+        )
+        return noul
 
     async def _ask_model(self, model_id: str, body: dict) -> float:
         try:

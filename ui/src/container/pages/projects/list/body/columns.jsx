@@ -1,8 +1,10 @@
+import LimitsSummary from '@Components/limits/limits-summary';
 import Lucide from '@Components/lucide';
 import ConfigStatusTag from '@Container/pages/projects/components/config-status-tag';
 import ProjectStatusTag from '@Container/pages/projects/components/project-status-tag';
 import { useGetThreeDotsMenuItems } from '@Container/pages/projects/list/body/three-dots-menu';
 import useGetVisibleConfig from '@Container/pages/projects/use-get-visible-config';
+import useModals, { modals } from '@Hooks/use-modals';
 import { DATE_FORMAT, DATE_FORMAT_SHORT } from '@Src/constants';
 import {
   Button,
@@ -60,6 +62,13 @@ const getColumns = () => [
   },
 
   {
+    title: 'Budget',
+    dataIndex: 'limits',
+    key: 'budget',
+    render: (limits, { routeBudgets, uuid }) => <BudgetCell limits={limits} routeBudgets={routeBudgets} uuid={uuid} />,
+  },
+
+  {
     title: 'Configurations',
     dataIndex: 'configs',
     key: 'configs',
@@ -85,6 +94,28 @@ const getColumns = () => [
     width: '10px',
   },
 ];
+
+function BudgetCell({ limits, routeBudgets, uuid }) {
+  const { showModal } = useModals();
+
+  const routes = routeBudgets?.published ?? [];
+
+  const handleOnManage = () => {
+    showModal(modals.MANAGE_PROJECT_BUDGET, { uuid });
+  };
+
+  if (!limits?.length && routes.length) {
+    const tooltip = `Budget set on routes: ${routes.join(', ')}`;
+
+    return (
+      <Tooltip title={tooltip}>
+        <span className="opacity-70">Per route</span>
+      </Tooltip>
+    );
+  }
+
+  return <LimitsSummary limits={limits} noun="budget" onManage={handleOnManage} withCategory={false} />;
+}
 
 function ConfigurationCell({ configs }) {
   const config = useGetVisibleConfig(configs);

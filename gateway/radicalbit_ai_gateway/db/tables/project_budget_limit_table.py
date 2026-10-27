@@ -19,8 +19,9 @@ class ProjectBudgetLimit(Reflected, BaseTable, BaseDAO):
     __table_args__ = (
         UniqueConstraint(
             'PROJECT_UUID',
+            'ALGORITHM',
             'WINDOW_SIZE',
-            name='uq_project_budget_limit_PROJECT_UUID_WINDOW_SIZE',
+            name='uq_project_budget_limit_PROJECT_UUID_ALGORITHM_WINDOW_SIZE',
         ),
     )
 

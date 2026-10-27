@@ -91,3 +91,28 @@ def test_project_budget_limit_out_round_trip():
     assert limit_out.algorithm == LimitingAlgorithmType.FIXED_WINDOW
     assert limit_out.window_size == '1 minute'
     assert limit_out.value == 100
+
+
+@pytest.mark.parametrize(
+    ('window_size', 'canonical'),
+    [('24 hours', '1 day'), ('30 days', '1 month'), (3600, '1 hour')],
+)
+def test_window_size_is_canonicalised(window_size, canonical):
+    limit_in = ProjectBudgetLimitIn(window_size=window_size, value=10)
+    assert limit_in.window_size == canonical
+
+
+@pytest.mark.parametrize('window_size', ['7 hours', '3 days', '0 seconds'])
+def test_window_outside_the_list_rejected(window_size):
+    with pytest.raises(ValueError, match='not allowed for FIXED_WINDOW|longer than 0'):
+        ProjectBudgetLimitIn(window_size=window_size, value=10)
+
+
+def test_limits_in_rejects_the_same_window_written_differently():
+    with pytest.raises(ValueError, match='Duplicate limit in request'):
+        ProjectBudgetLimitsIn(
+            limits=[
+                ProjectBudgetLimitIn(window_size='24 hours', value=10),
+                ProjectBudgetLimitIn(window_size='1 day', value=20),
+            ]
+        )

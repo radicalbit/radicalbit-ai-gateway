@@ -13,7 +13,10 @@ from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
     DecisionJudgeEngine,
 )
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
+from radicalbit_ai_gateway.guardrails.judges.judge_engine import (
+    JudgeEngine,
+    JudgeUsageCounter,
+)
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
@@ -396,6 +399,7 @@ class GuardrailCheck:
         messages: list[BaseMessage],
         params: JudgeParameter,
         route_config: GatewayRouteConfig,
+        count_judge_usage: JudgeUsageCounter | None = None,
         **kwargs,
     ) -> bool:
         """Check using an LLM contextual judge (security, policy, etc.)."""
@@ -427,6 +431,7 @@ class GuardrailCheck:
                 primary_model=primary_model,
                 fallback_model=fallback_model,
                 cost_service=self._cost_service,
+                count_usage=count_judge_usage,
                 **kwargs,
             )
 
@@ -623,6 +628,7 @@ class GuardrailCheck:
         where: GuardrailWhereType,
         project_uuid: str = '',
         project_name: str = '',
+        count_judge_usage: JudgeUsageCounter | None = None,
     ) -> SoftBlockInfo | None:
         """Apply guardrails to messages and return SoftBlockInfo on SOFT_BLOCK."""
         kwargs = {
@@ -636,6 +642,7 @@ class GuardrailCheck:
             'route_name': route_config.route_name,
             'where': where,
             'parent_span': trace.get_current_span(),
+            'count_judge_usage': count_judge_usage,
         }
 
         check_guardrails = self._get_guardrails_for_route(
@@ -1058,6 +1065,7 @@ class GuardrailCheck:
         group_uuid: str,
         api_key_name: str,
         group_name: str,
+        count_judge_usage: JudgeUsageCounter | None = None,
     ) -> bool:
         """Evaluate only WARN-behavior guardrails without emitting events/logs.
         Used to surface a response header for non-blocking guardrails.
@@ -1082,6 +1090,7 @@ class GuardrailCheck:
             'route_name': route_config.route_name,
             'where': where,
             'parent_span': trace.get_current_span(),
+            'count_judge_usage': count_judge_usage,
         }
 
         for guardrail in check_guardrails:

@@ -890,7 +890,9 @@ class TestDecisionModelEndpoint(unittest.TestCase):
 
         assert (first.status_code, hit.status_code, miss.status_code) == (200,) * 3
 
-    def test_hit_is_served_even_when_limits_are_full(self):
+    def test_hit_is_rejected_when_limits_are_full(self):
+        # Limits are checked before the cache: over a limit means a 429,
+        # even when the answer is cached.
         app.state.routes = _build_routes(
             JEV, token_limiting={'input': {'max_tokens': 100}}, **EXACT_CACHE
         )
@@ -899,7 +901,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         first = self._post()
         hit = self._post()
 
-        assert (first.status_code, hit.status_code) == (200, 200)
+        assert (first.status_code, hit.status_code) == (200, 429)
 
     def test_semantic_cache_route_leaves_decision_requests_uncached(self):
         app.state.routes = _build_routes(
