@@ -1,11 +1,11 @@
 from unittest.mock import MagicMock, patch
 
-from langchain_core.messages import HumanMessage
 import pytest
 
 from radicalbit_ai_gateway.guardrails.guardrail_check import GuardrailCheck
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
     CheckParameter,

@@ -6,13 +6,6 @@ import re
 from typing import Protocol
 
 import httpx
-from langchain_core.messages import (
-    AIMessage,
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-    ToolMessage,
-)
 from opentelemetry import trace
 from traceloop.sdk.decorators import task, workflow
 
@@ -20,8 +13,18 @@ from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
     DecisionJudgeEngine,
 )
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
+from radicalbit_ai_gateway.guardrails.judges.judge_engine import (
+    JudgeEngine,
+    JudgeUsageCounter,
+)
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
 from radicalbit_ai_gateway.models.event_payload import GuardrailEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
@@ -151,7 +154,7 @@ def _filter_messages_by_roles(
     messages: list[BaseMessage],
     roles: list[GuardrailMessageRole] | None,
 ) -> list[BaseMessage]:
-    """Return only the messages whose LangChain type matches the given roles.
+    """Return only the messages whose type matches the given roles.
 
     When *roles* is ``None`` (not configured) the function returns all messages
     unchanged — preserving the original gateway behavior where all messages in
@@ -396,6 +399,7 @@ class GuardrailCheck:
         messages: list[BaseMessage],
         params: JudgeParameter,
         route_config: GatewayRouteConfig,
+        count_judge_usage: JudgeUsageCounter | None = None,
         **kwargs,
     ) -> bool:
         """Check using an LLM contextual judge (security, policy, etc.)."""
@@ -427,6 +431,7 @@ class GuardrailCheck:
                 primary_model=primary_model,
                 fallback_model=fallback_model,
                 cost_service=self._cost_service,
+                count_usage=count_judge_usage,
                 **kwargs,
             )
 
@@ -529,6 +534,7 @@ class GuardrailCheck:
                     'phase': getattr(phase, 'name', None),
                     # Extra fields (for logs), sanitized out from API responses
                     'model_id': params.model_id,
+                    'fallback_model_id': params.fallback_model_id,
                     'noul': noul,
                     'threshold': params.threshold,
                 }
@@ -622,6 +628,7 @@ class GuardrailCheck:
         where: GuardrailWhereType,
         project_uuid: str = '',
         project_name: str = '',
+        count_judge_usage: JudgeUsageCounter | None = None,
     ) -> SoftBlockInfo | None:
         """Apply guardrails to messages and return SoftBlockInfo on SOFT_BLOCK."""
         kwargs = {
@@ -635,6 +642,7 @@ class GuardrailCheck:
             'route_name': route_config.route_name,
             'where': where,
             'parent_span': trace.get_current_span(),
+            'count_judge_usage': count_judge_usage,
         }
 
         check_guardrails = self._get_guardrails_for_route(
@@ -887,7 +895,7 @@ class GuardrailCheck:
             return s
         elif kind == 'decision_judge':
             s = 'decision_judge'
-            for key in ('model_id', 'noul', 'threshold', 'phase'):
+            for key in ('model_id', 'fallback_model_id', 'noul', 'threshold', 'phase'):
                 value = reason_payload.get(key)
                 if value is not None:
                     s += f' {key}={_trunc(repr(value), max_len=120)}'
@@ -1057,6 +1065,7 @@ class GuardrailCheck:
         group_uuid: str,
         api_key_name: str,
         group_name: str,
+        count_judge_usage: JudgeUsageCounter | None = None,
     ) -> bool:
         """Evaluate only WARN-behavior guardrails without emitting events/logs.
         Used to surface a response header for non-blocking guardrails.
@@ -1081,6 +1090,7 @@ class GuardrailCheck:
             'route_name': route_config.route_name,
             'where': where,
             'parent_span': trace.get_current_span(),
+            'count_judge_usage': count_judge_usage,
         }
 
         for guardrail in check_guardrails:

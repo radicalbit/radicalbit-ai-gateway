@@ -4,7 +4,9 @@ import { isFulfilled, isRejectedWithValue } from '@reduxjs/toolkit';
 
 const { setNotificationMessage } = notificationActions;
 
-const errorWhiteList = {};
+const errorWhiteList = {
+  createKeyLimits: true,
+};
 
 const successWhiteList = {};
 

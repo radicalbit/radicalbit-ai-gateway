@@ -4,13 +4,6 @@ import json
 import logging
 from typing import Any
 
-from langchain_core.messages import (
-    AIMessage,
-    AIMessageChunk,
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-)
 import numpy as np
 from openai.types.audio.transcription import Transcription, UsageDuration, UsageTokens
 from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
@@ -24,6 +17,7 @@ from traceloop.sdk.decorators import task, workflow
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeUsageCounter
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.decision_model_invoker import (
     DecisionModelInvoker,
@@ -39,6 +33,13 @@ from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
 from radicalbit_ai_gateway.limiting.duration_limiter import DurationLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.limiting.token_limiter import TokenLimiter
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import (
     cache_hit_counter,
     cache_input_tokens,
@@ -599,6 +600,25 @@ class GatewayRoute:
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._select_and_prepare_embedding_model()
 
+        # Limits come first, before the judges spend: see
+        # _prepare_and_validate_request.
+        if (
+            self.token_limiter
+            or self.budget_limiter
+            or get_current_credential_limiter()
+            or get_current_project_budget_limiter()
+        ):
+            set_operation_category(OperationCategory.LIMITING)
+            await self._validate_embedding_limiters(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                input_texts=input_texts,
+                model_selected=model_selected,
+            )
+
         if self.gateway_route_config.guardrails:
             redacted_texts = input_texts
             has_redact_input = self.guardrail_engine.has_guardrails_for_route(
@@ -676,24 +696,6 @@ class GatewayRoute:
                 )
 
                 return cached_response
-
-        # Validate limiters
-        if (
-            self.token_limiter
-            or self.budget_limiter
-            or get_current_credential_limiter()
-            or get_current_project_budget_limiter()
-        ):
-            set_operation_category(OperationCategory.LIMITING)
-            await self._validate_embedding_limiters(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                input_texts=redacted_texts,
-                model_selected=model_selected,
-            )
 
         set_operation_category(OperationCategory.INVOCATION)
         response = await self.embedding_invoker.embed(
@@ -1031,6 +1033,17 @@ class GatewayRoute:
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._decision_models[0]
 
+        # Limits come first, before the judges spend: see
+        # _prepare_and_validate_request.
+        await self._check_decision_limits(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+        )
+
         screened = {f: body[f] for f in DECISION_SCREENED_FIELDS if f in body}
         if self.gateway_route_config.guardrails and screened:
             body = {
@@ -1079,15 +1092,6 @@ class GatewayRoute:
                     content=cached['content'].encode('utf-8'),
                     media_type=cached['media_type'],
                 )
-
-        await self._check_decision_limits(
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            group_uuid=group_uuid,
-            api_key_name=api_key_name,
-            group_name=group_name,
-            route_name=route_name,
-        )
 
         set_operation_category(OperationCategory.INVOCATION)
         response = await self.decision_invoker.decide(
@@ -1267,6 +1271,33 @@ class GatewayRoute:
             project_name=self.project_name,
         )
 
+    def _judge_usage_counter(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        api_key_name: str,
+        group_uuid: str,
+        group_name: str,
+    ) -> JudgeUsageCounter:
+        """Count a judge call on the request's counters, at the judge model's price."""
+        identity = self._request_identity(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            api_key_name=api_key_name,
+            group_uuid=group_uuid,
+            group_name=group_name,
+        )
+
+        async def count(model: Model, input_tokens: int, output_tokens: int) -> None:
+            await self._count_usage(
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+                model_selected=model,
+                identity=identity,
+            )
+
+        return count
+
     async def _count_decision_usage(
         self, input_tokens: int, model: Model, identity: RequestIdentity
     ) -> None:
@@ -1324,6 +1355,27 @@ class GatewayRoute:
 
         if not self.chat_invoker:
             raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
+
+        # Limits come first, before anything that spends (routing, judges,
+        # semantic cache, the model). A judge's spend then counts toward the
+        # next request. Routing has not run yet: the first chat model only
+        # picks the tokenizer for the input estimate.
+        if (
+            self.token_limiter
+            or self.budget_limiter
+            or get_current_credential_limiter()
+            or get_current_project_budget_limiter()
+        ):
+            set_operation_category(OperationCategory.LIMITING)
+            await self._validate_limiters(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                api_key_name=api_key_name,
+                messages=messages,
+                model_selected=self._chat_models[0],
+            )
 
         # Preprocessing plugins: transform the raw client messages first, before
         # routing and before the configured system prompt is injected, so plugins
@@ -1434,6 +1486,13 @@ class GatewayRoute:
                         group_uuid=group_uuid,
                         api_key_name=api_key_name,
                         group_name=group_name,
+                        count_judge_usage=self._judge_usage_counter(
+                            request_uuid=request_uuid,
+                            api_key_uuid=api_key_uuid,
+                            api_key_name=api_key_name,
+                            group_uuid=group_uuid,
+                            group_name=group_name,
+                        ),
                     ):
                         guardrails_input_triggered = True
                 except Exception:
@@ -1469,24 +1528,6 @@ class GatewayRoute:
                 input_soft_block=None,
                 guardrails_input_triggered=guardrails_input_triggered,
                 guardrails_block_triggered=guardrails_block_triggered,
-            )
-
-        # Validate Limiters
-        if (
-            self.token_limiter
-            or self.budget_limiter
-            or get_current_credential_limiter()
-            or get_current_project_budget_limiter()
-        ):
-            set_operation_category(OperationCategory.LIMITING)
-            await self._validate_limiters(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                api_key_name=api_key_name,
-                messages=redacted_messages,
-                model_selected=model_selected,
             )
 
         return PrepareAndValidateResult(
@@ -1735,6 +1776,13 @@ class GatewayRoute:
                         group_uuid=group_uuid,
                         api_key_name=api_key_name,
                         group_name=group_name,
+                        count_judge_usage=self._judge_usage_counter(
+                            request_uuid=request_uuid,
+                            api_key_uuid=api_key_uuid,
+                            api_key_name=api_key_name,
+                            group_uuid=group_uuid,
+                            group_name=group_name,
+                        ),
                     ):
                         guardrails_triggered = True
                 except Exception:
@@ -2048,6 +2096,13 @@ class GatewayRoute:
                 where=where,
                 project_uuid=self.project_uuid,
                 project_name=self.project_name,
+                count_judge_usage=self._judge_usage_counter(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                ),
             )
         except (GuardrailBadRequest, JudgeInternalError):
             raise
@@ -2091,10 +2146,21 @@ class GatewayRoute:
                     where=where,
                     project_uuid=self.project_uuid,
                     project_name=self.project_name,
+                    count_judge_usage=self._judge_usage_counter(
+                        request_uuid=request_uuid,
+                        api_key_uuid=api_key_uuid,
+                        api_key_name=api_key_name,
+                        group_uuid=group_uuid,
+                        group_name=group_name,
+                    ),
                 )
             )
         except GuardrailBadRequest as e:
             logger.warning('Guardrail BLOCK triggered: %s', e.log_message)
+            raise
+
+        except JudgeInternalError:
+            # Its error handler logs it.
             raise
 
         except Exception as e:
@@ -2163,6 +2229,13 @@ class GatewayRoute:
                         where=GuardrailWhereType.INPUT,
                         project_uuid=self.project_uuid,
                         project_name=self.project_name,
+                        count_judge_usage=self._judge_usage_counter(
+                            request_uuid=request_uuid,
+                            api_key_uuid=api_key_uuid,
+                            api_key_name=api_key_name,
+                            group_uuid=group_uuid,
+                            group_name=group_name,
+                        ),
                     )
                 )
             except (GuardrailBadRequest, JudgeInternalError):

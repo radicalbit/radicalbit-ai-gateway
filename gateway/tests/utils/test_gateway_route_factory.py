@@ -16,7 +16,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import uuid
 
-from langchain_core.messages import HumanMessage
 from openai.types.chat.chat_completion import ChatCompletion
 import pook
 import pytest
@@ -31,6 +30,7 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.cost_service import CostService

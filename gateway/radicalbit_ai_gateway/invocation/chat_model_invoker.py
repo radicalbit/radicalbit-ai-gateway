@@ -2,19 +2,18 @@ from collections.abc import AsyncIterator
 import logging
 import time
 
-from langchain.chat_models.base import init_chat_model
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
+from radicalbit_ai_gateway.llm.chat_model import ChatModel
+from radicalbit_ai_gateway.llm.factory import init_chat_model
+from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import (
     ENABLE_PROMPT_CACHE_PARAM,
-    GatewayDeepSeekChatModel,
     MockGatewayChatModel,
     Model,
 )
@@ -50,11 +49,11 @@ class ChatModelInvoker(ModelInvoker):
         )
         self._initialize_models(self._build_model)
 
-    def _build_model(self, model: Model) -> BaseChatModel:
+    def _build_model(self, model: Model) -> ChatModel:
         """Build a chat model from configuration.
 
         Returns:
-            BaseChatModel: A chat model instance.
+            ChatModel: A chat model instance.
 
         """
         provider, model_name = parse_provider_and_model(model.model)
@@ -73,7 +72,7 @@ class ChatModelInvoker(ModelInvoker):
                 response_text=response_text,
             )
 
-        # Strip gateway-only params that must not reach LangChain
+        # Strip gateway-only params that must not reach the provider
         _GATEWAY_PARAMS = {ENABLE_PROMPT_CACHE_PARAM}
         init_kwargs = {
             k: v
@@ -81,21 +80,14 @@ class ChatModelInvoker(ModelInvoker):
             if k not in _GATEWAY_PARAMS
         }
 
-        if provider == 'deepseek':
-            return GatewayDeepSeekChatModel(
-                model=model_name,
-                http_async_client=self.httpx_client,
-                **init_kwargs,
-            )
-
-        # Map gateway provider names to LangChain provider names
-        # LangChain uses underscore (google_genai) while gateway uses hyphen (google-genai)
-        langchain_provider = provider.replace('-', '_')
+        # Factory provider keys use underscores (google_genai) where the gateway
+        # config uses hyphens (google-genai)
+        factory_provider = provider.replace('-', '_')
 
         if provider not in ('anthropic', 'mistralai'):
             init_kwargs['http_async_client'] = self.httpx_client
         return init_chat_model(
-            model=f'{langchain_provider}:{model_name}',
+            model=f'{factory_provider}:{model_name}',
             **init_kwargs,
         )
 
@@ -336,7 +328,7 @@ class ChatModelInvoker(ModelInvoker):
 
     async def _stream_with_metrics(
         self,
-        chat_model: BaseChatModel,
+        chat_model: ChatModel,
         messages: list[BaseMessage],
         stats: dict[str, int],
         **kwargs,

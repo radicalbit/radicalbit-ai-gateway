@@ -2,7 +2,6 @@ import datetime
 from time import time
 import uuid
 
-from langchain_core.messages import AIMessageChunk
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import (
     ChatCompletionChunk,
@@ -13,6 +12,7 @@ from openai.types.chat.chat_completion_chunk import (
 )
 from openai.types.completion_usage import CompletionUsage
 
+from radicalbit_ai_gateway.llm.messages import AIMessageChunk
 from radicalbit_ai_gateway.utils.ai_gateway_types import ChunkAccumulationResult
 
 

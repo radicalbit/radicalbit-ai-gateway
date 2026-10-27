@@ -4,7 +4,6 @@ import copy
 from unittest.mock import MagicMock, patch
 import uuid
 
-from langchain_core.messages import HumanMessage
 import pytest
 
 from tests.common.mocked_gateway_config_openai import get_default_gateway_openai
@@ -13,6 +12,7 @@ from radicalbit_ai_gateway.alerting.alert_dispatch import alert_event
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.guardrails import (
     Guardrail,
     GuardrailBehaviorType,

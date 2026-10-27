@@ -204,3 +204,86 @@ def test_zero_budget_is_allowed():
     GatewayConfig.model_validate(
         _with_route(budget_limiting={'window_size': '1 day', 'max_budget': 0})
     )
+
+
+# Guardrail placement
+
+EMB = {'model_id': 'emb', 'model': 'openai/text-embedding-3-small'}
+WHISPER = {'model_id': 'whisper', 'model': 'openai/whisper-1'}
+
+_CHATLESS_ROUTES = {
+    'embedding': {'embedding_models': ['emb']},
+    'transcription': {'transcription_models': ['whisper']},
+    'decision': {'decision_models': ['jev']},
+}
+
+
+def _on_chatless_route(kind: str, guardrail: dict) -> dict:
+    return {
+        'chat_models': [GPT],
+        'embedding_models': [EMB],
+        'transcription_models': [WHISPER],
+        'decision_models': [JEV],
+        'guardrails': [guardrail],
+        'routes': {
+            'r': {**_CHATLESS_ROUTES[kind], 'guardrails': [guardrail['name']]},
+        },
+    }
+
+
+_GUARDRAILS_OF_EVERY_TYPE = [
+    {'name': 'g', 'type': 'starts_with', 'parameters': {'values': ['x']}},
+    {'name': 'g', 'type': 'ends_with', 'parameters': {'values': ['x']}},
+    {'name': 'g', 'type': 'contains', 'parameters': {'values': ['x']}},
+    {'name': 'g', 'type': 'regex', 'parameters': {'values': ['x']}},
+    {
+        'name': 'g',
+        'type': 'presidio_analyzer',
+        'parameters': {'entities': ['EMAIL_ADDRESS']},
+    },
+    {
+        'name': 'g',
+        'type': 'presidio_anonymizer',
+        'parameters': {'entities': ['EMAIL_ADDRESS']},
+    },
+    {'name': 'g', 'type': 'judge', 'parameters': {'model_id': 'gpt', 'prompt': 'x'}},
+    {
+        'name': 'g',
+        'type': 'decision_judge',
+        'parameters': {'model_id': 'jev', 'instructions': 'x'},
+    },
+    {'name': 'g', 'type': 'guardrails_ai', 'parameters': {'guard_name': 'x'}},
+]
+
+
+@pytest.mark.parametrize('kind', list(_CHATLESS_ROUTES))
+@pytest.mark.parametrize(
+    'guardrail', _GUARDRAILS_OF_EVERY_TYPE, ids=lambda g: g['type']
+)
+def test_output_guardrail_on_route_without_chat_models_is_rejected(kind, guardrail):
+    raw = _on_chatless_route(kind, {**guardrail, 'where': 'output'})
+
+    [(_, msg)] = _errors(raw)
+
+    assert (
+        "Route 'r': guardrail 'g' has where: output, but the route has no "
+        'chat_models. The guardrail would never run.'
+    ) in msg
+
+
+@pytest.mark.parametrize('kind', list(_CHATLESS_ROUTES))
+def test_io_guardrail_on_route_without_chat_models_is_accepted(kind):
+    guardrail = {'name': 'g', 'type': 'contains', 'parameters': {'values': ['x']}}
+
+    GatewayConfig.model_validate(_on_chatless_route(kind, {**guardrail, 'where': 'io'}))
+
+
+def test_output_guardrail_on_route_with_chat_models_is_accepted():
+    guardrail = {
+        'name': 'g',
+        'type': 'contains',
+        'where': 'output',
+        'parameters': {'values': ['x']},
+    }
+
+    GatewayConfig.model_validate(_with_guardrail(guardrail))

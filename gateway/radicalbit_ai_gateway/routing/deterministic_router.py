@@ -2,9 +2,9 @@ from datetime import datetime, timezone
 import logging
 
 from cron_converter import Cron
-from langchain_core.messages import BaseMessage, HumanMessage
 
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
+from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
     DeterministicRoutingConfig,

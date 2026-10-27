@@ -18,6 +18,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     DecisionJudgeParameter,
     Guardrail,
     GuardrailType,
+    GuardrailWhereType,
     JudgeParameter,
 )
 from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
@@ -379,6 +380,7 @@ class GatewayConfig(BaseModel):
         """Post-resolution:
         - no duplicates within a single route (explicit, redundant check)
         - consistency with global guardrails (should be guaranteed by the 'before' validator; here we assert defensively)
+        - no output guardrail on a route without chat models (it would never run)
         """
         if not self.routes:
             return self
@@ -406,6 +408,16 @@ class GatewayConfig(BaseModel):
                     f'(names are case-sensitive): {", ".join(sorted(unknown))}'
                 )
 
+            # Only chat requests have an output phase. An io guardrail still runs on input.
+            if not route.chat_models:
+                for g in self.guardrails or []:
+                    if g.name in names and g.where == GuardrailWhereType.OUTPUT:
+                        raise ValueError(
+                            f"Route '{r_name}': guardrail '{g.name}' has where: "
+                            'output, but the route has no chat_models. The '
+                            'guardrail would never run.'
+                        )
+
         return self
 
     @model_validator(mode='after')
@@ -421,10 +433,23 @@ class GatewayConfig(BaseModel):
                             'not declared in top-level chat_models.'
                         )
             elif isinstance(params, DecisionJudgeParameter):
-                if params.model_id not in self.decision_models_by_id:
+                # Any decision model of the project, not only those on the route.
+                for label, model_id in (
+                    ('model', params.model_id),
+                    ('fallback model', params.fallback_model_id),
+                ):
+                    if (
+                        model_id is not None
+                        and model_id not in self.decision_models_by_id
+                    ):
+                        raise ValueError(
+                            f"Guardrail '{guardrail.name}': decision judge {label} "
+                            f"'{model_id}' not declared in top-level decision_models."
+                        )
+                if params.fallback_model_id == params.model_id:
                     raise ValueError(
-                        f"Guardrail '{guardrail.name}': decision judge model "
-                        f"'{params.model_id}' not declared in top-level decision_models."
+                        f"Guardrail '{guardrail.name}': decision judge fallback model "
+                        f"'{params.fallback_model_id}' must differ from its model."
                     )
         return self
 

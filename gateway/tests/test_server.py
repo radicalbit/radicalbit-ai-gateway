@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.encoders import jsonable_encoder
 from fastapi.testclient import TestClient
 from freezegun import freeze_time
-from langchain_core.messages import HumanMessage, SystemMessage
 from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_text_delta_event import (
     TranscriptionTextDeltaEvent,
@@ -31,6 +30,7 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.event_dto import WindowStatus
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import (
