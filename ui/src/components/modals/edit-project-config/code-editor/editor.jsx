@@ -8,6 +8,7 @@ import 'ace-builds/src-noconflict/theme-tomorrow_night';
 import 'ace-builds/src-noconflict/ext-language_tools';
 
 const EDITOR_OPTIONS = {
+  enableKeyboardAccessibility: true,
   showLineNumbers: true,
   tabSize: 2,
   textInputAriaLabel: 'YAML configuration',
