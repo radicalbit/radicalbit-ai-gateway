@@ -209,7 +209,7 @@ function ChoiceCell({ record }) {
   const { form, write } = useFormbitContext();
   const overwrite = form?.overwrite ?? [];
 
-  const { existing, isHeader, key } = record;
+  const { existing, isHeader, key, limit, member } = record;
 
   if (isHeader || !existing) {
     return false;
@@ -222,7 +222,9 @@ function ChoiceCell({ record }) {
 
   const value = overwrite.includes(key) ? ChoiceEnum.OVERWRITE : ChoiceEnum.SKIP;
 
-  return <Segmented onChange={handleOnChange} options={CHOICE_OPTIONS} size="small" value={value} />;
+  const ariaLabel = `${member?.name}: ${LIMIT_CATEGORY_LABELS[limit?.category]} · ${formatLimitWindow(limit?.windowSize)}`;
+
+  return <Segmented aria-label={ariaLabel} onChange={handleOnChange} options={CHOICE_OPTIONS} size="small" value={value} />;
 }
 
 export default Preview;
