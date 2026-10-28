@@ -134,7 +134,12 @@ DECISION_TEXT = '\n'.join(
 DECISION_ANSWER = {
     'model': 'jev-1.13.0',
     'answers': {
-        'intent': {'type': 'choice', 'choice': {'refund': 0.9, 'complaint': 0.1}}
+        'intent': {
+            'type': 'choice',
+            'choice': 'refund',
+            'confidence': 0.8,
+            'probabilities': {'refund': 0.9, 'complaint': 0.1},
+        }
     },
     'usage': {'input_tokens': 312, 'output_tokens': 20},
 }

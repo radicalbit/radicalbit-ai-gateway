@@ -26,6 +26,7 @@ from radicalbit_ai_gateway.invocation.decision_model_invoker import (
 from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EmbeddingModelInvoker,
 )
+from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
 from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
     TranscriptionModelInvoker,
 )
@@ -59,6 +60,7 @@ from radicalbit_ai_gateway.models.model import ENABLE_PROMPT_CACHE_PARAM, Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
 from radicalbit_ai_gateway.routing import (
+    DecisionRouter,
     DeterministicRouter,
     SemanticRouter,
     TextClassificationRouter,
@@ -86,8 +88,12 @@ from radicalbit_ai_gateway.utils.exceptions import (
     JudgeInternalError,
 )
 from radicalbit_ai_gateway.utils.request_context import (
+    RoutingSpendRecorder,
     get_current_credential_limiter,
     get_current_project_budget_limiter,
+    get_current_request_identity,
+    set_current_request_identity,
+    set_routing_spend_recorder,
 )
 from radicalbit_ai_gateway.utils.state_leaves import string_leaves, with_string_leaves
 from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
@@ -117,6 +123,7 @@ class GatewayRoute:
         router: DeterministicRouter
         | SemanticRouter
         | TextClassificationRouter
+        | DecisionRouter
         | None = None,
         token_limiter: TokenLimiter | None = None,
         rate_limiter: RequestRateLimiter | None = None,
@@ -1298,6 +1305,32 @@ class GatewayRoute:
 
         return count
 
+    def _routing_spend_recorder(
+        self, identity: RequestIdentity, metrics: ModelInvoker
+    ) -> RoutingSpendRecorder:
+        """Charge a routing call to the request, as a judge call is (ADR 0006)."""
+
+        async def record(
+            model: Model,
+            input_tokens: int,
+            latency_ms: float,
+            *,
+            model_type: str,
+            target_model_id: str | None = None,
+        ) -> None:
+            metrics.record_routing_call(
+                identity=identity,
+                model=model,
+                target_model_id=target_model_id or model.model_id,
+                input_tokens=input_tokens,
+                latency_ms=latency_ms,
+                model_type=model_type,
+            )
+            # Routing calls bill input tokens only, as decision calls do.
+            await self._count_decision_usage(input_tokens, model, identity)
+
+        return record
+
     async def _count_decision_usage(
         self, input_tokens: int, model: Model, identity: RequestIdentity
     ) -> None:
@@ -1352,6 +1385,16 @@ class GatewayRoute:
         """Prepare a common pre-invocation logic: validation, guardrails, cache, limiters."""
         if route_name != self.gateway_route_config.route_name:
             raise GatewayBadRequest(f'{route_name} must be the route name')
+        # Who sent the request: routing charges its own calls to them.
+        set_current_request_identity(
+            self._request_identity(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+            )
+        )
 
         if not self.chat_invoker:
             raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
@@ -1383,32 +1426,6 @@ class GatewayRoute:
         # fail-closed if a plugin raises.
         set_operation_category(OperationCategory.PREPROCESSING)
         messages = await run_preprocessing(messages, self.gateway_route_config.plugins)
-
-        # Prepare request for processing: route on the preprocessed messages.
-        set_operation_category(OperationCategory.ROUTING)
-        model_selected = await self._select_chat_model(messages)
-
-        if self.router and self.gateway_route_config.routing:
-            emit_event(
-                RoutingEventPayload(
-                    value=1.0,
-                    request_uuid=request_uuid,
-                    event_type=EventType.ROUTING,
-                    route_name=route_name,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                    project_uuid=self.project_uuid,
-                    project_name=self.project_name,
-                    routing_name=self.gateway_route_config.routing,
-                    selected_model_id=model_selected.model_id,
-                )
-            )
-
-        # Inject the route's configured system prompt AFTER preprocessing, so
-        # preprocessing plugins can never see or modify it.
-        self._apply_config_prompt(messages, model_selected)
 
         guardrails_input_triggered = False
         guardrails_block_triggered = (
@@ -1444,13 +1461,43 @@ class GatewayRoute:
                 except Exception:
                     pass
 
+        # Route on the redacted messages, so no router (and no service it
+        # calls) sees text a redact guardrail masks.
+        set_operation_category(OperationCategory.ROUTING)
+        model_selected = await self._select_chat_model(redacted_messages)
+
+        if self.router and self.gateway_route_config.routing:
+            emit_event(
+                RoutingEventPayload(
+                    value=1.0,
+                    request_uuid=request_uuid,
+                    event_type=EventType.ROUTING,
+                    route_name=route_name,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                    project_uuid=self.project_uuid,
+                    project_name=self.project_name,
+                    routing_name=self.gateway_route_config.routing,
+                    selected_model_id=model_selected.model_id,
+                )
+            )
+
+        # Inject the route's configured system prompt after routing and after
+        # redaction: plugins, routers and redact guardrails never see it.
+        self._apply_config_prompt(redacted_messages, model_selected)
+        if redacted_messages is not messages:
+            # The cache still reads the unredacted list: keep the prompt there too.
+            self._apply_config_prompt(messages, model_selected)
+
+        if self.gateway_route_config.guardrails:
             if self.guardrail_engine.has_guardrails_for_route(
                 self.gateway_route_config,
                 GuardrailWhereType.INPUT,
                 GuardrailClass.CHECK,
             ):
-                if not has_redact_input:
-                    set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+                set_operation_category(OperationCategory.GUARDRAIL_INPUT)
 
                 input_soft_block = await self._apply_check_guardrails(
                     request_uuid=request_uuid,
@@ -1545,7 +1592,17 @@ class GatewayRoute:
     async def _select_chat_model(self, messages: list[BaseMessage]) -> Model:
         """Select the chat model for this request based on the routing config."""
         if self.router:
-            model_selected = await self.router.select_model(messages)
+            identity = get_current_request_identity()
+            # Routing runs on chat routes: the chat invoker emits its cost events.
+            set_routing_spend_recorder(
+                self._routing_spend_recorder(identity, self.chat_invoker)
+                if identity and self.chat_invoker
+                else None
+            )
+            try:
+                model_selected = await self.router.select_model(messages)
+            finally:
+                set_routing_spend_recorder(None)
         else:
             model_selected = self._chat_models[0]
 

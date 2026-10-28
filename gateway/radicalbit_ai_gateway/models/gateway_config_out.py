@@ -25,6 +25,8 @@ from radicalbit_ai_gateway.models.mcp_server import McpHttpServer, McpStdioServe
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
     BudgetConditions,
+    DecisionOutputMappingEntry,
+    DecisionRoutingConfig,
     DeterministicRoutingConfig,
     OutputMappingEntry,
     SemanticRoutingConfig,
@@ -206,6 +208,20 @@ class SemanticRoutingConfigOut(SemanticRoutingConfig):
     )
 
 
+class DecisionOutputMappingEntryOut(DecisionOutputMappingEntry):
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+
+class DecisionRoutingConfigOut(DecisionRoutingConfig):
+    output_mapping: list[DecisionOutputMappingEntryOut]
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+
 AnyCachingOut = Annotated[
     Union[CachingOut, SemanticCachingOut],
     Field(discriminator='type'),
@@ -216,6 +232,7 @@ AnyRoutingConfigOut = Annotated[
         DeterministicRoutingConfigOut,
         TextClassificationRoutingConfigOut,
         SemanticRoutingConfigOut,
+        DecisionRoutingConfigOut,
     ],
     Field(discriminator='type'),
 ]

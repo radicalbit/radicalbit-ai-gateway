@@ -7,7 +7,11 @@ import httpx
 from opentelemetry import trace
 
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeUsageCounter
-from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
+from radicalbit_ai_gateway.invocation.decision_model_invoker import (
+    DecisionModelInvoker,
+    billed_input_tokens,
+    is_number,
+)
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.guardrails import DecisionJudgeParameter
 from radicalbit_ai_gateway.models.model import Model
@@ -206,12 +210,8 @@ class DecisionJudgeEngine:
 
         Typesafe bills input tokens only. No usage, nothing to count.
         """
-        usage = payload.get('usage') if isinstance(payload, dict) else None
-        input_tokens = usage.get('input_tokens') if isinstance(usage, dict) else None
-        # bool is an int: reject it, as any non-number.
-        if isinstance(input_tokens, bool) or not isinstance(input_tokens, int):
-            return
-        if input_tokens <= 0:
+        input_tokens = billed_input_tokens(payload)
+        if input_tokens == 0:
             return
         model = self._invoker.record_judge_call(
             model_id=model_id,
@@ -228,8 +228,7 @@ class DecisionJudgeEngine:
             noul = payload['answers'][QUESTION_ID]['noul']
         except (KeyError, TypeError):
             raise self._error(model_id, 'the answer has no noul') from None
-        # bool is an int: reject it, as any non-number.
-        if isinstance(noul, bool) or not isinstance(noul, int | float):
+        if not is_number(noul):
             raise self._error(model_id, f'noul is not a number: {noul!r}')
         return float(noul)
 

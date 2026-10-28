@@ -44,6 +44,7 @@ class Event(ClickHouseBaseTable):
         'GUARDRAIL_BEHAVIOR', LowCardinality(String), default=''
     )
     is_judge = Column('IS_JUDGE', Boolean, default=False)
+    is_routing = Column('IS_ROUTING', Boolean, default=False)
     routing_name = Column('ROUTING_NAME', LowCardinality(String), default='')
     routing_selected_model_id = Column(
         'ROUTING_SELECTED_MODEL_ID', LowCardinality(String), default=''

@@ -28,6 +28,26 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 DECISION_MODEL_TYPE = 'decision_model'
 TYPESAFE_DEFAULT_BASE_URL = 'https://api.typesafe.ai'
 SYSTEMONE_PATH = '/v1/systemone'
+
+
+def is_number(value: object) -> bool:
+    """Tell if an answer value is a number. bool is an int: it is not."""
+    return not isinstance(value, bool) and isinstance(value, int | float)
+
+
+def billed_input_tokens(payload: object) -> int:
+    """Return the input tokens a Typesafe answer bills, or 0 when it has none.
+
+    Typesafe bills input tokens only.
+    """
+    usage = payload.get('usage') if isinstance(payload, dict) else None
+    input_tokens = usage.get('input_tokens') if isinstance(usage, dict) else None
+    # bool is an int: reject it, as any non-number.
+    if isinstance(input_tokens, bool) or not isinstance(input_tokens, int):
+        return 0
+    return max(input_tokens, 0)
+
+
 BACKOFF_BASE_SECONDS = 0.2
 BACKOFF_CAP_SECONDS = 2.0
 
