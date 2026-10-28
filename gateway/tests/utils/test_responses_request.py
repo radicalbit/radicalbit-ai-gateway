@@ -254,6 +254,21 @@ class TestResponsesRequest:
         with pytest.raises(GatewayInternalError):
             request.write_back(request.messages()[1:])
 
+    def test_changed_text_parts_are_refused(self):
+        request = ResponsesRequest({'input': 'Hi'})
+
+        with pytest.raises(GatewayInternalError):
+            request.write_back(
+                [
+                    HumanMessage(
+                        content=[
+                            {'type': 'text', 'text': 'A'},
+                            {'type': 'text', 'text': 'B'},
+                        ]
+                    )
+                ]
+            )
+
     def test_configured_prompt_goes_first(self):
         request = ResponsesRequest({'input': 'Hi'})
 

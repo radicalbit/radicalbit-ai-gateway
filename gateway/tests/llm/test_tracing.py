@@ -1632,6 +1632,38 @@ async def test_responses_settings_fill_what_the_client_left_out(spans):
     ]
 
 
+async def test_responses_image_and_other_input_blocks(spans):
+    response = {'id': 'r', 'status': 'completed', 'output': []}
+    content = [
+        {'type': 'input_text', 'text': 'What is it?'},
+        {'type': 'input_image', 'image_url': 'https://example.com/cat.png'},
+        {'type': 'input_file', 'file_id': 'file_1'},
+    ]
+
+    await _ResponsesModel(response, model_name='m').ainvoke_native_responses(
+        {'input': [{'role': 'user', 'content': content}]}
+    )
+
+    assert _input_messages(_only_span(spans)) == [
+        {
+            'role': 'user',
+            'parts': [
+                {'type': 'text', 'content': 'What is it?'},
+                {
+                    'type': 'uri',
+                    'modality': 'image',
+                    'uri': 'https://example.com/cat.png',
+                },
+                # Any other block is reported as its JSON.
+                {
+                    'type': 'text',
+                    'content': '{"type": "input_file", "file_id": "file_1"}',
+                },
+            ],
+        }
+    ]
+
+
 async def test_responses_stream_span_reads_the_final_response(spans, metrics):
     model = _ResponsesModel(events=_stream_events(RESPONSE), model_name='gpt-6-luna')
 

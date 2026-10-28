@@ -207,6 +207,33 @@ class TestResponseEvents:
         assert added[0]['input'] == ''
         assert added[3]['code'] == ''
 
+    def test_refusal_and_other_parts_stream_their_events(self):
+        refusal = {'type': 'refusal', 'refusal': 'I cannot help.'}
+        other = {'type': 'reasoning_text', 'text': 'Thinking'}
+        item = {**message_item(''), 'content': [refusal, other]}
+
+        events = events_of(response_events(_response([item])))
+
+        part_events = [
+            (e['type'], e.get('content_index')) for e in events if 'content_index' in e
+        ]
+        assert part_events == [
+            ('response.content_part.added', 0),
+            ('response.refusal.delta', 0),
+            ('response.refusal.done', 0),
+            ('response.content_part.done', 0),
+            ('response.content_part.added', 1),
+            ('response.content_part.done', 1),
+        ]
+        refusal_events = [e for e in events if e['type'].startswith('response.refusal')]
+        for event in refusal_events:
+            EVENT_ADAPTER.validate_python(event)
+        assert refusal_events[0]['delta'] == 'I cannot help.'
+        assert refusal_events[1]['refusal'] == 'I cannot help.'
+        added = [e for e in events if e['type'] == 'response.content_part.added']
+        assert added[0]['part'] == {**refusal, 'refusal': ''}
+        assert added[1]['part'] == other
+
 
 async def _collect(source):
     return [item async for item in source]

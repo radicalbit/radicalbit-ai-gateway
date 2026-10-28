@@ -188,6 +188,17 @@ async def test_sse_done_terminator_is_skipped():
     assert await _collect(iter_sse_events(lines())) == [('a', '{"type":"a"}')]
 
 
+async def test_sse_event_without_a_closing_blank_line_is_kept():
+    async def lines():
+        for line in ['data: {"type":"a"}', '', 'event: b', 'data: {"type":"b"}']:
+            yield line
+
+    assert await _collect(iter_sse_events(lines())) == [
+        ('a', '{"type":"a"}'),
+        ('b', '{"type":"b"}'),
+    ]
+
+
 def test_native_event_reports_the_route_as_model():
     created = json.dumps(UPSTREAM_EVENTS[0], separators=(',', ':'))
     delta = json.dumps(UPSTREAM_EVENTS[1], separators=(',', ':'))
@@ -396,6 +407,22 @@ class TestCompleteResponses:
             await _invoker(primary).complete_responses(**CALL, body={'input': 'Hi'})
 
         assert raised.value.status_code == 429
+
+    async def test_upstream_refusal_without_a_json_body_gets_one(self):
+        request = httpx.Request('POST', 'https://api.openai.com/v1/responses')
+        response = httpx.Response(413, text='Request Entity Too Large', request=request)
+        primary = FakeChatModel()
+        primary.ainvoke_native_responses = AsyncMock(
+            side_effect=openai.APIStatusError(
+                'Request Entity Too Large', response=response, body=None
+            )
+        )
+
+        with pytest.raises(ModelInvokerUpstreamError) as raised:
+            await _invoker(primary).complete_responses(**CALL, body={'input': 'Hi'})
+
+        assert raised.value.status_code == 413
+        assert raised.value.body == {'error': {'message': 'Request Entity Too Large'}}
 
 
 # ── Chat chunks (/v1/chat/completions) ────────────────────────────────────

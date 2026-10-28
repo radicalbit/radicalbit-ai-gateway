@@ -9,6 +9,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
+import numpy as np
 from openai.types.responses import Response
 import pytest
 from starlette.requests import Request
@@ -23,6 +24,7 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.models.caching import CacheType
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
@@ -40,6 +42,7 @@ from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
+from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
 
 ROUTE = 'agents'
 
@@ -139,6 +142,13 @@ GUARDRAILS = [
         where=GuardrailWhereType.OUTPUT,
         parameters=CheckParameter(values=['secret']),
         response_message='The answer was withheld.',
+    ),
+    Guardrail(
+        name='output_warn',
+        type=GuardrailType.CONTAINS,
+        behavior=GuardrailBehaviorType.WARN,
+        where=GuardrailWhereType.OUTPUT,
+        parameters=CheckParameter(values=['secret']),
     ),
 ]
 
@@ -559,3 +569,151 @@ async def test_chat_endpoint_ignores_a_responses_cache_entry():
         )
 
     assert cached is None
+
+
+@pytest.mark.parametrize(
+    'entry',
+    [
+        json.dumps({'object': 'chat.completion', 'choices': []}),
+        'not json',
+    ],
+)
+def test_an_entry_that_is_not_a_response_object_is_a_miss(post, entry):
+    model = FakeChatModel(events=upstream_events())
+    route = build_route({'openai': model}, cache=True)
+
+    with patch.object(route.gateway_cache, 'get', AsyncMock(return_value=entry)):
+        response = post(route, input='Hi')
+
+    assert response.status_code == 200
+    assert len(model.bodies) == 1
+    assert 'X-RB-AIGATEWAY-CACHE-HIT' not in response.headers
+
+
+class SemanticInMemoryCache(GatewayCache):
+    """An in-memory cache that reads and writes as the semantic one does."""
+
+    def __init__(self):
+        super().__init__(CacheToolsInMemory())
+        self.calls: list[tuple[str, dict]] = []
+
+    @property
+    def cache_type(self) -> CacheType:
+        return CacheType.SEMANTIC
+
+    async def get(self, cache_key: str, **kwargs) -> str | None:
+        self.calls.append(('get', kwargs))
+        return await super().get(cache_key, **kwargs)
+
+    async def set(self, cache_key: str, response: str, ttl: int | None, **kwargs):
+        self.calls.append(('set', kwargs))
+        await super().set(cache_key, response, ttl, **kwargs)
+
+
+def semantic_route(model: FakeChatModel, embedding_model: Model | None):
+    route = build_route({'openai': model})
+    route.gateway_cache = SemanticInMemoryCache()
+    route._get_first_embedding_model = MagicMock(return_value=embedding_model)
+    route._generate_embedding_for_semantic_cache = AsyncMock(
+        return_value=np.array([0.1, 0.2])
+    )
+    return route
+
+
+def test_semantic_cache_embeds_the_last_user_text(post):
+    model = FakeChatModel(events=upstream_events())
+    embedding_model = Model(
+        model_id='embed',
+        model='openai/text-embedding-3-small',
+        credentials=Credentials(api_key='sk-test'),
+    )
+    route = semantic_route(model, embedding_model)
+    turn = [
+        {'role': 'user', 'content': 'First question'},
+        {'role': 'assistant', 'content': 'An answer'},
+        {'role': 'user', 'content': 'Hi'},
+    ]
+
+    first = post(route, input=turn)
+    second = post(route, input=turn)
+
+    assert first.status_code == second.status_code == 200
+    assert len(model.bodies) == 1
+    assert second.headers['X-RB-AIGATEWAY-CACHE-HIT'] == 'true'
+    embedded = route._generate_embedding_for_semantic_cache.call_args.kwargs
+    assert embedded['text'] == 'Hi'
+    assert embedded['model_id_selected'] == 'embed'
+    assert [name for name, _ in route.gateway_cache.calls] == ['get', 'set', 'get']
+    for _, kwargs in route.gateway_cache.calls:
+        assert kwargs['embeddings'].tolist() == [0.1, 0.2]
+
+
+def test_semantic_cache_without_embeddings_is_skipped(post):
+    model = FakeChatModel(events=upstream_events())
+    route = semantic_route(model, embedding_model=None)
+
+    post(route, input='Hi')
+    response = post(route, input='Hi')
+
+    assert response.status_code == 200
+    assert len(model.bodies) == 2
+    assert route.gateway_cache.calls == []
+    assert 'X-RB-AIGATEWAY-CACHE-HIT' not in response.headers
+
+
+# ── Warn guardrails ───────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_output_warn_is_reported_and_the_reply_kept(post, stream):
+    route = build_route(
+        {'openai': FakeChatModel(events=upstream_events('The secret is 42'))},
+        guardrails=['output_warn'],
+    )
+
+    response = post(route, input='Hi', stream=stream)
+
+    assert response.status_code == 200
+    final = stream_events(response)[-1]['response'] if stream else response.json()
+    assert Response.model_validate(final).output_text == 'The secret is 42'
+    assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] == 'true'
+    assert 'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED' not in response.headers
+
+
+def test_a_failing_warn_check_does_not_fail_the_request(post):
+    route = build_route(
+        {'openai': FakeChatModel(events=upstream_events('The secret is 42'))},
+        guardrails=['output_warn'],
+    )
+
+    with patch.object(
+        route.guardrail_engine.guardrail_check,
+        'evaluate_warn_triggered',
+        AsyncMock(side_effect=RuntimeError('judge down')),
+    ):
+        response = post(route, input='Hi')
+
+    assert response.status_code == 200
+    assert 'X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN' not in response.headers
+
+
+# ── Limits ────────────────────────────────────────────────────────────────
+
+
+def test_budget_limit_blocks_before_the_model(post):
+    model = FakeChatModel(events=upstream_events())
+    route = build_route({'openai': model})
+    limiter = MagicMock()
+    limiter.check_budget = AsyncMock(
+        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
+    )
+
+    with patch(
+        'radicalbit_ai_gateway.ai_gateway.get_current_project_budget_limiter',
+        return_value=limiter,
+    ):
+        response = post(route, input='Hi')
+
+    assert response.status_code == 429
+    assert model.bodies == []
+    assert limiter.check_budget.call_args.kwargs['route_name'] == ROUTE
