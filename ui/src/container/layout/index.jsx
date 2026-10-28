@@ -67,7 +67,7 @@ const projects = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '1', shape: 'circle' }] }}>Projects</CollapsedTitle> : 'Projects',
   icon: <Lucide icon={FolderOpen} size="md" />,
   key: PathsEnum.PROJECTS,
-  link: getLink(PathsEnum.PROJECTS),
+  link: getLink(PathsEnum.PROJECTS, 'Projects'),
 });
 
 const configurations = (hasLeftColumnCollapsed) => ({
@@ -75,7 +75,7 @@ const configurations = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '2', shape: 'circle' }] }}>Configurations</CollapsedTitle> : 'Configurations',
   icon: <Lucide icon={Settings2} size="md" />,
   key: PathsEnum.CONFIGURATIONS,
-  link: getLink(PathsEnum.CONFIGURATIONS),
+  link: getLink(PathsEnum.CONFIGURATIONS, 'Configurations'),
 });
 
 const secrets = (hasLeftColumnCollapsed) => ({
@@ -83,7 +83,7 @@ const secrets = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Secrets</CollapsedTitle> : 'Secrets',
   icon: <Lucide icon={Lock} size="md" />,
   key: PathsEnum.SECRETS,
-  link: getLink(PathsEnum.SECRETS),
+  link: getLink(PathsEnum.SECRETS, 'Secrets'),
 });
 
 const routes = (hasLeftColumnCollapsed) => ({
@@ -91,7 +91,7 @@ const routes = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
   icon: <Lucide icon={Gauge} size="md" />,
   key: PathsEnum.ROUTES,
-  link: getLink(PathsEnum.ROUTES),
+  link: getLink(PathsEnum.ROUTES, 'Routes'),
 });
 
 const usage = (hasLeftColumnCollapsed) => ({
@@ -99,7 +99,7 @@ const usage = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
   icon: <Lucide icon={Signpost} size="md" />,
   key: PathsEnum.USAGE,
-  link: getLink(PathsEnum.USAGE),
+  link: getLink(PathsEnum.USAGE, 'Usage'),
 });
 
 const tracing = (hasLeftColumnCollapsed) => ({
@@ -107,7 +107,7 @@ const tracing = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
   icon: <Lucide icon={Route} size="md" />,
   key: PathsEnum.TRACING,
-  link: getLink(PathsEnum.TRACING),
+  link: getLink(PathsEnum.TRACING, 'Tracing'),
 });
 
 const groups = (hasLeftColumnCollapsed) => ({
@@ -115,7 +115,7 @@ const groups = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '7', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
   icon: <Lucide icon={Users} size="md" />,
   key: PathsEnum.GROUPS,
-  link: getLink(PathsEnum.GROUPS),
+  link: getLink(PathsEnum.GROUPS, 'Groups'),
 });
 
 const keys = (hasLeftColumnCollapsed) => ({
@@ -123,7 +123,7 @@ const keys = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '8', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
   icon: <Lucide icon={Key} size="md" />,
   key: PathsEnum.CREDENTIALS,
-  link: getLink(PathsEnum.CREDENTIALS),
+  link: getLink(PathsEnum.CREDENTIALS, 'Credentials'),
 });
 
 const alerts = (hasLeftColumnCollapsed) => ({
@@ -131,7 +131,7 @@ const alerts = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '9', shape: 'circle' }] }}>Alert</CollapsedTitle> : 'Alert',
   icon: <Lucide icon={Settings2} size="md" />,
   key: PathsEnum.ALERTS,
-  link: getLink(PathsEnum.ALERTS),
+  link: getLink(PathsEnum.ALERTS, 'Alert'),
 });
 
 // ALL ROUTES
@@ -172,7 +172,7 @@ export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps 
       {mac && (
         <div className="flex gap-2 items-center">
           {mac.map(({ label, shape }) => (
-            <Button key={label} shape={shape} size="small" type="secondary" {...buttonProps}>
+            <Button key={label} aria-hidden shape={shape} size="small" tabIndex={-1} type="secondary" {...buttonProps}>
               {label}
             </Button>
           ))}
@@ -183,8 +183,8 @@ export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps 
   );
 }
 
-const getLink = (pathname, search) => (
-  <Link to={{ pathname, search }}>
+const getLink = (pathname, label) => (
+  <Link aria-label={label} to={{ pathname }}>
     <div className="hidden">{pathname}</div>
   </Link>
 );
