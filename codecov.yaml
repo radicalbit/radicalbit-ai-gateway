@@ -9,9 +9,16 @@ coverage:
         target: 89%        # minimum coverage required on new/changed code in a PR
 
 flags:
+  # Each component uploads only when its path-filtered workflow runs, so carry
+  # the last upload forward for commits that did not touch it.
   gateway:
     paths:
       - gateway/
+    carryforward: true
+  metrics-worker:
+    paths:
+      - metrics-worker/
+    carryforward: true
 
 comment:
   layout: "reach, diff, flags, files"
