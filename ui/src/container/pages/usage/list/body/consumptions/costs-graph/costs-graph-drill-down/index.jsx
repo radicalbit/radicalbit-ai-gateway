@@ -11,6 +11,7 @@ import { Board, Button, Skeleton, Void } from '@radicalbit/radicalbit-design-sys
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
+  AriaComponent,
   DataZoomComponent,
   GraphicComponent,
   GridComponent,
@@ -28,7 +29,7 @@ import '../_styles.less';
 import { GROUP_BY } from '../group-by';
 import option from './option';
 
-echarts.use([
+echarts.use([AriaComponent,
   BarChart,
   GridComponent,
   TooltipComponent,

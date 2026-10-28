@@ -6,6 +6,7 @@ import { Board, Segmented, Spinner, Void } from '@radicalbit/radicalbit-design-s
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
+  AriaComponent,
   DataZoomComponent,
   GraphicComponent,
   GridComponent,
@@ -23,7 +24,7 @@ import option from './option';
 import useGetNameToId from './use-get-name-to-id';
 import useLazyGetBreakdownByGroupBy from './use-lazy-get-breakdown-by-group-by';
 
-echarts.use([
+echarts.use([AriaComponent,
   BarChart,
   GridComponent,
   TooltipComponent,

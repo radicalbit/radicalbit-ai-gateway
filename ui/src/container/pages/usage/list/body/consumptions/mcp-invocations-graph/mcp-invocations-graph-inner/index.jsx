@@ -7,6 +7,7 @@ import {
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
+  AriaComponent,
   DataZoomComponent,
   GraphicComponent,
   GridComponent,
@@ -23,7 +24,7 @@ import { MCP_DEFAULT_GROUP_BY, MCP_GROUP_BY } from '../group-by';
 import option from './option';
 import useGetNameToId from './use-get-name-to-id';
 
-echarts.use([
+echarts.use([AriaComponent,
   BarChart,
   GridComponent,
   TooltipComponent,

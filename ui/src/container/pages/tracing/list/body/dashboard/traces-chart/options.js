@@ -1,6 +1,7 @@
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
+  AriaComponent,
   GridComponent,
   LegendComponent,
   TitleComponent,
@@ -10,7 +11,7 @@ import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import chartTsToDate from '@Helpers/chart-ts-to-date';
 
-echarts.use([BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer, TitleComponent]);
+echarts.use([AriaComponent, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer, TitleComponent]);
 
 const SERIES_COLOR_MAP = {
   success: '#4db694', // var(--coo-success)
@@ -27,6 +28,7 @@ const GRANULARITY_LABEL = {
 
 function tracesBarChartOption({ xAxisData, series = [], granularity, total }) {
   return {
+    aria: { enabled: true },
     title: {
       left: 35,
       top: 20,

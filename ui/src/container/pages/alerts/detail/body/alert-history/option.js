@@ -4,6 +4,7 @@ const SENT_COLOR = '#00A35C';
 const FAILED_COLOR = '#F33D23';
 
 export default ({ buckets }) => ({
+  aria: { enabled: true },
   legend: { show: false },
   grid: {
     top: 10, right: 10, bottom: 10, left: 10, containLabel: true,

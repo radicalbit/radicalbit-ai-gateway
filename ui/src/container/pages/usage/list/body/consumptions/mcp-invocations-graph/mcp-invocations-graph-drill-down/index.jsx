@@ -13,6 +13,7 @@ import {
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
+  AriaComponent,
   DataZoomComponent,
   GraphicComponent,
   GridComponent,
@@ -28,7 +29,7 @@ import { useSearchParams } from 'react-router-dom';
 import { MCP_GROUP_BY } from '../group-by';
 import option from './option';
 
-echarts.use([
+echarts.use([AriaComponent,
   BarChart,
   GridComponent,
   TooltipComponent,

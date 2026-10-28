@@ -4,6 +4,7 @@ import { Board, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { LineChart } from 'echarts/charts';
 import {
+  AriaComponent,
   DataZoomComponent,
   GridComponent,
   LegendComponent,
@@ -17,7 +18,7 @@ import { useSearchParams } from 'react-router-dom';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import option from './option';
 
-echarts.use([
+echarts.use([AriaComponent,
   LineChart,
   GridComponent,
   TooltipComponent,
