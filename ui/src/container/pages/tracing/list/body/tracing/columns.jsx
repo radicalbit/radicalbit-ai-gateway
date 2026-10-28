@@ -1,6 +1,8 @@
 import HtmlAnchor from '@Components/html-anchor';
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
+import TableRowButton from '@Components/table-row-button';
+import useModals, { modals } from '@Hooks/use-modals';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import {
   FormatBold,
@@ -30,15 +32,27 @@ function AssociatedGroup({ groupName, groupUuid }) {
   return '--';
 }
 
+function OpenTrace({ children, traceId }) {
+  const { showModal } = useModals();
+
+  const handleOnClick = () => {
+    showModal(modals.TRACE_DETAIL, { traceId });
+  };
+
+  return <TableRowButton onClick={handleOnClick}>{children}</TableRowButton>;
+}
+
 const columns = [
   {
     title: 'Route',
     dataIndex: 'routeName',
     align: 'left',
-    render: (value, { traceStatus }) => (
+    render: (value, { traceId, traceStatus }) => (
       <StatusTooltip traceStatus={traceStatus}>
         <div className="flex items-center gap-2">
-          <FormatBold value={value} />
+          <OpenTrace traceId={traceId}>
+            <FormatBold value={value} />
+          </OpenTrace>
 
           <Status traceStatus={traceStatus} />
         </div>

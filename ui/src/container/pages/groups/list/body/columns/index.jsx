@@ -1,6 +1,7 @@
 import Lucide from '@Components/lucide';
+import TableRowLink from '@Components/table-row-link';
 import { useGetThreeDotsMenuItems } from '@Container/pages/groups/detail/header/three-dots-menu';
-import { DATE_FORMAT } from '@Src/constants';
+import { DATE_FORMAT, PathsEnum } from '@Src/constants';
 import {
   Button, DataTableAction, Dropdown, RelativeDateTime, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
@@ -19,9 +20,11 @@ const columns = [
     title: 'Name',
     dataIndex: 'name',
     key: 'name',
-    render: (value) => (
+    render: (value, { uuid }) => (
       <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        <TableRowLink keepSearch to={`/${PathsEnum.GROUPS}/${uuid}`}>
+          <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        </TableRowLink>
       </Truncate>
     ),
   },
