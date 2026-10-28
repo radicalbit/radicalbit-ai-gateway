@@ -3,6 +3,7 @@ import AddGroupToKey from './add-group-to-key';
 import AddGroupsToRoute from './add-groups-to-route';
 import AddKeysToGroups from './add-keys-to-group';
 import AddRoutesToGroups from './add-routes-to-group';
+import ApplyGroupLimits from './apply-group-limits';
 import CreateAlertRule from './create-alert-rule';
 import CreateGroup from './create-group';
 import CreateKey from './create-key';
@@ -64,6 +65,9 @@ export default function ModalsProvider() {
 
     case modals.MANAGE_KEY_LIMITS:
       return <ManageKeyLimits />;
+
+    case modals.APPLY_GROUP_LIMITS:
+      return <ApplyGroupLimits />;
 
     case modals.MANAGE_PROJECT_BUDGET:
       return <ManageProjectBudget />;
