@@ -169,15 +169,15 @@ function NameCell({ isCollapsed, record }) {
   const chevron = isCollapsed ? ChevronRight : ChevronDown;
 
   return (
-    <div className="flex items-center gap-2">
+    <button aria-expanded={!isCollapsed} className="flex items-center gap-2 p-0 border-0 bg-transparent text-inherit text-left font-[inherit] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--coo-fg-black)]" type="button">
       <Lucide icon={chevron} />
 
-      <div className="flex flex-col">
+      <span className="flex flex-col">
         <strong>{member.name}</strong>
 
         <ExpiredMark member={member} />
-      </div>
-    </div>
+      </span>
+    </button>
   );
 }
 

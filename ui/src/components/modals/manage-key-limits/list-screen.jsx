@@ -227,13 +227,13 @@ function Name({ isExpanded, record }) {
   const chevron = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    <div className="flex gap-2 items-center font-[var(--coo-font-weight-bold)]">
+    <button aria-expanded={isExpanded} className="flex gap-2 items-center p-0 border-0 bg-transparent text-inherit text-left font-[inherit] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--coo-fg-black)] font-[var(--coo-font-weight-bold)]" type="button">
       <Lucide icon={chevron} />
 
       {LIMIT_CATEGORY_LABELS[category]}
 
       <span className="font-normal opacity-70">{`(${count})`}</span>
-    </div>
+    </button>
   );
 }
 
