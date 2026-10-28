@@ -47,6 +47,7 @@ COLUMN_NAMES = [
     'MCP_METHOD',
     'MCP_ALIAS',
     'MCP_TARGET',
+    'IS_ROUTING',
 ]
 
 
@@ -195,6 +196,7 @@ def insert_event_record_connect_async(event_payload):
             'MCP_METHOD': event_data.get('MCP_METHOD', ''),
             'MCP_ALIAS': event_data.get('MCP_ALIAS', ''),
             'MCP_TARGET': event_data.get('MCP_TARGET', ''),
+            'IS_ROUTING': event_data.get('IS_ROUTING', False),
         }
         buffer.append([values[column] for column in COLUMN_NAMES])
         processed_ids.append(str(request_uuid))

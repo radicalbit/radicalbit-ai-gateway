@@ -82,7 +82,9 @@ TYPESAFE_BODY = {
     'answers': {
         'intent': {
             'type': 'choice',
-            'choice': {'refund': 0.91, 'information': 0.04, 'complaint': 0.05},
+            'choice': 'refund',
+            'confidence': 0.87,
+            'probabilities': {'refund': 0.91, 'information': 0.04, 'complaint': 0.05},
         }
     },
     'usage': {'input_tokens': 312, 'output_tokens': 20},

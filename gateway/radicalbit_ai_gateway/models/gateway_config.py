@@ -24,6 +24,7 @@ from radicalbit_ai_gateway.models.guardrails import (
 from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
 from radicalbit_ai_gateway.models.routing import (
     AnyRoutingConfig,
+    DecisionRoutingConfig,
     DeterministicRoutingConfig,
     RoutingRuleType,
     SemanticRoutingConfig,
@@ -474,6 +475,11 @@ class GatewayConfig(BaseModel):
 
         routing_by_name = self.routing_by_name
 
+        # Checked for every routing, used or not, as decision judges are.
+        for routing_config in self.routing:
+            if isinstance(routing_config, DecisionRoutingConfig):
+                self._validate_decision_routing_models(routing_config)
+
         for route_name, route in self.routes.items():
             if not route.routing:
                 continue
@@ -486,7 +492,7 @@ class GatewayConfig(BaseModel):
             routing_config = routing_by_name[route.routing]
             route_model_ids = set(route.chat_models or [])
 
-            # Decision routing does not exist yet: keep decision models out.
+            # Routing sends chat requests: never to a decision model.
             referenced_ids = [routing_config.default_model_id] + [
                 entry.model_id for entry in routing_config.output_mapping
             ]
@@ -528,6 +534,20 @@ class GatewayConfig(BaseModel):
                 )
 
         return self
+
+    def _validate_decision_routing_models(
+        self, routing_config: DecisionRoutingConfig
+    ) -> None:
+        """Any decision model of the project can answer, not only those on the route."""
+        for label, model_id in (
+            ('decision model', routing_config.decision_model_id),
+            ('fallback model', routing_config.fallback_model_id),
+        ):
+            if model_id is not None and model_id not in self.decision_models_by_id:
+                raise ValueError(
+                    f"Decision routing '{routing_config.name}': {label} "
+                    f"'{model_id}' not declared in top-level decision_models."
+                )
 
     @model_validator(mode='after')
     def validate_mcp_servers(self) -> Self:
