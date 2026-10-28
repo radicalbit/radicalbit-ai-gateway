@@ -1,6 +1,7 @@
 import { formatCount } from '@Components/limits/helpers';
 import useModals from '@Hooks/use-modals';
 import { useApplyGroupLimitsMutation, useGetGroupQuery } from '@State/groups/api';
+import { FCK_APPLY_GROUP_LIMITS } from '@State/groups/fixed-cache-key';
 import { useGetKeysQuery } from '@State/keys/api';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
@@ -10,8 +11,9 @@ import { useEffect } from 'react';
 import LimitsToApply from './limits-to-apply';
 import Preview from './preview';
 import { getInitialValues, schema } from './schema';
-import useHandleOnSubmit, { getFixedCacheKey } from './useHandleOnSubmit';
+import useHandleOnSubmit from './useHandleOnSubmit';
 import useMembers from './use-members';
+import useTouchedCount from './use-touched-count';
 
 const UNAVAILABLE_MESSAGE = 'Unable to load this group, please close and retry later';
 
@@ -27,12 +29,10 @@ function ApplyGroupLimits() {
   const { hideModal, modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const group = useGetGroupQuery(uuid, { skip: !uuid });
+  const group = useGetGroupQuery(uuid, { refetchOnMountOrArgChange: true, skip: !uuid });
   const keys = useGetKeysQuery(undefined, { refetchOnMountOrArgChange: true });
 
-  const [, { reset }] = useApplyGroupLimitsMutation({ fixedCacheKey: getFixedCacheKey(uuid) });
-
-  useEffect(() => reset, [reset]);
+  useResetApplyOnUnmount();
 
   if (group.isLoading || keys.isLoading) {
     return (
@@ -68,7 +68,7 @@ function ApplyGroupLimitsInner() {
   const { data } = useGetGroupQuery(uuid, { skip: !uuid });
   const name = data?.name;
 
-  const [, { data: result }] = useApplyGroupLimitsMutation({ fixedCacheKey: getFixedCacheKey(uuid) });
+  const [, { data: result }] = useApplyGroupLimitsMutation({ fixedCacheKey: `${FCK_APPLY_GROUP_LIMITS}-${uuid}` });
 
   const body = result ? <Result result={result} /> : <ApplyForm />;
   const actions = result
@@ -129,7 +129,9 @@ function CopyExplanation({ count }) {
 function ApplyActions() {
   const { hideModal } = useModals();
 
-  const { handleOnSubmit, args: { isLoading }, isSubmitDisabled, touchedCount } = useHandleOnSubmit();
+  const { handleOnSubmit, args: { isLoading }, isSubmitDisabled } = useHandleOnSubmit();
+
+  const touchedCount = useTouchedCount();
 
   const applyLabel = `Apply to ${formatCount(touchedCount, 'credential')}`;
 
@@ -157,6 +159,15 @@ function Result({ result }) {
       <span className="text-xs opacity-70">From now on they belong to each credential: change or delete them from Credentials.</span>
     </div>
   );
+}
+
+function useResetApplyOnUnmount() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const [, { reset }] = useApplyGroupLimitsMutation({ fixedCacheKey: `${FCK_APPLY_GROUP_LIMITS}-${uuid}` });
+
+  useEffect(() => reset, [reset]);
 }
 
 export default ApplyGroupLimits;

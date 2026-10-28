@@ -1,12 +1,12 @@
 import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
-import { useApplyGroupLimitsMutation } from '@State/groups/api';
+import { useApplyGroupLimitsMutation, useGetGroupQuery } from '@State/groups/api';
+import { FCK_APPLY_GROUP_LIMITS } from '@State/groups/fixed-cache-key';
 import { useGetKeysQuery } from '@State/keys/api';
 import { useFormbitContext } from '@radicalbit/formbit';
-import {
-  areRowsValid, getConflicts, getPreview, getTouchedMembers,
-} from './helpers';
+import { areRowsValid, getConflicts, getPreview } from './helpers';
 import useMembers from './use-members';
+import useTouchedCount from './use-touched-count';
 
 const ROW_LOC_INDEX = 2;
 
@@ -29,26 +29,25 @@ const getBackendErrors = (queryError) => {
   return { message: general ? getValidationMessage(general) : undefined, rows };
 };
 
-export const getFixedCacheKey = (uuid) => `apply-group-limits-${uuid}`;
-
 export default () => {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
   const { form, isFormInvalid, submitForm } = useFormbitContext();
   const rows = form?.limits ?? [];
-  const overwrite = form?.overwrite ?? [];
 
   const { members, limitsByKey } = useMembers();
 
-  const { isFetching } = useGetKeysQuery();
+  const touchedCount = useTouchedCount();
 
-  const [trigger, args] = useApplyGroupLimitsMutation({ fixedCacheKey: getFixedCacheKey(uuid) });
+  const { isFetching: isFetchingGroup } = useGetGroupQuery(uuid, { skip: !uuid });
 
-  const isValid = areRowsValid(rows);
-  const touchedCount = isValid ? getTouchedMembers(getPreview({ limitsByKey, members, rows }), overwrite).length : members.length;
+  const { isFetching: isFetchingKeys } = useGetKeysQuery();
 
-  const isSubmitDisabled = isFormInvalid() || !isValid || !touchedCount || isFetching || args.isLoading;
+  const [trigger, args] = useApplyGroupLimitsMutation({ fixedCacheKey: `${FCK_APPLY_GROUP_LIMITS}-${uuid}` });
+
+  const isFetching = isFetchingGroup || isFetchingKeys;
+  const isSubmitDisabled = isFormInvalid() || !areRowsValid(rows) || !touchedCount || isFetching || args.isLoading;
 
   const handleOnSubmit = () => {
     if (isSubmitDisabled) {
@@ -82,7 +81,5 @@ export default () => {
     });
   };
 
-  return {
-    handleOnSubmit, args, isSubmitDisabled, touchedCount,
-  };
+  return { handleOnSubmit, args, isSubmitDisabled };
 };
