@@ -6,8 +6,11 @@ import {
   Button, DataTableAction, Dropdown, RelativeDateTime, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
 import { EllipsisVertical } from 'lucide-react';
+import { useRef, useState } from 'react';
 import Keys from './keys';
 import Routes from './routes';
+
+const MENU_TRIGGER = ['hover', 'click'];
 
 const columns = [
   {
@@ -68,7 +71,7 @@ const columns = [
     dataIndex: 'uuid',
     key: 'actions',
     width: '50px',
-    render: (uuid) => <DataTableAction noHide><Actions uuid={uuid} /></DataTableAction>,
+    render: (uuid, { name }) => <DataTableAction noHide><Actions name={name} uuid={uuid} /></DataTableAction>,
   },
   {
     title: '',
@@ -78,8 +81,31 @@ const columns = [
   },
 ];
 
-function Actions({ uuid }) {
+function Actions({ name, uuid }) {
+  const buttonRef = useRef(null);
+
+  const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);
+
   const items = useGetThreeDotsMenuItems(uuid);
+
+  const handleOnOpenChange = (isOpen) => {
+    const { activeElement } = document;
+    const isFocusLost = activeElement === document.body || activeElement?.closest('.ant-dropdown');
+
+    if (!isOpen) {
+      setIsOpenedByKeyboard(false);
+    }
+
+    if (!isOpen && isFocusLost) {
+      buttonRef.current?.focus();
+    }
+  };
+
+  const handleOnKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      setIsOpenedByKeyboard(true);
+    }
+  };
 
   const handleOnClick = (e) => {
     e.stopPropagation();
@@ -90,13 +116,15 @@ function Actions({ uuid }) {
   }
 
   return (
-    <Tooltip title="More actions">
-      <Dropdown menu={{ items }}>
-        <Button aria-label="More actions" onClick={handleOnClick} type="text">
-          <Lucide icon={EllipsisVertical} />
-        </Button>
-      </Dropdown>
-    </Tooltip>
+    <span onClick={handleOnClick} role="presentation">
+      <Tooltip title="More actions">
+        <Dropdown autoFocus={isOpenedByKeyboard} menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
+          <Button aria-label={`More actions for ${name}`} onKeyDown={handleOnKeyDown} ref={buttonRef} type="text">
+            <Lucide icon={EllipsisVertical} />
+          </Button>
+        </Dropdown>
+      </Tooltip>
+    </span>
   );
 }
 

@@ -13,9 +13,11 @@ import {
 import {
   ChevronDown, ChevronRight, EllipsisVertical, Plus,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import DeleteLimit from './delete-limit';
 import { ScreenEnum } from './schema';
+
+const MENU_TRIGGER = ['hover', 'click'];
 
 const EXPIRED_MESSAGE = 'This credential has expired: its limits can no longer be changed.';
 
@@ -244,6 +246,29 @@ function Max({ record }) {
 }
 
 function Actions({ isExpired, record }) {
+  const buttonRef = useRef(null);
+
+  const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);
+
+  const handleOnOpenChange = (isOpen) => {
+    const { activeElement } = document;
+    const isFocusLost = activeElement === document.body || activeElement?.closest('.ant-dropdown');
+
+    if (!isOpen) {
+      setIsOpenedByKeyboard(false);
+    }
+
+    if (!isOpen && isFocusLost) {
+      buttonRef.current?.focus();
+    }
+  };
+
+  const handleOnKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      setIsOpenedByKeyboard(true);
+    }
+  };
+
   const handleOnClick = (e) => {
     e.stopPropagation();
   };
@@ -255,11 +280,13 @@ function Actions({ isExpired, record }) {
   const items = [{ key: 'delete', label: <DeleteLimit limit={record} /> }];
 
   return (
-    <Dropdown menu={{ items }}>
-      <Button aria-label="More actions" onClick={handleOnClick} type="text">
-        <Lucide icon={EllipsisVertical} />
-      </Button>
-    </Dropdown>
+    <span onClick={handleOnClick} role="presentation">
+      <Dropdown autoFocus={isOpenedByKeyboard} menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
+        <Button aria-label="More actions" onKeyDown={handleOnKeyDown} ref={buttonRef} type="text">
+          <Lucide icon={EllipsisVertical} />
+        </Button>
+      </Dropdown>
+    </span>
   );
 }
 
