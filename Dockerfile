@@ -37,7 +37,7 @@ RUN echo "VITE_GATEWAY_ORIGIN=''" > .env.production && \
 # ============================================
 # Stage 3: Final Runtime Image
 # ============================================
-FROM python:3.11.16-slim
+FROM python:3.11.17-slim
 
 ENV HTTP_INTERFACE=0.0.0.0
 ENV HTTP_PORT=9000
