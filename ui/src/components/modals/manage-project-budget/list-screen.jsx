@@ -7,15 +7,12 @@ import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
-  Board, Button, DataTable, Dropdown, Tooltip, Void,
+  Board, Button, DataTable, Tooltip, Void,
 } from '@radicalbit/radicalbit-design-system';
-import { EllipsisVertical, Plus } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Plus } from 'lucide-react';
 import Conflicts from './conflicts';
 import DeleteBudget from './delete-budget';
 import { ScreenEnum } from './schema';
-
-const MENU_TRIGGER = ['hover', 'click'];
 
 const NO_BUDGET_TITLE = 'This project has no budget';
 
@@ -148,42 +145,13 @@ function Window({ limit }) {
 }
 
 function Actions({ limit }) {
-  const buttonRef = useRef(null);
-
-  const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);
-
-  const handleOnOpenChange = (isOpen) => {
-    const { activeElement } = document;
-    const isFocusLost = activeElement === document.body || activeElement?.closest('.ant-dropdown');
-
-    if (!isOpen) {
-      setIsOpenedByKeyboard(false);
-    }
-
-    if (!isOpen && isFocusLost) {
-      buttonRef.current?.focus();
-    }
-  };
-
-  const handleOnKeyDown = (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      setIsOpenedByKeyboard(true);
-    }
-  };
-
   const handleOnClick = (e) => {
     e.stopPropagation();
   };
 
-  const items = [{ key: 'delete', label: <DeleteBudget limit={limit} /> }];
-
   return (
     <span onClick={handleOnClick} role="presentation">
-      <Dropdown autoFocus={isOpenedByKeyboard} menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
-        <Button aria-label="More actions" onKeyDown={handleOnKeyDown} ref={buttonRef} type="text">
-          <Lucide icon={EllipsisVertical} />
-        </Button>
-      </Dropdown>
+      <DeleteBudget limit={limit} />
     </span>
   );
 }
