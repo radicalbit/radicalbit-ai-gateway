@@ -35,7 +35,17 @@ _MESSAGE_TYPES: dict[str, type[BaseMessage]] = {
     'developer': SystemMessage,
 }
 _TEXT_PART_TYPES = frozenset({'input_text', 'output_text'})
-_TOOL_OUTPUT_TYPES = frozenset({'function_call_output', 'custom_tool_call_output'})
+# The outputs of the tools the client runs that carry text; a computer call's
+# output is a screenshot.
+_TOOL_OUTPUT_TYPES = frozenset(
+    {
+        'function_call_output',
+        'custom_tool_call_output',
+        'local_shell_call_output',
+        'shell_call_output',
+        'apply_patch_call_output',
+    }
+)
 # Tools the client runs: any other tool type runs at the provider (hosted),
 # except a shell in a local environment and a tool search the client executes.
 _CLIENT_TOOL_TYPES = frozenset(
@@ -104,6 +114,21 @@ def _content_texts(item: dict, key: str) -> list[_Text]:
     return []
 
 
+def _tool_output_texts(item: dict) -> list[_Text]:
+    """Return the texts of a tool output item; a shell call's are its non-empty
+    stdout and stderr.
+    """
+    if item.get('type') != 'shell_call_output':
+        return _content_texts(item, 'output')
+    return [
+        _Text(chunk, stream)
+        for chunk in item.get('output') or []
+        if isinstance(chunk, dict)
+        for stream in ('stdout', 'stderr')
+        if isinstance(chunk.get(stream), str) and chunk[stream]
+    ]
+
+
 def _message_texts(content: Any) -> list[str]:
     if isinstance(content, str):
         return [content]
@@ -160,9 +185,11 @@ def _slots(body: dict) -> list[_Slot]:
             if message_type and texts:
                 slots.append(_Slot(message_type, texts))
         elif item_type in _TOOL_OUTPUT_TYPES:
-            texts = _content_texts(item, 'output')
+            texts = _tool_output_texts(item)
             if texts:
-                slots.append(_Slot(ToolMessage, texts, item.get('call_id') or ''))
+                # A local shell call's output names its call by ``id``.
+                call_id = item.get('call_id') or item.get('id') or ''
+                slots.append(_Slot(ToolMessage, texts, call_id))
     return slots
 
 

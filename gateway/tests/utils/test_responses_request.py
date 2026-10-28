@@ -98,6 +98,83 @@ class TestResponsesRequest:
         assert variables['city'] == '[CITY]'
         assert variables['photo'] == body['prompt']['variables']['photo']
 
+    def test_built_in_tool_outputs_read_as_tool_messages(self):
+        body = {
+            'input': [
+                {'type': 'local_shell_call_output', 'id': 'ls_0', 'output': 'a.py'},
+                {
+                    'type': 'shell_call_output',
+                    'call_id': 'call_S',
+                    'output': [
+                        {
+                            'stdout': 'KEY=secret',
+                            'stderr': '',
+                            'outcome': {'type': 'exit', 'exit_code': 0},
+                        },
+                        {
+                            'stdout': '',
+                            'stderr': 'not found',
+                            'outcome': {'type': 'exit', 'exit_code': 1},
+                        },
+                    ],
+                },
+                {
+                    'type': 'apply_patch_call_output',
+                    'call_id': 'call_P',
+                    'status': 'completed',
+                    'output': 'Patched a.py',
+                },
+                {
+                    'type': 'apply_patch_call_output',
+                    'call_id': 'call_Q',
+                    'status': 'failed',
+                },
+            ]
+        }
+
+        messages = ResponsesRequest(body).messages()
+
+        assert messages == [
+            ToolMessage(content='a.py', tool_call_id='ls_0'),
+            ToolMessage(
+                content=[
+                    {'type': 'text', 'text': 'KEY=secret'},
+                    {'type': 'text', 'text': 'not found'},
+                ],
+                tool_call_id='call_S',
+            ),
+            ToolMessage(content='Patched a.py', tool_call_id='call_P'),
+        ]
+
+    def test_shell_output_is_written_back(self):
+        body = {
+            'input': [
+                {
+                    'type': 'shell_call_output',
+                    'call_id': 'call_S',
+                    'output': [
+                        {
+                            'stdout': 'KEY=secret',
+                            'stderr': '',
+                            'outcome': {'type': 'exit', 'exit_code': 0},
+                        }
+                    ],
+                }
+            ]
+        }
+        request = ResponsesRequest(body)
+
+        request.write_back(
+            [ToolMessage(content='KEY=[REDACTED]', tool_call_id='call_S')]
+        )
+
+        (chunk,) = request.body['input'][0]['output']
+        assert chunk == {
+            'stdout': 'KEY=[REDACTED]',
+            'stderr': '',
+            'outcome': {'type': 'exit', 'exit_code': 0},
+        }
+
     def test_several_text_parts_read_as_one_message(self):
         body = {
             'input': [
