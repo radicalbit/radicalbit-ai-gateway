@@ -12,7 +12,7 @@ export const createRoutes = ({ hasLeftColumnCollapsed, currentPath }) => {
   const routeToCheck = currentPath.split('/')[1];
   const ar = allRoutes(hasLeftColumnCollapsed);
 
-  const selectedItem = ar.flatMap(({ children }) => children).find(({ key }) => routeToCheck === key)?.position;
+  const selectedItem = ar.flatMap(({ children = [] }) => children).find(({ key }) => routeToCheck === key)?.position;
 
   return { ariaLabel: 'Main', selectedItem, items: ar };
 };
