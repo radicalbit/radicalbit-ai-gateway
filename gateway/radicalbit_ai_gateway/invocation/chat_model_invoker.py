@@ -504,23 +504,29 @@ class ChatModelInvoker(ModelInvoker):
         _, chat_model, _ = self.model_map[model_id]
         return chat_model.supports_native_responses()
 
-    def _responses_candidates(
-        self, model_id: str, allow_fallback: bool
-    ) -> list[tuple[Model, ChatModel]]:
-        """Return the model, then its fallbacks that serve the Responses API."""
+    def _responses_attempts(
+        self, model_id: str, allow_fallback: bool, body: dict
+    ) -> list[tuple[Model, ChatModel, dict]]:
+        """Return the model, then its fallbacks that serve the Responses API, each
+        with the body to send it.
+
+        Only the model that reasoned can resume its reasoning: a fallback gets
+        the body without the reasoning items.
+        """
         if not self.supports_responses(model_id):
             raise ModelInvokerBadRequest(
                 f'Chat model {model_id} does not serve the Responses API'
             )
         model, chat_model, fallbacks = self.model_map[model_id]
-        candidates = [(model, chat_model)]
+        attempts = [(model, chat_model, body)]
         if allow_fallback:
-            candidates += [
-                (fallback, fallback_model)
+            fallback_body = without_reasoning(body)
+            attempts += [
+                (fallback, fallback_model, fallback_body)
                 for fallback, fallback_model in fallbacks or []
                 if fallback_model.supports_native_responses()
             ]
-        return candidates
+        return attempts
 
     @staticmethod
     def _responses_failure(route_name: str, error: Exception) -> ModelInvokerError:
@@ -540,17 +546,29 @@ class ChatModelInvoker(ModelInvoker):
             f'All chat models failed for model {route_name}: {error}'
         )
 
-    async def _stream_responses_with_metrics(
-        self, chat_model: ChatModel, body: dict, stats: dict[str, int]
-    ) -> AsyncIterator[NativeResponsesEvent]:
-        async for event, data in chat_model.astream_native_responses(body):
-            native_event = NativeResponsesEvent.parse(event, data)
-            if native_event.is_final:
-                input_tokens, cached, output = usage_token_counts(native_event.usage)
-                stats['cached_token_count'] = cached
-                stats['token_input_count'] = input_tokens - cached
-                stats['token_output_count'] = output
-            yield native_event
+    def _record_responses_metrics(
+        self,
+        usage: dict | None,
+        model: Model,
+        fallback_triggered: bool,
+        start_time: float,
+        target_model_id: str,
+        **request: str,
+    ) -> None:
+        input_tokens, cached, output = usage_token_counts(usage)
+        self._record_metrics(
+            **request,
+            model=model,
+            target_model_id=target_model_id,
+            latency_ms=(time.monotonic() - start_time) * 1000,
+            model_type='chat-model',
+            token_input_count=(input_tokens - cached) or None,
+            token_output_count=output or None,
+            cached_token_count=cached or None,
+            cache_creation_5m_token_count=None,
+            cache_creation_1h_token_count=None,
+            fallback_triggered=fallback_triggered,
+        )
 
     @task(name='llm_stream_responses')
     async def stream_responses(
@@ -572,28 +590,29 @@ class ChatModelInvoker(ModelInvoker):
         A fallback is tried only while nothing has been yielded: once the
         client has part of a reply, an error ends the stream.
         """
-        candidates = self._responses_candidates(model_id, allow_fallback)
+        attempts = self._responses_attempts(model_id, allow_fallback, body)
         start_time = time.monotonic()
-        stats = dict.fromkeys(
-            ('token_input_count', 'token_output_count', 'cached_token_count'), 0
-        )
-        model_invoked = candidates[0][0]
+        usage: dict | None = None
+        model_invoked = attempts[0][0]
         fallback_triggered = False
         first_error: Exception | None = None
         try:
-            for position, (candidate, chat_model) in enumerate(candidates):
+            for position, (candidate, chat_model, candidate_body) in enumerate(
+                attempts
+            ):
                 model_invoked = candidate
                 fallback_triggered = position > 0
-                stats.update(dict.fromkeys(stats, 0))
+                usage = None
                 started = False
-                # Only the model that reasoned can resume its reasoning.
-                candidate_body = body if position == 0 else without_reasoning(body)
                 try:
-                    async for event in self._stream_responses_with_metrics(
-                        chat_model, candidate_body, stats
+                    async for event, data in chat_model.astream_native_responses(
+                        candidate_body
                     ):
+                        native_event = NativeResponsesEvent.parse(event, data)
+                        if native_event.is_final:
+                            usage = native_event.usage
                         started = True
-                        yield event
+                        yield native_event
                 except Exception as error:
                     if started:
                         raise
@@ -605,23 +624,18 @@ class ChatModelInvoker(ModelInvoker):
                     return
             raise self._responses_failure(route_name, first_error) from first_error
         finally:
-            self._record_metrics(
+            self._record_responses_metrics(
+                usage=usage,
+                model=model_invoked,
+                fallback_triggered=fallback_triggered,
+                start_time=start_time,
+                target_model_id=model_id,
                 request_uuid=request_uuid,
                 api_key_uuid=api_key_uuid,
                 group_uuid=group_uuid,
                 api_key_name=api_key_name,
                 group_name=group_name,
                 route_name=route_name,
-                model=model_invoked,
-                target_model_id=model_id,
-                latency_ms=(time.monotonic() - start_time) * 1000,
-                model_type='chat-model',
-                token_input_count=stats['token_input_count'] or None,
-                token_output_count=stats['token_output_count'] or None,
-                cached_token_count=stats['cached_token_count'] or None,
-                cache_creation_5m_token_count=None,
-                cache_creation_1h_token_count=None,
-                fallback_triggered=fallback_triggered,
                 project_uuid=project_uuid,
                 project_name=project_name,
             )
@@ -646,10 +660,9 @@ class ChatModelInvoker(ModelInvoker):
         """
         start_time = time.monotonic()
         first_error: Exception | None = None
-        for position, (candidate, chat_model) in enumerate(
-            self._responses_candidates(model_id, allow_fallback)
+        for position, (candidate, chat_model, candidate_body) in enumerate(
+            self._responses_attempts(model_id, allow_fallback, body)
         ):
-            candidate_body = body if position == 0 else without_reasoning(body)
             try:
                 result = await chat_model.ainvoke_native_responses(candidate_body)
             except Exception as error:
@@ -658,24 +671,18 @@ class ChatModelInvoker(ModelInvoker):
                     'Responses model %s failed: %s', candidate.model_id, str(error)
                 )
                 continue
-            input_tokens, cached, output = usage_token_counts(result.get('usage'))
-            self._record_metrics(
+            self._record_responses_metrics(
+                usage=result.get('usage'),
+                model=candidate,
+                fallback_triggered=position > 0,
+                start_time=start_time,
+                target_model_id=model_id,
                 request_uuid=request_uuid,
                 api_key_uuid=api_key_uuid,
                 group_uuid=group_uuid,
                 api_key_name=api_key_name,
                 group_name=group_name,
                 route_name=route_name,
-                model=candidate,
-                target_model_id=model_id,
-                latency_ms=(time.monotonic() - start_time) * 1000,
-                model_type='chat-model',
-                token_input_count=(input_tokens - cached) or None,
-                token_output_count=output or None,
-                cached_token_count=cached or None,
-                cache_creation_5m_token_count=None,
-                cache_creation_1h_token_count=None,
-                fallback_triggered=position > 0,
                 project_uuid=project_uuid,
                 project_name=project_name,
             )
