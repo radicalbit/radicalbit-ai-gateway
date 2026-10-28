@@ -2,6 +2,8 @@ import Lucide from '@Components/lucide';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetGroupQuery } from '@State/groups/api';
 import { useGetKeyQuery } from '@State/keys/api';
+import ChartData from '@Components/chart-data';
+import withChartAria from '@Helpers/chart-aria';
 import {
   useGetMcpInvocationsByGroupStreamWithRange,
   useGetMcpInvocationsByKeyStreamWithRange,
@@ -170,13 +172,13 @@ function IsSuccess({ chart }) {
         lazyUpdate
         notMerge={false}
         onChartReady={handleOnChartReady}
-        option={option({
+        option={withChartAria(option({
           xAxisData: chart?.timestamp || [],
           series,
           granularity: chart?.granularity,
           total: chart?.total,
           drillDownEntity,
-        })}
+        }))}
         ref={chartRef}
         style={{
           ...chartWidthAndHeight,
@@ -184,6 +186,8 @@ function IsSuccess({ chart }) {
           overflow: 'hidden',
         }}
       />
+
+      <ChartData granularity={chart?.granularity} series={series} xAxisData={chart?.timestamp || []} />
 
       <BackButton />
     </div>

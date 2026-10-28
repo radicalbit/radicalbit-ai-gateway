@@ -1,6 +1,8 @@
 import Lucide from '@Components/lucide';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetMcpServersChartSseWithRange } from '@State/usage/vertical-hooks';
+import ChartData from '@Components/chart-data';
+import withChartAria from '@Helpers/chart-aria';
 import {
   Board, Button, Segmented, Spinner, Void,
 } from '@radicalbit/radicalbit-design-system';
@@ -198,12 +200,12 @@ function IsSuccess({ chart }) {
         notMerge={false}
         onChartReady={handleOnChartReady}
         onEvents={{ click: handleOnClick }}
-        option={option({
+        option={withChartAria(option({
           xAxisData: chart?.timestamp || [],
           series,
           granularity: chart?.granularity,
           total: chart?.total,
-        })}
+        }))}
         ref={chartRef}
         style={{
           ...chartWidthAndHeight,
@@ -211,6 +213,8 @@ function IsSuccess({ chart }) {
           overflow: 'hidden',
         }}
       />
+
+      <ChartData granularity={chart?.granularity} series={series} xAxisData={chart?.timestamp || []} />
 
       <GroupByTabs />
     </div>

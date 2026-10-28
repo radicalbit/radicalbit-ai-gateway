@@ -28,7 +28,6 @@ export default ({ xAxisData, series = [], granularity, total, drillDownEntity })
   const granularityLabel = GRANULARITY_TITLE[granularity] || 'Hourly';
 
   return ({
-    aria: { enabled: true },
     color: CHART_COLORS,
     title: {
       left: 59,

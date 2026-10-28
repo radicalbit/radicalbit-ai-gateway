@@ -1,6 +1,7 @@
 import Lucide from '@Components/lucide';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetAlertHistoryQuery } from '@State/alerts/api';
+import withChartAria from '@Helpers/chart-aria';
 import {
   Button, Collapse, Skeleton, Void,
 } from '@radicalbit/radicalbit-design-system';
@@ -138,7 +139,7 @@ function HistoryChart({ buckets }) {
       echarts={echarts}
       notMerge
       onChartReady={handleOnChartReady}
-      option={option({ buckets })}
+      option={withChartAria(option({ buckets }))}
       ref={chartRef}
       style={chartStyle}
     />

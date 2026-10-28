@@ -28,7 +28,6 @@ const GRANULARITY_LABEL = {
 
 function tracesBarChartOption({ xAxisData, series = [], granularity, total }) {
   return {
-    aria: { enabled: true },
     title: {
       left: 35,
       top: 20,

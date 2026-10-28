@@ -2,7 +2,6 @@ import chartTsToDate from '@Helpers/chart-ts-to-date';
 import { CHART_COLORS } from '@Src/constants';
 
 export default ({ xAxisData, series = [], granularity, total }) => ({
-  aria: { enabled: true },
   color: CHART_COLORS,
   title: {
     left: 35,

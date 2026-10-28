@@ -2,6 +2,8 @@ import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import Lucide from '@Components/lucide';
 import { useGetGroupQuery } from '@State/groups/api';
 import { useGetKeyQuery } from '@State/keys/api';
+import ChartData from '@Components/chart-data';
+import withChartAria from '@Helpers/chart-aria';
 import {
   useGetCostsByGroupStreamWithRange,
   useGetCostsByKeyStreamWithRange,
@@ -117,13 +119,13 @@ function IsSuccess() {
         lazyUpdate
         notMerge={false}
         onChartReady={() => updateTheme(chartRef)}
-        option={option({
+        option={withChartAria(option({
           xAxisData: timestamp || [],
           series,
           granularity,
           total,
           drillDownEntity,
-        })}
+        }))}
         ref={chartRef}
         style={{
           ...chartWidthAndHeight,
@@ -131,6 +133,8 @@ function IsSuccess() {
           overflow: 'hidden',
         }}
       />
+
+      <ChartData granularity={granularity} series={series} xAxisData={timestamp || []} />
 
       <BackButton />
     </div>
