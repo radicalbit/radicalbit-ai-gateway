@@ -1,9 +1,8 @@
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
+import InfoPopover from '@Components/info-popover';
 import { numberFormatterInt } from '@Src/constants';
-import {
-  Divider, Popover,
-} from '@radicalbit/radicalbit-design-system';
+import { Divider } from '@radicalbit/radicalbit-design-system';
 import { AlignLeft } from 'lucide-react';
 
 function Routing({ routing }) {
@@ -20,11 +19,11 @@ function Routing({ routing }) {
   const btnType = value > 0 ? { type: 'primary' } : { type: 'primary-light' };
 
   return (
-    <Popover content={<PopoverContent routing={routing} />} minWidth="250" title={<strong>Total invocations</strong>}>
+    <InfoPopover content={<PopoverContent routing={routing} />} minWidth="250" title={<strong>Total invocations</strong>}>
       <IconBadge aria-label="Advanced Routing" {...btnType}>
         <Lucide icon={AlignLeft} />
       </IconBadge>
-    </Popover>
+    </InfoPopover>
   );
 }
 

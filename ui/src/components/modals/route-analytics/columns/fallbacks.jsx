@@ -2,10 +2,9 @@ import HtmlAnchor from '@Components/html-anchor';
 import dateFormatter from '@Helpers/date-formatter';
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
+import InfoPopover from '@Components/info-popover';
 import { PathsEnum, SEARCH_PARAMS, numberFormatterInt } from '@Src/constants';
-import {
-  Divider, Popover,
-} from '@radicalbit/radicalbit-design-system';
+import { Divider } from '@radicalbit/radicalbit-design-system';
 import { CornerDownRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -23,11 +22,11 @@ function Fallbacks({ fallbacks }) {
   const btnType = value > 0 ? { type: 'primary' } : { type: 'primary-light' };
 
   return (
-    <Popover content={<PopoverContent fallbacks={fallbacks} />} minWidth="250" title={<strong>Fallback</strong>}>
+    <InfoPopover content={<PopoverContent fallbacks={fallbacks} />} minWidth="250" title={<strong>Fallback</strong>}>
       <IconBadge aria-label="Fallback" {...btnType}>
         <Lucide icon={CornerDownRight} />
       </IconBadge>
-    </Popover>
+    </InfoPopover>
   );
 }
 

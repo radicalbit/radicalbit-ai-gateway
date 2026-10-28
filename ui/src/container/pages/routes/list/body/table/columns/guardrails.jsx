@@ -2,10 +2,9 @@ import HtmlAnchor from '@Components/html-anchor';
 import dateFormatter from '@Helpers/date-formatter';
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
+import InfoPopover from '@Components/info-popover';
 import { PathsEnum, SEARCH_PARAMS, numberFormatterInt } from '@Src/constants';
-import {
-  Divider, Popover,
-} from '@radicalbit/radicalbit-design-system';
+import { Divider } from '@radicalbit/radicalbit-design-system';
 import { Shield } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -23,11 +22,11 @@ function Guardrails({ guardrails }) {
   const btnType = value > 0 ? { type: 'primary' } : { type: 'primary-light' };
 
   return (
-    <Popover content={<PopoverContent guardrails={guardrails} />} minWidth="250" title={<strong>Guardrails</strong>}>
+    <InfoPopover content={<PopoverContent guardrails={guardrails} />} minWidth="250" title={<strong>Guardrails</strong>}>
       <IconBadge aria-label="Guardrails" {...btnType}>
         <Lucide icon={Shield} />
       </IconBadge>
-    </Popover>
+    </InfoPopover>
   );
 }
 
