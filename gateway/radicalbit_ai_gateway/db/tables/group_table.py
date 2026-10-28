@@ -33,7 +33,6 @@ class Group(Reflected, BaseTable, BaseDAO):
     keys = relationship(
         'Key',
         back_populates='group',
-        cascade='all, delete-orphan',
         passive_deletes=True,
         lazy='selectin',
     )
