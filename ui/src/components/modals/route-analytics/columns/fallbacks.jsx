@@ -13,17 +13,19 @@ function Fallbacks({ fallbacks }) {
 
   if (value === undefined) {
     return (
-      <IconBadge aria-label="Fallback" disabled>
+      <IconBadge aria-label="Fallback: not configured" disabled>
         <Lucide icon={CornerDownRight} />
       </IconBadge>
     );
   }
 
-  const btnType = value > 0 ? { type: 'primary' } : { type: 'primary-light' };
+  const isTriggered = value > 0;
+  const btnType = isTriggered ? { type: 'primary' } : { type: 'primary-light' };
+  const ariaLabel = isTriggered ? 'Fallback: triggered' : 'Fallback: not triggered';
 
   return (
     <InfoPopover content={<PopoverContent fallbacks={fallbacks} />} minWidth="250" title={<strong>Fallback</strong>}>
-      <IconBadge aria-label="Fallback" {...btnType}>
+      <IconBadge aria-label={ariaLabel} {...btnType}>
         <Lucide icon={CornerDownRight} />
       </IconBadge>
     </InfoPopover>

@@ -11,17 +11,19 @@ function Caching({ metrics, configuration }) {
 
   if (caching === undefined) {
     return (
-      <IconBadge aria-label="Caching" disabled>
+      <IconBadge aria-label="Caching: not configured" disabled>
         <Lucide icon={CircleCheck} />
       </IconBadge>
     );
   }
 
-  const btnType = cacheTriggered > 0 ? { type: 'primary' } : { type: 'primary-light' };
+  const isTriggered = cacheTriggered > 0;
+  const btnType = isTriggered ? { type: 'primary' } : { type: 'primary-light' };
+  const ariaLabel = isTriggered ? 'Caching: triggered' : 'Caching: not triggered';
 
   return (
     <InfoPopover content={<PopoverContent configuration={configuration} metrics={metrics} />} minWidth="250" title={<strong>Caching</strong>}>
-      <IconBadge aria-label="Caching" {...btnType}>
+      <IconBadge aria-label={ariaLabel} {...btnType}>
         <Lucide icon={CircleCheck} />
       </IconBadge>
     </InfoPopover>

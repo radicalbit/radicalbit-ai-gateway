@@ -85,6 +85,7 @@ function ProjectSelected() {
 
           <Search
             allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
+            aria-label="Search routes by name"
             onChange={handleSearchChange}
             placeholder="Search routes by name"
             style={{ width: '350px' }}

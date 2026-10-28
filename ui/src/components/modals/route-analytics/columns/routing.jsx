@@ -10,17 +10,19 @@ function Routing({ routing }) {
 
   if (value === undefined) {
     return (
-      <IconBadge aria-label="Advanced Routing" disabled>
+      <IconBadge aria-label="Advanced Routing: not configured" disabled>
         <Lucide icon={AlignLeft} />
       </IconBadge>
     );
   }
 
-  const btnType = value > 0 ? { type: 'primary' } : { type: 'primary-light' };
+  const isTriggered = value > 0;
+  const btnType = isTriggered ? { type: 'primary' } : { type: 'primary-light' };
+  const ariaLabel = isTriggered ? 'Advanced Routing: triggered' : 'Advanced Routing: not triggered';
 
   return (
     <InfoPopover content={<PopoverContent routing={routing} />} minWidth="250" title={<strong>Total invocations</strong>}>
-      <IconBadge aria-label="Advanced Routing" {...btnType}>
+      <IconBadge aria-label={ariaLabel} {...btnType}>
         <Lucide icon={AlignLeft} />
       </IconBadge>
     </InfoPopover>

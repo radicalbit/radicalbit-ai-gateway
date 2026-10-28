@@ -13,17 +13,19 @@ function Guardrails({ guardrails }) {
 
   if (value === undefined) {
     return (
-      <IconBadge aria-label="Guardrails" disabled>
+      <IconBadge aria-label="Guardrails: not configured" disabled>
         <Lucide icon={Shield} />
       </IconBadge>
     );
   }
 
-  const btnType = value > 0 ? { type: 'primary' } : { type: 'primary-light' };
+  const isTriggered = value > 0;
+  const btnType = isTriggered ? { type: 'primary' } : { type: 'primary-light' };
+  const ariaLabel = isTriggered ? 'Guardrails: triggered' : 'Guardrails: not triggered';
 
   return (
     <InfoPopover content={<PopoverContent guardrails={guardrails} />} minWidth="250" title={<strong>Guardrails</strong>}>
-      <IconBadge aria-label="Guardrails" {...btnType}>
+      <IconBadge aria-label={ariaLabel} {...btnType}>
         <Lucide icon={Shield} />
       </IconBadge>
     </InfoPopover>

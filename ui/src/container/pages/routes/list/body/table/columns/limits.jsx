@@ -13,18 +13,19 @@ function Limits({ metrics, configuration }) {
 
   if (rateLimitTriggered === undefined && tokenInputLimitTriggered === undefined && tokenOutputLimitTriggered === undefined && durationLimitTriggered === undefined) {
     return (
-      <IconBadge aria-label="Limits" disabled>
+      <IconBadge aria-label="Limits: not configured" disabled>
         <Lucide icon={SlidersHorizontal} />
       </IconBadge>
     );
   }
 
-  const hasTriggered = rateLimitTriggered > 0 || tokenInputLimitTriggered > 0 || tokenOutputLimitTriggered > 0 || durationLimitTriggered > 0;
-  const btnType = hasTriggered ? { type: 'primary' } : { type: 'primary-light' };
+  const isTriggered = rateLimitTriggered > 0 || tokenInputLimitTriggered > 0 || tokenOutputLimitTriggered > 0 || durationLimitTriggered > 0;
+  const btnType = isTriggered ? { type: 'primary' } : { type: 'primary-light' };
+  const ariaLabel = isTriggered ? 'Limits: triggered' : 'Limits: not triggered';
 
   return (
     <InfoPopover content={<PopoverContent configuration={configuration} metrics={metrics} />} minWidth="250" title={<strong>Limits</strong>}>
-      <IconBadge aria-label="Limits" {...btnType}>
+      <IconBadge aria-label={ariaLabel} {...btnType}>
         <Lucide icon={SlidersHorizontal} />
       </IconBadge>
     </InfoPopover>
