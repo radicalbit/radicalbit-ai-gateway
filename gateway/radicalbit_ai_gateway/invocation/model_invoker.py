@@ -96,6 +96,7 @@ class ModelInvoker:
         is_cached_tokens: bool = False,
         project_uuid: str = '',
         project_name: str = '',
+        is_judge: bool = False,
     ):
         cost = self.cost_service.compute_cost(
             model_id=model.model_id,
@@ -119,6 +120,7 @@ class ModelInvoker:
                 is_cached_tokens=is_cached_tokens,
                 project_uuid=project_uuid,
                 project_name=project_name,
+                is_judge=is_judge,
             )
         )
         total_tokens_counter_input.add(
@@ -145,6 +147,7 @@ class ModelInvoker:
         cache_type: str | None = None,
         project_uuid: str = '',
         project_name: str = '',
+        is_judge: bool = False,
     ):
         cost = self.cost_service.compute_cost(
             model_id=model.model_id,
@@ -167,6 +170,7 @@ class ModelInvoker:
                 cache_type=cache_type,
                 project_uuid=project_uuid,
                 project_name=project_name,
+                is_judge=is_judge,
             )
         )
         total_tokens_counter_output.add(
@@ -200,6 +204,7 @@ class ModelInvoker:
         is_semantic_search: bool = False,
         project_uuid: str = '',
         project_name: str = '',
+        is_judge: bool = False,
     ):
         cache_type = 'semantic' if is_semantic_search else None
         emit_event(
@@ -217,6 +222,7 @@ class ModelInvoker:
                 cache_type=cache_type,
                 project_uuid=project_uuid,
                 project_name=project_name,
+                is_judge=is_judge,
             )
         )
         model_invocations_counter.add(
@@ -250,6 +256,7 @@ class ModelInvoker:
             'model_type': model_type,
             'project_uuid': project_uuid,
             'project_name': project_name,
+            'is_judge': is_judge,
         }
         for count, where, ct, is_cached, skip_if_zero in input_token_entries:
             if count is not None and (not skip_if_zero or count > 0):
@@ -283,6 +290,7 @@ class ModelInvoker:
                     project_name=project_name,
                     target=target_model_id,
                     fallback=model.model_id,
+                    is_judge=is_judge,
                 )
             )
             fallbacks_triggered_counter.add(
