@@ -1,4 +1,5 @@
-import useModals, { modals } from '@Src/hooks/use-modals';
+import useModals, { modals, restoreFocusBeforeModal } from '@Src/hooks/use-modals';
+import { useEffect, useRef } from 'react';
 import AddGroupToKey from './add-group-to-key';
 import AddGroupsToRoute from './add-groups-to-route';
 import AddKeysToGroups from './add-keys-to-group';
@@ -22,6 +23,8 @@ import TraceDetail from './trace-detail';
 export default function ModalsProvider() {
   const { modalPayload } = useModals();
   const modalName = modalPayload?.modalName;
+
+  useRestoreFocusOnModalClose();
 
   switch (modalName) {
     case modals.ADD_KEYS_TO_GROUP:
@@ -84,4 +87,19 @@ export default function ModalsProvider() {
     default:
       return false;
   }
+}
+
+function useRestoreFocusOnModalClose() {
+  const { modalPayload } = useModals();
+  const modalName = modalPayload?.modalName;
+
+  const previousModalName = useRef(modalName);
+
+  useEffect(() => {
+    if (previousModalName.current && !modalName) {
+      requestAnimationFrame(restoreFocusBeforeModal);
+    }
+
+    previousModalName.current = modalName;
+  }, [modalName]);
 }

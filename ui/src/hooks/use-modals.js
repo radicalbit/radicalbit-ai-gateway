@@ -54,12 +54,36 @@ const _getModal = (search) => {
   }
 };
 
+let focusBeforeModal;
+
+const _getFocusTarget = () => {
+  const { activeElement } = document;
+
+  if (activeElement?.closest('.ant-dropdown')) {
+    return document.querySelector('.ant-dropdown-open button') ?? activeElement;
+  }
+
+  return activeElement;
+};
+
+const restoreFocusBeforeModal = () => {
+  if (focusBeforeModal?.isConnected) {
+    focusBeforeModal.focus();
+  }
+
+  focusBeforeModal = undefined;
+};
+
 const useModals = () => {
   const navigate = useNavigate();
   const { search } = useLocation();
 
   const showModal = useCallback(
     (modalName, data = {}) => {
+      if (!_getModal(window.location.search)) {
+        focusBeforeModal = _getFocusTarget();
+      }
+
       // FIXME: with react-router-dom v6 probably we can use useSearcParams and remove the window.location.search
       const parsedSearch = _handleQueryString(window.location.search, modals.QUERY_NAME, btoa(JSON.stringify({ modalName, data })));
 
@@ -81,4 +105,4 @@ const useModals = () => {
 };
 
 export default useModals;
-export { modals };
+export { modals, restoreFocusBeforeModal };
