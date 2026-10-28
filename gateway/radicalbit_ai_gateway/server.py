@@ -1,5 +1,4 @@
 import asyncio
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 import json
 import logging.config
@@ -1125,9 +1124,10 @@ async def responses(
         tags=list(get_current_request_tags()),
     )
 
+    is_stream = bool(response_create_params.get('stream'))
     ctx = RequestEventContext.get_or_create(request)
     ctx.route_name = route_name
-    ctx.is_streaming = bool(response_create_params.get('stream'))
+    ctx.is_streaming = is_stream
 
     set_operation_category(OperationCategory.AUTH)
     key_details = await set_api_key_uuid(
@@ -1145,7 +1145,6 @@ async def responses(
         tags=list(get_current_request_tags()),
     )
 
-    is_stream = bool(response_create_params.get('stream'))
     # The request as the client sent it: the gateway's policies apply to it,
     # then it goes upstream.
     body = await request.json()
@@ -1201,26 +1200,15 @@ async def responses(
     prepared = await route.prepare_responses(body=body, **identity)
 
     if is_stream:
-        if (
-            prepared.soft_block
-            or prepared.cached_response
-            or route.has_output_guardrails()
-        ):
-            frames, headers = await route.stream_responses_buffered(
-                prepared, **identity
-            )
-            source = _aiter_list(frames)
-        else:
-            headers = route.responses_headers(prepared)
-            source = route.stream_responses(prepared, **identity)
+        frames, headers = await route.open_responses_stream(prepared)
         set_operation_category(OperationCategory.ENDPOINT)
         return StreamingResponseWithStatusCode(
-            in_request_trace(serve_stream(source)),
+            in_request_trace(serve_stream(frames)),
             media_type='text/event-stream',
             headers=headers,
         )
 
-    response_obj, headers = await route.invoke_responses(prepared, **identity)
+    response_obj, headers = await route.invoke_responses(prepared)
     set_operation_category(OperationCategory.ENDPOINT)
     return JSONResponse(content=response_obj, headers=headers)
 
@@ -1232,11 +1220,6 @@ async def responses_unsupported(request: Request, path: str):
     raise GatewayNotFoundError(
         f'{request.method} /v1/responses/{path} is not supported by the gateway yet'
     )
-
-
-async def _aiter_list(items: list) -> AsyncIterator:
-    for item in items:
-        yield item
 
 
 # mount static files application (https://fastapi.tiangolo.com/tutorial/static-files/)

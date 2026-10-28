@@ -70,6 +70,9 @@ class ResponsesPrepared:
         model_selected: The model routing selected.
         allow_fallback: False when the request continues state stored at the
             provider, which only the selected model's account can serve.
+        identity: Who made the request, as the keyword arguments
+            (``request_uuid``, ``api_key_uuid``, ``group_uuid``, ``api_key_name``,
+            ``group_name``) the route's policies take.
         cache_key: The cache key of the request, empty when it is not cached.
         embeddings: Embeddings for semantic cache (if applicable).
         cached_response: The cached response object, on a cache hit.
@@ -81,6 +84,7 @@ class ResponsesPrepared:
     body: dict
     model_selected: Model
     allow_fallback: bool
+    identity: dict[str, str]
     cache_key: str = ''
     embeddings: Any = None
     cached_response: dict | None = None

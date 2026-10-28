@@ -123,6 +123,11 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 DECISION_SCREENED_FIELDS = ('state', 'questions')
 
 
+async def _aiter_list(items: list) -> AsyncIterator:
+    for item in items:
+        yield item
+
+
 def _parse_cached_response_object(raw: str | None) -> dict | None:
     """Return a cached Responses API response object; a chat completion is a miss.
 
@@ -635,6 +640,13 @@ class GatewayRoute:
         route_name = self.gateway_route_config.route_name
         if not self.chat_invoker:
             raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
+        identity = {
+            'request_uuid': request_uuid,
+            'api_key_uuid': api_key_uuid,
+            'group_uuid': group_uuid,
+            'api_key_name': api_key_name,
+            'group_name': group_name,
+        }
 
         check_supported(body)
         request = ResponsesRequest(body)
@@ -673,6 +685,7 @@ class GatewayRoute:
                 body=request.body,
                 model_selected=model_selected,
                 allow_fallback=allow_fallback,
+                identity=identity,
                 soft_block=gateway_response(
                     request_uuid,
                     route_name,
@@ -693,18 +706,12 @@ class GatewayRoute:
             body=request.body,
             model_selected=model_selected,
             allow_fallback=allow_fallback,
+            identity=identity,
             guardrails_input_triggered=input_guardrails.input_triggered,
         )
         if self.gateway_cache:
             set_operation_category(OperationCategory.CACHE)
-            await self._lookup_responses_cache(
-                prepared,
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-            )
+            await self._lookup_responses_cache(prepared)
             if prepared.cached_response:
                 return prepared
 
@@ -727,27 +734,14 @@ class GatewayRoute:
         return prepared
 
     async def invoke_responses(
-        self,
-        prepared: ResponsesPrepared,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
+        self, prepared: ResponsesPrepared
     ) -> tuple[dict, dict[str, str]]:
         """Answer a prepared Responses API request; return the response object
         and the gateway's headers.
         """
         route_name = self.gateway_route_config.route_name
-        identity = {
-            'request_uuid': request_uuid,
-            'api_key_uuid': api_key_uuid,
-            'group_uuid': group_uuid,
-            'api_key_name': api_key_name,
-            'group_name': group_name,
-        }
         if prepared.soft_block:
-            return prepared.soft_block, self.responses_headers(
+            return prepared.soft_block, self._responses_headers(
                 prepared, input_blocked=True
             )
 
@@ -757,95 +751,83 @@ class GatewayRoute:
         else:
             set_operation_category(OperationCategory.INVOCATION)
             response, _ = await self.chat_invoker.complete_responses(
-                **identity,
-                route_name=route_name,
-                body=prepared.body,
-                model_id=prepared.model_selected.model_id,
-                allow_fallback=prepared.allow_fallback,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
+                **self._responses_call(prepared)
             )
 
         (
             response,
             output_triggered,
             output_blocked,
-        ) = await self._process_responses_output(response, **identity)
+        ) = await self._process_responses_output(prepared, response)
         if not cache_hit:
-            await self._account_responses(prepared, response, **identity)
-        return {**response, 'model': route_name}, self.responses_headers(
+            await self._account_responses(prepared, response)
+        return {**response, 'model': route_name}, self._responses_headers(
             prepared,
             output_triggered=output_triggered,
             output_blocked=output_blocked,
             cache_hit=cache_hit,
         )
 
-    async def stream_responses(
-        self,
-        prepared: ResponsesPrepared,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-    ) -> AsyncIterator[str]:
-        """Stream a prepared Responses API request as the upstream sends it.
+    async def open_responses_stream(
+        self, prepared: ResponsesPrepared
+    ) -> tuple[AsyncIterator[str], dict[str, str]]:
+        """Stream a prepared Responses API request; return its SSE frames and the
+        gateway's headers.
 
-        For a request with neither soft block, cache hit nor output guardrail
-        (see ``stream_responses_buffered``).
+        The upstream's events are relayed as they come, unless the whole reply
+        must be known first: a soft block, a cache hit, or a reply the output
+        guardrails must pass.
         """
+        if (
+            prepared.soft_block
+            or prepared.cached_response
+            or self.has_output_guardrails()
+        ):
+            frames, headers = await self._buffered_responses_frames(prepared)
+            return _aiter_list(frames), headers
+        return self._live_responses_frames(prepared), self._responses_headers(prepared)
+
+    def _responses_call(self, prepared: ResponsesPrepared) -> dict:
+        """Return the arguments of the invoker's call for a prepared request."""
+        return {
+            **prepared.identity,
+            'route_name': self.gateway_route_config.route_name,
+            'body': prepared.body,
+            'model_id': prepared.model_selected.model_id,
+            'allow_fallback': prepared.allow_fallback,
+            'project_uuid': self.project_uuid,
+            'project_name': self.project_name,
+        }
+
+    async def _live_responses_frames(
+        self, prepared: ResponsesPrepared
+    ) -> AsyncIterator[str]:
+        """Relay the upstream's events, then account for the final response."""
         set_streaming()
         set_operation_category(OperationCategory.INVOCATION)
-        identity = {
-            'request_uuid': request_uuid,
-            'api_key_uuid': api_key_uuid,
-            'group_uuid': group_uuid,
-            'api_key_name': api_key_name,
-            'group_name': group_name,
-        }
         route_name = self.gateway_route_config.route_name
         final_response = None
         async for event in self.chat_invoker.stream_responses(
-            **identity,
-            route_name=route_name,
-            body=prepared.body,
-            model_id=prepared.model_selected.model_id,
-            allow_fallback=prepared.allow_fallback,
-            project_uuid=self.project_uuid,
-            project_name=self.project_name,
+            **self._responses_call(prepared)
         ):
             if event.is_final:
                 final_response = event.response
             yield event.to_sse(route_name)
 
         if final_response:
-            await self._account_responses(prepared, final_response, **identity)
+            await self._account_responses(prepared, final_response)
 
-    async def stream_responses_buffered(
-        self,
-        prepared: ResponsesPrepared,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
+    async def _buffered_responses_frames(
+        self, prepared: ResponsesPrepared
     ) -> tuple[list[str], dict[str, str]]:
-        """Stream a prepared Responses API request once its whole reply is known:
-        a soft block, a cache hit, or a reply the output guardrails must pass.
+        """Return the frames of a reply known whole before streaming.
 
         A reply the gateway changed or built is streamed as OpenAI streams it,
         each text in one delta; an unchanged one as the upstream sent it.
         """
         set_streaming()
-        identity = {
-            'request_uuid': request_uuid,
-            'api_key_uuid': api_key_uuid,
-            'group_uuid': group_uuid,
-            'api_key_name': api_key_name,
-            'group_name': group_name,
-        }
         if prepared.soft_block or prepared.cached_response:
-            response, headers = await self.invoke_responses(prepared, **identity)
+            response, headers = await self.invoke_responses(prepared)
             return response_events(response), headers
 
         route_name = self.gateway_route_config.route_name
@@ -853,33 +835,27 @@ class GatewayRoute:
         frames: list[str] = []
         final_response = None
         async for event in self.chat_invoker.stream_responses(
-            **identity,
-            route_name=route_name,
-            body=prepared.body,
-            model_id=prepared.model_selected.model_id,
-            allow_fallback=prepared.allow_fallback,
-            project_uuid=self.project_uuid,
-            project_name=self.project_name,
+            **self._responses_call(prepared)
         ):
             if event.is_final:
                 final_response = event.response
             frames.append(event.to_sse(route_name))
         if final_response is None:
-            return frames, self.responses_headers(prepared)
+            return frames, self._responses_headers(prepared)
 
         (
             response,
             output_triggered,
             output_blocked,
-        ) = await self._process_responses_output(final_response, **identity)
-        await self._account_responses(prepared, response, **identity)
+        ) = await self._process_responses_output(prepared, final_response)
+        await self._account_responses(prepared, response)
         if response != final_response:
             frames = response_events({**response, 'model': route_name})
-        return frames, self.responses_headers(
+        return frames, self._responses_headers(
             prepared, output_triggered=output_triggered, output_blocked=output_blocked
         )
 
-    def responses_headers(
+    def _responses_headers(
         self,
         prepared: ResponsesPrepared,
         input_blocked: bool = False,
@@ -906,13 +882,7 @@ class GatewayRoute:
 
     @workflow(name='apply_responses_output_guardrails')
     async def _process_responses_output(
-        self,
-        response: dict,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
+        self, prepared: ResponsesPrepared, response: dict
     ) -> tuple[dict, bool, bool]:
         """Apply the output guardrails to the text of a response.
 
@@ -935,11 +905,7 @@ class GatewayRoute:
         if has_redact_output:
             set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
             redacted = await self._apply_redact_guardrails(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
+                **prepared.identity,
                 messages=messages,
                 where=GuardrailWhereType.OUTPUT,
             )
@@ -958,11 +924,7 @@ class GatewayRoute:
             if not has_redact_output:
                 set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
             soft_block = await self._apply_check_guardrails(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
+                **prepared.identity,
                 messages=messages,
                 where=GuardrailWhereType.OUTPUT,
             )
@@ -974,17 +936,9 @@ class GatewayRoute:
                     self.gateway_route_config,
                     messages,
                     GuardrailWhereType.OUTPUT,
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    api_key_name=api_key_name,
-                    group_name=group_name,
+                    **prepared.identity,
                     count_judge_usage=self._judge_usage_counter(
-                        request_uuid=request_uuid,
-                        api_key_uuid=api_key_uuid,
-                        api_key_name=api_key_name,
-                        group_uuid=group_uuid,
-                        group_name=group_name,
+                        **prepared.identity,
                     ),
                 ):
                     guardrails_triggered = True
@@ -995,14 +949,7 @@ class GatewayRoute:
         return output.response, guardrails_triggered, False
 
     async def _account_responses(
-        self,
-        prepared: ResponsesPrepared,
-        response: dict,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
+        self, prepared: ResponsesPrepared, response: dict
     ) -> None:
         """Count a model's response against the limits, and cache it."""
         input_tokens, _, output_tokens = usage_token_counts(response.get('usage'))
@@ -1011,11 +958,7 @@ class GatewayRoute:
             completion_tokens=output_tokens,
             model_selected=prepared.model_selected,
             identity=self._request_identity(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
+                **prepared.identity,
             ),
         )
         if (
@@ -1028,20 +971,12 @@ class GatewayRoute:
                 json.dumps({**response, 'model': prepared.model_selected.model_id}),
                 prepared.cache_key,
                 self.gateway_route_config.route_name,
-                api_key_uuid,
+                prepared.identity['api_key_uuid'],
                 prepared.embeddings,
             )
 
     @task(name='lookup_responses_cache')
-    async def _lookup_responses_cache(
-        self,
-        prepared: ResponsesPrepared,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-    ) -> None:
+    async def _lookup_responses_cache(self, prepared: ResponsesPrepared) -> None:
         """Set the cache key of a prepared request, and its cached response on a hit."""
         signature = cache_signature(prepared.body)
         if signature is None:
@@ -1050,7 +985,7 @@ class GatewayRoute:
         prepared.cache_key = self.gateway_cache.generate_responses_cache_key(
             project_uuid=self.project_uuid,
             route_name=route_name,
-            key_uuid=api_key_uuid,
+            key_uuid=prepared.identity['api_key_uuid'],
             signature=signature,
         )
         user_content = last_user_text(prepared.body)
@@ -1059,11 +994,7 @@ class GatewayRoute:
             if user_content and embedding_model_selected:
                 prepared.embeddings = await self._generate_embedding_for_semantic_cache(
                     text=user_content,
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    api_key_name=api_key_name,
-                    group_name=group_name,
+                    **prepared.identity,
                     route_name=route_name,
                     model_id_selected=embedding_model_selected.model_id,
                 )
@@ -1078,7 +1009,7 @@ class GatewayRoute:
             user_content=user_content,
             project_uuid=self.project_uuid,
             route_name=route_name,
-            key_uuid=api_key_uuid,
+            key_uuid=prepared.identity['api_key_uuid'],
             k=1,
         )
         cached = _parse_cached_response_object(raw_cached_response)
@@ -1087,11 +1018,7 @@ class GatewayRoute:
 
         input_tokens, _, output_tokens = usage_token_counts(cached.get('usage'))
         self._emit_cache_events_and_metrics(
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            group_uuid=group_uuid,
-            api_key_name=api_key_name,
-            group_name=group_name,
+            **prepared.identity,
             route_name=route_name,
             model_id=cached.get('model', ''),
             usage=CompletionUsage(
