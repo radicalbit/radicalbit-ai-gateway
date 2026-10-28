@@ -1,7 +1,6 @@
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import { CredentialStateEnum, GATEWAY_OWNER, RotationStateEnum } from '@Src/constants';
-import DeleteKey from '@Container/pages/keys/list/delete-key';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import {
@@ -81,6 +80,10 @@ export const useGetThreeDotsMenuItems = (uuid) => {
 
   const handleOnRotateKey = () => {
     showModal(modals.ROTATE_KEY, { uuid });
+  };
+
+  const handleOnDeleteKey = () => {
+    showModal(modals.DELETE_KEY_WITH_GROUPS, { uuid });
   };
 
   const handleOnManageLimits = () => {
@@ -176,10 +179,8 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         type: 'divider',
       },
       {
-        label: (
-          <DeleteKey uuid={uuid}>
-            <div className="is-error">Delete credential</div>
-          </DeleteKey>),
+        label: <div className="is-error">Delete credential</div>,
+        onClick: handleOnDeleteKey,
       },
     ];
   }
@@ -200,10 +201,8 @@ export const useGetThreeDotsMenuItems = (uuid) => {
       type: 'divider',
     },
     {
-      label: (
-        <DeleteKey uuid={uuid}>
-          <div className="is-error">Delete credential</div>
-        </DeleteKey>),
+      label: <div className="is-error">Delete credential</div>,
+      onClick: handleOnDeleteKey,
     },
   ].filter(Boolean);
 };

@@ -11,6 +11,7 @@ import CreateKey from './create-key';
 import CreateProject from './create-project';
 import DeleteGroupWithAssociatedItems from './delete-group-with-associated-items';
 import DeleteKeyWithGroups from './delete-key-with-groups';
+import DeleteProject from './delete-project';
 import EditGroup from './edit-group';
 import EditKey from './edit-key';
 import EditProjectConfig from './edit-project-config';
@@ -53,6 +54,9 @@ export default function ModalsProvider() {
 
     case modals.DELETE_KEY_WITH_GROUPS:
       return <DeleteKeyWithGroups />;
+
+    case modals.DELETE_PROJECT:
+      return <DeleteProject />;
 
     case modals.DELETE_GROUP_WITH_ASSOCIATED_ITEMS:
       return <DeleteGroupWithAssociatedItems />;

@@ -1,5 +1,4 @@
 import Lucide from '@Components/lucide';
-import DeleteGroup from '@Container/pages/groups/list/delete-group';
 import useModals, { modals } from '@Hooks/use-modals';
 import { GATEWAY_OWNER } from '@Src/constants';
 import { useGetGroupQuery } from '@State/groups/api';
@@ -63,6 +62,10 @@ export const useGetThreeDotsMenuItems = (uuid) => {
 
   const handleOnAssociateRoutes = () => {
     showModal(modals.ADD_ROUTES_TO_GROUP, { uuid });
+  };
+
+  const handleOnDeleteGroup = () => {
+    showModal(modals.DELETE_GROUP_WITH_ASSOCIATED_ITEMS, { uuid });
   };
 
   const handleOnAssociateKeys = () => {
@@ -138,10 +141,8 @@ export const useGetThreeDotsMenuItems = (uuid) => {
       type: 'divider',
     },
     {
-      label: (
-        <DeleteGroup uuid={uuid}>
-          <div className="is-error">Delete group</div>
-        </DeleteGroup>),
+      label: <div className="is-error">Delete group</div>,
+      onClick: handleOnDeleteGroup,
     },
   ];
 };
