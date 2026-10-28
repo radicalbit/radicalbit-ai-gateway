@@ -1,6 +1,7 @@
 import Lucide from '@Components/lucide';
 import { DUPLICATE_BUDGET_ERROR, WINDOW_TYPE_HELP } from '@Components/limits/constants';
 import { asBudgets, getNewLimitsErrors } from '@Components/limits/helpers';
+import focusLimitRow from '@Components/limits/focus-limit-row';
 import LimitFields from '@Components/limits/limit-fields';
 import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
@@ -23,6 +24,7 @@ function AddScreen() {
 
   const handleOnAddRow = () => {
     write('limits', [...rows, newRow()]);
+    focusLimitRow(rows.length);
   };
 
   const backendError = error('silent.backend');
@@ -78,6 +80,7 @@ function Rows() {
 
   const handleOnRemove = useCallback((index) => {
     write('limits', rows.filter((_, rowIndex) => rowIndex !== index));
+    focusLimitRow(index);
   }, [rows, write]);
 
   const isOnlyRow = rows.length === 1;
@@ -108,6 +111,7 @@ function Row({
     onRemove(index);
   };
 
+  const rowLabel = `budget ${index + 1}`;
   const message = error ?? formError(`silent.limits.${index}`);
   const errorField = message ? <FormField message={message} /> : false;
 
@@ -115,10 +119,10 @@ function Row({
     <div className="flex flex-col gap-1">
       <div className="flex gap-2 items-end">
         <div className="flex-1 min-w-0">
-          <LimitFields limit={row} onChange={handleOnChange} withCategory={false} />
+          <LimitFields limit={row} onChange={handleOnChange} rowLabel={rowLabel} withCategory={false} />
         </div>
 
-        <Button aria-label="Remove budget" disabled={isOnlyRow} onClick={handleOnRemove} type="text">
+        <Button aria-label={`Remove budget ${index + 1}`} disabled={isOnlyRow} onClick={handleOnRemove} type="text">
           <Lucide icon={Trash2} />
         </Button>
       </div>
