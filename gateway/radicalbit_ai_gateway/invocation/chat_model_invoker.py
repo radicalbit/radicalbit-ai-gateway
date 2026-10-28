@@ -18,6 +18,9 @@ from radicalbit_ai_gateway.models.model import (
     MockGatewayChatModel,
     Model,
 )
+from radicalbit_ai_gateway.responses.events import NativeResponsesEvent
+from radicalbit_ai_gateway.responses.output import usage_token_counts
+from radicalbit_ai_gateway.responses.request import without_reasoning
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
@@ -29,11 +32,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
 )
 from radicalbit_ai_gateway.utils.parse_provider_and_model import (
     parse_provider_and_model,
-)
-from radicalbit_ai_gateway.utils.responses_native import (
-    NativeResponsesEvent,
-    usage_token_counts,
-    without_reasoning,
 )
 
 app_config = get_app_config()

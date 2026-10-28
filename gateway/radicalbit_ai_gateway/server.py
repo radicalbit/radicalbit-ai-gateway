@@ -60,6 +60,7 @@ from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.responses.serving import serve_stream
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
@@ -150,7 +151,6 @@ from radicalbit_ai_gateway.utils.request_context import (
     set_current_project_budget_limiter,
     set_current_route_config,
 )
-from radicalbit_ai_gateway.utils.responses_output import serve_stream
 from radicalbit_ai_gateway.utils.streaming_response import (
     StreamingResponseWithStatusCode,
 )

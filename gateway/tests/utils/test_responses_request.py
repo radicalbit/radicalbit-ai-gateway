@@ -11,16 +11,16 @@ from radicalbit_ai_gateway.llm.messages import (
     ToolMessage,
 )
 from radicalbit_ai_gateway.models.responses import ResponsesSettings
-from radicalbit_ai_gateway.utils.exceptions import (
-    GatewayBadRequest,
-    GatewayInternalError,
-)
-from radicalbit_ai_gateway.utils.responses_request import (
+from radicalbit_ai_gateway.responses.request import (
     ResponsesRequest,
     apply_governance,
     cache_signature,
     last_user_text,
     references_stored_state,
+)
+from radicalbit_ai_gateway.utils.exceptions import (
+    GatewayBadRequest,
+    GatewayInternalError,
 )
 
 

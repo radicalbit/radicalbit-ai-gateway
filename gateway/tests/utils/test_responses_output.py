@@ -4,16 +4,16 @@ from openai.types.responses import Response, ResponseStreamEvent
 from pydantic import TypeAdapter
 
 from radicalbit_ai_gateway.llm.messages import AIMessage
-from radicalbit_ai_gateway.utils.exceptions import (
-    GatewayBadRequest,
-    ModelInvokerUpstreamError,
-)
-from radicalbit_ai_gateway.utils.responses_output import (
+from radicalbit_ai_gateway.responses.events import response_events
+from radicalbit_ai_gateway.responses.output import (
     ResponsesOutput,
     gateway_response,
     message_item,
-    response_events,
-    serve_stream,
+)
+from radicalbit_ai_gateway.responses.serving import serve_stream
+from radicalbit_ai_gateway.utils.exceptions import (
+    GatewayBadRequest,
+    ModelInvokerUpstreamError,
 )
 
 EVENT_ADAPTER = TypeAdapter(ResponseStreamEvent)
