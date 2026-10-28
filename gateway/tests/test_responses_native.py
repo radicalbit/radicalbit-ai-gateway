@@ -118,9 +118,17 @@ def _openai(**kwargs):
 
 
 class TestOpenAIResponses:
-    def test_only_the_official_endpoint_serves_responses(self):
+    def test_serves_responses_with_or_without_a_base_url(self):
         assert _openai().supports_native_responses()
-        assert not _openai(base_url='http://vllm:8000/v1').supports_native_responses()
+        assert _openai(base_url='http://vllm:8000/v1').supports_native_responses()
+
+    def test_deepseek_serves_responses(self):
+        deepseek = init_chat_model(
+            'deepseek:deepseek-flash',
+            api_key='sk',
+            http_async_client=HttpxAiohttpClient(),
+        )
+        assert deepseek.supports_native_responses()
 
     async def test_stream_forwards_the_body_and_relays_events(self):
         chat_model = _openai(temperature=0.2, reasoning_effort='low')

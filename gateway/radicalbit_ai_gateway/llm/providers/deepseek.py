@@ -66,6 +66,9 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
     def _structured_method(self) -> str:
         return 'function_calling'
 
+    def supports_native_responses(self) -> bool:
+        return True
+
     def _get_request_payload(self, messages: list[BaseMessage], **kwargs: Any) -> dict:
         payload = super()._get_request_payload(messages, **kwargs)
         for message in payload['messages']:

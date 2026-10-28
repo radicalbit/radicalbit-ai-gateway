@@ -848,9 +848,7 @@ class ChatOpenAI(_BaseChatOpenAI):
         return params
 
     def supports_native_responses(self) -> bool:
-        # Only the official endpoint is known to serve the Responses API: an
-        # OpenAI-compatible server behind ``base_url`` may not.
-        return self.openai_api_base is None
+        return True
 
     def _routes_stream_to_responses_api(self, kwargs: dict) -> bool:
         return self._use_responses_api({**kwargs, **self.model_kwargs})
