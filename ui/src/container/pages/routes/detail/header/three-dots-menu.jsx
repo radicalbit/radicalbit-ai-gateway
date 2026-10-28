@@ -36,7 +36,7 @@ function ThreeDotsMenu() {
 
   return (
     <Tooltip title="More actions">
-      <Dropdown autoFocus={isOpenedByKeyboard} menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
+      <Dropdown autoFocus={isOpenedByKeyboard} destroyOnHidden menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
         <Button aria-label="More actions" onKeyDown={handleOnKeyDown} ref={buttonRef} type="text">
           <Lucide icon={EllipsisVertical} />
         </Button>
