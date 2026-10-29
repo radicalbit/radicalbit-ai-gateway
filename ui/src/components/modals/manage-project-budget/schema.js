@@ -6,6 +6,7 @@ const ScreenEnum = {
   ADD: 'add',
   DELETE: 'delete',
   EDIT: 'edit',
+  EDIT_CONFIRM: 'edit-confirm',
 };
 
 const newRow = () => ({ ...EMPTY_LIMIT, category: LimitCategoryEnum.BUDGET, rowKey: `${Date.now()}-${Math.random()}` });

@@ -75,6 +75,12 @@ export const EDIT_MAX_NOTE = 'Changing only the max keeps what was already consu
 
 export const EDIT_WINDOW_NOTE = 'A new window type or window restarts the counter: what was already consumed is not carried over.';
 
+export const COUNTER_RESTARTS_NOTE = 'The counter restarts: what was already consumed in the current window is not carried over.';
+
+export const OLD_LIMIT_LEFT_MESSAGE = 'The new limit is saved, but the old one could not be deleted: delete it from the list.';
+
+export const OLD_BUDGET_LEFT_MESSAGE = 'The new budget is saved, but the old one could not be deleted: delete it from the list.';
+
 export const EXPIRED_LIMITS_MESSAGE = 'This credential has expired: its limits can no longer be changed.';
 
 export const EMPTY_LIMIT = {

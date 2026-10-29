@@ -1,4 +1,5 @@
 import { EXPIRED_LIMITS_MESSAGE, LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
+import focusConfirmQuestion from '@Components/limits/focus-confirm-question';
 import focusLimitMenu from '@Components/limits/focus-limit-menu';
 import { formatLimitWindow, getNewLimitsErrors, isLimitComplete } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
@@ -7,7 +8,7 @@ import useModals from '@Hooks/use-modals';
 import { useGetKeyQuery, useUpdateKeyLimitValueMutation } from '@State/keys/api';
 import { FCK_UPDATE_KEY_LIMIT_VALUE } from '@State/keys/fixed-cache-key';
 import { useFormbitContext } from '@radicalbit/formbit';
-import { getInitialValues } from './schema';
+import { ScreenEnum, getInitialValues } from './schema';
 
 const METHOD_NOT_ALLOWED = 405;
 
@@ -29,7 +30,7 @@ export default () => {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { form, initialize, isFormInvalid } = useFormbitContext();
+  const { form, initialize, isFormInvalid, write } = useFormbitContext();
   const limitUuid = form?.__metadata?.limitUuid;
   const row = form?.limits?.[0];
 
@@ -44,12 +45,19 @@ export default () => {
   const [duplicateError] = getNewLimitsErrors({ limits: otherLimits, rows: row ? [row] : [] });
   const isWindowChanged = row?.algorithm !== limit?.algorithm || row?.windowSize !== limit?.windowSize;
   const isMaxChanged = row?.value !== limit?.value;
-  const isSaveDisabled = !row || !isLimitComplete(row) || isFormInvalid() || !!duplicateError || isWindowChanged || !isMaxChanged || args.isLoading;
+  const isSaveDisabled = !row || !isLimitComplete(row) || isFormInvalid() || !!duplicateError || (!isMaxChanged && !isWindowChanged) || args.isLoading;
   const errorMessage = args.isError ? getErrorMessage(args.error) : undefined;
   const label = `${LIMIT_CATEGORY_LABELS[limit?.category]} ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
 
   const handleOnSave = async () => {
     if (isSaveDisabled) {
+      return;
+    }
+
+    if (isWindowChanged) {
+      write('__metadata.screen', ScreenEnum.EDIT_CONFIRM);
+      focusConfirmQuestion();
+
       return;
     }
 

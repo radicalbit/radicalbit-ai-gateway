@@ -7,11 +7,13 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import AddScreen from './add-screen';
 import DeleteScreen from './delete-screen';
+import EditConfirmScreen from './edit-confirm-screen';
 import EditScreen from './edit-screen';
 import ListScreen from './list-screen';
 import { ScreenEnum, getInitialValues, schema } from './schema';
 import useHandleOnDelete from './useHandleOnDelete';
 import useHandleOnEdit from './useHandleOnEdit';
+import useHandleOnReplace from './useHandleOnReplace';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
 const UNAVAILABLE_MESSAGE = 'Unable to load this credential, please close and retry later';
@@ -23,12 +25,14 @@ const SCREENS = {
   [ScreenEnum.ADD]: AddScreen,
   [ScreenEnum.DELETE]: DeleteScreen,
   [ScreenEnum.EDIT]: EditScreen,
+  [ScreenEnum.EDIT_CONFIRM]: EditConfirmScreen,
 };
 
 const SCREEN_ACTIONS = {
   [ScreenEnum.ADD]: AddActions,
   [ScreenEnum.DELETE]: DeleteActions,
   [ScreenEnum.EDIT]: EditActions,
+  [ScreenEnum.EDIT_CONFIRM]: EditConfirmActions,
 };
 
 function ManageKeyLimits() {
@@ -147,6 +151,18 @@ function EditActions() {
       <Button onClick={handleOnCancel} type="secondary-light">Cancel</Button>
 
       <Button disabled={isSaveDisabled} loading={isLoading} onClick={handleOnSave} type="primary">Save</Button>
+    </div>
+  );
+}
+
+function EditConfirmActions() {
+  const { handleOnCancel, handleOnConfirm, isConfirmDisabled, isLoading } = useHandleOnReplace();
+
+  return (
+    <div className="flex gap-2 justify-end">
+      <Button onClick={handleOnCancel} type="secondary-light">Cancel</Button>
+
+      <Button disabled={isConfirmDisabled} loading={isLoading} onClick={handleOnConfirm} type="primary">Replace limit</Button>
     </div>
   );
 }

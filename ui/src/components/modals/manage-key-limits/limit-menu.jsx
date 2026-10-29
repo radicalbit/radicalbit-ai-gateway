@@ -1,5 +1,5 @@
 import Lucide from '@Components/lucide';
-import focusDeleteQuestion from '@Components/limits/focus-delete-question';
+import focusConfirmQuestion from '@Components/limits/focus-confirm-question';
 import focusLimitRow from '@Components/limits/focus-limit-row';
 import { LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import { formatLimitWindow } from '@Components/limits/helpers';
@@ -32,7 +32,7 @@ function LimitMenu({ limit }) {
 
   const handleOnDelete = () => {
     writeAll([['__metadata.limitUuid', limitUuid], ['__metadata.screen', ScreenEnum.DELETE]]);
-    focusDeleteQuestion();
+    focusConfirmQuestion();
   };
 
   const items = [

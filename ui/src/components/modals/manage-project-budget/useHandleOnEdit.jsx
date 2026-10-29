@@ -1,4 +1,5 @@
 import { DUPLICATE_BUDGET_ERROR, LimitCategoryEnum, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
+import focusConfirmQuestion from '@Components/limits/focus-confirm-question';
 import focusLimitMenu from '@Components/limits/focus-limit-menu';
 import {
   asBudgets, formatLimitValue, formatLimitWindow, getNewLimitsErrors, isLimitComplete,
@@ -9,7 +10,7 @@ import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery, useUpdateProjectBudgetLimitValueMutation } from '@State/projects/api';
 import { FCK_UPDATE_PROJECT_BUDGET_LIMIT_VALUE } from '@State/projects/fixed-cache-key';
 import { useFormbitContext } from '@radicalbit/formbit';
-import { getInitialValues } from './schema';
+import { ScreenEnum, getInitialValues } from './schema';
 
 const getErrorMessage = (queryError) => {
   const detail = queryError?.data?.detail;
@@ -25,7 +26,7 @@ export default () => {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
-  const { form, initialize, isFormInvalid } = useFormbitContext();
+  const { form, initialize, isFormInvalid, write } = useFormbitContext();
   const limitUuid = form?.__metadata?.limitUuid;
   const row = form?.limits?.[0];
 
@@ -40,12 +41,19 @@ export default () => {
   const [duplicateError] = getNewLimitsErrors({ duplicateError: DUPLICATE_BUDGET_ERROR, limits: otherLimits, rows: row ? [row] : [] });
   const isWindowChanged = row?.algorithm !== limit?.algorithm || row?.windowSize !== limit?.windowSize;
   const isMaxChanged = row?.value !== limit?.value;
-  const isSaveDisabled = !row || !isLimitComplete(row) || isFormInvalid() || !!duplicateError || isWindowChanged || !isMaxChanged || args.isLoading;
+  const isSaveDisabled = !row || !isLimitComplete(row) || isFormInvalid() || !!duplicateError || (!isMaxChanged && !isWindowChanged) || args.isLoading;
   const errorMessage = args.isError ? getErrorMessage(args.error) : undefined;
   const label = `${formatLimitValue(LimitCategoryEnum.BUDGET, limit?.value)} / ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
 
   const handleOnSave = async () => {
     if (isSaveDisabled) {
+      return;
+    }
+
+    if (isWindowChanged) {
+      write('__metadata.screen', ScreenEnum.EDIT_CONFIRM);
+      focusConfirmQuestion();
+
       return;
     }
 

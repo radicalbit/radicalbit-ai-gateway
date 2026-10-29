@@ -43,7 +43,7 @@ function DeleteScreen() {
         <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnCancel} type="text">Back</Button>
       </div>
 
-      <div className="flex flex-col gap-2 focus:outline-none" data-delete-question tabIndex={-1}>
+      <div className="flex flex-col gap-2 focus:outline-none" data-confirm-question tabIndex={-1}>
         <TextWithBold bold={label} isQuestion text="Are you sure you want to delete the limit" />
 
         <StaleRules limit={limit} />
