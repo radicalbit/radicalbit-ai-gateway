@@ -18,7 +18,11 @@ from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.models.api_key_dto import ApiKeySec
 from radicalbit_ai_gateway.models.auth_dto import GroupFullOut, KeyCreateIn, KeyFullOut
-from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitOut,
+    CredentialLimitUpdatedOut,
+    CredentialLimitValueIn,
+)
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.server import validation_exception_handler
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
@@ -27,9 +31,11 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
     AuthRegistryError,
     CredentialLimitNotFoundError,
+    CredentialLimitValueError,
     ErrorOut,
     KeyInternalError,
     KeyNotFoundError,
+    KeyOperationNotAllowedError,
     auth_registry_exception_handler,
 )
 
@@ -388,6 +394,89 @@ class TestKeyRoute(unittest.TestCase):
                 'error', 'auth_registry_error', code='key_not_found', param=None
             ).error
         )
+
+    def _patch_limit(self, key_uuid, limit_uuid, body):
+        return self.client.patch(
+            f'{self.prefix}/keys/{key_uuid}/limits/{limit_uuid}', json=body
+        )
+
+    def test_update_limit_value_returns_the_limit_with_its_previous_max(self):
+        key_uuid, limit_uuid = uuid.uuid4(), uuid.uuid4()
+        updated = CredentialLimitUpdatedOut(
+            **CredentialLimitOut.from_key_limit(
+                db_mock.get_sample_key_limit(
+                    uuid=limit_uuid, key_uuid=key_uuid, max_value=25.0
+                )
+            ).model_dump(),
+            previous_value=10.0,
+        )
+        self.key_service.update_limit_value = MagicMock(return_value=updated)
+
+        res = self._patch_limit(key_uuid, limit_uuid, {'value': 25})
+
+        assert res.status_code == 200
+        assert res.json()['value'] == 25.0
+        assert res.json()['previousValue'] == 10.0
+        self.key_service.update_limit_value.assert_called_once_with(
+            key_uuid, limit_uuid, CredentialLimitValueIn(value=25)
+        )
+
+    def test_update_limit_value_rejects_a_max_not_above_zero(self):
+        self.key_service.update_limit_value = MagicMock()
+
+        res = self._patch_limit(uuid.uuid4(), uuid.uuid4(), {'value': 0})
+
+        assert res.status_code == 422
+        assert res.json()['detail'][0]['loc'] == ['body', 'value']
+        self.key_service.update_limit_value.assert_not_called()
+
+    def test_update_limit_value_maps_the_service_errors(self):
+        cases = [
+            (
+                CredentialLimitNotFoundError('missing'),
+                404,
+                'credential_limit_not_found',
+            ),
+            (
+                KeyOperationNotAllowedError('expired'),
+                405,
+                'key_operation_method_not_allowed',
+            ),
+            (
+                CredentialLimitValueError('not whole'),
+                422,
+                'credential_limit_value_unprocessable_entity',
+            ),
+        ]
+        for error, status_code, code in cases:
+            self.key_service.update_limit_value = MagicMock(side_effect=error)
+
+            res = self._patch_limit(uuid.uuid4(), uuid.uuid4(), {'value': 5})
+
+            assert res.status_code == status_code
+            assert res.json()['error']['code'] == code
+
+    def test_update_limit_value_is_audited_on_the_key(self):
+        def find_endpoint(routes):
+            for route in routes:
+                nested = getattr(
+                    getattr(route, 'original_router', None), 'routes', None
+                )
+                found = find_endpoint(nested or getattr(route, 'routes', []))
+                if found:
+                    return found
+                if getattr(route, 'path', '').endswith(
+                    '/keys/{key_uuid}/limits/{limit_uuid}'
+                ) and 'PATCH' in getattr(route, 'methods', set()):
+                    return route.endpoint
+            return None
+
+        endpoint = find_endpoint(self.client.app.routes)
+
+        assert endpoint._route_meta == {
+            'entity_type': 'KEY',
+            'entity_uuid_param': 'key_uuid',
+        }
 
 
 class TestKeyRouteExpiry(unittest.TestCase):
