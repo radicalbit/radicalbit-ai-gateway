@@ -31,7 +31,6 @@ export default () => {
   const isMaxChanged = row?.value !== limit?.value;
   const isSaveDisabled = !row || !isLimitComplete(row) || isFormInvalid() || !!duplicateError || (!isMaxChanged && !isWindowChanged) || args.isLoading;
   const errorMessage = args.isError ? getErrorMessage(args.error) : undefined;
-  const label = getBudgetLabel(limit);
 
   const handleOnSave = async () => {
     if (isSaveDisabled) {
@@ -49,7 +48,7 @@ export default () => {
       uuid,
       limitUuid,
       data: { value: row.value },
-      successMessage: <SuccessMessage prefix="Budget" strong={label} suffix={`updated on ${name}`} />,
+      successMessage: <SuccessMessage prefix="Budget" strong={getBudgetLabel({ ...limit, value: row.value })} suffix={`updated on ${name}`} />,
     });
 
     if (error) {
