@@ -224,7 +224,7 @@ class DecisionRoutingConfigOut(DecisionRoutingConfig):
 
 
 class LLMRoutingConfigOut(LLMRoutingConfig):
-    output_mapping: list[OutputMappingEntryOut]
+    output_mapping: list[DecisionOutputMappingEntryOut]
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()

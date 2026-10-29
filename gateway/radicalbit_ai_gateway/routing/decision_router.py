@@ -3,21 +3,17 @@ import json
 import logging
 import time
 
-from opentelemetry import trace
-
 from radicalbit_ai_gateway.invocation.decision_model_invoker import (
     DECISION_MODEL_TYPE,
     DecisionModelInvoker,
     billed_input_tokens,
     is_number,
 )
-from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
-from radicalbit_ai_gateway.models.guardrails import GuardrailMessageRole
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import DecisionRoutingConfig
+from radicalbit_ai_gateway.routing.common import routing_text, set_span_attributes
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.build_user_content import stringify_message_content
-from radicalbit_ai_gateway.utils.content_utils import ContentUtils
 from radicalbit_ai_gateway.utils.exceptions import ModelInvokerBadRequest
 from radicalbit_ai_gateway.utils.request_context import record_routing_spend
 
@@ -33,37 +29,12 @@ REASON_LOW_CONFIDENCE = 'low_confidence'
 REASON_NO_TEXT = 'no_text'
 REASON_UNKNOWN_OPTION = 'unknown_option'
 
-_MESSAGE_TYPE_BY_ROLE = {
-    GuardrailMessageRole.USER: 'human',
-    GuardrailMessageRole.ASSISTANT: 'ai',
-    GuardrailMessageRole.SYSTEM: 'system',
-    GuardrailMessageRole.TOOL: 'tool',
-}
-# history: all with no message_roles sends human and AI messages only.
-_DEFAULT_MESSAGE_TYPES = frozenset({'human', 'ai'})
-
 _ATTRIBUTE_PREFIX = 'routing.decision.'
 
 
 def _set_attributes(**attributes) -> None:
     """Set `routing.decision.*` attributes on the routing span."""
-    try:
-        span = trace.get_current_span()
-        if span.is_recording():
-            for key, value in attributes.items():
-                span.set_attribute(_ATTRIBUTE_PREFIX + key, value)
-    except Exception:
-        pass
-
-
-def _last_human_text(messages: list[BaseMessage]) -> str | None:
-    """Return the text of the last human message, as the other routers do."""
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage):
-            text = stringify_message_content(msg.content)
-            if text:
-                return text
-    return None
+    set_span_attributes(_ATTRIBUTE_PREFIX, **attributes)
 
 
 class _NoAnswer(Exception):
@@ -239,22 +210,7 @@ class DecisionRouter:
         )
 
     def _state(self, messages: list[BaseMessage]) -> str:
-        if self._config.history == 'last':
-            return _last_human_text(messages) or ''
-        roles = self._config.message_roles
-        types = (
-            {_MESSAGE_TYPE_BY_ROLE[r] for r in roles}
-            if roles is not None
-            else _DEFAULT_MESSAGE_TYPES
-        )
-        parts = []
-        for msg in messages:
-            if getattr(msg, 'type', '') not in types:
-                continue
-            text = ContentUtils.extract_text_content(msg.content, strip=True)
-            if text:
-                parts.append(text)
-        return '\n'.join(parts)
+        return routing_text(messages, self._config.history, self._config.message_roles)
 
     def _default(self, reason: str) -> Model:
         logger.info('Decision routing uses the default model: %s', reason)

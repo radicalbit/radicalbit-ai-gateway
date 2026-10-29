@@ -20,6 +20,7 @@ from radicalbit_ai_gateway.models.limiting import (
 )
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
+    DecisionOutputMappingEntry,
     DeterministicRoutingConfig,
     LLMRoutingConfig,
     OutputMappingEntry,
@@ -477,6 +478,7 @@ def get_gateway_routing_llm() -> GatewayConfig:
         _make_model('general_model', 'openai/gpt-4o-mini'),
         _make_model('default_model', 'openai/gpt-3.5-turbo'),
         _make_model('router_model', 'openai/gpt-4o-mini'),
+        _make_model('router_backup', 'openai/gpt-4o-mini'),
     ]
     routing = LLMRoutingConfig(
         name='llm_routing',
@@ -485,13 +487,13 @@ def get_gateway_routing_llm() -> GatewayConfig:
         router_model_id='router_model',
         threshold=0.5,
         output_mapping=[
-            OutputMappingEntry(
+            DecisionOutputMappingEntry(
                 model_id='code_model',
-                conditions=['writing, debugging or reviewing code'],
+                description='writing, debugging or reviewing code',
             ),
-            OutputMappingEntry(
+            DecisionOutputMappingEntry(
                 model_id='general_model',
-                conditions=['general knowledge questions', 'small talk'],
+                description='general knowledge questions and small talk',
             ),
         ],
     )
