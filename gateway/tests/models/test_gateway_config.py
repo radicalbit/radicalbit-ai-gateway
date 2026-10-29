@@ -430,7 +430,7 @@ def test_llm_routing_valid():
     routing_config = gateway_config.routing_by_name['llm_router']
     assert routing_config.router_model_id == 'router'
     assert routing_config.threshold == 0.375
-    assert routing_config.timeout == 5.0
+    assert routing_config.timeout == 10.0
 
 
 def test_llm_routing_router_model_not_in_top_level_chat_models():

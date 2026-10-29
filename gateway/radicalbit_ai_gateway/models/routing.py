@@ -265,7 +265,9 @@ class LLMRoutingConfig(ModelChoiceRoutingConfig):
     fallback_model_id: str | None = None
     threshold: float = Field(default=0.375, ge=0.0, le=1.0)
     timeout: float = Field(
-        default=5.0, gt=0, description='Timeout in seconds for router model calls'
+        default=10.0,
+        gt=0,
+        description='Timeout in seconds for each router model call',
     )
 
     @model_validator(mode='after')
