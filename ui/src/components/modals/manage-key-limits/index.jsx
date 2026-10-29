@@ -7,9 +7,11 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import AddScreen from './add-screen';
 import DeleteScreen from './delete-screen';
+import EditScreen from './edit-screen';
 import ListScreen from './list-screen';
 import { ScreenEnum, getInitialValues, schema } from './schema';
 import useHandleOnDelete from './useHandleOnDelete';
+import useHandleOnEdit from './useHandleOnEdit';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
 const UNAVAILABLE_MESSAGE = 'Unable to load this credential, please close and retry later';
@@ -20,11 +22,13 @@ const SCREENS = {
   [ScreenEnum.LIST]: ListScreen,
   [ScreenEnum.ADD]: AddScreen,
   [ScreenEnum.DELETE]: DeleteScreen,
+  [ScreenEnum.EDIT]: EditScreen,
 };
 
 const SCREEN_ACTIONS = {
   [ScreenEnum.ADD]: AddActions,
   [ScreenEnum.DELETE]: DeleteActions,
+  [ScreenEnum.EDIT]: EditActions,
 };
 
 function ManageKeyLimits() {
@@ -131,6 +135,18 @@ function DeleteActions() {
       <Button onClick={handleOnCancel} type="secondary-light">Cancel</Button>
 
       <Button loading={isLoading} onClick={handleOnDelete} type="error-light">Delete</Button>
+    </div>
+  );
+}
+
+function EditActions() {
+  const { args: { isLoading }, handleOnCancel, handleOnSave, isSaveDisabled } = useHandleOnEdit();
+
+  return (
+    <div className="flex gap-2 justify-end">
+      <Button onClick={handleOnCancel} type="secondary-light">Cancel</Button>
+
+      <Button disabled={isSaveDisabled} loading={isLoading} onClick={handleOnSave} type="primary">Save</Button>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import Lucide from '@Components/lucide';
 import focusDeleteQuestion from '@Components/limits/focus-delete-question';
+import focusLimitRow from '@Components/limits/focus-limit-row';
 import { LimitCategoryEnum, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import { formatLimitValue, formatLimitWindow } from '@Components/limits/helpers';
 import { useFormbitContext } from '@radicalbit/formbit';
@@ -20,12 +21,24 @@ function BudgetMenu({ limit }) {
   const limitUuid = limit?.uuid;
   const label = `${formatLimitValue(LimitCategoryEnum.BUDGET, limit?.value)} / ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
 
+  const handleOnEdit = () => {
+    const row = {
+      algorithm: limit?.algorithm, category: LimitCategoryEnum.BUDGET, rowKey: limitUuid, value: limit?.value, windowSize: limit?.windowSize,
+    };
+
+    writeAll([['limits', [row]], ['__metadata.limitUuid', limitUuid], ['__metadata.screen', ScreenEnum.EDIT]]);
+    focusLimitRow(0);
+  };
+
   const handleOnDelete = () => {
     writeAll([['__metadata.limitUuid', limitUuid], ['__metadata.screen', ScreenEnum.DELETE]]);
     focusDeleteQuestion();
   };
 
-  const items = [{ key: 'delete', label: 'Delete', onClick: handleOnDelete }];
+  const items = [
+    { key: 'edit', label: 'Edit', onClick: handleOnEdit },
+    { key: 'delete', label: 'Delete', onClick: handleOnDelete },
+  ];
 
   const handleOnOpenChange = (isOpen) => {
     const { activeElement } = document;

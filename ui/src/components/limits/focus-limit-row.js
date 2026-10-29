@@ -3,7 +3,7 @@ const focusLimitRow = (index) => {
     const rows = document.querySelectorAll('.ant-modal [data-limit-row]');
     const row = rows[Math.min(index, rows.length - 1)];
 
-    row?.querySelector('input')?.focus();
+    row?.querySelector('input:not([disabled])')?.focus();
   });
 };
 

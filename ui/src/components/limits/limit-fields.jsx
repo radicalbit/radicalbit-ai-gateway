@@ -15,7 +15,7 @@ const SELECT_PLACEHOLDER = 'Select';
 // The design system forces its own widths on these inputs: they fill flex-1 wrappers instead
 const FULL_WIDTH = { width: '100%' };
 
-function LimitFields({ limit, onChange, rowLabel, withCategory = true }) {
+function LimitFields({ isCategoryLocked = false, limit, onChange, rowLabel, withCategory = true }) {
   const id = useId();
 
   const category = limit?.category;
@@ -50,6 +50,7 @@ function LimitFields({ limit, onChange, rowLabel, withCategory = true }) {
     <Field htmlFor={`${id}-category`} label="Category">
       <Select
         aria-label={getAriaLabel('Category')}
+        disabled={isCategoryLocked}
         id={`${id}-category`}
         onChange={handleOnChangeCategory}
         options={CATEGORY_OPTIONS}

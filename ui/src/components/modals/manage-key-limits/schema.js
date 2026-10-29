@@ -5,6 +5,7 @@ const ScreenEnum = {
   LIST: 'list',
   ADD: 'add',
   DELETE: 'delete',
+  EDIT: 'edit',
 };
 
 const newRow = () => ({ ...EMPTY_LIMIT, rowKey: `${Date.now()}-${Math.random()}` });

@@ -65,11 +65,15 @@ export const LIMIT_EVENT_CATEGORIES = {
   [LimitCategoryEnum.BUDGET]: 'budget_limit',
 };
 
-export const DUPLICATE_LIMIT_ERROR = 'A limit with the same category, window type and window already exists.';
+export const DUPLICATE_LIMIT_ERROR = 'A limit with the same category, window type and window already exists: edit that one instead.';
 
-export const DUPLICATE_BUDGET_ERROR = 'A budget with the same window type and window already exists.';
+export const DUPLICATE_BUDGET_ERROR = 'A budget with the same window type and window already exists: edit that one instead.';
 
 export const DUPLICATE_ROW_ERROR = 'Same limit as a row above.';
+
+export const EDIT_MAX_NOTE = 'Changing only the max keeps what was already consumed in this window.';
+
+export const EDIT_WINDOW_NOTE = 'A new window type or window restarts the counter: what was already consumed is not carried over.';
 
 export const EXPIRED_LIMITS_MESSAGE = 'This credential has expired: its limits can no longer be changed.';
 
