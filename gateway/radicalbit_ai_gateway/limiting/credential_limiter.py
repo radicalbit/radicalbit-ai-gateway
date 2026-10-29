@@ -33,6 +33,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     OutputTokenLimitExceeded,
     RequestRateLimitExceeded,
 )
+from radicalbit_ai_gateway.utils.money import format_usd
 from radicalbit_ai_gateway.utils.token_encoding import count_tokens
 
 app_config = get_app_config()
@@ -418,7 +419,7 @@ class CredentialLimiter:
             )
             raise BudgetLimitExceededError(
                 message=(
-                    f'Credential budget limit exceeded: {entry.limit_out.value:g} '
+                    f'Credential budget limit exceeded: {format_usd(entry.limit_out.value)} '
                     f'per {entry.limit_out.window_size} on credential '
                     f'"{self.credential_name}". Please retry after '
                     f'{stats.remaining_time} seconds.'

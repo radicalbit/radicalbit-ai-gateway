@@ -14,7 +14,6 @@ from tests.common import db_mock
 
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
-from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.models.api_key_dto import ApiKeySec
@@ -506,21 +505,17 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         self.key_dao.delete_by_uuid = MagicMock(return_value=1)
         group_dao = MagicMock(spec_set=GroupDAO)
         group_dao.get_by_uuid = MagicMock(return_value=self.group)
-        group_limit_dao = MagicMock(spec_set=GroupLimitDAO)
-        group_limit_dao.get_by_group_uuid = MagicMock(return_value=[])
         self.key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
         self.key_limit_dao.get_by_key_uuid = MagicMock(return_value=[])
         self.key_limit_dao.insert_many = MagicMock(return_value=[])
         self.key_limit_dao.get_by_uuid = MagicMock(return_value=self.limit)
         self.key_limit_dao.delete_by_uuid = MagicMock(return_value=1)
-        self.key_limit_dao.delete_group_limits_by_key_uuid = MagicMock(return_value=[])
 
         self.key_service = KeyService(
             key_dao=self.key_dao,
             api_key_security=MagicMock(spec_set=ApiKeySecurity),
             group_dao=group_dao,
             key_limit_dao=self.key_limit_dao,
-            group_limit_dao=group_limit_dao,
         )
         app = FastAPI(title='AI Gateway', debug=True)
         app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
@@ -635,7 +630,6 @@ class TestKeyRouteRotation(unittest.TestCase):
             api_key_security=api_key_security,
             group_dao=MagicMock(spec_set=GroupDAO),
             key_limit_dao=MagicMock(spec_set=KeyLimitDAO),
-            group_limit_dao=MagicMock(spec_set=GroupLimitDAO),
         )
         app = FastAPI(title='AI Gateway', debug=True)
         app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)

@@ -13,19 +13,23 @@ from radicalbit_ai_gateway.models.auth_dto import (
     GroupRouteOut,
     KeyFullOut,
 )
+from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitCategory
 from radicalbit_ai_gateway.models.group_limiting import (
-    GroupLimitOut,
-    GroupLimitOverwriteWarning,
+    GroupLimitOutcome,
+    GroupLimitResultOut,
     GroupLimitsApplyOut,
+    GroupLimitsIn,
+    GroupMemberLimitsOut,
 )
+from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.utils.exceptions import (
     AuthRegistryError,
     ErrorOut,
+    GroupHasNoCredentialsError,
     GroupInternalError,
-    GroupLimitNotFoundError,
     GroupNotFoundError,
     KeyNotFoundError,
     ProjectNotFoundError,
@@ -233,87 +237,101 @@ class TestGroupRoute(unittest.TestCase):
         )
         self.group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
 
-    def test_add_limits_to_group(self):
+    def test_apply_limits_to_group(self):
         group = db_mock.get_sample_group()
-        limit = db_mock.get_sample_group_limit(group_uuid=group.uuid)
-        limits_in = db_mock.get_sample_group_limits_in()
+        key_uuid = uuid.uuid4()
+        body = {
+            'limits': [
+                {
+                    'category': 'request_rate',
+                    'algorithm': 'FIXED_WINDOW',
+                    'windowSize': '60 seconds',
+                    'value': 50,
+                }
+            ],
+            'skip': [
+                {
+                    'keyUuid': str(key_uuid),
+                    'category': 'request_rate',
+                    'algorithm': 'FIXED_WINDOW',
+                    'windowSize': '1 minute',
+                }
+            ],
+        }
         result = GroupLimitsApplyOut(
-            limits=[GroupLimitOut.from_group_limit(limit)], overwritten=[]
+            members=[
+                GroupMemberLimitsOut(
+                    key_uuid=key_uuid,
+                    key_name='billing-service',
+                    expired=False,
+                    limits=[
+                        GroupLimitResultOut(
+                            category=CredentialLimitCategory.RATE,
+                            algorithm=LimitingAlgorithmType.FIXED_WINDOW,
+                            window_size='1 minute',
+                            outcome=GroupLimitOutcome.SKIPPED,
+                            previous_value=100,
+                            new_value=50,
+                        )
+                    ],
+                )
+            ]
         )
-        self.group_service.add_limits_to_group = MagicMock(return_value=result)
-        res = self.client.post(
-            f'{self.prefix}/groups/{group.uuid}/limits',
-            json=jsonable_encoder(limits_in),
-        )
+        self.group_service.apply_limits_to_group = MagicMock(return_value=result)
+
+        res = self.client.post(f'{self.prefix}/groups/{group.uuid}/limits', json=body)
+
         assert res.status_code == 201
-        assert res.json() == jsonable_encoder(result)
-        self.group_service.add_limits_to_group.assert_called_once_with(
-            group.uuid, limits_in
+        assert res.json() == {
+            'members': [
+                {
+                    'keyUuid': str(key_uuid),
+                    'keyName': 'billing-service',
+                    'expired': False,
+                    'limits': [
+                        {
+                            'category': 'request_rate',
+                            'algorithm': 'FIXED_WINDOW',
+                            'windowSize': '1 minute',
+                            'outcome': 'skipped',
+                            'previousValue': 100.0,
+                            'newValue': 50.0,
+                        }
+                    ],
+                }
+            ]
+        }
+        self.group_service.apply_limits_to_group.assert_called_once_with(
+            group.uuid, GroupLimitsIn.model_validate(body)
         )
 
-    def test_add_limits_to_group_with_overwrite_warning(self):
+    def test_apply_limits_to_group_with_no_credentials(self):
         group = db_mock.get_sample_group()
-        limit = db_mock.get_sample_group_limit(group_uuid=group.uuid)
-        limits_in = db_mock.get_sample_group_limits_in()
-        warning = GroupLimitOverwriteWarning(
-            key_uuid=uuid.uuid4(),
-            key_name='has-own-limit',
-            category=limit.category,
-            algorithm=limit.algorithm,
-            window_size=limit.window_size,
+        self.group_service.apply_limits_to_group = MagicMock(
+            side_effect=GroupHasNoCredentialsError('error')
         )
-        result = GroupLimitsApplyOut(
-            limits=[GroupLimitOut.from_group_limit(limit)], overwritten=[warning]
-        )
-        self.group_service.add_limits_to_group = MagicMock(return_value=result)
         res = self.client.post(
             f'{self.prefix}/groups/{group.uuid}/limits',
-            json=jsonable_encoder(limits_in),
+            json=jsonable_encoder(db_mock.get_sample_group_limits_in()),
         )
-        assert res.status_code == 201
-        assert len(res.json()['overwritten']) == 1
+        assert res.status_code == 400
+        assert res.json()['error']['code'] == 'group_has_no_credentials_bad_request'
 
-    def test_add_limits_to_group_not_found(self):
+    def test_apply_limits_to_group_not_found(self):
         group = db_mock.get_sample_group()
-        limits_in = db_mock.get_sample_group_limits_in()
-        self.group_service.add_limits_to_group = MagicMock(
+        self.group_service.apply_limits_to_group = MagicMock(
             side_effect=GroupNotFoundError('error')
         )
         res = self.client.post(
             f'{self.prefix}/groups/{group.uuid}/limits',
-            json=jsonable_encoder(limits_in),
+            json=jsonable_encoder(db_mock.get_sample_group_limits_in()),
         )
         assert res.status_code == 404
 
-    def test_get_limits_for_group(self):
+    def test_a_group_has_no_limits_to_read_or_delete(self):
         group = db_mock.get_sample_group()
-        limit = db_mock.get_sample_group_limit(group_uuid=group.uuid)
-        limits_out = [GroupLimitOut.from_group_limit(limit)]
-        self.group_service.get_limits_for_group = MagicMock(return_value=limits_out)
         res = self.client.get(f'{self.prefix}/groups/{group.uuid}/limits')
-        assert res.status_code == 200
-        assert res.json() == jsonable_encoder(limits_out)
-        self.group_service.get_limits_for_group.assert_called_once_with(group.uuid)
-
-    def test_delete_limit_from_group(self):
-        group = db_mock.get_sample_group()
-        limit = db_mock.get_sample_group_limit(group_uuid=group.uuid)
-        limit_out = GroupLimitOut.from_group_limit(limit)
-        self.group_service.delete_limit_from_group = AsyncMock(return_value=limit_out)
-        res = self.client.delete(
-            f'{self.prefix}/groups/{group.uuid}/limits/{limit.uuid}'
-        )
-        assert res.status_code == 200
-        assert res.json() == jsonable_encoder(limit_out)
-        self.group_service.delete_limit_from_group.assert_awaited_once_with(
-            group.uuid, limit.uuid
-        )
-
-    def test_delete_limit_from_group_not_found(self):
-        group = db_mock.get_sample_group()
-        self.group_service.delete_limit_from_group = AsyncMock(
-            side_effect=GroupLimitNotFoundError('error')
-        )
+        assert res.status_code == 405
         res = self.client.delete(
             f'{self.prefix}/groups/{group.uuid}/limits/{uuid.uuid4()}'
         )

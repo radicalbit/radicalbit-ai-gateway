@@ -1,7 +1,6 @@
 import hashlib
 import json
 
-from langchain_core.messages import BaseMessage
 from openai.types.chat import (
     ChatCompletionToolChoiceOptionParam,
     ChatCompletionToolParam,
@@ -11,6 +10,7 @@ from radicalbit_ai_gateway.caching.abstract_cache import AbstractCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.caching import CacheType
 
 

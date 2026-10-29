@@ -21,6 +21,7 @@ from radicalbit_ai_gateway.models.event_payload import (
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
@@ -96,7 +97,8 @@ class ModelInvoker:
         is_cached_tokens: bool = False,
         project_uuid: str = '',
         project_name: str = '',
-        routing_name: str | None = None,
+        is_judge: bool = False,
+        is_routing: bool = False,
     ):
         cost = self.cost_service.compute_cost(
             model_id=model.model_id,
@@ -120,7 +122,8 @@ class ModelInvoker:
                 is_cached_tokens=is_cached_tokens,
                 project_uuid=project_uuid,
                 project_name=project_name,
-                routing_name=routing_name,
+                is_judge=is_judge,
+                is_routing=is_routing,
             )
         )
         total_tokens_counter_input.add(
@@ -147,7 +150,8 @@ class ModelInvoker:
         cache_type: str | None = None,
         project_uuid: str = '',
         project_name: str = '',
-        routing_name: str | None = None,
+        is_judge: bool = False,
+        is_routing: bool = False,
     ):
         cost = self.cost_service.compute_cost(
             model_id=model.model_id,
@@ -170,7 +174,8 @@ class ModelInvoker:
                 cache_type=cache_type,
                 project_uuid=project_uuid,
                 project_name=project_name,
-                routing_name=routing_name,
+                is_judge=is_judge,
+                is_routing=is_routing,
             )
         )
         total_tokens_counter_output.add(
@@ -182,6 +187,33 @@ class ModelInvoker:
             {'route_name': route_name, 'model_name': model.model_id},
         )
         return cost
+
+    def record_routing_call(
+        self,
+        identity: RequestIdentity,
+        model: Model,
+        target_model_id: str,
+        input_tokens: int,
+        latency_ms: float,
+        model_type: str,
+        output_tokens: int | None = None,
+    ) -> None:
+        """Emit the cost events of a routing call, flagged as routing.
+
+        Input tokens at the model's input price, and the output tokens of a
+        chat model router at its output price.
+        """
+        self._record_metrics(
+            **identity.event_fields(),
+            target_model_id=target_model_id,
+            model=model,
+            latency_ms=latency_ms,
+            model_type=model_type,
+            token_input_count=input_tokens,
+            token_output_count=output_tokens,
+            fallback_triggered=target_model_id != model.model_id,
+            is_routing=True,
+        )
 
     def _record_metrics(
         self,
@@ -204,7 +236,8 @@ class ModelInvoker:
         is_semantic_search: bool = False,
         project_uuid: str = '',
         project_name: str = '',
-        routing_name: str | None = None,
+        is_judge: bool = False,
+        is_routing: bool = False,
     ):
         cache_type = 'semantic' if is_semantic_search else None
         emit_event(
@@ -222,7 +255,8 @@ class ModelInvoker:
                 cache_type=cache_type,
                 project_uuid=project_uuid,
                 project_name=project_name,
-                routing_name=routing_name,
+                is_judge=is_judge,
+                is_routing=is_routing,
             )
         )
         model_invocations_counter.add(
@@ -256,7 +290,8 @@ class ModelInvoker:
             'model_type': model_type,
             'project_uuid': project_uuid,
             'project_name': project_name,
-            'routing_name': routing_name,
+            'is_judge': is_judge,
+            'is_routing': is_routing,
         }
         for count, where, ct, is_cached, skip_if_zero in input_token_entries:
             if count is not None and (not skip_if_zero or count > 0):
@@ -290,6 +325,8 @@ class ModelInvoker:
                     project_name=project_name,
                     target=target_model_id,
                     fallback=model.model_id,
+                    is_judge=is_judge,
+                    is_routing=is_routing,
                 )
             )
             fallbacks_triggered_counter.add(

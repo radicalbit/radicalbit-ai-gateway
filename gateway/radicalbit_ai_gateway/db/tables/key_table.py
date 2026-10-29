@@ -49,7 +49,7 @@ class Key(Reflected, BaseTable, BaseDAO):
     group_uuid = Column(
         'GROUP_UUID',
         UUID(as_uuid=True),
-        ForeignKey('group.UUID', ondelete='CASCADE'),
+        ForeignKey('group.UUID', ondelete='SET NULL'),
         nullable=True,
     )
     group = relationship(

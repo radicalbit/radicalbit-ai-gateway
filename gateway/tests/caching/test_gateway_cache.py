@@ -2,7 +2,6 @@ import datetime
 import json
 
 from freezegun import freeze_time
-from langchain_core.messages import HumanMessage
 from openai.types import CompletionUsage
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
@@ -13,6 +12,7 @@ from tests.common.db_mock import TEST_PROJECT_UUID
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 
 PROJECT_UUID = str(TEST_PROJECT_UUID)
 

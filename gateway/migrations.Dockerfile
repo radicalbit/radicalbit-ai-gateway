@@ -1,4 +1,4 @@
-FROM python:3.11.16-slim
+FROM python:3.11.17-slim
 
 # Apply Debian security updates (the pinned base tag is not rebuilt once a newer
 # Python patch is released)
@@ -20,9 +20,11 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_RADICALBIT_AI_GATEWAY=0.0.0
 # Copy dependency files
 COPY uv.lock pyproject.toml ./
 
-# Install only migrations dependencies using uv
+# Install only migrations dependencies using uv, then drop the packaging tools
+# (uv, and the base image's pip/setuptools/wheel): nothing needs them at runtime
 RUN uv pip install --no-cache --system --group migrations && \
-    pip uninstall -y uv && \
+    pip uninstall -y uv setuptools wheel && \
+    python -m pip uninstall -y pip && \
     rm -rf /root/.cache
 
 # Copy alembic config and migrations

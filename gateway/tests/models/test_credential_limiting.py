@@ -139,3 +139,89 @@ def test_credential_limit_out_round_trip():
     assert limit_out.algorithm == LimitingAlgorithmType.FIXED_WINDOW
     assert limit_out.window_size == '1 minute'
     assert limit_out.value == 100
+
+
+@pytest.mark.parametrize(
+    ('window_size', 'canonical'),
+    [
+        ('60 seconds', '1 minute'),
+        ('24 hours', '1 day'),
+        ('1 Hours', '1 hour'),
+        ('30 days', '1 month'),
+        (300, '5 minutes'),
+        (604800, '1 week'),
+    ],
+)
+def test_window_size_is_canonicalised(window_size, canonical):
+    limit_in = CredentialLimitIn(
+        category=CredentialLimitCategory.RATE, window_size=window_size, value=10
+    )
+    assert limit_in.window_size == canonical
+
+
+@pytest.mark.parametrize('window_size', ['1 week', '1 month', '12 hours'])
+def test_fixed_window_accepts_windows_of_the_list(window_size):
+    limit_in = CredentialLimitIn(
+        category=CredentialLimitCategory.RATE, window_size=window_size, value=10
+    )
+    assert limit_in.window_size == window_size
+
+
+@pytest.mark.parametrize('window_size', ['7 hours', '3 days', '2 weeks', '45 seconds'])
+def test_fixed_window_rejects_windows_outside_the_list(window_size):
+    with pytest.raises(ValueError, match='not allowed for FIXED_WINDOW'):
+        CredentialLimitIn(
+            category=CredentialLimitCategory.RATE, window_size=window_size, value=10
+        )
+
+
+@pytest.mark.parametrize('window_size', ['1 week', '1 month'])
+def test_aligned_window_rejects_windows_longer_than_a_day(window_size):
+    with pytest.raises(ValueError, match='not allowed for ALIGNED_FIXED_WINDOW'):
+        CredentialLimitIn(
+            category=CredentialLimitCategory.RATE,
+            algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
+            window_size=window_size,
+            value=10,
+        )
+
+
+@pytest.mark.parametrize('window_size', ['0 seconds', 0, -60])
+def test_window_must_be_positive(window_size):
+    with pytest.raises(ValueError, match='must be longer than 0'):
+        CredentialLimitIn(
+            category=CredentialLimitCategory.RATE, window_size=window_size, value=10
+        )
+
+
+def test_limits_in_rejects_the_same_window_written_differently():
+    with pytest.raises(ValueError, match='Duplicate limit in request'):
+        CredentialLimitsIn(
+            limits=[
+                CredentialLimitIn(
+                    category=CredentialLimitCategory.RATE,
+                    window_size='60 seconds',
+                    value=10,
+                ),
+                CredentialLimitIn(
+                    category=CredentialLimitCategory.RATE,
+                    window_size='1 minute',
+                    value=20,
+                ),
+            ]
+        )
+
+
+def test_whole_float_window_is_read_as_seconds():
+    limit_in = CredentialLimitIn(
+        category=CredentialLimitCategory.RATE, window_size=60.0, value=10
+    )
+    assert limit_in.window_size == '1 minute'
+
+
+@pytest.mark.parametrize('window_size', [60.5, True])
+def test_window_must_be_a_whole_number_of_seconds(window_size):
+    with pytest.raises(ValueError, match='whole number of seconds'):
+        CredentialLimitIn(
+            category=CredentialLimitCategory.RATE, window_size=window_size, value=10
+        )

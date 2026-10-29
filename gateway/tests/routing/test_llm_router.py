@@ -1,11 +1,11 @@
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 import pytest
 
 from tests.common.mocked_gateway_config_openai import get_gateway_routing_llm
 
+from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage, SystemMessage
 from radicalbit_ai_gateway.routing.llm_router import (
     LLMRouter,
     build_response_schema,
@@ -24,6 +24,16 @@ def _raw_message(input_tokens=120, output_tokens=15) -> AIMessage:
     )
 
 
+RECORD_ROUTING_SPEND = 'radicalbit_ai_gateway.routing.llm_router.record_routing_spend'
+
+
+def _parsed(scores: dict | None):
+    if scores is None:
+        return None
+    routing_config = get_gateway_routing_llm().routing_by_name['llm_routing']
+    return build_response_schema(routing_config).model_validate(scores)
+
+
 def _structured_model(scores=None, side_effect=None) -> AsyncMock:
     structured = AsyncMock()
     if side_effect is not None:
@@ -32,7 +42,7 @@ def _structured_model(scores=None, side_effect=None) -> AsyncMock:
         structured.ainvoke = AsyncMock(
             return_value={
                 'raw': _raw_message(),
-                'parsed': scores,
+                'parsed': _parsed(scores),
                 'parsing_error': None,
             }
         )
@@ -122,39 +132,33 @@ class TestLLMRouter:
         assert isinstance(sent[0], SystemMessage)
         assert sent[1].content == 'fix this bug'
 
-    async def test_reports_router_usage(self):
+    async def test_records_router_spend(self):
         router = _build_router(
             _structured_model({'code_model': 0.9, 'general_model': 0.1})
         )
-        on_usage = AsyncMock()
-        await router.select_model(
-            [HumanMessage(content='fix this bug')], on_usage=on_usage
-        )
-        on_usage.assert_awaited_once()
-        usage = on_usage.await_args.args[0]
-        assert usage.model.model_id == 'router_model'
-        assert usage.model_type == 'chat-model'
-        assert usage.input_tokens == 120
-        assert usage.output_tokens == 15
+        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
+            await router.select_model([HumanMessage(content='fix this bug')])
+        record.assert_awaited_once()
+        model, input_tokens, _latency_ms = record.await_args.args
+        assert model.model_id == 'router_model'
+        assert input_tokens == 120
+        assert record.await_args.kwargs['model_type'] == 'chat-model'
+        assert record.await_args.kwargs['output_tokens'] == 15
 
-    async def test_reports_usage_even_below_threshold(self):
+    async def test_records_spend_even_below_threshold(self):
         router = _build_router(
             _structured_model({'code_model': 0.1, 'general_model': 0.1})
         )
-        on_usage = AsyncMock()
-        result = await router.select_model(
-            [HumanMessage(content='cook a pie')], on_usage=on_usage
-        )
+        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
+            result = await router.select_model([HumanMessage(content='cook a pie')])
         assert result.model_id == 'default_model'
-        on_usage.assert_awaited_once()
+        record.assert_awaited_once()
 
-    async def test_no_usage_when_router_call_fails(self):
+    async def test_no_spend_when_router_call_fails(self):
         router = _build_router(_structured_model(side_effect=RuntimeError('boom')))
-        on_usage = AsyncMock()
-        await router.select_model(
-            [HumanMessage(content='fix this bug')], on_usage=on_usage
-        )
-        on_usage.assert_not_awaited()
+        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
+            await router.select_model([HumanMessage(content='fix this bug')])
+        record.assert_not_awaited()
 
     async def test_model_without_structured_output_returns_default(self):
         config = get_gateway_routing_llm()
@@ -182,10 +186,23 @@ class TestPromptAndSchema:
         assert 'keys are exactly: code_model, general_model' in prompt
 
     def test_schema_requires_one_score_per_model(self, routing_config):
-        schema = build_response_schema(routing_config)
+        schema = build_response_schema(routing_config).model_json_schema()
         assert schema['required'] == ['code_model', 'general_model']
-        assert schema['properties'] == {
-            'code_model': {'type': 'number'},
-            'general_model': {'type': 'number'},
+        assert {name: prop['type'] for name, prop in schema['properties'].items()} == {
+            'code_model': 'number',
+            'general_model': 'number',
         }
         assert schema['additionalProperties'] is False
+
+    def test_schema_takes_model_ids_that_are_not_identifiers(self, routing_config):
+        routing_config = routing_config.model_copy(
+            update={
+                'output_mapping': [
+                    entry.model_copy(update={'model_id': f'gpt-4o.{i}'})
+                    for i, entry in enumerate(routing_config.output_mapping)
+                ]
+            }
+        )
+        schema = build_response_schema(routing_config)
+        parsed = schema.model_validate({'gpt-4o.0': 0.7, 'gpt-4o.1': 0.2})
+        assert parsed.model_dump(by_alias=True) == {'gpt-4o.0': 0.7, 'gpt-4o.1': 0.2}

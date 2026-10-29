@@ -4,7 +4,17 @@ import { isFulfilled, isRejectedWithValue } from '@reduxjs/toolkit';
 
 const { setNotificationMessage } = notificationActions;
 
-const errorWhiteList = {};
+const errorWhiteList = {
+  applyGroupLimits: true,
+  approveConfig: true,
+  cancelApproval: true,
+  createKeyLimits: true,
+  createProjectBudgetLimits: true,
+  generateConfig: true,
+  serveConfig: true,
+  unserveConfig: true,
+  updateConfig: true,
+};
 
 const successWhiteList = {};
 

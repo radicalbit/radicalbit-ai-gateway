@@ -18,11 +18,13 @@ from radicalbit_ai_gateway.models.guardrails import (
     DecisionJudgeParameter,
     Guardrail,
     GuardrailType,
+    GuardrailWhereType,
     JudgeParameter,
 )
 from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
 from radicalbit_ai_gateway.models.routing import (
     AnyRoutingConfig,
+    DecisionRoutingConfig,
     DeterministicRoutingConfig,
     LLMRoutingConfig,
     RoutingRuleType,
@@ -380,6 +382,7 @@ class GatewayConfig(BaseModel):
         """Post-resolution:
         - no duplicates within a single route (explicit, redundant check)
         - consistency with global guardrails (should be guaranteed by the 'before' validator; here we assert defensively)
+        - no output guardrail on a route without chat models (it would never run)
         """
         if not self.routes:
             return self
@@ -407,6 +410,16 @@ class GatewayConfig(BaseModel):
                     f'(names are case-sensitive): {", ".join(sorted(unknown))}'
                 )
 
+            # Only chat requests have an output phase. An io guardrail still runs on input.
+            if not route.chat_models:
+                for g in self.guardrails or []:
+                    if g.name in names and g.where == GuardrailWhereType.OUTPUT:
+                        raise ValueError(
+                            f"Route '{r_name}': guardrail '{g.name}' has where: "
+                            'output, but the route has no chat_models. The '
+                            'guardrail would never run.'
+                        )
+
         return self
 
     @model_validator(mode='after')
@@ -422,12 +435,33 @@ class GatewayConfig(BaseModel):
                             'not declared in top-level chat_models.'
                         )
             elif isinstance(params, DecisionJudgeParameter):
-                if params.model_id not in self.decision_models_by_id:
+                # Any decision model of the project, not only those on the route.
+                for label, model_id in (
+                    ('model', params.model_id),
+                    ('fallback model', params.fallback_model_id),
+                ):
+                    if (
+                        model_id is not None
+                        and model_id not in self.decision_models_by_id
+                    ):
+                        raise ValueError(
+                            f"Guardrail '{guardrail.name}': decision judge {label} "
+                            f"'{model_id}' not declared in top-level decision_models."
+                        )
+                if params.fallback_model_id == params.model_id:
                     raise ValueError(
-                        f"Guardrail '{guardrail.name}': decision judge model "
-                        f"'{params.model_id}' not declared in top-level decision_models."
+                        f"Guardrail '{guardrail.name}': decision judge fallback model "
+                        f"'{params.fallback_model_id}' must differ from its model."
                     )
         return self
+
+    def uses_budget_routing(self, route: GatewayRouteConfig) -> bool:
+        """Whether *route* picks its model by how much of its budget is used."""
+        routing_config = self.routing_by_name.get(route.routing)
+        return (
+            isinstance(routing_config, DeterministicRoutingConfig)
+            and routing_config.rule == RoutingRuleType.BUDGET
+        )
 
     @model_validator(mode='after')
     def validate_routing(self) -> Self:
@@ -442,6 +476,11 @@ class GatewayConfig(BaseModel):
 
         routing_by_name = self.routing_by_name
 
+        # Checked for every routing, used or not, as decision judges are.
+        for routing_config in self.routing:
+            if isinstance(routing_config, DecisionRoutingConfig):
+                self._validate_decision_routing_models(routing_config)
+
         for route_name, route in self.routes.items():
             if not route.routing:
                 continue
@@ -454,7 +493,7 @@ class GatewayConfig(BaseModel):
             routing_config = routing_by_name[route.routing]
             route_model_ids = set(route.chat_models or [])
 
-            # Decision routing does not exist yet: keep decision models out.
+            # Routing sends chat requests: never to a decision model.
             referenced_ids = [routing_config.default_model_id] + [
                 entry.model_id for entry in routing_config.output_mapping
             ]
@@ -497,16 +536,26 @@ class GatewayConfig(BaseModel):
                     )
 
             # budget routing requires budget_limiting to be configured on the route
-            if (
-                isinstance(routing_config, DeterministicRoutingConfig)
-                and routing_config.rule == RoutingRuleType.BUDGET
-                and route.budget_limiting is None
-            ):
+            if self.uses_budget_routing(route) and route.budget_limiting is None:
                 raise ValueError(
                     f"Route '{route_name}': budget routing requires budget_limiting to be configured."
                 )
 
         return self
+
+    def _validate_decision_routing_models(
+        self, routing_config: DecisionRoutingConfig
+    ) -> None:
+        """Any decision model of the project can answer, not only those on the route."""
+        for label, model_id in (
+            ('decision model', routing_config.decision_model_id),
+            ('fallback model', routing_config.fallback_model_id),
+        ):
+            if model_id is not None and model_id not in self.decision_models_by_id:
+                raise ValueError(
+                    f"Decision routing '{routing_config.name}': {label} "
+                    f"'{model_id}' not declared in top-level decision_models."
+                )
 
     @model_validator(mode='after')
     def validate_mcp_servers(self) -> Self:

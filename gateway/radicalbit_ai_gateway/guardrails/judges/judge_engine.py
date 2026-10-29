@@ -1,12 +1,12 @@
+from collections.abc import Awaitable, Callable
 import logging
 import time
 
-from langchain.chat_models.base import init_chat_model
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import Runnable
-
 from radicalbit_ai_gateway.events.events_processor import emit_event
+from radicalbit_ai_gateway.llm.chat_model import StructuredChatModel
+from radicalbit_ai_gateway.llm.factory import init_chat_model
+from radicalbit_ai_gateway.llm.messages import AIMessage, BaseMessage, HumanMessage
+from radicalbit_ai_gateway.llm.prompts import PromptTemplate
 from radicalbit_ai_gateway.metrics.define_metrics import (
     fallbacks_triggered_counter,
     invocations_latency_histogram,
@@ -48,6 +48,16 @@ from radicalbit_ai_gateway.utils.parse_provider_and_model import (
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
+# Counts a judge call on the limiters: (model that answered, input, output tokens).
+JudgeUsageCounter = Callable[[Model, int, int], Awaitable[None]]
+
+
+class _UsageCountError(Exception):
+    """A limiter failed to count a judge call. The judge did not fail.
+
+    Raised from the limiter error, so the fallback code can let it through.
+    """
+
 
 class JudgeEngine:
     """Engine for executing guardrails with LLM as a judge."""
@@ -58,7 +68,7 @@ class JudgeEngine:
         httpx_client=None,
     ):
         self.prompt_manager = prompt_manager
-        self._model_cache: dict[str, Runnable] = {}
+        self._model_cache: dict[str, StructuredChatModel] = {}
         self.httpx_client = httpx_client
 
     async def execute_judge(
@@ -68,6 +78,7 @@ class JudgeEngine:
         primary_model: Model,
         cost_service: CostService,
         fallback_model: Model | None = None,
+        count_usage: JudgeUsageCounter | None = None,
         **kwargs,
     ) -> JudgeResult:
         judge_runtime_config = JudgeRuntimeConfig(
@@ -104,6 +115,7 @@ class JudgeEngine:
             content=content,
             media_blocks=media_blocks,
             cost_service=cost_service,
+            count_usage=count_usage,
             **kwargs,
         )
 
@@ -138,6 +150,7 @@ class JudgeEngine:
         content: str,
         cost_service: CostService,
         media_blocks: list[dict] | None = None,
+        count_usage: JudgeUsageCounter | None = None,
         **kwargs,
     ) -> JudgeResult:
         _media = media_blocks or []
@@ -149,8 +162,12 @@ class JudgeEngine:
                 prompt_template=prompt_template,
                 media_blocks=_media,
                 cost_service=cost_service,
+                count_usage=count_usage,
                 **kwargs,
             )
+        except _UsageCountError as err:
+            # Not a judge failure: no fallback, the limiter error goes up as is.
+            raise err.__cause__ from None
         except (JudgeOutputTruncatedError, JudgeParsingError) as judge_err:
             logger.warning('Primary judge failed with recoverable error: %s', judge_err)
             primary_err = judge_err
@@ -185,8 +202,11 @@ class JudgeEngine:
                 fallback_triggerd=True,
                 target_model_id=primary_model.model_id,
                 cost_service=cost_service,
+                count_usage=count_usage,
                 **kwargs,
             )
+        except _UsageCountError as err:
+            raise err.__cause__ from None
         except (JudgeOutputTruncatedError, JudgeParsingError) as fallback_err:
             logger.error(
                 'Both primary and fallback judges failed: primary=%s | fallback=%s',
@@ -226,6 +246,7 @@ class JudgeEngine:
         media_blocks: list[dict] | None = None,
         fallback_triggerd: bool = False,
         target_model_id: str = '',
+        count_usage: JudgeUsageCounter | None = None,
         **kwargs,
     ) -> JudgeResult:
         invocation = await self._invoke_model(
@@ -243,6 +264,14 @@ class JudgeEngine:
             cost_service=cost_service,
             **kwargs,
         )
+        # Count before parsing. A bad reply still spent tokens.
+        input_tokens = invocation.token_input_count or 0
+        output_tokens = invocation.token_output_count or 0
+        if count_usage and (input_tokens or output_tokens):
+            try:
+                await count_usage(model, input_tokens, output_tokens)
+            except Exception as err:
+                raise _UsageCountError from err
         return extract_judge_result(invocation.result, model.model_id)
 
     async def _invoke_model(
@@ -266,8 +295,9 @@ class JudgeEngine:
                 [HumanMessage(content=human_content)]
             )
         else:
-            generation_chain = prompt_template | structured_model
-            result = await generation_chain.ainvoke({'content': content})
+            result = await structured_model.ainvoke(
+                [HumanMessage(content=prompt_template.format(content=content))]
+            )
         latency_ms = (time.monotonic() - start_time) * 1000
 
         raw_response = result.get('raw')
@@ -297,7 +327,7 @@ class JudgeEngine:
 
     def _get_or_create_model(
         self, config: JudgeRuntimeConfig, model: Model
-    ) -> Runnable:
+    ) -> StructuredChatModel:
         cache_key = f'{model.model_id}:{config.temperature}:{config.max_tokens}'
         if cache_key not in self._model_cache:
             provider, model_name = parse_provider_and_model(model.model)

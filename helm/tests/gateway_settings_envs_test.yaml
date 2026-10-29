@@ -1,0 +1,188 @@
+suite: test gateway settings envs
+templates:
+  - gateway/deployment.yaml
+tests:
+  - it: should pass the ClickHouse password under the name the gateway reads
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CLICKHOUSE_DB_PWD
+            valueFrom:
+              secretKeyRef:
+                key: password
+                name: RELEASE-NAME-radicalbit-ai-gateway-ch-auth
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CLICKHOUSE_DB_PASSWORD
+          any: true
+  - it: should keep CLICKHOUSE_DB_PASSWORD for the otel collector
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[1].env
+          content:
+            name: CLICKHOUSE_DB_PASSWORD
+          any: true
+  - it: should pass the ClickHouse database to the gateway
+    set:
+      clickhouse:
+        database: analytics
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CLICKHOUSE_DB_NAME
+            value: analytics
+  - it: should make the gateway serve metrics on the service metrics port
+    set:
+      gateway:
+        service:
+          ports:
+            metrics: 9100
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMETHEUS_METRICS_PORT
+            value: "9100"
+  - it: should set debug and log mode from the default values
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GATEWAY_DEBUG_MODE
+            value: "false"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOG_MODE
+            value: plain
+  - it: should set custom debug and log mode
+    set:
+      gateway:
+        debugMode: true
+        logMode: json
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GATEWAY_DEBUG_MODE
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOG_MODE
+            value: json
+  - it: should set CORS origins as a JSON list and credentials
+    set:
+      gateway:
+        cors:
+          allowOrigins:
+            - https://gateway.example.com
+            - https://admin.example.com
+          allowCredentials: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CORS_ALLOW_ORIGINS
+            value: '["https://gateway.example.com","https://admin.example.com"]'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CORS_ALLOW_CREDENTIALS
+            value: "false"
+  - it: should not set CORS envs by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CORS_ALLOW_ORIGINS
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CORS_ALLOW_CREDENTIALS
+          any: true
+  - it: should set the config generator endpoint, model and retries
+    set:
+      gateway:
+        assistant:
+          baseUrl: https://llm.example.com/v1
+          model: gpt-4.1-mini
+          maxRetries: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONFIG_GENERATOR_OPENAI_BASE_URL
+            value: https://llm.example.com/v1
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONFIG_GENERATOR_OPENAI_MODEL
+            value: gpt-4.1-mini
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONFIG_GENERATOR_MAX_RETRIES
+            value: "5"
+  - it: should not set the config generator settings by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONFIG_GENERATOR_OPENAI_BASE_URL
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONFIG_GENERATOR_OPENAI_MODEL
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONFIG_GENERATOR_MAX_RETRIES
+          any: true
+  - it: should set the event pipeline tuning
+    set:
+      gateway:
+        events:
+          batchSize: 100
+          flushMs: 250
+          brokerPoolLimit: 10
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CELERY_EVENTS_BATCH_SIZE
+            value: "100"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CELERY_EVENTS_FLUSH_MS
+            value: "250"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CELERY_BROKER_POOL_LIMIT
+            value: "10"
+  - it: should not set the event pipeline tuning by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CELERY_EVENTS_BATCH_SIZE
+          any: true
+  - it: should not set THREAD_POOL_MAX_WORKERS, which nothing reads
+    set:
+      gateway:
+        workers:
+          threadPool: 8
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: THREAD_POOL_MAX_WORKERS
+          any: true

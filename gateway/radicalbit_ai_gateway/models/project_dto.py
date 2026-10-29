@@ -8,7 +8,10 @@ from pydantic.alias_generators import to_camel
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
-from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitOut
+from radicalbit_ai_gateway.models.project_budget_limiting import (
+    ProjectBudgetLimitConflictsOut,
+    ProjectBudgetLimitOut,
+)
 from radicalbit_ai_gateway.models.project_status import ProjectStatus
 
 
@@ -128,6 +131,7 @@ class ProjectOut(BaseModel):
     served_config_uuid: UUID | None
     configs: list[ConfigSlotOut]
     limits: list[ProjectBudgetLimitOut] | None = None
+    route_budgets: ProjectBudgetLimitConflictsOut | None = None
     created_at: str
     updated_at: str
 
@@ -140,6 +144,7 @@ class ProjectOut(BaseModel):
         project: Project,
         configs: list[ProjectConfig],
         limits: list[ProjectBudgetLimitOut] | None = None,
+        route_budgets: ProjectBudgetLimitConflictsOut | None = None,
     ) -> 'ProjectOut':
         ordered = sorted(configs, key=lambda c: c.slot)
         served = next(
@@ -154,6 +159,7 @@ class ProjectOut(BaseModel):
             served_config_uuid=served.uuid if served else None,
             configs=[ConfigSlotOut.from_config(c) for c in ordered],
             limits=limits,
+            route_budgets=route_budgets,
             created_at=str(project.created_at),
             updated_at=str(project.updated_at),
         )

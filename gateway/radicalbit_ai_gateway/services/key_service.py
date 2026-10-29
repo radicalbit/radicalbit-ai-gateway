@@ -6,10 +6,8 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
-from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
-from radicalbit_ai_gateway.db.tables.group_limit_table import GroupLimit
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.limiting.credential_limiter import clear_limit_counter
@@ -27,7 +25,6 @@ from radicalbit_ai_gateway.models.credential_expiry import (
     get_credential_state,
 )
 from radicalbit_ai_gateway.models.credential_limiting import (
-    CredentialLimitCategory,
     CredentialLimitOut,
     CredentialLimitsIn,
 )
@@ -35,8 +32,12 @@ from radicalbit_ai_gateway.models.credential_rotation import (
     get_grace_end,
     previous_value_authenticates,
 )
-from radicalbit_ai_gateway.models.group_limiting import GroupLimitOverwriteWarning
-from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
+from radicalbit_ai_gateway.models.group_limiting import (
+    GroupLimitOutcome,
+    GroupLimitResultOut,
+    GroupLimitsIn,
+    GroupMemberLimitsOut,
+)
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -71,13 +72,11 @@ class KeyService:
         api_key_security: ApiKeySecurity,
         group_dao: GroupDAO,
         key_limit_dao: KeyLimitDAO,
-        group_limit_dao: GroupLimitDAO,
     ):
         self.key_dao = key_dao
         self.api_key_security = api_key_security
         self.group_dao = group_dao
         self.key_limit_dao = key_limit_dao
-        self.group_limit_dao = group_limit_dao
 
     def _get_key(
         self,
@@ -270,9 +269,6 @@ class KeyService:
                 f'An error occurred while assigning the group to the key: {exc}'
             ) from exc
         else:
-            group_limits = self.group_limit_dao.get_by_group_uuid(key_group_in.group)
-            if group_limits:
-                self.propagate_group_limits(group_limits=group_limits, keys=[inserted])
             return KeyFullOut.from_key_obscured(
                 key=inserted, include_groups=include_groups
             )
@@ -293,87 +289,89 @@ class KeyService:
             raise KeyInternalError(
                 f'Group with UUID {group_uuid} not removed from key {key.name}'
             )
-        propagated = self.key_limit_dao.delete_group_limits_by_key_uuid(key_uuid)
-        await self._clear_limit_counters(propagated)
         return KeyFullOut.from_key_obscured(key=key, include_groups=True)
 
-    def propagate_group_limits(
-        self, group_limits: Sequence[GroupLimit], keys: Sequence[Key]
-    ) -> tuple[list[CredentialLimitOut], list[GroupLimitOverwriteWarning]]:
-        """Copy each group limit onto each key's own limits. The last limit
-        applied to a credential always wins: an existing limit for the same
-        (key, category, algorithm, window_size) — individually-set or from
-        another group — is overwritten, not skipped.
+    def apply_limits_to_keys(
+        self, keys: Sequence[Key], limits_in: GroupLimitsIn
+    ) -> list[GroupMemberLimitsOut]:
+        """Copy the limits onto each key (bulk assignment), in one transaction.
+
+        A key that already has the same limit is a conflict: skipped when listed
+        in `limits_in.skip`, otherwise its max is overwritten on the same row,
+        so the counter is kept. Expired keys are written too.
         """
-        if not group_limits or not keys:
-            return [], []
         existing_by_signature = {
             (limit.key_uuid, limit.category, limit.algorithm, limit.window_size): limit
             for limit in self.key_limit_dao.get_all_by_key_uuids(
                 [key.uuid for key in keys]
             )
         }
-        UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
+        skipped = {
+            (skip.key_uuid, skip.category.value, skip.algorithm.value, skip.window_size)
+            for skip in limits_in.skip
+        }
         now = datetime.datetime.now(tz=UTC)
         to_insert: list[KeyLimit] = []
         to_update: list[KeyLimit] = []
-        overwritten: list[GroupLimitOverwriteWarning] = []
+        members: list[GroupMemberLimitsOut] = []
         for key in keys:
-            for group_limit in group_limits:
+            results: list[GroupLimitResultOut] = []
+            for limit_in in limits_in.limits:
                 signature = (
                     key.uuid,
-                    group_limit.category,
-                    group_limit.algorithm,
-                    group_limit.window_size,
+                    limit_in.category.value,
+                    limit_in.algorithm.value,
+                    str(limit_in.window_size),
                 )
                 existing = existing_by_signature.get(signature)
-                if existing is not None:
-                    was_from_a_different_source = (
-                        existing.group_limit_uuid != group_limit.uuid
-                    )
-                    existing.max_value = group_limit.max_value
-                    existing.group_limit_uuid = group_limit.uuid
-                    existing.updated_at = now
-                    to_update.append(existing)
-                    if was_from_a_different_source:
-                        overwritten.append(
-                            GroupLimitOverwriteWarning(
-                                key_uuid=key.uuid,
-                                key_name=key.name,
-                                category=CredentialLimitCategory(group_limit.category),
-                                algorithm=LimitingAlgorithmType(group_limit.algorithm),
-                                window_size=group_limit.window_size,
-                            )
-                        )
+                previous_value = None
+                if existing is None:
+                    outcome = GroupLimitOutcome.ADDED
+                    to_insert.append(limit_in.to_key_limit(key.uuid))
                 else:
-                    to_insert.append(
-                        KeyLimit(
-                            key_uuid=key.uuid,
-                            category=group_limit.category,
-                            algorithm=group_limit.algorithm,
-                            window_size=group_limit.window_size,
-                            max_value=group_limit.max_value,
-                            group_limit_uuid=group_limit.uuid,
-                            created_at=now,
-                            updated_at=now,
-                        )
+                    previous_value = float(existing.max_value)
+                    if signature in skipped:
+                        outcome = GroupLimitOutcome.SKIPPED
+                    else:
+                        outcome = GroupLimitOutcome.OVERWRITTEN
+                        existing.max_value = limit_in.value
+                        existing.updated_at = now
+                        to_update.append(existing)
+                results.append(
+                    GroupLimitResultOut(
+                        category=limit_in.category,
+                        algorithm=limit_in.algorithm,
+                        window_size=str(limit_in.window_size),
+                        outcome=outcome,
+                        previous_value=previous_value,
+                        new_value=limit_in.value,
                     )
-        inserted = self.key_limit_dao.insert_many(to_insert) if to_insert else []
-        updated = self.key_limit_dao.update_many(to_update) if to_update else []
-        applied = [
-            CredentialLimitOut.from_key_limit(limit) for limit in inserted + updated
-        ]
-        return applied, overwritten
-
-    async def clear_propagated_limit_counters(self, group_limit_uuid: UUID) -> None:
-        limits = self.key_limit_dao.get_by_group_limit_uuid(group_limit_uuid)
-        await self._clear_limit_counters(limits)
+                )
+            members.append(
+                GroupMemberLimitsOut(
+                    key_uuid=key.uuid,
+                    key_name=key.name,
+                    expired=get_credential_state(key.expires_on)
+                    == CredentialState.EXPIRED,
+                    limits=results,
+                )
+            )
+        try:
+            self.key_limit_dao.save_many(to_insert, to_update)
+        except IntegrityError as e:
+            if 'uq_key_limit_KEY_UUID_CATEGORY_ALGORITHM_WINDOW_SIZE' in str(e.orig):
+                raise CredentialLimitAlreadyExistsError(
+                    'A credential of the group got one of these limits meanwhile: '
+                    'apply them again'
+                ) from e
+            raise KeyInternalError(
+                f'An error occurred while applying the limits: {e}'
+            ) from e
+        return members
 
     @staticmethod
     async def _clear_limit_counters(limits: Sequence[KeyLimit]) -> None:
-        """Best-effort: the DB rows are already gone (or about to be, via a
-        cascading delete), that's what matters.
-        """
+        """Best-effort: the DB rows are already gone, that's what matters."""
         for limit in limits:
             try:
                 await clear_limit_counter(

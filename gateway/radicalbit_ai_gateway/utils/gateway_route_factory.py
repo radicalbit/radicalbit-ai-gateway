@@ -3,8 +3,6 @@ import logging
 from uuid import UUID
 
 from fastapi import FastAPI
-from langchain.embeddings.base import init_embeddings
-from langchain_core.embeddings import Embeddings
 import redis
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
@@ -20,17 +18,22 @@ from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.invocation.chat_model_invoker import build_chat_model
+from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
+from radicalbit_ai_gateway.llm.embeddings import Embeddings
+from radicalbit_ai_gateway.llm.factory import init_embeddings
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.model import MockGatewayEmbeddings, Model
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.routing import (
+    DecisionRoutingConfig,
     LLMRoutingConfig,
     SemanticRoutingConfig,
     TextClassificationRoutingConfig,
 )
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routing import (
+    DecisionRouter,
     DeterministicRouter,
     LLMRouter,
     SemanticRouter,
@@ -57,10 +60,10 @@ def build_embeddings_model(model: Model, httpx_client=None) -> Embeddings:
         latency_ms = int(params.get('latency_ms', 0))
         vector_size = int(params.get('vector_size', 5))
         return MockGatewayEmbeddings(latency_ms=latency_ms, vector_size=vector_size)
-    langchain_provider = provider.replace('-', '_')
+    factory_provider = provider.replace('-', '_')
     return init_embeddings(
         model=model_name,
-        provider=langchain_provider,
+        provider=factory_provider,
         http_async_client=httpx_client,
         **{**params, **credentials},
     )
@@ -183,8 +186,19 @@ def build_gateway_routes_from_config(
                     router = SemanticRouter(
                         config=routing_config,
                         models_by_id=route_models_by_id,
-                        embedding_model=emb_model,
                         embeddings_model=embeddings_instance,
+                        embedding_model_config=emb_model,
+                    )
+                elif isinstance(routing_config, DecisionRoutingConfig):
+                    # Any decision model of the project can answer, as for judges.
+                    router = DecisionRouter(
+                        config=routing_config,
+                        models_by_id=route_models_by_id,
+                        invoker=DecisionModelInvoker(
+                            models=gateway_config.decision_models,
+                            cost_service=cost_service,
+                            httpx_client=httpx_client,
+                        ),
                     )
                 elif isinstance(routing_config, LLMRoutingConfig):
                     router_model = chat_by_id[routing_config.router_model_id]

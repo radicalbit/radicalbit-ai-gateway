@@ -1,7 +1,9 @@
 """The scheduler ticks the window closing until the gateway shuts down."""
 
 import asyncio
+from unittest.mock import patch
 
+from radicalbit_ai_gateway.alerting import alert_window_scheduler
 from radicalbit_ai_gateway.alerting.alert_window_scheduler import (
     run_alert_window_scheduler,
 )
@@ -30,12 +32,15 @@ async def test_a_failing_tick_does_not_stop_the_scheduler():
         ticks.append(1)
         raise RuntimeError('redis down')
 
-    task = asyncio.create_task(
-        run_alert_window_scheduler(close_windows, interval_seconds=0.01)
-    )
+    # The gateway logger writes to the real stderr, past pytest's capture.
+    with patch.object(alert_window_scheduler, 'logger') as logger:
+        task = asyncio.create_task(
+            run_alert_window_scheduler(close_windows, interval_seconds=0.01)
+        )
 
-    await asyncio.sleep(0.1)
-    task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0.1)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
     assert len(ticks) >= 2
+    logger.exception.assert_called_with('Failed to close alert windows')

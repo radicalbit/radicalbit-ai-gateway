@@ -1,6 +1,5 @@
 """Unit tests for the Responses API translation utilities."""
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.chat.chat_completion_message_tool_call import (
@@ -10,31 +9,37 @@ from openai.types.chat.chat_completion_message_tool_call import (
 from openai.types.completion_usage import CompletionUsage
 import pytest
 
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
 from radicalbit_ai_gateway.utils.responses_translation import (
     chat_completion_to_response,
-    input_to_langchain_messages,
+    input_to_messages,
     responses_tools_to_chat_completions_tools,
     translate_tool_choice,
 )
 
-# ── input_to_langchain_messages ────────────────────────────────────────────────
+# ── input_to_messages ────────────────────────────────────────────────
 
 
-class TestInputToLangchainMessages:
+class TestInputToMessages:
     def test_string_input(self):
-        msgs = input_to_langchain_messages('Hello')
+        msgs = input_to_messages('Hello')
         assert msgs == [HumanMessage(content='Hello')]
 
     def test_string_input_with_instructions(self):
-        msgs = input_to_langchain_messages('Hello', instructions='Be brief.')
+        msgs = input_to_messages('Hello', instructions='Be brief.')
         assert msgs == [
             SystemMessage(content='Be brief.'),
             HumanMessage(content='Hello'),
         ]
 
     def test_list_user_message(self):
-        msgs = input_to_langchain_messages(
+        msgs = input_to_messages(
             [
                 {'role': 'user', 'content': 'Hi', 'type': 'message'},
             ]
@@ -42,7 +47,7 @@ class TestInputToLangchainMessages:
         assert msgs == [HumanMessage(content='Hi')]
 
     def test_list_system_message(self):
-        msgs = input_to_langchain_messages(
+        msgs = input_to_messages(
             [
                 {'role': 'system', 'content': 'You are helpful.', 'type': 'message'},
                 {'role': 'user', 'content': 'Tell me something.', 'type': 'message'},
@@ -54,7 +59,7 @@ class TestInputToLangchainMessages:
         ]
 
     def test_developer_role_maps_to_system(self):
-        msgs = input_to_langchain_messages(
+        msgs = input_to_messages(
             [
                 {
                     'role': 'developer',
@@ -66,7 +71,7 @@ class TestInputToLangchainMessages:
         assert msgs == [SystemMessage(content='You are a code assistant.')]
 
     def test_assistant_message(self):
-        msgs = input_to_langchain_messages(
+        msgs = input_to_messages(
             [
                 {'role': 'assistant', 'content': 'Sure!', 'type': 'message'},
             ]
@@ -74,7 +79,7 @@ class TestInputToLangchainMessages:
         assert msgs == [AIMessage(content='Sure!')]
 
     def test_function_call_output(self):
-        msgs = input_to_langchain_messages(
+        msgs = input_to_messages(
             [
                 {
                     'type': 'function_call_output',
@@ -90,14 +95,14 @@ class TestInputToLangchainMessages:
 
     def test_function_call_output_missing_call_id_raises(self):
         with pytest.raises(GatewayBadRequest, match='call_id'):
-            input_to_langchain_messages(
+            input_to_messages(
                 [
                     {'type': 'function_call_output', 'output': 'result'},
                 ]
             )
 
     def test_instructions_prepended_before_list_items(self):
-        msgs = input_to_langchain_messages(
+        msgs = input_to_messages(
             [{'role': 'user', 'content': 'Hi', 'type': 'message'}],
             instructions='Be concise.',
         )
@@ -107,7 +112,7 @@ class TestInputToLangchainMessages:
         ]
 
     def test_multipart_content_text(self):
-        msgs = input_to_langchain_messages(
+        msgs = input_to_messages(
             [
                 {
                     'role': 'user',
@@ -120,7 +125,7 @@ class TestInputToLangchainMessages:
         assert isinstance(msgs[0], HumanMessage)
 
     def test_multipart_content_image_url(self):
-        msgs = input_to_langchain_messages(
+        msgs = input_to_messages(
             [
                 {
                     'role': 'user',
@@ -143,7 +148,7 @@ class TestInputToLangchainMessages:
         assert len(msgs[0].content) == 2
 
     def test_unknown_item_types_are_skipped(self):
-        msgs = input_to_langchain_messages(
+        msgs = input_to_messages(
             [
                 {'type': 'computer_call_output', 'call_id': 'x', 'output': {}},
                 {'role': 'user', 'content': 'Hello', 'type': 'message'},
@@ -154,7 +159,7 @@ class TestInputToLangchainMessages:
 
     def test_invalid_input_type_raises(self):
         with pytest.raises(GatewayBadRequest):
-            input_to_langchain_messages(12345)  # type: ignore[arg-type]
+            input_to_messages(12345)  # type: ignore[arg-type]
 
 
 # ── responses_tools_to_chat_completions_tools ─────────────────────────────────

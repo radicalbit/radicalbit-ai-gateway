@@ -2,7 +2,6 @@ import datetime
 from unittest.mock import MagicMock, patch
 
 from freezegun import freeze_time
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 import pytest
 
 from tests.common.db_mock import GROUP_UUID
@@ -17,6 +16,7 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.caching import CacheConfig, CacheType, SemanticCaching
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig

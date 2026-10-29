@@ -2,14 +2,20 @@ import asyncio
 import logging
 import time
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
+from radicalbit_ai_gateway.llm.chat_model import ChatModel
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import LLMRoutingConfig
-from radicalbit_ai_gateway.routing.usage import OnRoutingUsage, RoutingUsage
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import stringify_message_content
+from radicalbit_ai_gateway.utils.request_context import record_routing_spend
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
@@ -42,16 +48,21 @@ def build_system_prompt(config: LLMRoutingConfig) -> str:
     )
 
 
-def build_response_schema(config: LLMRoutingConfig) -> dict:
-    model_ids = [entry.model_id for entry in config.output_mapping]
-    return {
-        'title': 'routing_distribution',
-        'description': 'Pertinence score of the query for each model.',
-        'type': 'object',
-        'properties': {model_id: {'type': 'number'} for model_id in model_ids},
-        'required': model_ids,
-        'additionalProperties': False,
+def build_response_schema(config: LLMRoutingConfig) -> type[BaseModel]:
+    """One required float per model, keyed by its model_id.
+
+    A model_id need not be a Python identifier: each field is aliased to it.
+    """
+    fields = {
+        f'score_{i}': (float, Field(alias=entry.model_id))
+        for i, entry in enumerate(config.output_mapping)
     }
+    return create_model(
+        'routing_distribution',
+        __doc__='Pertinence score of the query for each model.',
+        __config__=ConfigDict(extra='forbid'),
+        **fields,
+    )
 
 
 class LLMRouter:
@@ -67,7 +78,7 @@ class LLMRouter:
         config: LLMRoutingConfig,
         models_by_id: dict[str, Model],
         router_model: Model,
-        chat_model: BaseChatModel,
+        chat_model: ChatModel,
     ):
         self._config = config
         self._models_by_id = models_by_id
@@ -85,11 +96,7 @@ class LLMRouter:
             )
             self._structured_model = None
 
-    async def select_model(
-        self,
-        messages: list[BaseMessage],
-        on_usage: OnRoutingUsage | None = None,
-    ) -> Model:
+    async def select_model(self, messages: list[BaseMessage]) -> Model:
         if self._structured_model is None:
             return self._default_model()
 
@@ -114,14 +121,15 @@ class LLMRouter:
             return self._default_model()
         latency_ms = (time.monotonic() - start_time) * 1000
 
-        await self._report_usage(response.get('raw'), latency_ms, on_usage)
+        await self._record_spend(response.get('raw'), latency_ms)
 
-        scores = response.get('parsed')
-        if not isinstance(scores, dict):
+        parsed = response.get('parsed')
+        if not isinstance(parsed, BaseModel):
             logger.warning(
                 'LLM router returned no parseable scores, using default model'
             )
             return self._default_model()
+        scores = parsed.model_dump(by_alias=True)
 
         best_model_id = self._config.default_model_id
         best_score = -1.0
@@ -145,25 +153,17 @@ class LLMRouter:
 
         return self._models_by_id[best_model_id]
 
-    async def _report_usage(
-        self,
-        raw_response,
-        latency_ms: float,
-        on_usage: OnRoutingUsage | None,
-    ) -> None:
-        if on_usage is None:
-            return
+    async def _record_spend(self, raw_response, latency_ms: float) -> None:
+        """Charge the router call, input and output tokens, to the request."""
         if not isinstance(raw_response, AIMessage) or not raw_response.usage_metadata:
             logger.warning('LLM router response carries no token usage')
             return
-        await on_usage(
-            RoutingUsage(
-                model=self._router_model,
-                model_type='chat-model',
-                latency_ms=latency_ms,
-                input_tokens=raw_response.usage_metadata.get('input_tokens', 0),
-                output_tokens=raw_response.usage_metadata.get('output_tokens', 0),
-            )
+        await record_routing_spend(
+            self._router_model,
+            raw_response.usage_metadata.get('input_tokens', 0),
+            latency_ms,
+            model_type='chat-model',
+            output_tokens=raw_response.usage_metadata.get('output_tokens', 0),
         )
 
     def _default_model(self) -> Model:

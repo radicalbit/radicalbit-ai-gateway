@@ -28,9 +28,9 @@ from collections.abc import Awaitable, Callable
 import logging
 
 from fastapi import status
-from langchain_core.messages import BaseMessage
 from traceloop.sdk.decorators import task, workflow
 
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.config_hooks import (
     PluginConfig,

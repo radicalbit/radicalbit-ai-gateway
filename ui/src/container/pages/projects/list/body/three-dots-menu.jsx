@@ -19,6 +19,7 @@ import {
   Square,
   SquarePen,
   Trash,
+  Wallet,
 } from 'lucide-react';
 
 const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
@@ -30,6 +31,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   const visibleConfig = useGetVisibleConfig(configs);
 
   const editConfigItem = useEditConfigItem(uuid, visibleConfig);
+  const budgetLimitsItem = useBudgetLimitsItem(uuid);
   const visibleConfigActions = useVisibleConfigItems(uuid, visibleConfig);
   const deleteProjectItems = useDeleteProjectItems(uuid);
 
@@ -61,10 +63,33 @@ export const useGetThreeDotsMenuItems = (uuid) => {
     }
     : false;
 
+  const limitsGroup = {
+    key: 'limits-group',
+    type: 'group',
+    label: 'Limits',
+    children: [budgetLimitsItem],
+  };
+
   return [
     configurationGroup,
+    limitsGroup,
     ...deleteProjectItems,
   ].filter(Boolean);
+};
+
+const useBudgetLimitsItem = (uuid) => {
+  const { showModal } = useModals();
+
+  const handleOnClick = () => {
+    showModal(modals.MANAGE_PROJECT_BUDGET, { uuid });
+  };
+
+  return {
+    key: 'budget-limits',
+    icon: <Lucide icon={Wallet} />,
+    label: 'Budget limits',
+    onClick: handleOnClick,
+  };
 };
 
 const useEditConfigItem = (uuid, visibleConfig) => {

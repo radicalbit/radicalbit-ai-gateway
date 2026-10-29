@@ -16,6 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
 from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitsIn
+from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitsIn
 from radicalbit_ai_gateway.server import validation_exception_handler
 
 
@@ -43,3 +44,28 @@ class TestValidationExceptionHandler(unittest.TestCase):
         )
         assert res.status_code == 422
         assert 'Duplicate limit in request' in res.text
+
+    def test_window_size_error_points_at_the_field(self):
+        res = self.client.post(
+            '/limits',
+            json={
+                'limits': [{'category': 'budget', 'windowSize': '7 hours', 'value': 10}]
+            },
+        )
+        assert res.status_code == 422
+        assert res.json()['detail'][0]['loc'] == ['body', 'limits', 0, 'windowSize']
+
+    def test_project_budget_window_size_error_points_at_the_field(self):
+        app = FastAPI()
+        app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
+        @app.post('/budget-limits')
+        def _create_budget_limits(limits_in: ProjectBudgetLimitsIn):
+            return limits_in.model_dump()
+
+        res = TestClient(app).post(
+            '/budget-limits',
+            json={'limits': [{'windowSize': 60.5, 'value': 10}]},
+        )
+        assert res.status_code == 422
+        assert res.json()['detail'][0]['loc'] == ['body', 'limits', 0, 'windowSize']

@@ -4,6 +4,8 @@ from typing import Annotated, Literal, Union
 from cron_converter import Cron
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from radicalbit_ai_gateway.models.guardrails import GuardrailMessageRole
+
 try:
     from typing import Self
 except ImportError:
@@ -187,6 +189,69 @@ class SemanticRoutingConfig(RoutingConfig):
         return self
 
 
+class DecisionOutputMappingEntry(BaseModel):
+    """One option offered to the decision model."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    model_id: str
+    description: str
+
+    @field_validator('description')
+    @classmethod
+    def validate_description(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError('description must not be empty')
+        return v
+
+
+class DecisionRoutingConfig(RoutingConfig):
+    """A decision model chooses the chat model among the output_mapping options."""
+
+    type: Literal['decision'] = 'decision'
+    decision_model_id: str
+    fallback_model_id: str | None = None
+    instructions: str
+    output_mapping: list[DecisionOutputMappingEntry]
+    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    history: Literal['last', 'all'] = 'last'
+    message_roles: list[GuardrailMessageRole] | None = None
+
+    @field_validator('instructions')
+    @classmethod
+    def validate_instructions(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError('instructions must not be empty')
+        return v
+
+    @field_validator('output_mapping')
+    @classmethod
+    def validate_at_least_two_options(
+        cls, v: list[DecisionOutputMappingEntry]
+    ) -> list[DecisionOutputMappingEntry]:
+        # The base validator only rejects an empty list.
+        if len(v) < 2:
+            raise ValueError('decision routing needs at least 2 output_mapping entries')
+        return v
+
+    @field_validator('message_roles', mode='before')
+    @classmethod
+    def validate_message_roles(cls, value):
+        """Accept roles in any case, as guardrails do."""
+        if isinstance(value, list):
+            return [v.upper() if isinstance(v, str) else v for v in value]
+        return value
+
+    @model_validator(mode='after')
+    def validate_message_roles_need_history_all(self) -> Self:
+        if self.message_roles is not None and self.history == 'last':
+            raise ValueError(
+                'message_roles needs history: all. With history: last only the '
+                'last human message is sent.'
+            )
+        return self
+
+
 class LLMRoutingConfig(RoutingConfig):
     type: Literal['llm'] = 'llm'
     router_model_id: str
@@ -213,6 +278,7 @@ AnyRoutingConfig = Annotated[
         DeterministicRoutingConfig,
         TextClassificationRoutingConfig,
         SemanticRoutingConfig,
+        DecisionRoutingConfig,
         LLMRoutingConfig,
     ],
     Field(discriminator='type'),

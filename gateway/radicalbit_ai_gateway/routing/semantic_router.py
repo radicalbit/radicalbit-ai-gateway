@@ -1,15 +1,18 @@
 import logging
 import time
 
-from langchain_core.embeddings import Embeddings
-from langchain_core.messages import BaseMessage, HumanMessage
 import numpy as np
 
+from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
+    EMBEDDINGS_MODEL_TYPE,
+)
+from radicalbit_ai_gateway.llm.embeddings import Embeddings
+from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import SemanticRoutingConfig
-from radicalbit_ai_gateway.routing.usage import OnRoutingUsage, RoutingUsage
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import stringify_message_content
+from radicalbit_ai_gateway.utils.request_context import record_routing_spend
 from radicalbit_ai_gateway.utils.token_encoding import count_tokens
 
 app_config = get_app_config()
@@ -37,13 +40,14 @@ class SemanticRouter:
         self,
         config: SemanticRoutingConfig,
         models_by_id: dict[str, Model],
-        embedding_model: Model,
         embeddings_model: Embeddings,
+        embedding_model_config: Model,
     ):
         self._config = config
         self._models_by_id = models_by_id
-        self._embedding_model = embedding_model
         self._embeddings_model = embeddings_model
+        # Its price and tokenizer charge the query embedding to the request.
+        self._embedding_model_config = embedding_model_config
         self._centroids: list[tuple[str, np.ndarray]] = []
         self._initialized = False
 
@@ -66,11 +70,7 @@ class SemanticRouter:
             )
         self._initialized = True
 
-    async def select_model(
-        self,
-        messages: list[BaseMessage],
-        on_usage: OnRoutingUsage | None = None,
-    ) -> Model:
+    async def select_model(self, messages: list[BaseMessage]) -> Model:
         if not self._initialized:
             logger.warning('SemanticRouter not initialized, using default model')
             return self._models_by_id[self._config.default_model_id]
@@ -79,17 +79,9 @@ class SemanticRouter:
         if not last_text:
             return self._models_by_id[self._config.default_model_id]
 
-        start_time = time.monotonic()
+        start = time.monotonic()
         query_vector = await self._embeddings_model.aembed_query(last_text)
-        if on_usage is not None:
-            await on_usage(
-                RoutingUsage(
-                    model=self._embedding_model,
-                    model_type='embeddings',
-                    latency_ms=(time.monotonic() - start_time) * 1000,
-                    input_tokens=count_tokens(last_text, self._embedding_model.model),
-                )
-            )
+        await self._record_spend(last_text, (time.monotonic() - start) * 1000)
         query = _normalize(np.array(query_vector))
 
         best_model_id = self._config.default_model_id
@@ -111,3 +103,13 @@ class SemanticRouter:
             return self._models_by_id[self._config.default_model_id]
 
         return self._models_by_id[best_model_id]
+
+    async def _record_spend(self, text: str, latency_ms: float) -> None:
+        """Charge the query embedding to the request. Centroids are not charged."""
+        model = self._embedding_model_config
+        await record_routing_spend(
+            model,
+            count_tokens(text, model.model),
+            latency_ms,
+            model_type=EMBEDDINGS_MODEL_TYPE,
+        )

@@ -38,23 +38,23 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver-opts: |
             network=host
             env.BUILDKIT_STEP_LOG_MAX_SIZE=50000000
             env.BUILDKIT_STEP_LOG_MAX_SPEED=100000000
       - name: Log in to container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ secrets.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - name: Build and push app image by digest
         id: build-app
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -62,7 +62,7 @@ jobs:
           outputs: type=image,name=${{ env.APP_IMAGE }},push-by-digest=true,name-canonical=true,push=true
       - name: Build and push migrations image by digest
         id: build-migrations
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./gateway
           file: ./gateway/migrations.Dockerfile
@@ -77,7 +77,7 @@ jobs:
           APP_DIGEST: ${{ steps.build-app.outputs.digest }}
           MIGRATIONS_DIGEST: ${{ steps.build-migrations.outputs.digest }}
       - name: Upload digests
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: digests-gateway-${{ matrix.platform_short }}
           path: /tmp/digests/**
@@ -96,19 +96,19 @@ jobs:
       migrations_digest: ${{ steps.migrations-manifest.outputs.digest }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: /tmp/digests
           pattern: digests-gateway-*
           merge-multiple: true
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Install Cosign
         uses: sigstore/cosign-installer@v4.0.0
       - name: Log in to container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ secrets.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}
@@ -194,7 +194,7 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v4.0.0
       - name: Log in to container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ secrets.REGISTRY_HOST }}
           username: ${{ secrets.REGISTRY_USERNAME }}

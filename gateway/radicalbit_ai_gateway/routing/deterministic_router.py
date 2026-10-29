@@ -2,15 +2,14 @@ from datetime import datetime, timezone
 import logging
 
 from cron_converter import Cron
-from langchain_core.messages import BaseMessage, HumanMessage
 
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
+from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
     DeterministicRoutingConfig,
     RoutingRuleType,
 )
-from radicalbit_ai_gateway.routing.usage import OnRoutingUsage
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import (
     build_user_content,
@@ -43,11 +42,7 @@ class DeterministicRouter:
         self._models_by_id = models_by_id
         self.budget_limiter = budget_limiter
 
-    async def select_model(
-        self,
-        messages: list[BaseMessage],
-        on_usage: OnRoutingUsage | None = None,
-    ) -> Model:
+    async def select_model(self, messages: list[BaseMessage]) -> Model:
         if self._config.rule == RoutingRuleType.KEYWORD:
             return self._apply_keyword_rule(messages)
         if self._config.rule == RoutingRuleType.TOKEN_LENGTH:

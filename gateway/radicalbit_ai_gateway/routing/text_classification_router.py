@@ -1,11 +1,10 @@
 import logging
 
 import httpx
-from langchain_core.messages import BaseMessage, HumanMessage
 
+from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import TextClassificationRoutingConfig
-from radicalbit_ai_gateway.routing.usage import OnRoutingUsage
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import stringify_message_content
 
@@ -22,11 +21,7 @@ class TextClassificationRouter:
         self._config = config
         self._models_by_id = models_by_id
 
-    async def select_model(
-        self,
-        messages: list[BaseMessage],
-        on_usage: OnRoutingUsage | None = None,
-    ) -> Model:
+    async def select_model(self, messages: list[BaseMessage]) -> Model:
         user_text = None
         for msg in reversed(messages):
             if isinstance(msg, HumanMessage):

@@ -24,7 +24,7 @@ jobs:
   test:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Run helm-unittest
         run: |
           docker run --rm --user root -v ${{ github.workspace }}/helm:/apps \
