@@ -8,7 +8,7 @@ import { useCallback } from 'react';
 import { useMatch, useNavigate } from 'react-router-dom';
 
 export default () => {
-  const { modalPayload } = useModals();
+  const { hideModal, modalPayload } = useModals();
   const uuid = modalPayload.data?.uuid;
   const { submitForm } = useFormbitContext();
 
@@ -39,9 +39,12 @@ export default () => {
 
       if (currentUuid === uuid) {
         navigate(`/${PathsEnum.GROUPS}`, { replace: true });
+        return;
       }
+
+      hideModal();
     });
-  }, [args.isLoading, submitForm, trigger, uuid, name, currentUuid, navigate]);
+  }, [args.isLoading, submitForm, trigger, uuid, name, currentUuid, navigate, hideModal]);
 
   return { handleOnSubmit, args };
 };

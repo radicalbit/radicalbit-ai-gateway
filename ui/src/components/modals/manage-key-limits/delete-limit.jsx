@@ -6,7 +6,11 @@ import SuccessMessage from '@Components/success-message';
 import useModals from '@Hooks/use-modals';
 import { useGetAlertsQuery } from '@State/alerts/api';
 import { useDeleteKeyLimitMutation, useGetKeyQuery } from '@State/keys/api';
-import { Popconfirm, SectionTitle, Skeleton, TextWithBold } from '@radicalbit/radicalbit-design-system';
+import Lucide from '@Components/lucide';
+import {
+  Button, Popconfirm, SectionTitle, Skeleton, TextWithBold,
+} from '@radicalbit/radicalbit-design-system';
+import { Trash2 } from 'lucide-react';
 
 const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this limit.';
 
@@ -51,7 +55,11 @@ function DeleteLimit({ limit }) {
           <StaleRules limit={limit} />
         </div>
       )}
-      label={<div className="is-error">Delete</div>}
+      label={(
+        <Button aria-label={`Delete limit ${label}`} type="text">
+          <Lucide icon={Trash2} type="error" />
+        </Button>
+      )}
       okText={<div className="is-error">Delete</div>}
       okType="error-light"
       onCancel={handleOnCancel}

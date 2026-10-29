@@ -1,9 +1,8 @@
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
+import InfoPopover from '@Components/info-popover';
 import { useGetRouteByNameWithRange } from '@Src/store/state/routes/vertical-hooks';
-import {
-  Json, Popover,
-} from '@radicalbit/radicalbit-design-system';
+import { Json } from '@radicalbit/radicalbit-design-system';
 import isEmpty from 'lodash/isEmpty';
 import {
   Bot, CircleCheck, CornerDownRight, Hourglass, Plug, Route, Shield, TableColumnsSplit, Timer,
@@ -24,13 +23,13 @@ export function useGetModelItem() {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content="Configure this section into your configuration file" placement="top">
+        <InfoPopover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
             <IconBadge aria-label="Models" type="text"><Lucide icon={Bot} /></IconBadge>
 
             <div>Models</div>
           </div>
-        </Popover>
+        </InfoPopover>
       ),
     };
   }
@@ -69,13 +68,13 @@ export function useGetFallbackItem() {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content="Configure this section into your configuration file" placement="top">
+        <InfoPopover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
             <IconBadge aria-label="Fallback" disabled type="secondary-light"><Lucide icon={CornerDownRight} /></IconBadge>
 
             <div>Fallback</div>
           </div>
-        </Popover>
+        </InfoPopover>
       ),
     };
   }
@@ -124,13 +123,13 @@ export function useGetGuardrailsItem() {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content="Configure this section into your configuration file" placement="top">
+        <InfoPopover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
             <IconBadge aria-label="Guardrails" disabled type="secondary-light"><Lucide icon={Shield} /></IconBadge>
 
             <div>Guardrails</div>
           </div>
-        </Popover>
+        </InfoPopover>
       ),
     };
   }
@@ -178,13 +177,13 @@ export function useGetRateLimitingItem() {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content="Configure this section into your configuration file" placement="top">
+        <InfoPopover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
             <IconBadge aria-label="Rate Limiting" disabled><Lucide icon={Timer} /></IconBadge>
 
             <div>Rate Limiting</div>
           </div>
-        </Popover>
+        </InfoPopover>
       ),
     };
   }
@@ -239,13 +238,13 @@ export function useGetTokenLimitingItem() {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content={tooltip} placement="top">
+        <InfoPopover content={tooltip} placement="top">
           <div className="flex justify-start items-center gap-4">
             <IconBadge aria-label="Token Limiting" disabled type="secondary-light"><Lucide icon={TableColumnsSplit} /></IconBadge>
 
             <div>Token Limiting</div>
           </div>
-        </Popover>
+        </InfoPopover>
       ),
     };
   }
@@ -296,13 +295,13 @@ export function useGetDurationLimitingItem() {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content={tooltip} placement="top">
+        <InfoPopover content={tooltip} placement="top">
           <div className="flex justify-start items-center gap-4">
             <IconBadge aria-label="Duration Limiting" disabled><Lucide icon={Hourglass} /></IconBadge>
 
             <div>Duration Limiting</div>
           </div>
-        </Popover>
+        </InfoPopover>
       ),
     };
   }
@@ -360,7 +359,7 @@ export function useGetCacheItem() {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content="Configure this section into your configuration file" placement="top">
+        <InfoPopover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
             <IconBadge aria-label="Caching" {...type}>
               <Lucide icon={CircleCheck} />
@@ -368,7 +367,7 @@ export function useGetCacheItem() {
 
             <div>Caching</div>
           </div>
-        </Popover>
+        </InfoPopover>
       ),
     };
   }
@@ -407,13 +406,13 @@ export function useGetAdvancedRoutingItem() {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content="Configure this section into your configuration file" placement="top">
+        <InfoPopover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
             <IconBadge aria-label="Advanced Routing" disabled type="secondary-light"><Lucide icon={Route} /></IconBadge>
 
             <div>Advanced Routing</div>
           </div>
-        </Popover>
+        </InfoPopover>
       ),
     };
   }
@@ -450,13 +449,13 @@ export function useGetMcpServersItem() {
       collapsible: 'disabled',
       showArrow: false,
       label: (
-        <Popover content="Configure this section into your configuration file" placement="top">
+        <InfoPopover content="Configure this section into your configuration file" placement="top">
           <div className="flex justify-start items-center gap-4">
             <IconBadge aria-label="MCP Servers" disabled type="secondary-light"><Lucide icon={Plug} /></IconBadge>
 
             <div>MCP Servers</div>
           </div>
-        </Popover>
+        </InfoPopover>
       ),
     };
   }

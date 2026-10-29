@@ -1,4 +1,5 @@
-import { Popover, Tag, Truncate } from '@radicalbit/radicalbit-design-system';
+import InfoPopover from '@Components/info-popover';
+import { Tag, Truncate } from '@radicalbit/radicalbit-design-system';
 
 const VISIBLE_TAGS = 3;
 
@@ -37,7 +38,7 @@ function HiddenTags({ count, tags }) {
   };
 
   return (
-    <Popover
+    <InfoPopover
       arrow={false}
       content={(
         <div className="flex flex-col gap-2">
@@ -54,7 +55,7 @@ function HiddenTags({ count, tags }) {
       title="Tags"
     >
       <Tag onClick={handleOnClick} rounded type="secondary">{`+${count}`}</Tag>
-    </Popover>
+    </InfoPopover>
   );
 }
 

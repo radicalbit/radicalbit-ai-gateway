@@ -13,6 +13,8 @@ const OVERLAY_SELECTORS = '.c-popover, .ant-select-dropdown';
 
 const TRIGGER_WIDTH = 150;
 
+const OPEN_KEYS = ['Enter', ' ', 'ArrowDown'];
+
 function TagsFilter({ id }) {
   return (
     <TagsFilterContextProvider>
@@ -29,7 +31,7 @@ function TagsFilterInner({ id }) {
   const activeCount = rows.filter(({ key, values }) => key && values.length > 0).length;
   const label = activeCount > 0 ? `${activeCount} selected` : undefined;
 
-  const { handleOnTriggerClick, isOpen, wrapperRef } = usePopoverVisibility();
+  const { handleOnTriggerClick, handleOnTriggerKeyDown, isOpen, wrapperRef } = usePopoverVisibility();
   useResetRowsOnProjectChange();
 
   if (!projectUuid) {
@@ -56,6 +58,7 @@ function TagsFilterInner({ id }) {
           id={id}
           minWidth={TRIGGER_WIDTH}
           onClick={handleOnTriggerClick}
+          onKeyDown={handleOnTriggerKeyDown}
           open={false}
           placeholder="All tags"
           value={label}
@@ -145,10 +148,21 @@ const usePopoverVisibility = () => {
       setIsOpen(false);
     };
 
+    const handleOnDocumentKeyDown = (event) => {
+      if (event.key !== 'Escape' || document.querySelector('.ant-select-dropdown:not(.ant-select-dropdown-hidden)')) {
+        return;
+      }
+
+      setIsOpen(false);
+      wrapperRef.current?.querySelector('input')?.focus();
+    };
+
     document.addEventListener('mousedown', handleOnDocumentClick, true);
+    document.addEventListener('keydown', handleOnDocumentKeyDown);
 
     return () => {
       document.removeEventListener('mousedown', handleOnDocumentClick, true);
+      document.removeEventListener('keydown', handleOnDocumentKeyDown);
     };
   }, [isOpen]);
 
@@ -156,7 +170,22 @@ const usePopoverVisibility = () => {
     setIsOpen((prev) => !prev);
   };
 
-  return { handleOnTriggerClick, isOpen, wrapperRef };
+  const handleOnTriggerKeyDown = (event) => {
+    if (!OPEN_KEYS.includes(event.key)) {
+      return;
+    }
+
+    event.preventDefault();
+    setIsOpen(true);
+
+    requestAnimationFrame(() => {
+      document.querySelector('.c-popover:not(.ant-popover-hidden) input, .c-popover:not(.ant-popover-hidden) button')?.focus();
+    });
+  };
+
+  return {
+    handleOnTriggerClick, handleOnTriggerKeyDown, isOpen, wrapperRef,
+  };
 };
 
 const useResetRowsOnProjectChange = () => {

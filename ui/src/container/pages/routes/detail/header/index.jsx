@@ -46,6 +46,7 @@ function RouteDetailHeader() {
       title={(
         <SectionTitle
           icon={<CopyToClipboard link={routeName} tooltip={{ mouseEnterDelay: 0 }} />}
+          level={2}
           subtitle="View route setup"
           title={routeName}
         />

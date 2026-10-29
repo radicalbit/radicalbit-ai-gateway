@@ -1,4 +1,5 @@
-import { Divider, Popover } from '@radicalbit/radicalbit-design-system';
+import InfoPopover from '@Components/info-popover';
+import { Divider } from '@radicalbit/radicalbit-design-system';
 
 function Models({ configuration }) {
   const chatModels = configuration?.chatModels || [];
@@ -59,9 +60,9 @@ function Models({ configuration }) {
   );
 
   return (
-    <Popover content={content} minWidth="250">
+    <InfoPopover content={content} minWidth="250">
       {count}
-    </Popover>
+    </InfoPopover>
   );
 }
 

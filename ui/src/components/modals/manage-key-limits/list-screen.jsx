@@ -8,10 +8,10 @@ import { CredentialStateEnum } from '@Src/constants';
 import { useGetKeyQuery } from '@State/keys/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
-  Alert, Board, Button, DataTable, Dropdown, Void,
+  Alert, Board, Button, DataTable, Void,
 } from '@radicalbit/radicalbit-design-system';
 import {
-  ChevronDown, ChevronRight, EllipsisVertical, Plus,
+  ChevronDown, ChevronRight, Plus,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import DeleteLimit from './delete-limit';
@@ -225,13 +225,13 @@ function Name({ isExpanded, record }) {
   const chevron = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    <div className="flex gap-2 items-center font-[var(--coo-font-weight-bold)]">
+    <button aria-expanded={isExpanded} className="flex gap-2 items-center p-0 border-0 bg-transparent text-inherit text-left font-[inherit] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--coo-fg-black)] font-[var(--coo-font-weight-bold)]" type="button">
       <Lucide icon={chevron} />
 
       {LIMIT_CATEGORY_LABELS[category]}
 
       <span className="font-normal opacity-70">{`(${count})`}</span>
-    </div>
+    </button>
   );
 }
 
@@ -252,14 +252,10 @@ function Actions({ isExpired, record }) {
     return false;
   }
 
-  const items = [{ key: 'delete', label: <DeleteLimit limit={record} /> }];
-
   return (
-    <Dropdown menu={{ items }}>
-      <Button aria-label="More actions" onClick={handleOnClick} type="text">
-        <Lucide icon={EllipsisVertical} />
-      </Button>
-    </Dropdown>
+    <span onClick={handleOnClick} role="presentation">
+      <DeleteLimit limit={record} />
+    </span>
   );
 }
 

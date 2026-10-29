@@ -1,13 +1,13 @@
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
-import { Popover } from '@radicalbit/radicalbit-design-system';
+import InfoPopover from '@Components/info-popover';
 import { CircleAlert, CircleCheck, TriangleAlert } from 'lucide-react';
 
 function Risk({ level }) {
   switch (level) {
     case 'minimal': {
       return (
-        <Popover
+        <InfoPopover
           content="AI-enabled video games, spam filters"
           title={(
             <div className="flex items-center gap-4">
@@ -31,13 +31,13 @@ function Risk({ level }) {
           >
             <Lucide icon={CircleCheck} />
           </IconBadge>
-        </Popover>
+        </InfoPopover>
       );
     }
 
     case 'medium': {
       return (
-        <Popover
+        <InfoPopover
           content={(
             <>
               General purpose AI and AI systems with specific transparency
@@ -67,13 +67,13 @@ function Risk({ level }) {
           >
             <Lucide icon={CircleAlert} />
           </IconBadge>
-        </Popover>
+        </InfoPopover>
       );
     }
 
     case 'high': {
       return (
-        <Popover
+        <InfoPopover
           content={(
             <>
               Safety components in critical infrastructure, employment &
@@ -107,7 +107,7 @@ function Risk({ level }) {
           >
             <Lucide icon={TriangleAlert} />
           </IconBadge>
-        </Popover>
+        </InfoPopover>
       );
     }
 
