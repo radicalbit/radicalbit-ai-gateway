@@ -38,9 +38,10 @@ const SCREEN_ACTIONS = {
 function ManageProjectBudget() {
   const { modalPayload } = useModals();
   const screen = modalPayload?.data?.screen;
+  const limit = modalPayload?.data?.limit;
 
   return (
-    <FormbitContextProvider initialValues={getInitialValues(screen)} schema={schema}>
+    <FormbitContextProvider initialValues={getInitialValues(screen, limit)} schema={schema}>
       <ManageProjectBudgetInner />
     </FormbitContextProvider>
   );

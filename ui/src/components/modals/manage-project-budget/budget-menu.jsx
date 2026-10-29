@@ -1,13 +1,12 @@
 import Lucide from '@Components/lucide';
 import focusConfirmQuestion from '@Components/limits/focus-confirm-question';
 import focusLimitRow from '@Components/limits/focus-limit-row';
-import { LimitCategoryEnum } from '@Components/limits/constants';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button, Dropdown, Tooltip } from '@radicalbit/radicalbit-design-system';
 import { EllipsisVertical } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { getBudgetLabel } from './helpers';
-import { ScreenEnum } from './schema';
+import { ScreenEnum, getEditRow } from './schema';
 
 const MENU_TRIGGER = ['hover', 'click'];
 
@@ -22,11 +21,7 @@ function BudgetMenu({ limit }) {
   const label = getBudgetLabel(limit);
 
   const handleOnEdit = () => {
-    const row = {
-      algorithm: limit?.algorithm, category: LimitCategoryEnum.BUDGET, rowKey: limitUuid, value: limit?.value, windowSize: limit?.windowSize,
-    };
-
-    writeAll([['limits', [row]], ['__metadata.limitUuid', limitUuid], ['__metadata.screen', ScreenEnum.EDIT]]);
+    writeAll([['limits', [getEditRow(limit)]], ['__metadata.limitUuid', limitUuid], ['__metadata.screen', ScreenEnum.EDIT]]);
     focusLimitRow(0);
   };
 

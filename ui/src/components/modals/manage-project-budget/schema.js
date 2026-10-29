@@ -11,10 +11,23 @@ const ScreenEnum = {
 
 const newRow = () => ({ ...EMPTY_LIMIT, category: LimitCategoryEnum.BUDGET, rowKey: `${Date.now()}-${Math.random()}` });
 
-const getInitialValues = (screen = ScreenEnum.LIST) => ({
-  limits: [newRow()],
-  __metadata: { screen },
+const getEditRow = ({ algorithm, uuid, value, windowSize }) => ({
+  algorithm, category: LimitCategoryEnum.BUDGET, rowKey: uuid, value, windowSize,
 });
+
+const getInitialValues = (screen = ScreenEnum.LIST, limit = undefined) => {
+  if (limit) {
+    return {
+      limits: [getEditRow(limit)],
+      __metadata: { limitUuid: limit.uuid, screen },
+    };
+  }
+
+  return {
+    limits: [newRow()],
+    __metadata: { screen },
+  };
+};
 
 const schema = yup.object().shape({
   limits: yup.array().of(yup.object().shape({
@@ -25,5 +38,5 @@ const schema = yup.object().shape({
 });
 
 export {
-  ScreenEnum, getInitialValues, newRow, schema,
+  ScreenEnum, getEditRow, getInitialValues, newRow, schema,
 };
