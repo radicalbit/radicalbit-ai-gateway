@@ -2067,6 +2067,31 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         assert result.status_message == ''
         assert result.events == []
 
+    def test_get_span_by_trace_and_span_id_reads_gen_ai_total_tokens(self):
+        test_spans = [
+            db_mock.get_sample_otel_span(
+                timestamp=datetime.datetime(
+                    2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+                ),
+                trace_id='trace-123',
+                span_id='span-456',
+                parent_span_id='',
+                span_attributes={
+                    'gen_ai.usage.input_tokens': '312',
+                    'gen_ai.usage.output_tokens': '0',
+                    'gen_ai.usage.total_tokens': '312',
+                },
+            )
+        ]
+        self.insert(test_spans)
+
+        result = self.otel_traces_dao.get_span_by_trace_and_span_id(
+            TEST_PROJECT_UUID, 'trace-123', 'span-456'
+        )
+
+        assert result is not None
+        assert result.total_tokens == '312'
+
     def test_get_span_by_trace_and_span_id_with_events(self):
         """Test that events are correctly retrieved as dictionaries."""
         base_time = datetime.datetime(
