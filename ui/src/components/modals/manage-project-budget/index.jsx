@@ -3,7 +3,7 @@ import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
-  Alert, Button, RbitModal, SectionTitle, Spinner,
+  Alert, Button, RbitModal, SectionTitle, Skeleton, Spinner,
 } from '@radicalbit/radicalbit-design-system';
 import AddScreen from './add-screen';
 import DeleteScreen from './delete-screen';
@@ -36,31 +36,8 @@ const SCREEN_ACTIONS = {
 };
 
 function ManageProjectBudget() {
-  const { hideModal, modalPayload } = useModals();
-  const uuid = modalPayload?.data?.uuid;
+  const { modalPayload } = useModals();
   const screen = modalPayload?.data?.screen;
-
-  const { isError, isLoading, isSuccess } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
-
-  if (isLoading) {
-    return (
-      <RbitModal onCancel={hideModal} open width={MODAL_WIDTH}>
-        <Spinner />
-      </RbitModal>
-    );
-  }
-
-  if (isError) {
-    return (
-      <RbitModal onCancel={hideModal} open width={MODAL_WIDTH}>
-        <Alert title={UNAVAILABLE_MESSAGE} type="error" />
-      </RbitModal>
-    );
-  }
-
-  if (!isSuccess) {
-    return false;
-  }
 
   return (
     <FormbitContextProvider initialValues={getInitialValues(screen)} schema={schema}>
@@ -70,38 +47,85 @@ function ManageProjectBudget() {
 }
 
 function ManageProjectBudgetInner() {
-  const { hideModal, modalPayload } = useModals();
+  const { hideModal } = useModals();
+
+  return (
+    <RbitModal
+      actions={<Footer />}
+      aria-label="Budget limits"
+      closable
+      header={<Header />}
+      onCancel={hideModal}
+      open
+      width={MODAL_WIDTH}
+    >
+      <Body />
+    </RbitModal>
+  );
+}
+
+function Header() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { data, isLoading, isSuccess } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
+  const name = data?.name;
+
+  if (isLoading) {
+    return <SectionTitle subtitle={<Skeleton.Input active size="small" />} title="Budget limits" />;
+  }
+
+  if (!isSuccess) {
+    return <SectionTitle title="Budget limits" />;
+  }
+
+  const subtitle = `An overall spending cap on every route of ${name}, whoever calls it.`;
+
+  return <SectionTitle subtitle={subtitle} title="Budget limits" />;
+}
+
+function Body() {
+  const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
   const { form } = useFormbitContext();
   const screen = form?.__metadata?.screen;
 
-  const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
-  const name = data?.name;
+  const { isError, isLoading, isSuccess } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
 
   const Screen = SCREENS[screen] ?? ListScreen;
-  const Actions = SCREEN_ACTIONS[screen];
-  const subtitle = `An overall spending cap on every route of ${name}, whoever calls it.`;
-  const actions = Actions ? <Actions /> : false;
 
-  return (
-    <RbitModal
-      actions={actions}
-      aria-label="Budget limits"
-      closable
-      header={(
-        <SectionTitle
-          subtitle={subtitle}
-          title="Budget limits"
-        />
-      )}
-      onCancel={hideModal}
-      open
-      width={MODAL_WIDTH}
-    >
-      <Screen />
-    </RbitModal>
-  );
+  if (isLoading) {
+    return <Spinner />;
+  }
+
+  if (isError) {
+    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
+  }
+
+  if (!isSuccess) {
+    return false;
+  }
+
+  return <Screen />;
+}
+
+function Footer() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { form } = useFormbitContext();
+  const screen = form?.__metadata?.screen;
+
+  const { isSuccess } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
+
+  const Actions = SCREEN_ACTIONS[screen];
+
+  if (!isSuccess || !Actions) {
+    return false;
+  }
+
+  return <Actions />;
 }
 
 function AddActions() {

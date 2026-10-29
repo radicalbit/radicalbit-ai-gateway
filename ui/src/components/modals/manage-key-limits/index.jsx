@@ -3,7 +3,7 @@ import useModals from '@Hooks/use-modals';
 import { useGetKeyQuery } from '@State/keys/api';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
-  Alert, Button, RbitModal, SectionTitle, Spinner,
+  Alert, Button, RbitModal, SectionTitle, Skeleton, Spinner,
 } from '@radicalbit/radicalbit-design-system';
 import AddScreen from './add-screen';
 import DeleteScreen from './delete-screen';
@@ -36,31 +36,6 @@ const SCREEN_ACTIONS = {
 };
 
 function ManageKeyLimits() {
-  const { hideModal, modalPayload } = useModals();
-  const uuid = modalPayload?.data?.uuid;
-
-  const { isError, isLoading, isSuccess } = useGetKeyQuery(uuid, { skip: !uuid });
-
-  if (isLoading) {
-    return (
-      <RbitModal onCancel={hideModal} open width={MODAL_WIDTH}>
-        <Spinner />
-      </RbitModal>
-    );
-  }
-
-  if (isError) {
-    return (
-      <RbitModal onCancel={hideModal} open width={MODAL_WIDTH}>
-        <Alert title={UNAVAILABLE_MESSAGE} type="error" />
-      </RbitModal>
-    );
-  }
-
-  if (!isSuccess) {
-    return false;
-  }
-
   return (
     <FormbitContextProvider initialValues={getInitialValues()} schema={schema}>
       <ManageKeyLimitsInner />
@@ -69,38 +44,85 @@ function ManageKeyLimits() {
 }
 
 function ManageKeyLimitsInner() {
-  const { hideModal, modalPayload } = useModals();
+  const { hideModal } = useModals();
+
+  return (
+    <RbitModal
+      actions={<Footer />}
+      aria-label="Limits"
+      closable
+      header={<Header />}
+      onCancel={hideModal}
+      open
+      width={MODAL_WIDTH}
+    >
+      <Body />
+    </RbitModal>
+  );
+}
+
+function Header() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { data, isLoading, isSuccess } = useGetKeyQuery(uuid, { skip: !uuid });
+  const name = data?.name;
+
+  if (isLoading) {
+    return <SectionTitle subtitle={<Skeleton.Input active size="small" />} title="Limits" />;
+  }
+
+  if (!isSuccess) {
+    return <SectionTitle title="Limits" />;
+  }
+
+  const subtitle = `Every request authenticated by ${name} counts against these limits, whatever route it calls.`;
+
+  return <SectionTitle subtitle={subtitle} title="Limits" />;
+}
+
+function Body() {
+  const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
   const { form } = useFormbitContext();
   const screen = form?.__metadata?.screen;
 
-  const { data } = useGetKeyQuery(uuid, { skip: !uuid });
-  const name = data?.name;
+  const { isError, isLoading, isSuccess } = useGetKeyQuery(uuid, { skip: !uuid });
 
   const Screen = SCREENS[screen] ?? ListScreen;
-  const Actions = SCREEN_ACTIONS[screen];
-  const subtitle = `Every request authenticated by ${name} counts against these limits, whatever route it calls.`;
-  const actions = Actions ? <Actions /> : false;
 
-  return (
-    <RbitModal
-      actions={actions}
-      aria-label="Limits"
-      closable
-      header={(
-        <SectionTitle
-          subtitle={subtitle}
-          title="Limits"
-        />
-      )}
-      onCancel={hideModal}
-      open
-      width={MODAL_WIDTH}
-    >
-      <Screen />
-    </RbitModal>
-  );
+  if (isLoading) {
+    return <Spinner />;
+  }
+
+  if (isError) {
+    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
+  }
+
+  if (!isSuccess) {
+    return false;
+  }
+
+  return <Screen />;
+}
+
+function Footer() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { form } = useFormbitContext();
+  const screen = form?.__metadata?.screen;
+
+  const { isSuccess } = useGetKeyQuery(uuid, { skip: !uuid });
+
+  const Actions = SCREEN_ACTIONS[screen];
+
+  if (!isSuccess || !Actions) {
+    return false;
+  }
+
+  return <Actions />;
 }
 
 function AddActions() {
