@@ -178,7 +178,7 @@ function EditActions() {
 }
 
 function EditConfirmActions() {
-  const { handleOnCancel, handleOnConfirm, isConfirmDisabled, isLoading } = useHandleOnReplace();
+  const { args: { isLoading }, handleOnCancel, handleOnConfirm, isConfirmDisabled } = useHandleOnReplace();
 
   return (
     <div className="flex gap-2 justify-end">

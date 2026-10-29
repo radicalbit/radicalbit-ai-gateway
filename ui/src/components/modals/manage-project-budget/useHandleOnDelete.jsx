@@ -1,11 +1,10 @@
-import { LimitCategoryEnum, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import focusLimitMenu from '@Components/limits/focus-limit-menu';
-import { formatLimitValue, formatLimitWindow } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
 import useModals from '@Hooks/use-modals';
 import { useDeleteProjectBudgetLimitMutation, useGetProjectBudgetQuery } from '@State/projects/api';
 import { FCK_DELETE_PROJECT_BUDGET_LIMIT } from '@State/projects/fixed-cache-key';
 import { useFormbitContext } from '@radicalbit/formbit';
+import { getBudgetLabel } from './helpers';
 import { getInitialValues } from './schema';
 
 export default () => {
@@ -21,7 +20,7 @@ export default () => {
 
   const [trigger, args] = useDeleteProjectBudgetLimitMutation({ fixedCacheKey: `${FCK_DELETE_PROJECT_BUDGET_LIMIT}-${limitUuid}` });
 
-  const label = `${formatLimitValue(LimitCategoryEnum.BUDGET, limit?.value)} / ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
+  const label = getBudgetLabel(limit);
 
   const handleOnDelete = async () => {
     if (args.isLoading) {

@@ -1,26 +1,13 @@
-import { LimitCategoryEnum, OLD_BUDGET_LEFT_MESSAGE, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
+import { OLD_BUDGET_LEFT_MESSAGE } from '@Components/limits/constants';
 import focusLimitMenu from '@Components/limits/focus-limit-menu';
 import focusLimitRow from '@Components/limits/focus-limit-row';
-import { formatLimitValue, formatLimitWindow } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
-import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
 import { useCreateProjectBudgetLimitsMutation, useDeleteProjectBudgetLimitMutation, useGetProjectBudgetQuery } from '@State/projects/api';
 import { FCK_REPLACE_PROJECT_BUDGET_CREATE, FCK_REPLACE_PROJECT_BUDGET_DELETE } from '@State/projects/fixed-cache-key';
 import { useFormbitContext } from '@radicalbit/formbit';
+import { getBudgetLabel, getErrorMessage } from './helpers';
 import { ScreenEnum, getInitialValues } from './schema';
-
-const getLimitLabel = ({ algorithm, value, windowSize } = {}) => `${formatLimitValue(LimitCategoryEnum.BUDGET, value)} / ${formatLimitWindow(windowSize)} · ${WINDOW_TYPE_LABELS[algorithm]}`;
-
-const getErrorMessage = (queryError) => {
-  const detail = queryError?.data?.detail;
-
-  if (Array.isArray(detail) && detail.length) {
-    return detail[0].msg.replace(/^Value error, /, '');
-  }
-
-  return getMessageFromQueryError(queryError);
-};
 
 export default () => {
   const { modalPayload } = useModals();
@@ -38,11 +25,11 @@ export default () => {
   const [createLimits, createArgs] = useCreateProjectBudgetLimitsMutation({ fixedCacheKey: `${FCK_REPLACE_PROJECT_BUDGET_CREATE}-${limitUuid}` });
   const [deleteLimit, deleteArgs] = useDeleteProjectBudgetLimitMutation({ fixedCacheKey: `${FCK_REPLACE_PROJECT_BUDGET_DELETE}-${limitUuid}` });
 
-  const isLoading = createArgs.isLoading || deleteArgs.isLoading;
+  const args = { isLoading: createArgs.isLoading || deleteArgs.isLoading };
   const isOldLimitLeft = createArgs.isSuccess && deleteArgs.isError;
-  const isConfirmDisabled = !row || !limit || isLoading || isOldLimitLeft;
-  const newLabel = getLimitLabel(row);
-  const oldLabel = getLimitLabel(limit);
+  const isConfirmDisabled = !row || !limit || args.isLoading || isOldLimitLeft;
+  const newLabel = getBudgetLabel(row);
+  const oldLabel = getBudgetLabel(limit);
   const createErrorMessage = createArgs.isError ? getErrorMessage(createArgs.error) : undefined;
   const errorMessage = isOldLimitLeft ? OLD_BUDGET_LEFT_MESSAGE : createErrorMessage;
 
@@ -98,12 +85,12 @@ export default () => {
   };
 
   return {
+    args,
     errorMessage,
     handleOnBack,
     handleOnCancel,
     handleOnConfirm,
     isConfirmDisabled,
-    isLoading,
     newLabel,
     oldLabel,
   };

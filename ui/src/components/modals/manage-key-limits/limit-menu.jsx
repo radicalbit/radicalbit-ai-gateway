@@ -1,12 +1,11 @@
 import Lucide from '@Components/lucide';
 import focusConfirmQuestion from '@Components/limits/focus-confirm-question';
 import focusLimitRow from '@Components/limits/focus-limit-row';
-import { LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
-import { formatLimitWindow } from '@Components/limits/helpers';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button, Dropdown, Tooltip } from '@radicalbit/radicalbit-design-system';
 import { EllipsisVertical } from 'lucide-react';
 import { useRef, useState } from 'react';
+import { getLimitLabel } from './helpers';
 import { ScreenEnum } from './schema';
 
 const MENU_TRIGGER = ['hover', 'click'];
@@ -19,7 +18,7 @@ function LimitMenu({ limit }) {
   const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);
 
   const limitUuid = limit?.uuid;
-  const label = `${LIMIT_CATEGORY_LABELS[limit?.category]} ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
+  const label = getLimitLabel(limit);
 
   const handleOnEdit = () => {
     const row = {

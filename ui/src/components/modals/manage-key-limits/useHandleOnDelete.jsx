@@ -1,11 +1,10 @@
-import { LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import focusLimitMenu from '@Components/limits/focus-limit-menu';
-import { formatLimitWindow } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
 import useModals from '@Hooks/use-modals';
 import { useDeleteKeyLimitMutation, useGetKeyQuery } from '@State/keys/api';
 import { FCK_DELETE_KEY_LIMIT } from '@State/keys/fixed-cache-key';
 import { useFormbitContext } from '@radicalbit/formbit';
+import { getLimitLabel } from './helpers';
 import { getInitialValues } from './schema';
 
 export default () => {
@@ -21,7 +20,7 @@ export default () => {
 
   const [trigger, args] = useDeleteKeyLimitMutation({ fixedCacheKey: `${FCK_DELETE_KEY_LIMIT}-${limitUuid}` });
 
-  const label = `${LIMIT_CATEGORY_LABELS[limit?.category]} ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
+  const label = getLimitLabel(limit);
 
   const handleOnDelete = async () => {
     if (args.isLoading) {

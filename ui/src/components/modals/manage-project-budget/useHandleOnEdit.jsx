@@ -1,26 +1,14 @@
-import { DUPLICATE_BUDGET_ERROR, LimitCategoryEnum, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
+import { DUPLICATE_BUDGET_ERROR } from '@Components/limits/constants';
 import focusConfirmQuestion from '@Components/limits/focus-confirm-question';
 import focusLimitMenu from '@Components/limits/focus-limit-menu';
-import {
-  asBudgets, formatLimitValue, formatLimitWindow, getNewLimitsErrors, isLimitComplete,
-} from '@Components/limits/helpers';
+import { asBudgets, getNewLimitsErrors, isLimitComplete } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
-import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery, useUpdateProjectBudgetLimitValueMutation } from '@State/projects/api';
 import { FCK_UPDATE_PROJECT_BUDGET_LIMIT_VALUE } from '@State/projects/fixed-cache-key';
 import { useFormbitContext } from '@radicalbit/formbit';
+import { getBudgetLabel, getErrorMessage } from './helpers';
 import { ScreenEnum, getInitialValues } from './schema';
-
-const getErrorMessage = (queryError) => {
-  const detail = queryError?.data?.detail;
-
-  if (Array.isArray(detail) && detail.length) {
-    return detail[0].msg.replace(/^Value error, /, '');
-  }
-
-  return getMessageFromQueryError(queryError);
-};
 
 export default () => {
   const { modalPayload } = useModals();
@@ -43,7 +31,7 @@ export default () => {
   const isMaxChanged = row?.value !== limit?.value;
   const isSaveDisabled = !row || !isLimitComplete(row) || isFormInvalid() || !!duplicateError || (!isMaxChanged && !isWindowChanged) || args.isLoading;
   const errorMessage = args.isError ? getErrorMessage(args.error) : undefined;
-  const label = `${formatLimitValue(LimitCategoryEnum.BUDGET, limit?.value)} / ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
+  const label = getBudgetLabel(limit);
 
   const handleOnSave = async () => {
     if (isSaveDisabled) {

@@ -1,34 +1,14 @@
-import {
-  EXPIRED_LIMITS_MESSAGE, LIMIT_CATEGORY_LABELS, OLD_LIMIT_LEFT_MESSAGE, WINDOW_TYPE_LABELS,
-} from '@Components/limits/constants';
+import { OLD_LIMIT_LEFT_MESSAGE } from '@Components/limits/constants';
 import focusLimitMenu from '@Components/limits/focus-limit-menu';
 import focusLimitRow from '@Components/limits/focus-limit-row';
-import { formatLimitWindow, getLimitSignature } from '@Components/limits/helpers';
+import { getLimitSignature } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
-import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
 import { useCreateKeyLimitsMutation, useDeleteKeyLimitMutation, useGetKeyQuery } from '@State/keys/api';
 import { FCK_REPLACE_KEY_LIMIT_CREATE, FCK_REPLACE_KEY_LIMIT_DELETE } from '@State/keys/fixed-cache-key';
 import { useFormbitContext } from '@radicalbit/formbit';
+import { getErrorMessage, getLimitLabel } from './helpers';
 import { ScreenEnum, getInitialValues } from './schema';
-
-const METHOD_NOT_ALLOWED = 405;
-
-const getLimitLabel = ({ algorithm, category, windowSize } = {}) => `${LIMIT_CATEGORY_LABELS[category]} ${formatLimitWindow(windowSize)} · ${WINDOW_TYPE_LABELS[algorithm]}`;
-
-const getErrorMessage = (queryError) => {
-  if (queryError?.status === METHOD_NOT_ALLOWED) {
-    return EXPIRED_LIMITS_MESSAGE;
-  }
-
-  const detail = queryError?.data?.detail;
-
-  if (Array.isArray(detail) && detail.length) {
-    return detail[0].msg.replace(/^Value error, /, '');
-  }
-
-  return getMessageFromQueryError(queryError);
-};
 
 export default () => {
   const { modalPayload } = useModals();
@@ -46,9 +26,9 @@ export default () => {
   const [createLimits, createArgs] = useCreateKeyLimitsMutation({ fixedCacheKey: `${FCK_REPLACE_KEY_LIMIT_CREATE}-${limitUuid}` });
   const [deleteLimit, deleteArgs] = useDeleteKeyLimitMutation({ fixedCacheKey: `${FCK_REPLACE_KEY_LIMIT_DELETE}-${limitUuid}` });
 
-  const isLoading = createArgs.isLoading || deleteArgs.isLoading;
+  const args = { isLoading: createArgs.isLoading || deleteArgs.isLoading };
   const isOldLimitLeft = createArgs.isSuccess && deleteArgs.isError;
-  const isConfirmDisabled = !row || !limit || isLoading || isOldLimitLeft;
+  const isConfirmDisabled = !row || !limit || args.isLoading || isOldLimitLeft;
   const newLabel = getLimitLabel(row);
   const oldLabel = getLimitLabel(limit);
   const createErrorMessage = createArgs.isError ? getErrorMessage(createArgs.error) : undefined;
@@ -110,12 +90,12 @@ export default () => {
   };
 
   return {
+    args,
     errorMessage,
     handleOnBack,
     handleOnCancel,
     handleOnConfirm,
     isConfirmDisabled,
-    isLoading,
     newLabel,
     oldLabel,
   };

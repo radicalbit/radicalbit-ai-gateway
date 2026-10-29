@@ -1,30 +1,13 @@
-import { EXPIRED_LIMITS_MESSAGE, LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import focusConfirmQuestion from '@Components/limits/focus-confirm-question';
 import focusLimitMenu from '@Components/limits/focus-limit-menu';
-import { formatLimitWindow, getNewLimitsErrors, isLimitComplete } from '@Components/limits/helpers';
+import { getNewLimitsErrors, isLimitComplete } from '@Components/limits/helpers';
 import SuccessMessage from '@Components/success-message';
-import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
 import { useGetKeyQuery, useUpdateKeyLimitValueMutation } from '@State/keys/api';
 import { FCK_UPDATE_KEY_LIMIT_VALUE } from '@State/keys/fixed-cache-key';
 import { useFormbitContext } from '@radicalbit/formbit';
+import { getErrorMessage, getLimitLabel } from './helpers';
 import { ScreenEnum, getInitialValues } from './schema';
-
-const METHOD_NOT_ALLOWED = 405;
-
-const getErrorMessage = (queryError) => {
-  if (queryError?.status === METHOD_NOT_ALLOWED) {
-    return EXPIRED_LIMITS_MESSAGE;
-  }
-
-  const detail = queryError?.data?.detail;
-
-  if (Array.isArray(detail) && detail.length) {
-    return detail[0].msg.replace(/^Value error, /, '');
-  }
-
-  return getMessageFromQueryError(queryError);
-};
 
 export default () => {
   const { modalPayload } = useModals();
@@ -47,7 +30,7 @@ export default () => {
   const isMaxChanged = row?.value !== limit?.value;
   const isSaveDisabled = !row || !isLimitComplete(row) || isFormInvalid() || !!duplicateError || (!isMaxChanged && !isWindowChanged) || args.isLoading;
   const errorMessage = args.isError ? getErrorMessage(args.error) : undefined;
-  const label = `${LIMIT_CATEGORY_LABELS[limit?.category]} ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
+  const label = getLimitLabel(limit);
 
   const handleOnSave = async () => {
     if (isSaveDisabled) {

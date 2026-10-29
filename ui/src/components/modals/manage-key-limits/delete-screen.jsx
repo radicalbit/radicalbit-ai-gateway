@@ -1,17 +1,13 @@
 import Lucide from '@Components/lucide';
-import { LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
-import {
-  RuleScopeEnum, formatCount, formatLimitWindow, getRulesMadeStale,
-} from '@Components/limits/helpers';
+import { RuleScopeEnum, formatCount, getRulesMadeStale } from '@Components/limits/helpers';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
 import { useGetAlertsQuery } from '@State/alerts/api';
 import { useGetKeyQuery } from '@State/keys/api';
 import { useFormbitContext } from '@radicalbit/formbit';
-import {
-  Button, FormField, Skeleton, TextWithBold,
-} from '@radicalbit/radicalbit-design-system';
+import { Button, FormField, Skeleton, TextWithBold } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft } from 'lucide-react';
+import { getLimitLabel } from './helpers';
 import useHandleOnDelete from './useHandleOnDelete';
 
 const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this limit.';
@@ -25,12 +21,12 @@ function DeleteScreen() {
   const { form } = useFormbitContext();
   const limitUuid = form?.__metadata?.limitUuid;
 
+  const { args: { error, isError }, handleOnCancel } = useHandleOnDelete();
+
   const { data } = useGetKeyQuery(uuid, { skip: !uuid });
   const limit = (data?.limits ?? []).find((item) => item.uuid === limitUuid);
 
-  const { args: { error, isError }, handleOnCancel } = useHandleOnDelete();
-
-  const label = `${LIMIT_CATEGORY_LABELS[limit?.category]} ${formatLimitWindow(limit?.windowSize)} · ${WINDOW_TYPE_LABELS[limit?.algorithm]}`;
+  const label = getLimitLabel(limit);
   const errorField = isError ? <FormField message={getMessageFromQueryError(error)} /> : false;
 
   if (!limit) {
