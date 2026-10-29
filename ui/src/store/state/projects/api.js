@@ -106,6 +106,21 @@ export const projectsApiSlice = apiService.injectEndpoints({
       },
     }),
 
+    updateProjectBudgetLimitValue: builder.mutation({
+      query: ({ data, limitUuid, uuid }) => ({
+        url: `/projects/${uuid}/budget-limits/${limitUuid}`,
+        method: 'patch',
+        data,
+      }),
+      invalidatesTags: (result, _, { uuid }) => {
+        if (result) {
+          return [{ type: API_TAGS.PROJECTS, id: LIST_ID }, { type: API_TAGS.PROJECTS, id: uuid }, API_TAGS.ALERTS];
+        }
+
+        return [];
+      },
+    }),
+
     deleteProjectBudgetLimit: builder.mutation({
       query: ({ limitUuid, uuid }) => ({
         url: `/projects/${uuid}/budget-limits/${limitUuid}`,
@@ -281,6 +296,7 @@ export const {
   useCreateProjectMutation,
   useDeleteProjectMutation,
   useCreateProjectBudgetLimitsMutation,
+  useUpdateProjectBudgetLimitValueMutation,
   useDeleteProjectBudgetLimitMutation,
   useGenerateConfigMutation,
   useUpdateConfigMutation,

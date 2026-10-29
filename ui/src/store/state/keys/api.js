@@ -139,6 +139,21 @@ export const keysApiSlice = apiService.injectEndpoints({
       },
     }),
 
+    updateKeyLimitValue: builder.mutation({
+      query: ({ data, limitUuid, uuid }) => ({
+        url: `/keys/${uuid}/limits/${limitUuid}`,
+        method: 'patch',
+        data,
+      }),
+      invalidatesTags: (result, _, { uuid }) => {
+        if (result) {
+          return [API_TAGS.KEYS, `${API_TAGS.KEYS}-${uuid}`, API_TAGS.ALERTS];
+        }
+
+        return [];
+      },
+    }),
+
     deleteKeyLimit: builder.mutation({
       query: ({ limitUuid, uuid }) => ({
         url: `/keys/${uuid}/limits/${limitUuid}`,
@@ -186,6 +201,7 @@ export const {
   useRotateKeyMutation,
   useEndGracePeriodMutation,
   useCreateKeyLimitsMutation,
+  useUpdateKeyLimitValueMutation,
   useDeleteKeyLimitMutation,
 } = keysApiSlice;
 
