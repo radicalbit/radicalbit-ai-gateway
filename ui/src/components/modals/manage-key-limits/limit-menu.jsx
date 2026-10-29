@@ -39,7 +39,7 @@ function LimitMenu({ limit }) {
     { key: 'delete', label: 'Delete', onClick: handleOnDelete },
   ];
 
-  const handleOnOpenChange = (isOpen) => {
+  const handleOnOpenChange = (isOpen, info) => {
     const { activeElement } = document;
     const isFocusLost = activeElement === document.body || activeElement?.closest('.ant-dropdown');
 
@@ -47,7 +47,7 @@ function LimitMenu({ limit }) {
       setIsOpenedByKeyboard(false);
     }
 
-    if (!isOpen && isFocusLost) {
+    if (!isOpen && isFocusLost && info?.source !== 'menu') {
       buttonRef.current?.focus();
     }
   };

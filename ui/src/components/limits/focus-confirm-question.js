@@ -1,6 +1,18 @@
-const focusConfirmQuestion = () => {
+const FOCUS_ATTEMPTS = 20;
+
+const focusConfirmQuestion = (attempts = FOCUS_ATTEMPTS) => {
   requestAnimationFrame(() => {
-    document.querySelector('.ant-modal [data-confirm-question]')?.focus();
+    const question = document.querySelector('.ant-modal [data-confirm-question]');
+
+    if (question) {
+      question.focus();
+
+      return;
+    }
+
+    if (attempts > 0) {
+      focusConfirmQuestion(attempts - 1);
+    }
   });
 };
 
