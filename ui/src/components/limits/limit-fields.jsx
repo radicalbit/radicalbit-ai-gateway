@@ -45,6 +45,7 @@ function LimitFields({ limit, onChange, rowLabel, withCategory = true }) {
   const precision = isBudget ? 2 : 0;
   const prefix = isBudget ? '$' : undefined;
   const windowOptions = getWindowOptions(algorithm);
+  const getAriaLabel = (label) => (rowLabel ? `${label}, ${rowLabel}` : undefined);
   const categoryField = withCategory ? (
     <Field htmlFor={`${id}-category`} label="Category">
       <Select
@@ -60,7 +61,6 @@ function LimitFields({ limit, onChange, rowLabel, withCategory = true }) {
     </Field>
   ) : false;
   const maxLabel = MAX_LABELS[category] ?? MAX_LABEL;
-  const getAriaLabel = (label) => (rowLabel ? `${label}, ${rowLabel}` : undefined);
 
   return (
     <div className="flex gap-2 items-end w-0 min-w-full" data-limit-row>
