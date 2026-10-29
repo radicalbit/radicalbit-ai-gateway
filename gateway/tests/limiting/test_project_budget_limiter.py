@@ -254,3 +254,29 @@ class TestClearProjectBudgetLimitCounter:
             algorithm=LimitingAlgorithmType.FIXED_WINDOW.value,
             window_size='1 minute',
         )
+
+
+def _share_storage(source: ProjectBudgetLimiter, target: ProjectBudgetLimiter) -> None:
+    storage = source._entries[0].limiter._storage
+    for entry in target._entries:
+        entry.limiter._storage = storage
+
+
+class TestEditingAMax:
+    @pytest.mark.asyncio
+    async def test_a_new_max_keeps_what_was_spent_in_the_window(self):
+        limit = _limit(1.5)
+        before = _limiter([limit])
+        await before.count_input(
+            token_count=1000, input_cost_per_token=0.001, identity=IDENTITY
+        )
+
+        after = _limiter([limit.model_copy(update={'value': 2.0})])
+        _share_storage(before, after)
+        await after.check_budget(**_CALL_ARGS)
+        await after.count_input(
+            token_count=1000, input_cost_per_token=0.001, identity=IDENTITY
+        )
+
+        with pytest.raises(BudgetLimitExceededError):
+            await after.check_budget(**_CALL_ARGS)

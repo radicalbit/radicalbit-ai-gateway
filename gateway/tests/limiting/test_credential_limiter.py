@@ -282,3 +282,37 @@ class TestClearLimitCounter:
             algorithm=LimitingAlgorithmType.FIXED_WINDOW.value,
             window_size='1 minute',
         )
+
+
+def _share_storage(source: CredentialLimiter, target: CredentialLimiter) -> None:
+    storage = next(iter(source._entries.values()))[0].limiter._storage
+    for entries in target._entries.values():
+        for entry in entries:
+            entry.limiter._storage = storage
+
+
+class TestEditingAMax:
+    @pytest.mark.asyncio
+    async def test_a_new_max_keeps_what_was_consumed_in_the_window(self):
+        limit = _limit(CredentialLimitCategory.RATE, 2)
+        before = _limiter([limit])
+        await before.check_and_count_request(**_CALL_ARGS)
+        await before.check_and_count_request(**_CALL_ARGS)
+
+        after = _limiter([limit.model_copy(update={'value': 3})])
+        _share_storage(before, after)
+
+        await after.check_and_count_request(**_CALL_ARGS)
+        with pytest.raises(RequestRateLimitExceeded):
+            await after.check_and_count_request(**_CALL_ARGS)
+
+    @pytest.mark.asyncio
+    async def test_a_new_window_starts_from_zero(self):
+        limit = _limit(CredentialLimitCategory.RATE, 1)
+        before = _limiter([limit])
+        await before.check_and_count_request(**_CALL_ARGS)
+
+        after = _limiter([limit.model_copy(update={'window_size': '1 hour'})])
+        _share_storage(before, after)
+
+        await after.check_and_count_request(**_CALL_ARGS)
