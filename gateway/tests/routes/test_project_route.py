@@ -13,6 +13,8 @@ from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitConflictsOut,
     ProjectBudgetLimitOut,
+    ProjectBudgetLimitUpdatedOut,
+    ProjectBudgetLimitValueIn,
 )
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute
@@ -521,6 +523,58 @@ class TestProjectRoute(unittest.TestCase):
         )
         res = self.client.delete(f'{self.prefix}/projects/{pid}/budget-limits/{lid}')
         assert res.status_code == 404
+
+    def _patch_budget(self, pid, lid, body):
+        return self.client.patch(
+            f'{self.prefix}/projects/{pid}/budget-limits/{lid}', json=body
+        )
+
+    def test_update_budget_limit_value_returns_the_limit_with_its_previous_max(self):
+        pid, lid = uuid.uuid4(), uuid.uuid4()
+        updated = ProjectBudgetLimitUpdatedOut(
+            **ProjectBudgetLimitOut.from_project_budget_limit(
+                db_mock.get_sample_project_budget_limit(
+                    uuid=lid, project_uuid=pid, max_value=40.0
+                )
+            ).model_dump(),
+            previous_value=10.0,
+        )
+        self.project_service.update_budget_limit_value = MagicMock(return_value=updated)
+
+        res = self._patch_budget(pid, lid, {'value': 40})
+
+        assert res.status_code == 200
+        assert res.json()['value'] == 40.0
+        assert res.json()['previousValue'] == 10.0
+        self.project_service.update_budget_limit_value.assert_called_once_with(
+            pid, lid, ProjectBudgetLimitValueIn(value=40)
+        )
+
+    def test_update_budget_limit_value_rejects_a_max_not_above_zero(self):
+        self.project_service.update_budget_limit_value = MagicMock()
+
+        res = self._patch_budget(uuid.uuid4(), uuid.uuid4(), {'value': -1})
+
+        assert res.status_code == 422
+        self.project_service.update_budget_limit_value.assert_not_called()
+
+    def test_update_budget_limit_value_not_found(self):
+        self.project_service.update_budget_limit_value = MagicMock(
+            side_effect=ProjectBudgetLimitNotFoundError('nope')
+        )
+
+        res = self._patch_budget(uuid.uuid4(), uuid.uuid4(), {'value': 5})
+
+        assert res.status_code == 404
+        assert res.json()['error']['code'] == 'project_budget_limit_not_found'
+
+    def test_update_budget_limit_value_is_audited_on_the_project(self):
+        endpoint = self._get_endpoint('budget-limits/{limit_uuid}', 'PATCH')
+
+        assert endpoint._route_meta == {
+            'entity_type': 'PROJECT',
+            'entity_uuid_param': 'project_uuid',
+        }
 
     # --- route_meta ---
 
