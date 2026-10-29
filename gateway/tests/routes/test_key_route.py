@@ -430,6 +430,33 @@ class TestKeyRoute(unittest.TestCase):
         assert res.json()['detail'][0]['loc'] == ['body', 'value']
         self.key_service.update_limit_value.assert_not_called()
 
+    def test_update_limit_value_rejects_fields_other_than_the_max(self):
+        self.key_service.update_limit_value = MagicMock()
+
+        res = self._patch_limit(
+            uuid.uuid4(), uuid.uuid4(), {'value': 5, 'windowSize': '1 hour'}
+        )
+
+        assert res.status_code == 422
+        assert res.json()['detail'][0]['loc'] == ['body', 'windowSize']
+        self.key_service.update_limit_value.assert_not_called()
+
+    def test_update_limit_value_points_an_invalid_max_at_the_value_field(self):
+        self.key_service.update_limit_value = MagicMock(
+            side_effect=CredentialLimitValueError(
+                '2.5 is not a valid max for a request_rate limit'
+            )
+        )
+
+        res = self._patch_limit(uuid.uuid4(), uuid.uuid4(), {'value': 2.5})
+
+        assert res.status_code == 422
+        assert res.json()['detail'][0]['loc'] == ['body', 'value']
+        assert (
+            res.json()['detail'][0]['msg']
+            == '2.5 is not a valid max for a request_rate limit'
+        )
+
     def test_update_limit_value_maps_the_service_errors(self):
         cases = [
             (
@@ -441,11 +468,6 @@ class TestKeyRoute(unittest.TestCase):
                 KeyOperationNotAllowedError('expired'),
                 405,
                 'key_operation_method_not_allowed',
-            ),
-            (
-                CredentialLimitValueError('not whole'),
-                422,
-                'credential_limit_value_unprocessable_entity',
             ),
         ]
         for error, status_code, code in cases:

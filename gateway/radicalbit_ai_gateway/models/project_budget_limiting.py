@@ -100,7 +100,9 @@ class ProjectBudgetLimitValueIn(BaseModel):
         examples=[1.0, 15.0],
     )
 
-    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, extra='forbid'
+    )
 
 
 class ProjectBudgetLimitOut(BaseModel):

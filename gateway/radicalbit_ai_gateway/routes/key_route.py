@@ -22,6 +22,7 @@ from radicalbit_ai_gateway.models.credential_rotation import GracePeriodOutOfBou
 from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.exceptions import CredentialLimitValueError
 
 app_config = get_app_config()
 
@@ -158,7 +159,19 @@ class KeyRoute:
         def update_limit_value(
             key_uuid: UUID, limit_uuid: UUID, value_in: CredentialLimitValueIn
         ):
-            return key_service.update_limit_value(key_uuid, limit_uuid, value_in)
+            try:
+                return key_service.update_limit_value(key_uuid, limit_uuid, value_in)
+            except CredentialLimitValueError as e:
+                raise RequestValidationError(
+                    [
+                        {
+                            'type': 'value_error',
+                            'loc': ('body', 'value'),
+                            'msg': str(e),
+                            'input': value_in.value,
+                        }
+                    ]
+                ) from e
 
         @router.delete(
             '/keys/{key_uuid}/limits/{limit_uuid}',

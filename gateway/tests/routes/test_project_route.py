@@ -558,6 +558,17 @@ class TestProjectRoute(unittest.TestCase):
         assert res.status_code == 422
         self.project_service.update_budget_limit_value.assert_not_called()
 
+    def test_update_budget_limit_value_rejects_fields_other_than_the_max(self):
+        self.project_service.update_budget_limit_value = MagicMock()
+
+        res = self._patch_budget(
+            uuid.uuid4(), uuid.uuid4(), {'value': 5, 'windowSize': '1 day'}
+        )
+
+        assert res.status_code == 422
+        assert res.json()['detail'][0]['loc'] == ['body', 'windowSize']
+        self.project_service.update_budget_limit_value.assert_not_called()
+
     def test_update_budget_limit_value_not_found(self):
         self.project_service.update_budget_limit_value = MagicMock(
             side_effect=ProjectBudgetLimitNotFoundError('nope')

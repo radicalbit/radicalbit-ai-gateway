@@ -121,7 +121,9 @@ class CredentialLimitValueIn(BaseModel):
         examples=[10, 1000, 1.5],
     )
 
-    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, extra='forbid'
+    )
 
 
 def validate_limit_value(
