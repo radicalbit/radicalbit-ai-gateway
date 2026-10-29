@@ -6,7 +6,7 @@ import {
   Alert,
   Button,
   FormField,
-  RbitModal, SectionTitle, Skeleton, Spinner,
+  RbitModal, SectionTitle, Skeleton, Spinner, TextWithBold,
 } from '@radicalbit/radicalbit-design-system';
 import { schema } from './schema';
 import useHandleOnSubmit from './useHandleOnSubmit';
@@ -69,6 +69,16 @@ function Body() {
   if (isExternallyManaged) {
     return (
       <Alert title={DISABLED_CREDENTIALS_TOOLTIP} type="warning" />
+    );
+  }
+
+  if (!groupName) {
+    return (
+      <Spinner isFormWrapper>
+        <TextWithBold bold={name} isQuestion text="Are you sure you want to delete the credential" />
+
+        {error('silent.backend') && <FormField message={error('silent.backend')} />}
+      </Spinner>
     );
   }
 

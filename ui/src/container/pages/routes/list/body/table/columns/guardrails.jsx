@@ -2,10 +2,9 @@ import HtmlAnchor from '@Components/html-anchor';
 import dateFormatter from '@Helpers/date-formatter';
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
+import InfoPopover from '@Components/info-popover';
 import { PathsEnum, SEARCH_PARAMS, numberFormatterInt } from '@Src/constants';
-import {
-  Divider, Popover,
-} from '@radicalbit/radicalbit-design-system';
+import { Divider } from '@radicalbit/radicalbit-design-system';
 import { Shield } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -14,20 +13,22 @@ function Guardrails({ guardrails }) {
 
   if (value === undefined) {
     return (
-      <IconBadge aria-label="Guardrails" disabled>
+      <IconBadge aria-label="Guardrails: not configured" disabled>
         <Lucide icon={Shield} />
       </IconBadge>
     );
   }
 
-  const btnType = value > 0 ? { type: 'primary' } : { type: 'primary-light' };
+  const isTriggered = value > 0;
+  const btnType = isTriggered ? { type: 'primary' } : { type: 'primary-light' };
+  const ariaLabel = isTriggered ? 'Guardrails: triggered' : 'Guardrails: not triggered';
 
   return (
-    <Popover content={<PopoverContent guardrails={guardrails} />} minWidth="250" title={<strong>Guardrails</strong>}>
-      <IconBadge aria-label="Guardrails" {...btnType}>
+    <InfoPopover content={<PopoverContent guardrails={guardrails} />} minWidth="250" title={<strong>Guardrails</strong>}>
+      <IconBadge aria-label={ariaLabel} {...btnType}>
         <Lucide icon={Shield} />
       </IconBadge>
-    </Popover>
+    </InfoPopover>
   );
 }
 

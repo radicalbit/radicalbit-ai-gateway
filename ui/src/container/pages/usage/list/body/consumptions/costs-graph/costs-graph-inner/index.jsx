@@ -2,10 +2,13 @@ import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { parseTagsFromSearchParams } from '@State/tags-query-params-factory';
 import { useGetCostsChartStreamWithRange } from '@State/usage/vertical-hooks';
+import ChartData from '@Components/chart-data';
+import withChartAria from '@Helpers/chart-aria';
 import { Board, Segmented, Spinner, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
+  AriaComponent,
   DataZoomComponent,
   GraphicComponent,
   GridComponent,
@@ -23,7 +26,7 @@ import option from './option';
 import useGetNameToId from './use-get-name-to-id';
 import useLazyGetBreakdownByGroupBy from './use-lazy-get-breakdown-by-group-by';
 
-echarts.use([
+echarts.use([AriaComponent,
   BarChart,
   GridComponent,
   TooltipComponent,
@@ -156,13 +159,13 @@ function IsSuccess() {
         notMerge={false}
         onChartReady={() => updateTheme(chartRef)}
         onEvents={{ click: handleOnClick, mouseover: handleOnMouseOver }}
-        option={option({
+        option={withChartAria(option({
           xAxisData: chart?.timestamp || [],
           series,
           granularity: chart?.granularity,
           total: chart?.total,
           routeBreakdownCache: routeBreakdownCacheRef.current,
-        })}
+        }))}
         ref={chartRef}
         style={{
           ...chartWidthAndHeight,
@@ -170,6 +173,8 @@ function IsSuccess() {
           overflow: 'hidden',
         }}
       />
+
+      <ChartData granularity={chart?.granularity} series={series} xAxisData={chart?.timestamp || []} />
 
       <GroupByTabs />
     </div>

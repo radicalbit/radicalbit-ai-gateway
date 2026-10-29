@@ -1,6 +1,7 @@
 import Lucide from '@Components/lucide';
 import { WINDOW_TYPE_HELP } from '@Components/limits/constants';
 import { getNewLimitsErrors } from '@Components/limits/helpers';
+import focusLimitRow from '@Components/limits/focus-limit-row';
 import LimitFields from '@Components/limits/limit-fields';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button, FormField } from '@radicalbit/radicalbit-design-system';
@@ -14,6 +15,7 @@ function LimitsToApply() {
 
   const handleOnAddRow = () => {
     write('limits', [...rows, newRow()]);
+    focusLimitRow(rows.length);
   };
 
   return (
@@ -44,6 +46,7 @@ function Rows() {
 
   const handleOnRemove = useCallback((index) => {
     write('limits', rows.filter((_, rowIndex) => rowIndex !== index));
+    focusLimitRow(index);
   }, [rows, write]);
 
   const isOnlyRow = rows.length === 1;
@@ -74,6 +77,7 @@ function Row({
     onRemove(index);
   };
 
+  const rowLabel = `limit ${index + 1}`;
   const message = error ?? formError(`silent.limits.${index}`);
   const errorField = message ? <FormField message={message} /> : false;
 
@@ -81,10 +85,10 @@ function Row({
     <div className="flex flex-col gap-1">
       <div className="flex gap-2 items-end">
         <div className="flex-1 min-w-0">
-          <LimitFields limit={row} onChange={handleOnChange} />
+          <LimitFields limit={row} onChange={handleOnChange} rowLabel={rowLabel} />
         </div>
 
-        <Button aria-label="Remove limit" disabled={isOnlyRow} onClick={handleOnRemove} type="text">
+        <Button aria-label={`Remove limit ${index + 1}`} disabled={isOnlyRow} onClick={handleOnRemove} type="text">
           <Lucide icon={Trash2} />
         </Button>
       </div>

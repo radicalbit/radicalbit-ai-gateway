@@ -1,5 +1,6 @@
+import InfoPopover from '@Components/info-popover';
 import { numberFormatterFloat, numberFormatterInt } from '@Src/constants';
-import { BarChart, Popover } from '@radicalbit/radicalbit-design-system';
+import { BarChart } from '@radicalbit/radicalbit-design-system';
 
 const STATUS_TO_TYPE = {
   ok: 'success',
@@ -96,7 +97,7 @@ function BudgetLimit({ progressBar, routeName }) {
   }
 
   return (
-    <Popover
+    <InfoPopover
       content={<BudgetLimitPopoverContent budget={budget} routeName={routeName} />}
       minWidth="250"
       title={<strong>Budget limit</strong>}
@@ -110,7 +111,7 @@ function BudgetLimit({ progressBar, routeName }) {
 
         <small className="flex min-w-20">{`${value}%`}</small>
       </div>
-    </Popover>
+    </InfoPopover>
   );
 }
 
@@ -174,7 +175,7 @@ function TokensLimit({ progressBar, routeName }) {
   }
 
   return (
-    <Popover
+    <InfoPopover
       content={<TokensLimitPopoverContent routeName={routeName} tokenInput={tokenInput} tokenOutput={tokenOutput} />}
       minWidth="250"
       title={<strong>Token limit</strong>}
@@ -204,7 +205,7 @@ function TokensLimit({ progressBar, routeName }) {
           <small className="min-w-20">{`${outputValue}%`}</small>
         </div>
       </div>
-    </Popover>
+    </InfoPopover>
   );
 }
 
@@ -250,7 +251,7 @@ function RateLimit({ progressBar, routeName }) {
   }
 
   return (
-    <Popover
+    <InfoPopover
       content={<RateLimitPopoverContent rate={rate} routeName={routeName} />}
       minWidth="250"
       title={<strong>Rate limit</strong>}
@@ -264,7 +265,7 @@ function RateLimit({ progressBar, routeName }) {
 
         <small className="min-w-20">{`${value}%`}</small>
       </div>
-    </Popover>
+    </InfoPopover>
   );
 }
 
@@ -304,7 +305,7 @@ function DurationLimit({ progressBar, routeName }) {
   }
 
   return (
-    <Popover
+    <InfoPopover
       content={<DurationLimitPopoverContent duration={duration} routeName={routeName} />}
       minWidth="250"
       title={<strong>Duration limit</strong>}
@@ -318,7 +319,7 @@ function DurationLimit({ progressBar, routeName }) {
 
         <small className="min-w-20">{`${value}%`}</small>
       </div>
-    </Popover>
+    </InfoPopover>
   );
 }
 

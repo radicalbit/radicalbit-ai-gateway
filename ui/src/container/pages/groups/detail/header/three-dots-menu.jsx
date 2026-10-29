@@ -1,5 +1,4 @@
 import Lucide from '@Components/lucide';
-import DeleteGroup from '@Container/pages/groups/list/delete-group';
 import useModals, { modals } from '@Hooks/use-modals';
 import { GATEWAY_OWNER } from '@Src/constants';
 import { useGetGroupQuery } from '@State/groups/api';
@@ -8,15 +7,41 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { EllipsisVertical } from 'lucide-react';
 import { useParams } from 'react-router-dom';
+import { useRef, useState } from 'react';
+
+const MENU_TRIGGER = ['hover', 'click'];
 
 function ThreeDotsMenu() {
+  const buttonRef = useRef(null);
+
+  const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);
+
   const { uuid } = useParams();
   const items = useGetThreeDotsMenuItems(uuid);
 
+  const handleOnOpenChange = (isOpen) => {
+    const { activeElement } = document;
+    const isFocusLost = activeElement === document.body || activeElement?.closest('.ant-dropdown');
+
+    if (!isOpen) {
+      setIsOpenedByKeyboard(false);
+    }
+
+    if (!isOpen && isFocusLost) {
+      buttonRef.current?.focus();
+    }
+  };
+
+  const handleOnKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      setIsOpenedByKeyboard(true);
+    }
+  };
+
   return (
     <Tooltip title="More actions">
-      <Dropdown menu={{ items }}>
-        <Button aria-label="More actions" type="text">
+      <Dropdown autoFocus={isOpenedByKeyboard} destroyOnHidden menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
+        <Button aria-label="More actions" onKeyDown={handleOnKeyDown} ref={buttonRef} type="text">
           <Lucide icon={EllipsisVertical} />
         </Button>
       </Dropdown>
@@ -37,6 +62,10 @@ export const useGetThreeDotsMenuItems = (uuid) => {
 
   const handleOnAssociateRoutes = () => {
     showModal(modals.ADD_ROUTES_TO_GROUP, { uuid });
+  };
+
+  const handleOnDeleteGroup = () => {
+    showModal(modals.DELETE_GROUP_WITH_ASSOCIATED_ITEMS, { uuid });
   };
 
   const handleOnAssociateKeys = () => {
@@ -112,10 +141,8 @@ export const useGetThreeDotsMenuItems = (uuid) => {
       type: 'divider',
     },
     {
-      label: (
-        <DeleteGroup uuid={uuid}>
-          <div className="is-error">Delete group</div>
-        </DeleteGroup>),
+      label: <div className="is-error">Delete group</div>,
+      onClick: handleOnDeleteGroup,
     },
   ];
 };

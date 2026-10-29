@@ -1,4 +1,4 @@
-import { formatCount } from '@Components/limits/helpers';
+import { formatCount, isLimitComplete } from '@Components/limits/helpers';
 import useModals from '@Hooks/use-modals';
 import { useApplyGroupLimitsMutation, useGetGroupQuery } from '@State/groups/api';
 import { FCK_APPLY_GROUP_LIMITS } from '@State/groups/fixed-cache-key';
@@ -129,17 +129,25 @@ function CopyExplanation({ count }) {
 function ApplyActions() {
   const { hideModal } = useModals();
 
+  const { form } = useFormbitContext();
+  const rows = form?.limits ?? [];
+
   const { handleOnSubmit, args: { isLoading }, isSubmitDisabled } = useHandleOnSubmit();
 
   const touchedCount = useTouchedCount();
 
   const applyLabel = `Apply to ${formatCount(touchedCount, 'credential')}`;
+  const isIncomplete = !rows.every(isLimitComplete);
+  const hint = isIncomplete ? <span className="mr-auto self-center text-xs text-[var(--coo-fg-secondary)]" id="apply-group-limits-hint">Fill in every field of each limit to apply</span> : false;
+  const hintId = isIncomplete ? 'apply-group-limits-hint' : undefined;
 
   return (
     <div className="flex gap-2 justify-end">
+      {hint}
+
       <Button onClick={hideModal} type="secondary-light">Cancel</Button>
 
-      <Button disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{applyLabel}</Button>
+      <Button aria-describedby={hintId} disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{applyLabel}</Button>
     </div>
   );
 }

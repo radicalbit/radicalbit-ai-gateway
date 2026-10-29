@@ -17,9 +17,35 @@ import {
   Square,
   SquarePen,
 } from 'lucide-react';
+import { useRef, useState } from 'react';
+
+const MENU_TRIGGER = ['hover', 'click'];
 
 function SlotActions({ projectUuid, projectName, config }) {
+  const buttonRef = useRef(null);
+
+  const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);
+
   const items = useSlotMenuItems({ projectUuid, projectName, config });
+
+  const handleOnOpenChange = (isOpen) => {
+    const { activeElement } = document;
+    const isFocusLost = activeElement === document.body || activeElement?.closest('.ant-dropdown');
+
+    if (!isOpen) {
+      setIsOpenedByKeyboard(false);
+    }
+
+    if (!isOpen && isFocusLost) {
+      buttonRef.current?.focus();
+    }
+  };
+
+  const handleOnKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      setIsOpenedByKeyboard(true);
+    }
+  };
 
   const handleOnClick = (e) => {
     e.stopPropagation();
@@ -30,13 +56,15 @@ function SlotActions({ projectUuid, projectName, config }) {
   }
 
   return (
-    <Tooltip title="More actions">
-      <Dropdown className="c-project-config-menu" menu={{ items }}>
-        <Button aria-label="More actions" onClick={handleOnClick} type="text">
-          <Lucide icon={EllipsisVertical} />
-        </Button>
-      </Dropdown>
-    </Tooltip>
+    <span onClick={handleOnClick} role="presentation">
+      <Tooltip title="More actions">
+        <Dropdown autoFocus={isOpenedByKeyboard} className="c-project-config-menu" destroyOnHidden menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
+          <Button aria-label={`More actions for ${projectName}, slot ${config?.slot}`} onKeyDown={handleOnKeyDown} ref={buttonRef} type="text">
+            <Lucide icon={EllipsisVertical} />
+          </Button>
+        </Dropdown>
+      </Tooltip>
+    </span>
   );
 }
 
