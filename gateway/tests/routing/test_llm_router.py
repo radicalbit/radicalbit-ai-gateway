@@ -267,6 +267,21 @@ class TestLLMRouter:
             await router.select_model([HumanMessage(content='fix this bug')])
         record.assert_awaited_once()
 
+    async def test_no_spend_without_token_usage(self):
+        structured = _structured_model({CODE: 0.9, GENERAL: 0.1})
+        structured.ainvoke.return_value['raw'] = AIMessage(content='')
+        router = _build_router(structured)
+        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
+            result = await router.select_model([HumanMessage(content='fix this bug')])
+        assert result.model_id == 'code_model'
+        record.assert_not_awaited()
+
+    async def test_a_failing_span_does_not_break_routing(self):
+        router = _build_router(_structured_model({CODE: 0.9, GENERAL: 0.1}))
+        with patch(ROUTER_SPAN, side_effect=RuntimeError('no tracer')):
+            result = await router.select_model([HumanMessage(content='fix this bug')])
+        assert result.model_id == 'code_model'
+
     async def test_no_spend_when_router_call_fails(self):
         router = _build_router(_structured_model(side_effect=RuntimeError('boom')))
         with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:

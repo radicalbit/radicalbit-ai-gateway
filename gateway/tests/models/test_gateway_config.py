@@ -502,6 +502,13 @@ def test_llm_routing_message_roles_with_history_all():
     assert [r.value for r in routing_config.message_roles] == ['USER', 'ASSISTANT']
 
 
+def test_llm_routing_explicit_null_message_roles():
+    gateway_config = GatewayConfig.model_validate(
+        _llm_routing_raw(history='all', message_roles=None)
+    )
+    assert gateway_config.routing_by_name['llm_router'].message_roles is None
+
+
 def test_llm_routing_threshold_out_of_range():
     with pytest.raises(ValueError):
         GatewayConfig.model_validate(_llm_routing_raw(threshold=1.5))
