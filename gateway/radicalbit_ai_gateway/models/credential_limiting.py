@@ -113,6 +113,30 @@ class CredentialLimitsIn(BaseModel):
         return [limit.to_key_limit(key_uuid) for limit in self.limits]
 
 
+class CredentialLimitValueIn(BaseModel):
+    value: float = Field(
+        ...,
+        gt=0,
+        description='New threshold for the limit; its category, window type and window stay as they are.',
+        examples=[10, 1000, 1.5],
+    )
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+
+def validate_limit_value(
+    category: CredentialLimitCategory,
+    algorithm: LimitingAlgorithmType,
+    window_size: str,
+    value: float,
+) -> None:
+    Limiting(
+        algorithm=algorithm,
+        window_size=window_size,
+        **{CATEGORY_TO_LIMITING_FIELD[category]: value},
+    )
+
+
 class CredentialLimitOut(BaseModel):
     uuid: UUID
     category: CredentialLimitCategory
@@ -135,3 +159,7 @@ class CredentialLimitOut(BaseModel):
             created_at=str(key_limit.created_at),
             updated_at=str(key_limit.updated_at),
         )
+
+
+class CredentialLimitUpdatedOut(CredentialLimitOut):
+    previous_value: float
