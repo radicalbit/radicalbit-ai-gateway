@@ -6,13 +6,26 @@ import {
   Alert, Button, RbitModal, SectionTitle, Spinner,
 } from '@radicalbit/radicalbit-design-system';
 import AddScreen from './add-screen';
+import DeleteScreen from './delete-screen';
 import ListScreen from './list-screen';
 import { ScreenEnum, getInitialValues, schema } from './schema';
+import useHandleOnDelete from './useHandleOnDelete';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
 const UNAVAILABLE_MESSAGE = 'Unable to load this credential, please close and retry later';
 
 const MODAL_WIDTH = 760;
+
+const SCREENS = {
+  [ScreenEnum.LIST]: ListScreen,
+  [ScreenEnum.ADD]: AddScreen,
+  [ScreenEnum.DELETE]: DeleteScreen,
+};
+
+const SCREEN_ACTIONS = {
+  [ScreenEnum.ADD]: AddActions,
+  [ScreenEnum.DELETE]: DeleteActions,
+};
 
 function ManageKeyLimits() {
   const { hideModal, modalPayload } = useModals();
@@ -52,14 +65,15 @@ function ManageKeyLimitsInner() {
   const uuid = modalPayload?.data?.uuid;
 
   const { form } = useFormbitContext();
-  const isAddScreen = form?.__metadata?.screen === ScreenEnum.ADD;
+  const screen = form?.__metadata?.screen;
 
   const { data } = useGetKeyQuery(uuid, { skip: !uuid });
   const name = data?.name;
 
-  const body = isAddScreen ? <AddScreen /> : <ListScreen />;
+  const Screen = SCREENS[screen] ?? ListScreen;
+  const Actions = SCREEN_ACTIONS[screen];
   const subtitle = `Every request authenticated by ${name} counts against these limits, whatever route it calls.`;
-  const actions = isAddScreen ? <AddActions /> : false;
+  const actions = Actions ? <Actions /> : false;
 
   return (
     <RbitModal
@@ -76,7 +90,7 @@ function ManageKeyLimitsInner() {
       open
       width={MODAL_WIDTH}
     >
-      {body}
+      <Screen />
     </RbitModal>
   );
 }
@@ -105,6 +119,18 @@ function AddActions() {
       <Button onClick={handleOnCancel} type="secondary-light">Cancel</Button>
 
       <Button aria-describedby={hintId} disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{saveLabel}</Button>
+    </div>
+  );
+}
+
+function DeleteActions() {
+  const { args: { isLoading }, handleOnCancel, handleOnDelete } = useHandleOnDelete();
+
+  return (
+    <div className="flex gap-2 justify-end">
+      <Button onClick={handleOnCancel} type="secondary-light">Cancel</Button>
+
+      <Button loading={isLoading} onClick={handleOnDelete} type="error-light">Delete</Button>
     </div>
   );
 }

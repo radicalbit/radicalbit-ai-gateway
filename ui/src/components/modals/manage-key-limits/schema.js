@@ -4,6 +4,7 @@ import * as yup from 'yup';
 const ScreenEnum = {
   LIST: 'list',
   ADD: 'add',
+  DELETE: 'delete',
 };
 
 const newRow = () => ({ ...EMPTY_LIMIT, rowKey: `${Date.now()}-${Math.random()}` });
