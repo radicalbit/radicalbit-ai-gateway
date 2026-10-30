@@ -14,7 +14,7 @@ import {
   ChevronDown, ChevronRight, Plus,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import DeleteLimit from './delete-limit';
+import LimitMenu from './limit-menu';
 import { ScreenEnum } from './schema';
 
 const EXPIRED_MESSAGE = 'This credential has expired: its limits can no longer be changed.';
@@ -254,7 +254,7 @@ function Actions({ isExpired, record }) {
 
   return (
     <span onClick={handleOnClick} role="presentation">
-      <DeleteLimit limit={record} />
+      <LimitMenu limit={record} />
     </span>
   );
 }

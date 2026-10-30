@@ -10,8 +10,8 @@ import {
   Board, Button, DataTable, Tooltip, Void,
 } from '@radicalbit/radicalbit-design-system';
 import { Plus } from 'lucide-react';
+import BudgetMenu from './budget-menu';
 import Conflicts from './conflicts';
-import DeleteBudget from './delete-budget';
 import { ScreenEnum } from './schema';
 
 const NO_BUDGET_TITLE = 'This project has no budget';
@@ -151,7 +151,7 @@ function Actions({ limit }) {
 
   return (
     <span onClick={handleOnClick} role="presentation">
-      <DeleteBudget limit={limit} />
+      <BudgetMenu limit={limit} />
     </span>
   );
 }
