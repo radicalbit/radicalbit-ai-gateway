@@ -1,7 +1,7 @@
 import Lucide from '@Components/lucide';
 import { LIMIT_CATEGORIES, LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import {
-  formatLimitValue, formatLimitWindow, formatLimitsCount, formatRouteLimitWarning, sortLimits,
+  formatLimitValue, formatLimitWindow, formatLimitsCount, formatNeverReached, formatRouteLimitWarning, getLimitWarnings, sortLimits,
 } from '@Components/limits/helpers';
 import RouteLimitWarnings from '@Components/limits/route-limit-warnings';
 import useModals from '@Hooks/use-modals';
@@ -139,6 +139,7 @@ function LimitsTable() {
 
   const { data } = useGetKeyQuery(uuid, { skip: !uuid });
   const limits = data?.limits;
+  const limitWarnings = data?.limitWarnings;
   const isExpired = data?.state === CredentialStateEnum.EXPIRED;
 
   const [collapsed, setCollapsed] = useState(new Set());
@@ -161,9 +162,11 @@ function LimitsTable() {
         return [headerRow];
       }
 
-      return [headerRow, ...categoryLimits.map((limit) => ({ ...limit, header: false, key: limit.uuid }))];
+      return [headerRow, ...categoryLimits.map((limit) => ({
+        ...limit, header: false, key: limit.uuid, warnings: getLimitWarnings(limitWarnings, limit),
+      }))];
     });
-  }, [collapsed, limits]);
+  }, [collapsed, limitWarnings, limits]);
 
   const columns = useMemo(() => [
     {
@@ -231,10 +234,14 @@ function Name({ isExpanded, record }) {
 
   if (!record?.header) {
     return (
-      <span className={WINDOW_INDENT}>
-        {formatLimitWindow(record?.windowSize)}
+      <span className={`flex flex-col ${WINDOW_INDENT}`}>
+        <span>
+          {formatLimitWindow(record?.windowSize)}
 
-        <span className="opacity-70">{` · ${WINDOW_TYPE_LABELS[record?.algorithm]} window`}</span>
+          <span className="opacity-70">{` · ${WINDOW_TYPE_LABELS[record?.algorithm]} window`}</span>
+        </span>
+
+        {(record?.warnings ?? []).map((warning) => <small key={warning.routeName} className="text-[var(--coo-warning)]">{formatNeverReached(warning)}</small>)}
       </span>
     );
   }

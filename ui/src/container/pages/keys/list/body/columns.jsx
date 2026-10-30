@@ -54,7 +54,7 @@ const columns = [
     title: 'Limits',
     dataIndex: 'limits',
     key: 'limits',
-    render: (limits, { uuid }) => <Limits limits={limits} uuid={uuid} />,
+    render: (limits, { limitWarnings, uuid }) => <Limits limits={limits} uuid={uuid} warnings={limitWarnings} />,
   },
   {
     title: 'Created',
@@ -176,14 +176,14 @@ function AssociatedGroup({ group }) {
   return '--';
 }
 
-function Limits({ limits, uuid }) {
+function Limits({ limits, uuid, warnings }) {
   const { showModal } = useModals();
 
   const handleOnManage = () => {
     showModal(modals.MANAGE_KEY_LIMITS, { uuid });
   };
 
-  return <LimitsSummary limits={limits} onManage={handleOnManage} />;
+  return <LimitsSummary limits={limits} onManage={handleOnManage} warnings={warnings} />;
 }
 
 function Actions({ name, uuid }) {

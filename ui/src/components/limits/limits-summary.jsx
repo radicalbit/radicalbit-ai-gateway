@@ -3,12 +3,12 @@ import { Popover } from '@radicalbit/radicalbit-design-system';
 import { useState } from 'react';
 import { LIMIT_CATEGORY_LABELS, LimitCategoryEnum, WINDOW_TYPE_LABELS } from './constants';
 import {
-  formatCount, formatLimitValue, formatLimitWindow, sortLimits,
+  formatCount, formatLimitValue, formatLimitWindow, formatNeverReached, getLimitWarnings, sortLimits,
 } from './helpers';
 
 const TRIGGER = ['hover', 'focus'];
 
-function LimitsSummary({ limits = [], noun = 'limit', onManage, withCategory = true }) {
+function LimitsSummary({ limits = [], noun = 'limit', onManage, warnings = [], withCategory = true }) {
   const [isOpen, setIsOpen] = useState(false);
 
   const handleOnClick = (e) => {
@@ -27,29 +27,35 @@ function LimitsSummary({ limits = [], noun = 'limit', onManage, withCategory = t
   const count = formatCount(limits.length, noun);
   const title = withCategory ? 'Limits' : 'Budgets';
   const contentOnManage = onManage ? handleOnManage : undefined;
+  const neverReachedCount = limits.filter((limit) => getLimitWarnings(warnings, limit).length).length;
+  const neverReached = neverReachedCount ? <span className="text-[var(--coo-warning)]">{` · ${neverReachedCount} never reached`}</span> : false;
 
   return (
     <Popover
       arrow={false}
-      content={<Content limits={limits} onManage={contentOnManage} withCategory={withCategory} />}
+      content={<Content limits={limits} onManage={contentOnManage} warnings={warnings} withCategory={withCategory} />}
       onOpenChange={setIsOpen}
       open={isOpen}
       placement="bottomLeft"
       title={<strong>{title}</strong>}
       trigger={TRIGGER}
     >
-      <HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>
+      <span>
+        <HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>
+
+        {neverReached}
+      </span>
     </Popover>
   );
 }
 
-function Content({ limits, onManage, withCategory }) {
+function Content({ limits, onManage, warnings, withCategory }) {
   const handleOnManage = (e) => {
     e.stopPropagation();
     onManage();
   };
 
-  const lines = sortLimits(limits).map((limit) => <LimitLine key={limit.uuid} limit={limit} withCategory={withCategory} />);
+  const lines = sortLimits(limits).map((limit) => <LimitLine key={limit.uuid} limit={limit} warnings={getLimitWarnings(warnings, limit)} withCategory={withCategory} />);
   const manageLabel = withCategory ? 'Manage limits' : 'Manage budgets';
   const manageLink = onManage ? <HtmlAnchor onClick={handleOnManage}>{manageLabel}</HtmlAnchor> : false;
 
@@ -64,7 +70,7 @@ function Content({ limits, onManage, withCategory }) {
   );
 }
 
-function LimitLine({ limit, withCategory }) {
+function LimitLine({ limit, warnings, withCategory }) {
   const algorithm = limit?.algorithm;
   const category = limit?.category ?? LimitCategoryEnum.BUDGET;
   const value = limit?.value;
@@ -75,12 +81,16 @@ function LimitLine({ limit, withCategory }) {
   const windowTypeText = ` · ${WINDOW_TYPE_LABELS[algorithm]}`;
 
   return (
-    <span>
-      {categoryText}
+    <span className="flex flex-col">
+      <span>
+        {categoryText}
 
-      {maxText}
+        {maxText}
 
-      <span className="opacity-70">{windowTypeText}</span>
+        <span className="opacity-70">{windowTypeText}</span>
+      </span>
+
+      {warnings.map((warning) => <small key={warning.routeName} className="text-[var(--coo-warning)]">{formatNeverReached(warning)}</small>)}
     </span>
   );
 }
