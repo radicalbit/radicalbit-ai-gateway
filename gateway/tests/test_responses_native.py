@@ -130,6 +130,20 @@ class TestOpenAIResponses:
         )
         assert deepseek.supports_native_responses()
 
+    def test_azure_serves_responses(self):
+        azure = init_chat_model(
+            'azure:my-deployment',
+            api_key='sk',
+            api_version='2025-04-01-preview',
+            base_url='https://my-resource.openai.azure.com',
+            http_async_client=HttpxAiohttpClient(),
+        )
+        assert azure.supports_native_responses()
+
+    def test_providers_on_another_client_do_not(self):
+        anthropic = init_chat_model('anthropic:claude-haiku-5-5', api_key='sk')
+        assert not anthropic.supports_native_responses()
+
     async def test_stream_forwards_the_body_and_relays_events(self):
         chat_model = _openai(temperature=0.2, reasoning_effort='low')
         body = {

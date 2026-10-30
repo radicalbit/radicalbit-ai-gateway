@@ -107,9 +107,6 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
     def _structured_method(self) -> str:
         return 'function_calling'
 
-    def supports_native_responses(self) -> bool:
-        return True
-
     def adapt_responses_input(self, items: list) -> list:
         adapted = []
         for item in items:

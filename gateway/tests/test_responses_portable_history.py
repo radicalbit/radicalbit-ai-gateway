@@ -223,43 +223,45 @@ def _compatible(base_url: str):
     )
 
 
-class TestOpenRouterTarget:
-    def setup_method(self):
-        self.model = _compatible('https://openrouter.ai/api/v1')
+OPENROUTER = 'https://openrouter.ai/api/v1'
 
-    def test_its_own_reasoning_is_kept_whatever_model_produced_it(self):
+
+class TestCompatibleTarget:
+    """An ``openai/`` model with a ``base_url``: any OpenAI-compatible endpoint."""
+
+    def setup_method(self):
+        self.model = _compatible(OPENROUTER)
+
+    def test_all_reasoning_is_dropped_its_own_too(self):
         items = [
             USER,
+            OPENAI_REASONING,
+            DEEPSEEK_REASONING,
             OPENROUTER_LUNA_REASONING,
-            OPENROUTER_DEEPSEEK_REASONING,
             OPENROUTER_HAIKU_REASONING,
-            OPENROUTER_CALL,
-            CALL_OUTPUT,
         ]
+
+        assert self.model.adapt_responses_input(items) == [USER]
+
+    def test_every_item_loses_id_and_status(self):
+        items = [OPENAI_CALL, DEEPSEEK_CALL, OPENROUTER_CALL, OPENROUTER_MESSAGE]
+
+        assert self.model.adapt_responses_input(items) == [
+            _without(item, 'id', 'status') for item in items
+        ]
+
+    def test_items_without_ids_and_non_dicts_are_unchanged(self):
+        items = ['raw', USER, CALL_OUTPUT]
 
         assert self.model.adapt_responses_input(items) == items
 
-    def test_other_providers_reasoning_is_dropped(self):
-        items = [USER, OPENAI_REASONING, DEEPSEEK_REASONING, OPENROUTER_MESSAGE]
+    def test_the_callers_items_are_not_mutated(self):
+        items = [USER, OPENROUTER_LUNA_REASONING, OPENROUTER_CALL, CALL_OUTPUT]
+        before = copy.deepcopy(items)
 
-        assert self.model.adapt_responses_input(items) == [USER, OPENROUTER_MESSAGE]
+        self.model.adapt_responses_input(items)
 
-    def test_foreign_ids_are_removed_as_for_openai(self):
-        assert self.model.adapt_responses_input([DEEPSEEK_CALL]) == [
-            _without(DEEPSEEK_CALL, 'id', 'status')
-        ]
-
-
-class TestOtherCompatibleTarget:
-    def test_openai_rules_without_the_check_on_extra_fields(self):
-        model = _compatible('http://vllm:8000/v1')
-        items = [USER, OPENROUTER_LUNA_REASONING, DEEPSEEK_REASONING, OPENROUTER_CALL]
-
-        assert model.adapt_responses_input(items) == [
-            USER,
-            OPENROUTER_LUNA_REASONING,
-            OPENROUTER_CALL,
-        ]
+        assert items == before
 
 
 class TestDeepSeekTarget:

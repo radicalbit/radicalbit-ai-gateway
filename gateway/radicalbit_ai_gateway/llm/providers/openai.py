@@ -11,7 +11,6 @@ from collections.abc import AsyncIterator, Callable, Mapping
 import os
 import re
 from typing import Any, ClassVar
-from urllib.parse import urlparse
 
 import openai
 from pydantic import (
@@ -625,6 +624,11 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
 
     # ── Native Responses API ─────────────────────────────────────────────
 
+    def supports_native_responses(self) -> bool:
+        # Every endpoint on the OpenAI client is tried; one that does not serve
+        # the Responses API answers with its own error.
+        return True
+
     def _native_responses_payload(self, body: dict) -> dict:
         """Merge the model's configured settings into a client's Responses body.
 
@@ -804,7 +808,7 @@ def _is_openai_reasoning(item: dict) -> bool:
 
 
 # OpenAI never returns these on reasoning and rejects them on input: reasoning
-# carrying them came from elsewhere (OpenRouter), even with an OpenAI blob.
+# carrying them came from elsewhere, even with an OpenAI blob.
 _FOREIGN_REASONING_FIELDS = frozenset({'status', 'format', 'signature'})
 
 
@@ -879,29 +883,26 @@ class ChatOpenAI(_BaseChatOpenAI):
             params['max_completion_tokens'] = params.pop('max_tokens')
         return params
 
-    def supports_native_responses(self) -> bool:
-        return True
-
-    def _keeps_reasoning(self, item: dict) -> bool:
-        """Whether this endpoint gets the reasoning item back: only its own."""
-        hostname = urlparse(self.openai_api_base or '').hostname
-        if hostname == 'openrouter.ai':
-            # OpenRouter marks its reasoning with ``format``; its models reject
-            # other providers' encrypted reasoning.
-            return 'format' in item
-        # OpenAI reads only its own reasoning and rejects any other shape.
-        return _is_openai_reasoning(item) and not (
-            hostname in (None, 'api.openai.com')
-            and _FOREIGN_REASONING_FIELDS & item.keys()
-        )
-
     def adapt_responses_input(self, items: list) -> list:
+        if self.openai_api_base:
+            # Another OpenAI-compatible endpoint, whose own items can't be told
+            # apart: no reasoning, and no item ids, which each provider checks
+            # its own way.
+            return [
+                {k: v for k, v in item.items() if k not in ('id', 'status')}
+                if isinstance(item, dict)
+                else item
+                for item in super().adapt_responses_input(items)
+            ]
         adapted = []
         for item in items:
             if not isinstance(item, dict):
                 adapted.append(item)
             elif item.get('type') == 'reasoning':
-                if self._keeps_reasoning(item):
+                # OpenAI reads only its own reasoning and rejects any other shape.
+                if _is_openai_reasoning(item) and not (
+                    _FOREIGN_REASONING_FIELDS & item.keys()
+                ):
                     adapted.append(item)
             elif _has_foreign_id(item):
                 # OpenAI checks each item id's prefix; without the id it takes
