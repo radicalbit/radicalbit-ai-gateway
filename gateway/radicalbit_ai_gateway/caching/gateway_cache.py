@@ -66,6 +66,21 @@ class GatewayCache:
     ) -> str:
         return f'messages:{[message.model_dump_json(indent=None) for message in messages]};tools:{json.dumps(tools)};tool_choice:{json.dumps(tool_choice)};extra_args:{json.dumps(kwargs)}'
 
+    def generate_responses_cache_key(
+        self,
+        project_uuid: str,
+        route_name: str,
+        key_uuid: str,
+        signature: dict,
+    ) -> str:
+        """Key a Responses API request by its ``cache_signature``."""
+        request_signature = (
+            f'responses:{json.dumps(signature, ensure_ascii=False, sort_keys=True)}'
+        )
+        return self.cache_client.generate_cache_key(
+            project_uuid, route_name, request_signature, key_uuid
+        )
+
     def generate_embedding_cache_key(
         self,
         project_uuid: str,

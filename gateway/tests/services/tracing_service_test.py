@@ -1366,7 +1366,6 @@ class TracingServiceTest(unittest.TestCase):
                 group_name='test-group-clickhouse',  # stale name
                 output_tokens='100',
                 input_tokens='200',
-                total_tokens='300',
                 span_attributes={'custom.attr': 'value'},
                 status_message=None,
                 events=[],
@@ -1427,7 +1426,6 @@ class TracingServiceTest(unittest.TestCase):
                 group_name='test-group',
                 output_tokens='50',
                 input_tokens='100',
-                total_tokens='150',
                 span_attributes={},
                 status_message='Something went wrong',
                 events=[
@@ -1483,7 +1481,6 @@ class TracingServiceTest(unittest.TestCase):
                 group_name='test-group',
                 output_tokens='',
                 input_tokens='',
-                total_tokens='',
                 span_attributes={},
                 status_message=None,
                 events=[],
@@ -1524,7 +1521,6 @@ class TracingServiceTest(unittest.TestCase):
                 group_name='',
                 output_tokens='10',
                 input_tokens='20',
-                total_tokens='30',
                 span_attributes={'key': 'value'},
                 status_message=None,
                 events=[],

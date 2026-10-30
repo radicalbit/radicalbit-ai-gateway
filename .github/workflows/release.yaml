@@ -42,6 +42,7 @@ jobs:
     with:
       working-directory: ./gateway
       run-pytest: true
+    secrets: inherit
 
   test-worker:
     uses: ./.github/workflows/tests.yaml

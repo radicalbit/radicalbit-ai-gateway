@@ -13,9 +13,50 @@ import openai
 from pydantic import Field, SecretStr, model_validator
 
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
-from radicalbit_ai_gateway.llm.providers.openai import _BaseChatOpenAI, _env
+from radicalbit_ai_gateway.llm.providers.openai import (
+    _BaseChatOpenAI,
+    _env,
+    is_openai_reasoning_blob,
+)
 
 DEFAULT_API_BASE = 'https://api.deepseek.com/v1'
+# Stands in for reasoning another model did not share.
+REASONING_PLACEHOLDER = 'Reasoning not available: this step came from another model.'
+
+
+def _reasoning(text: str) -> dict:
+    return {
+        'type': 'reasoning',
+        'summary': [],
+        'content': [{'type': 'reasoning_text', 'text': text}],
+    }
+
+
+def _with_reasoning_before_current_calls(items: list) -> list:
+    """Put reasoning before each tool call of the current turn that has none."""
+    last_user = max(
+        (
+            index
+            for index, item in enumerate(items)
+            if isinstance(item, dict) and item.get('role') == 'user'
+        ),
+        default=-1,
+    )
+    adapted = items[: last_user + 1]
+    reasoned = False
+    for item in items[last_user + 1 :]:
+        kind = item.get('type') if isinstance(item, dict) else None
+        if kind == 'reasoning':
+            reasoned = True
+        elif kind == 'function_call_output':
+            reasoned = False
+        elif kind == 'function_call' and not reasoned:
+            # DeepSeek in thinking mode rejects a tool call of the current turn
+            # without non-empty reasoning before it.
+            adapted.append(_reasoning(REASONING_PLACEHOLDER))
+            reasoned = True
+        adapted.append(item)
+    return adapted
 
 
 def _secret_env_deepseek() -> SecretStr | None:
@@ -65,6 +106,27 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
 
     def _structured_method(self) -> str:
         return 'function_calling'
+
+    def adapt_responses_input(self, items: list) -> list:
+        adapted = []
+        for item in items:
+            if not (
+                isinstance(item, dict)
+                and item.get('type') == 'reasoning'
+                and is_openai_reasoning_blob(item.get('encrypted_content'))
+            ):
+                adapted.append(item)
+                continue
+            # OpenAI's summary is the only part of its reasoning another model
+            # can read; DeepSeek takes it as plain-text reasoning ``content``.
+            summary = '\n\n'.join(
+                part['text']
+                for part in item.get('summary') or []
+                if isinstance(part, dict) and part.get('text')
+            )
+            if summary:
+                adapted.append(_reasoning(summary))
+        return _with_reasoning_before_current_calls(adapted)
 
     def _get_request_payload(self, messages: list[BaseMessage], **kwargs: Any) -> dict:
         payload = super()._get_request_payload(messages, **kwargs)

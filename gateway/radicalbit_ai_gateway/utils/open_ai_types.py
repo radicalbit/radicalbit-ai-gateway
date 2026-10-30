@@ -499,13 +499,14 @@ CompletionCreateParams = Union[
 # ---------------------------------------------------------------------------
 # A minimal TypedDict for the Responses API create params.  We use `list`
 # instead of `Iterable` and `Any` for union-heavy fields so that FastAPI /
-# Pydantic can parse the request body without issues.
+# Pydantic can parse the request body without issues. It only validates the
+# request: the body goes upstream with every field the client sent.
 # ---------------------------------------------------------------------------
 
 
 class ResponseCreateParamsCustom(TypedDict, total=False):
-    input: Required[Union[str, list]]
-    """The input to the model — a string or list of EasyInputMessage items."""
+    input: Union[str, list]
+    """The input to the model — a string or a list of input items."""
 
     model: Required[Union[str, ChatModel]]
     """Gateway route name used to select the backend model."""
@@ -517,7 +518,7 @@ class ResponseCreateParamsCustom(TypedDict, total=False):
     """Whether to stream the response."""
 
     tools: list
-    """Function tools (other built-in tool types are skipped by the gateway)."""
+    """Function, custom and hosted tools (see the route's ``responses`` settings)."""
 
     tool_choice: Any
     """Which tool the model should use."""
@@ -535,16 +536,16 @@ class ResponseCreateParamsCustom(TypedDict, total=False):
     """Key-value pairs attached to the response."""
 
     previous_response_id: str | None
-    """Not supported — will raise GatewayBadRequest if set."""
+    """A response stored at the provider to continue; the request has no fallback."""
 
     store: bool | None
-    """Whether to store the response (no-op in the gateway)."""
+    """Whether the provider stores the response (forced false by a route's settings)."""
 
     user: str | None
     """End-user identifier forwarded to the upstream provider."""
 
     parallel_tool_calls: bool | None
-    """Whether to allow parallel tool calls (forwarded to Chat Completions)."""
+    """Whether to allow parallel tool calls."""
 
 
 # ---------------------------------------------------------------------------

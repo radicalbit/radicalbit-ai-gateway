@@ -2037,7 +2037,6 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
                     'traceloop.association.properties.group_name': 'test-group',
                     'gen_ai.usage.input_tokens': '100',
                     'gen_ai.usage.output_tokens': '50',
-                    'llm.usage.total_tokens': '150',
                     'traceloop.association.properties.request_uuid': '12345678-1234-5678-1234-567812345678',
                 },
             )
@@ -2061,7 +2060,6 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         assert result.group_name == 'test-group'
         assert result.output_tokens == '50'
         assert result.input_tokens == '100'
-        assert result.total_tokens == '150'
         # Verify new fields
         assert result.span_attributes is not None
         assert result.status_message == ''

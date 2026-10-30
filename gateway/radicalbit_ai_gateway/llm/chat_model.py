@@ -8,7 +8,7 @@ import uuid
 from pydantic import BaseModel
 
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
-from radicalbit_ai_gateway.llm.tracing import ChatTrace
+from radicalbit_ai_gateway.llm.tracing import ChatTrace, ResponsesTrace
 
 
 def _run_id() -> str:
@@ -49,7 +49,7 @@ class ChatModel(ABC):
         **kwargs: Any,
     ) -> AsyncIterator[AIMessageChunk]:
         messages = list(input)
-        trace = ChatTrace.start(self, messages, kwargs)
+        trace = ChatTrace.start(self, messages, kwargs, stream=True)
         run_id = _run_id()
         # The provider's chunks, without the closing one added here.
         chunks: list[AIMessageChunk] = []
@@ -87,6 +87,69 @@ class ChatModel(ABC):
     ) -> AsyncIterator[AIMessageChunk]:
         """Call the provider in streaming mode and yield its reply chunks."""
 
+    # ── Native OpenAI Responses API ──────────────────────────────────────
+    # A provider that serves the Responses API takes a client's request body
+    # as is, so nothing is lost translating it to and from messages. Such a
+    # provider implements ``_ainvoke_native_responses`` and
+    # ``_astream_native_responses``; the public methods trace every call
+    # (``ResponsesTrace`` in ``llm/tracing.py``).
+
+    def supports_native_responses(self) -> bool:
+        """Whether this model can serve a Responses API request body as is."""
+        return False
+
+    def adapt_responses_input(self, items: list) -> list:
+        """Return the Responses ``input`` items reduced to what this model accepts."""
+        # Reasoning can be resumed only by the model that produced it.
+        return [
+            item
+            for item in items
+            if not (isinstance(item, dict) and item.get('type') == 'reasoning')
+        ]
+
+    async def ainvoke_native_responses(self, body: dict) -> dict:
+        """Send a Responses API request body and return the response object."""
+        trace = ResponsesTrace.start(self, body)
+        try:
+            response = await self._ainvoke_native_responses(body)
+        except Exception as e:
+            if trace:
+                trace.fail(e)
+            raise
+        if trace:
+            trace.end(response)
+        return response
+
+    async def astream_native_responses(
+        self, body: dict
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Send a streaming Responses API request; yield ``(event, data)`` pairs."""
+        trace = ResponsesTrace.start(self, body, stream=True)
+        try:
+            async for event, data in self._astream_native_responses(body):
+                if trace:
+                    trace.add_event(event, data)
+                yield event, data
+        except BaseException as e:
+            # Also when the consumer stops early (GeneratorExit).
+            if trace:
+                trace.fail(e)
+            raise
+        if trace:
+            trace.end_stream()
+
+    async def _ainvoke_native_responses(self, body: dict) -> dict:
+        """Call the provider's Responses API and return the response object."""
+        raise NotImplementedError(
+            f'{type(self).__name__} does not serve the Responses API'
+        )
+
+    def _astream_native_responses(self, body: dict) -> AsyncIterator[tuple[str, str]]:
+        """Call the provider's Responses API in streaming mode; yield its events."""
+        raise NotImplementedError(
+            f'{type(self).__name__} does not serve the Responses API'
+        )
+
     def bind_tools(self, tools: list[dict], tool_choice: Any = None) -> 'ChatModel':
         """Return a model that offers ``tools`` on every call."""
         raise NotImplementedError(f'{type(self).__name__} does not support tools')
@@ -101,6 +164,10 @@ class ChatModel(ABC):
 
     # ── Tracing hooks ─────────────────────────────────────────────────────
     # What LangChain derived from its internals for its spans (llm/tracing.py).
+
+    def _server_url(self) -> str | None:
+        """Return the URL of the provider's API, reported as ``server.*``."""
+        return None
 
     def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
         """LangChain's invocation params of a call with ``kwargs``.

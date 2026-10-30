@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 import datetime
 import json
 import logging
+import time
 from typing import Any
 
 import numpy as np
@@ -11,6 +12,7 @@ from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
+from openai.types.completion_usage import CompletionUsage
 from openai.types.create_embedding_response import CreateEmbeddingResponse
 from traceloop.sdk.decorators import task, workflow
 
@@ -59,6 +61,21 @@ from radicalbit_ai_gateway.models.guardrails import GuardrailClass, GuardrailWhe
 from radicalbit_ai_gateway.models.model import ENABLE_PROMPT_CACHE_PARAM, Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
+from radicalbit_ai_gateway.responses.events import response_events
+from radicalbit_ai_gateway.responses.output import (
+    ResponsesOutput,
+    gateway_response,
+    message_item,
+    usage_token_counts,
+)
+from radicalbit_ai_gateway.responses.request import (
+    ResponsesRequest,
+    apply_governance,
+    cache_signature,
+    check_supported,
+    last_user_text,
+    references_stored_state,
+)
 from radicalbit_ai_gateway.routing import (
     DecisionRouter,
     DeterministicRouter,
@@ -69,9 +86,11 @@ from radicalbit_ai_gateway.routing import (
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.ai_gateway_types import (
     CacheResult,
+    InputGuardrailsResult,
     InvokeResponse,
     OutputProcessResult,
     PrepareAndValidateResult,
+    ResponsesPrepared,
     StreamBufferedResult,
     StreamGenerator,
 )
@@ -109,6 +128,27 @@ logging_config_dict = app_config.log_config.model_dump()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 DECISION_SCREENED_FIELDS = ('state', 'questions')
+
+
+async def _aiter_list(items: list) -> AsyncIterator:
+    for item in items:
+        yield item
+
+
+def _parse_cached_response_object(raw: str | None) -> dict | None:
+    """Return a cached Responses API response object; a chat completion is a miss.
+
+    A semantic cache shares a route's entries between endpoints.
+    """
+    if not raw:
+        return None
+    try:
+        cached = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(cached, dict) or cached.get('object') != 'response':
+        return None
+    return cached
 
 
 class GatewayRoute:
@@ -586,6 +626,442 @@ class GatewayRoute:
                 key_uuid=api_key_uuid,
                 embeddings=prepared.embeddings,
             )
+
+    # ============================================================================
+    # Responses API
+    # ============================================================================
+
+    async def prepare_responses(
+        self,
+        body: dict,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+    ) -> ResponsesPrepared:
+        """Apply the route's policies to a Responses API request.
+
+        The policies read the request's texts as chat messages (see
+        ``ResponsesRequest``); what they change is written back into the body
+        that goes upstream.
+        """
+        route_name = self.gateway_route_config.route_name
+        # Who sent the request: routing charges its own calls to them.
+        set_current_request_identity(
+            self._request_identity(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+            )
+        )
+        if not self.chat_invoker:
+            raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
+        identity = {
+            'request_uuid': request_uuid,
+            'api_key_uuid': api_key_uuid,
+            'group_uuid': group_uuid,
+            'api_key_name': api_key_name,
+            'group_name': group_name,
+        }
+
+        check_supported(body)
+        request = ResponsesRequest(body)
+        apply_governance(request.body, self.gateway_route_config.responses, route_name)
+        allow_fallback = not references_stored_state(request.body)
+
+        set_operation_category(OperationCategory.PREPROCESSING)
+        messages = await run_preprocessing(
+            request.messages(), self.gateway_route_config.plugins
+        )
+        redaction = await self._redact_input_guardrails(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            messages=messages,
+        )
+        # Route on the redacted messages, as the chat path does.
+        model_selected = await self._route_chat_request(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            messages=redaction.redacted_messages,
+        )
+        if not self.chat_invoker.supports_responses(model_selected.model_id):
+            raise GatewayBadRequest(
+                f'Model {model_selected.model_id} of route {route_name} '
+                'does not serve the Responses API'
+            )
+
+        self._apply_config_prompt(redaction.redacted_messages, model_selected)
+        input_guardrails = await self._check_input_guardrails(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            redaction=redaction,
+        )
+        if input_guardrails.soft_block:
+            return ResponsesPrepared(
+                body=request.body,
+                model_selected=model_selected,
+                allow_fallback=allow_fallback,
+                identity=identity,
+                soft_block=gateway_response(
+                    request_uuid,
+                    route_name,
+                    body,
+                    input_guardrails.soft_block.choices[0].message.content or '',
+                ),
+                guardrails_input_triggered=input_guardrails.input_triggered,
+            )
+
+        redacted_messages = input_guardrails.redacted_messages
+        if model_selected.effective_prompt:
+            request.write_back(redacted_messages[1:])
+            request.insert_prompt(redacted_messages[0], model_selected.role)
+        else:
+            request.write_back(redacted_messages)
+
+        prepared = ResponsesPrepared(
+            body=request.body,
+            model_selected=model_selected,
+            allow_fallback=allow_fallback,
+            identity=identity,
+            guardrails_input_triggered=input_guardrails.input_triggered,
+        )
+        if self.gateway_cache:
+            set_operation_category(OperationCategory.CACHE)
+            await self._lookup_responses_cache(prepared)
+            if prepared.cached_response:
+                return prepared
+
+        if (
+            self.token_limiter
+            or self.budget_limiter
+            or get_current_credential_limiter()
+            or get_current_project_budget_limiter()
+        ):
+            set_operation_category(OperationCategory.LIMITING)
+            await self._validate_limiters(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                group_name=group_name,
+                api_key_name=api_key_name,
+                messages=redacted_messages,
+                model_selected=model_selected,
+            )
+        return prepared
+
+    async def invoke_responses(
+        self, prepared: ResponsesPrepared
+    ) -> tuple[dict, dict[str, str]]:
+        """Answer a prepared Responses API request; return the response object
+        and the gateway's headers.
+        """
+        route_name = self.gateway_route_config.route_name
+        if prepared.soft_block:
+            return prepared.soft_block, self._responses_headers(
+                prepared, input_blocked=True
+            )
+
+        cache_hit = prepared.cached_response is not None
+        if cache_hit:
+            response = prepared.cached_response
+        else:
+            set_operation_category(OperationCategory.INVOCATION)
+            response, _ = await self.chat_invoker.complete_responses(
+                **self._responses_call(prepared)
+            )
+
+        (
+            response,
+            output_triggered,
+            output_blocked,
+        ) = await self._process_responses_output(prepared, response)
+        if not cache_hit:
+            await self._account_responses(prepared, response)
+        return {**response, 'model': route_name}, self._responses_headers(
+            prepared,
+            output_triggered=output_triggered,
+            output_blocked=output_blocked,
+            cache_hit=cache_hit,
+        )
+
+    async def open_responses_stream(
+        self, prepared: ResponsesPrepared
+    ) -> tuple[AsyncIterator[str], dict[str, str]]:
+        """Stream a prepared Responses API request; return its SSE frames and the
+        gateway's headers.
+
+        The upstream's events are relayed as they come, unless the whole reply
+        must be known first: a soft block, a cache hit, or a reply the output
+        guardrails must pass.
+        """
+        if (
+            prepared.soft_block
+            or prepared.cached_response
+            or self.has_output_guardrails()
+        ):
+            frames, headers = await self._buffered_responses_frames(prepared)
+            return _aiter_list(frames), headers
+        return self._live_responses_frames(prepared), self._responses_headers(prepared)
+
+    def _responses_call(self, prepared: ResponsesPrepared) -> dict:
+        """Return the arguments of the invoker's call for a prepared request."""
+        return {
+            **prepared.identity,
+            'route_name': self.gateway_route_config.route_name,
+            'body': prepared.body,
+            'model_id': prepared.model_selected.model_id,
+            'allow_fallback': prepared.allow_fallback,
+            'project_uuid': self.project_uuid,
+            'project_name': self.project_name,
+        }
+
+    async def _live_responses_frames(
+        self, prepared: ResponsesPrepared
+    ) -> AsyncIterator[str]:
+        """Relay the upstream's events, then account for the final response."""
+        set_streaming()
+        set_operation_category(OperationCategory.INVOCATION)
+        route_name = self.gateway_route_config.route_name
+        final_response = None
+        async for event in self.chat_invoker.stream_responses(
+            **self._responses_call(prepared)
+        ):
+            if event.is_final:
+                final_response = event.response
+            yield event.to_sse(route_name)
+
+        if final_response:
+            await self._account_responses(prepared, final_response)
+
+    async def _buffered_responses_frames(
+        self, prepared: ResponsesPrepared
+    ) -> tuple[list[str], dict[str, str]]:
+        """Return the frames of a reply known whole before streaming.
+
+        A reply the gateway changed or built is streamed as OpenAI streams it,
+        each text in one delta; an unchanged one as the upstream sent it.
+        """
+        set_streaming()
+        if prepared.soft_block or prepared.cached_response:
+            response, headers = await self.invoke_responses(prepared)
+            return response_events(response), headers
+
+        route_name = self.gateway_route_config.route_name
+        set_operation_category(OperationCategory.INVOCATION)
+        frames: list[str] = []
+        final_response = None
+        async for event in self.chat_invoker.stream_responses(
+            **self._responses_call(prepared)
+        ):
+            if event.is_final:
+                final_response = event.response
+            frames.append(event.to_sse(route_name))
+        if final_response is None:
+            return frames, self._responses_headers(prepared)
+
+        (
+            response,
+            output_triggered,
+            output_blocked,
+        ) = await self._process_responses_output(prepared, final_response)
+        await self._account_responses(prepared, response)
+        if response != final_response:
+            frames = response_events({**response, 'model': route_name})
+        return frames, self._responses_headers(
+            prepared, output_triggered=output_triggered, output_blocked=output_blocked
+        )
+
+    def _responses_headers(
+        self,
+        prepared: ResponsesPrepared,
+        input_blocked: bool = False,
+        output_triggered: bool = False,
+        output_blocked: bool = False,
+        cache_hit: bool = False,
+    ) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if cache_hit:
+            headers['X-RB-AIGATEWAY-CACHE-HIT'] = 'true'
+        if input_blocked or output_blocked:
+            headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
+            if input_blocked:
+                headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-TRIGGERED'] = 'true'
+            if output_blocked:
+                headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-TRIGGERED'] = 'true'
+        if prepared.guardrails_input_triggered or output_triggered:
+            headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
+            if prepared.guardrails_input_triggered:
+                headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-WARN'] = 'true'
+            if output_triggered:
+                headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] = 'true'
+        return headers
+
+    @workflow(name='apply_responses_output_guardrails')
+    async def _process_responses_output(
+        self, prepared: ResponsesPrepared, response: dict
+    ) -> tuple[dict, bool, bool]:
+        """Apply the output guardrails to the text of a response.
+
+        Returns the response, whether a guardrail triggered, and whether a
+        soft block replaced the reply.
+        """
+        if not self.has_output_guardrails():
+            return response, False, False
+        output = ResponsesOutput(response)
+        messages = output.messages()
+        if not messages:
+            return response, False, False
+
+        guardrails_triggered = False
+        has_redact_output = self.guardrail_engine.has_guardrails_for_route(
+            self.gateway_route_config,
+            GuardrailWhereType.OUTPUT,
+            GuardrailClass.REDACT,
+        )
+        if has_redact_output:
+            set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
+            redacted = await self._apply_redact_guardrails(
+                **prepared.identity,
+                messages=messages,
+                where=GuardrailWhereType.OUTPUT,
+            )
+            if any(
+                before.content != after.content
+                for before, after in zip(messages, redacted, strict=True)
+            ):
+                guardrails_triggered = True
+            messages = redacted
+
+        if self.guardrail_engine.has_guardrails_for_route(
+            self.gateway_route_config,
+            GuardrailWhereType.OUTPUT,
+            GuardrailClass.CHECK,
+        ):
+            if not has_redact_output:
+                set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
+            soft_block = await self._apply_check_guardrails(
+                **prepared.identity,
+                messages=messages,
+                where=GuardrailWhereType.OUTPUT,
+            )
+            if soft_block:
+                text = soft_block.choices[0].message.content or ''
+                return {**response, 'output': [message_item(text)]}, True, True
+            try:
+                if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
+                    self.gateway_route_config,
+                    messages,
+                    GuardrailWhereType.OUTPUT,
+                    **prepared.identity,
+                    count_judge_usage=self._judge_usage_counter(
+                        **prepared.identity,
+                    ),
+                ):
+                    guardrails_triggered = True
+            except Exception:
+                pass
+
+        output.write_back(messages)
+        return output.response, guardrails_triggered, False
+
+    async def _account_responses(
+        self, prepared: ResponsesPrepared, response: dict
+    ) -> None:
+        """Count a model's response against the limits, and cache it."""
+        input_tokens, _, output_tokens = usage_token_counts(response.get('usage'))
+        await self._count_usage(
+            prompt_tokens=input_tokens,
+            completion_tokens=output_tokens,
+            model_selected=prepared.model_selected,
+            identity=self._request_identity(
+                **prepared.identity,
+            ),
+        )
+        if (
+            self.gateway_cache
+            and prepared.cache_key
+            and response.get('status') == 'completed'
+        ):
+            set_operation_category(OperationCategory.CACHE)
+            await self._cache_response_object(
+                json.dumps({**response, 'model': prepared.model_selected.model_id}),
+                prepared.cache_key,
+                self.gateway_route_config.route_name,
+                prepared.identity['api_key_uuid'],
+                prepared.embeddings,
+            )
+
+    @task(name='lookup_responses_cache')
+    async def _lookup_responses_cache(self, prepared: ResponsesPrepared) -> None:
+        """Set the cache key of a prepared request, and its cached response on a hit."""
+        signature = cache_signature(prepared.body)
+        if signature is None:
+            return
+        route_name = self.gateway_route_config.route_name
+        prepared.cache_key = self.gateway_cache.generate_responses_cache_key(
+            project_uuid=self.project_uuid,
+            route_name=route_name,
+            key_uuid=prepared.identity['api_key_uuid'],
+            signature=signature,
+        )
+        user_content = last_user_text(prepared.body)
+        if self.gateway_cache.cache_type == CacheType.SEMANTIC:
+            embedding_model_selected = self._get_first_embedding_model()
+            if user_content and embedding_model_selected:
+                prepared.embeddings = await self._generate_embedding_for_semantic_cache(
+                    text=user_content,
+                    **prepared.identity,
+                    route_name=route_name,
+                    model_id_selected=embedding_model_selected.model_id,
+                )
+            if prepared.embeddings is None:
+                # Without embeddings the semantic cache can neither read nor write.
+                prepared.cache_key = ''
+                return
+
+        raw_cached_response = await self.gateway_cache.get(
+            cache_key=prepared.cache_key,
+            embeddings=prepared.embeddings,
+            user_content=user_content,
+            project_uuid=self.project_uuid,
+            route_name=route_name,
+            key_uuid=prepared.identity['api_key_uuid'],
+            k=1,
+        )
+        cached = _parse_cached_response_object(raw_cached_response)
+        if cached is None:
+            return
+
+        input_tokens, _, output_tokens = usage_token_counts(cached.get('usage'))
+        self._emit_cache_events_and_metrics(
+            **prepared.identity,
+            route_name=route_name,
+            model_id=cached.get('model', ''),
+            usage=CompletionUsage(
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+                total_tokens=input_tokens + output_tokens,
+            ),
+            cache_type=self.gateway_cache.cache_type,
+        )
+        now = int(time.time())
+        prepared.cached_response = {
+            **cached,
+            'created_at': now,
+            'completed_at': now if cached.get('completed_at') else None,
+        }
 
     async def invoke_embeddings(
         self,
@@ -1440,62 +1916,26 @@ class GatewayRoute:
         set_operation_category(OperationCategory.PREPROCESSING)
         messages = await run_preprocessing(messages, self.gateway_route_config.plugins)
 
-        guardrails_input_triggered = False
-        guardrails_block_triggered = (
-            False  # Only tracks BLOCK/SOFT_BLOCK, not REDACT or WARN
+        redaction = await self._redact_input_guardrails(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            messages=messages,
         )
-        redacted_messages = messages
-
-        if self.gateway_route_config.guardrails:
-            has_redact_input = self.guardrail_engine.has_guardrails_for_route(
-                self.gateway_route_config,
-                GuardrailWhereType.INPUT,
-                GuardrailClass.REDACT,
-            )
-            if has_redact_input:
-                set_operation_category(OperationCategory.GUARDRAIL_INPUT)
-                redacted_messages = await self._apply_redact_guardrails(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                    api_key_name=api_key_name,
-                    messages=messages,
-                    where=GuardrailWhereType.INPUT,
-                )
-
-                # Mark as triggered if input was redacted (but NOT for block header)
-                try:
-                    if (len(messages) != len(redacted_messages)) or any(
-                        (m1.content != m2.content)
-                        for m1, m2 in zip(messages, redacted_messages)
-                    ):
-                        guardrails_input_triggered = True
-                except Exception:
-                    pass
+        redacted_messages = redaction.redacted_messages
 
         # Route on the redacted messages, so no router (and no service it
         # calls) sees text a redact guardrail masks.
-        set_operation_category(OperationCategory.ROUTING)
-        model_selected = await self._select_chat_model(redacted_messages)
-
-        if self.router and self.gateway_route_config.routing:
-            emit_event(
-                RoutingEventPayload(
-                    value=1.0,
-                    request_uuid=request_uuid,
-                    event_type=EventType.ROUTING,
-                    route_name=route_name,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                    project_uuid=self.project_uuid,
-                    project_name=self.project_name,
-                    routing_name=self.gateway_route_config.routing,
-                    selected_model_id=model_selected.model_id,
-                )
-            )
+        model_selected = await self._route_chat_request(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            messages=redacted_messages,
+        )
 
         # Inject the route's configured system prompt after routing and after
         # redaction: plugins, routers and redact guardrails never see it.
@@ -1504,59 +1944,30 @@ class GatewayRoute:
             # The cache still reads the unredacted list: keep the prompt there too.
             self._apply_config_prompt(messages, model_selected)
 
-        if self.gateway_route_config.guardrails:
-            if self.guardrail_engine.has_guardrails_for_route(
-                self.gateway_route_config,
-                GuardrailWhereType.INPUT,
-                GuardrailClass.CHECK,
-            ):
-                set_operation_category(OperationCategory.GUARDRAIL_INPUT)
-
-                input_soft_block = await self._apply_check_guardrails(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                    api_key_name=api_key_name,
-                    messages=redacted_messages,
-                    where=GuardrailWhereType.INPUT,
-                )
-
-                if input_soft_block:
-                    # SOFT_BLOCK triggers the block header
-                    return PrepareAndValidateResult(
-                        model_selected=model_selected,
-                        redacted_messages=redacted_messages,
-                        cache_key='',
-                        embeddings=None,
-                        cached_response=None,
-                        input_soft_block=input_soft_block,
-                        guardrails_input_triggered=guardrails_input_triggered,
-                        guardrails_block_triggered=True,
-                    )
-
-                # Evaluate WARN-only guardrails on input (does NOT trigger block header)
-                try:
-                    if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
-                        self.gateway_route_config,
-                        redacted_messages,
-                        GuardrailWhereType.INPUT,
-                        request_uuid=request_uuid,
-                        api_key_uuid=api_key_uuid,
-                        group_uuid=group_uuid,
-                        api_key_name=api_key_name,
-                        group_name=group_name,
-                        count_judge_usage=self._judge_usage_counter(
-                            request_uuid=request_uuid,
-                            api_key_uuid=api_key_uuid,
-                            api_key_name=api_key_name,
-                            group_uuid=group_uuid,
-                            group_name=group_name,
-                        ),
-                    ):
-                        guardrails_input_triggered = True
-                except Exception:
-                    pass
+        input_guardrails = await self._check_input_guardrails(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            redaction=redaction,
+        )
+        guardrails_input_triggered = input_guardrails.input_triggered
+        guardrails_block_triggered = (
+            False  # Only tracks BLOCK/SOFT_BLOCK, not REDACT or WARN
+        )
+        if input_guardrails.soft_block:
+            # SOFT_BLOCK triggers the block header
+            return PrepareAndValidateResult(
+                model_selected=model_selected,
+                redacted_messages=redacted_messages,
+                cache_key='',
+                embeddings=None,
+                cached_response=None,
+                input_soft_block=input_guardrails.soft_block,
+                guardrails_input_triggered=guardrails_input_triggered,
+                guardrails_block_triggered=True,
+            )
 
         # Check cache
         if self.gateway_cache:
@@ -1621,6 +2032,38 @@ class GatewayRoute:
 
         logger.debug('Selected chat model: %s', model_selected.model_id)
 
+        return model_selected
+
+    async def _route_chat_request(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        messages: list[BaseMessage],
+    ) -> Model:
+        """Select the chat model of a request and record the routing decision."""
+        set_operation_category(OperationCategory.ROUTING)
+        model_selected = await self._select_chat_model(messages)
+
+        if self.router and self.gateway_route_config.routing:
+            emit_event(
+                RoutingEventPayload(
+                    value=1.0,
+                    request_uuid=request_uuid,
+                    event_type=EventType.ROUTING,
+                    route_name=self.gateway_route_config.route_name,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                    project_uuid=self.project_uuid,
+                    project_name=self.project_name,
+                    routing_name=self.gateway_route_config.routing,
+                    selected_model_id=model_selected.model_id,
+                )
+            )
         return model_selected
 
     def _apply_config_prompt(
@@ -2000,9 +2443,15 @@ class GatewayRoute:
                 'Cache hit. Hash name: %s',
                 cache_key if cache_key != '' else 'response:aigateway:cache:*',
             )
-            cached_response = ChatCompletion.model_validate(
-                json.loads(raw_cached_response)
-            )
+            try:
+                cached_response = ChatCompletion.model_validate(
+                    json.loads(raw_cached_response)
+                )
+            except ValueError:
+                # A semantic cache shares a route's entries between endpoints:
+                # a Responses API entry is a miss here.
+                logger.debug('Cached entry is not a chat completion: cache miss')
+                return None
 
             self._emit_cache_events_and_metrics(
                 request_uuid=request_uuid,
@@ -2032,6 +2481,23 @@ class GatewayRoute:
         embeddings: np.ndarray | None,
     ) -> None:
         """Cache the response if caching is enabled."""
+        await self._cache_response_object(
+            redacted_response.model_dump_json(indent=None),
+            cache_key,
+            route_name,
+            key_uuid,
+            embeddings,
+        )
+
+    async def _cache_response_object(
+        self,
+        response: str,
+        cache_key: str,
+        route_name: str,
+        key_uuid: str | None,
+        embeddings: np.ndarray | None,
+    ) -> None:
+        """Cache a serialized response object."""
         kwargs = {
             'embeddings': embeddings,
             'project_uuid': self.project_uuid,
@@ -2040,7 +2506,7 @@ class GatewayRoute:
         }
         await self.gateway_cache.set(
             cache_key=cache_key,
-            response=redacted_response.model_dump_json(indent=None),
+            response=response,
             ttl=self.ttl,
             **kwargs,
         )
@@ -2086,6 +2552,126 @@ class GatewayRoute:
     # ============================================================================
     # Guardrails
     # ============================================================================
+    async def _redact_input_guardrails(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        messages: list[BaseMessage],
+    ) -> InputGuardrailsResult:
+        """Apply the input REDACT guardrails of a chat request."""
+        if not self.gateway_route_config.guardrails or not (
+            self.guardrail_engine.has_guardrails_for_route(
+                self.gateway_route_config,
+                GuardrailWhereType.INPUT,
+                GuardrailClass.REDACT,
+            )
+        ):
+            return InputGuardrailsResult(
+                redacted_messages=messages,
+                input_triggered=False,
+                soft_block=None,
+            )
+
+        set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+        redacted_messages = await self._apply_redact_guardrails(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            group_name=group_name,
+            api_key_name=api_key_name,
+            messages=messages,
+            where=GuardrailWhereType.INPUT,
+        )
+
+        # Mark as triggered if input was redacted (but NOT for block header)
+        guardrails_input_triggered = False
+        try:
+            if (len(messages) != len(redacted_messages)) or any(
+                (m1.content != m2.content)
+                for m1, m2 in zip(messages, redacted_messages)
+            ):
+                guardrails_input_triggered = True
+        except Exception:
+            pass
+
+        return InputGuardrailsResult(
+            redacted_messages=redacted_messages,
+            input_triggered=guardrails_input_triggered,
+            soft_block=None,
+        )
+
+    async def _check_input_guardrails(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        redaction: InputGuardrailsResult,
+    ) -> InputGuardrailsResult:
+        """Apply the input CHECK guardrails of a chat request to its redacted messages."""
+        redacted_messages = redaction.redacted_messages
+        guardrails_input_triggered = redaction.input_triggered
+
+        if not self.gateway_route_config.guardrails or not (
+            self.guardrail_engine.has_guardrails_for_route(
+                self.gateway_route_config,
+                GuardrailWhereType.INPUT,
+                GuardrailClass.CHECK,
+            )
+        ):
+            return redaction
+
+        set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+        input_soft_block = await self._apply_check_guardrails(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            group_name=group_name,
+            api_key_name=api_key_name,
+            messages=redacted_messages,
+            where=GuardrailWhereType.INPUT,
+        )
+
+        if input_soft_block:
+            return InputGuardrailsResult(
+                redacted_messages=redacted_messages,
+                input_triggered=guardrails_input_triggered,
+                soft_block=input_soft_block,
+            )
+
+        # Evaluate WARN-only guardrails on input (does NOT trigger block header)
+        try:
+            if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
+                self.gateway_route_config,
+                redacted_messages,
+                GuardrailWhereType.INPUT,
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                count_judge_usage=self._judge_usage_counter(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                ),
+            ):
+                guardrails_input_triggered = True
+        except Exception:
+            pass
+
+        return InputGuardrailsResult(
+            redacted_messages=redacted_messages,
+            input_triggered=guardrails_input_triggered,
+            soft_block=None,
+        )
+
     async def _apply_redact_guardrails(
         self,
         request_uuid: str,

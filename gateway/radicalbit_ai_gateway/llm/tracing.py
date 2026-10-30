@@ -34,12 +34,17 @@ import operator
 import os
 import time
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from opentelemetry import context as context_api, metrics, trace
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAIAttributes,
 )
 from opentelemetry.semconv.attributes.error_attributes import ERROR_TYPE
+from opentelemetry.semconv.attributes.server_attributes import (
+    SERVER_ADDRESS,
+    SERVER_PORT,
+)
 from opentelemetry.semconv_ai import Meters, SpanAttributes
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 from pydantic import BaseModel
@@ -76,6 +81,12 @@ _token_histogram = _meter.create_histogram(
     unit='token',
     description='Measures number of input and output tokens used',
 )
+
+# Semantic convention attributes the installed package does not define yet.
+_RESPONSE_TIME_TO_FIRST_CHUNK = 'gen_ai.response.time_to_first_chunk'
+_REQUEST_PREVIOUS_RESPONSE_ID = 'gen_ai.request.previous_response.id'
+_REQUEST_REASONING_LEVEL = 'gen_ai.request.reasoning.level'
+_DEFAULT_PORTS = {'https': 443, 'http': 80}
 
 _FINISH_REASONS = {
     'stop': 'stop',
@@ -462,7 +473,11 @@ class ChatTrace:
     """
 
     def __init__(
-        self, model: 'ChatModel', messages: Sequence[BaseMessage], kwargs: dict
+        self,
+        model: 'ChatModel',
+        messages: Sequence[BaseMessage],
+        kwargs: dict,
+        stream: bool = False,
     ):
         kwargs = dict(kwargs)
         stop = kwargs.pop('stop', None)
@@ -471,17 +486,10 @@ class ChatTrace:
         self._start_time = time.time()
         self._request_model: str | None = None
         self._chunk_infos: list[dict | None] = []
-        self.span = _tracer.start_span(
-            f'{type(model).__name__}.chat', kind=SpanKind.CLIENT
-        )
+        self.span = _start_span(model, stream)
         span = self.span
         if not span.is_recording():
             return
-        # The gateway's own task context does not describe this span.
-        span.set_attribute(SpanAttributes.TRACELOOP_WORKFLOW_NAME, '')
-        span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_PATH, '')
-        span.set_attribute(GenAIAttributes.GEN_AI_PROVIDER_NAME, self._provider)
-        span.set_attribute(GenAIAttributes.GEN_AI_OPERATION_NAME, 'chat')
         invocation_params = model._invocation_params(stop=stop, **kwargs)
         self._set_request_params(invocation_params, invocation_params)
         self._set_request_params(model._serialized_kwargs(), None)
@@ -497,9 +505,13 @@ class ChatTrace:
     @classmethod
     @_dont_throw
     def start(
-        cls, model: 'ChatModel', messages: Sequence[BaseMessage], kwargs: dict
+        cls,
+        model: 'ChatModel',
+        messages: Sequence[BaseMessage],
+        kwargs: dict,
+        stream: bool = False,
     ) -> 'ChatTrace':
-        return cls(model, messages, kwargs)
+        return cls(model, messages, kwargs, stream)
 
     def _set_request_params(
         self, params: dict[str, Any], invocation_params: dict[str, Any] | None
@@ -538,6 +550,8 @@ class ChatTrace:
     @_dont_throw
     def add_chunk(self, chunk: AIMessageChunk) -> None:
         """Record a streamed chunk's generation info, merged at the end."""
+        if not self._chunk_infos:
+            _set_time_to_first_chunk(self.span, self._start_time)
         self._chunk_infos.append(self._model._generation_info(chunk))
 
     @_dont_throw
@@ -629,16 +643,7 @@ class ChatTrace:
         span.end()
 
     def _record_tokens(self, input_tokens: int, output_tokens: int, model: str) -> None:
-        for token_type, count in (('input', input_tokens), ('output', output_tokens)):
-            if count > 0:
-                _token_histogram.record(
-                    count,
-                    attributes={
-                        GenAIAttributes.GEN_AI_PROVIDER_NAME: self._provider,
-                        GenAIAttributes.GEN_AI_TOKEN_TYPE: token_type,
-                        GenAIAttributes.GEN_AI_RESPONSE_MODEL: model,
-                    },
-                )
+        _record_tokens(self._provider, input_tokens, output_tokens, model)
 
     def _set_usage(self, message: AIMessage, record: bool, model_name: str) -> None:
         """Usage from the reply's ``usage_metadata`` (token totals and cache)."""
@@ -716,12 +721,350 @@ class ChatTrace:
 
     @_dont_throw
     def fail(self, error: BaseException) -> None:
-        span = self.span
-        span.set_attribute(SpanAttributes.GEN_AI_TASK_STATUS, 'failure')
-        span.set_attribute(ERROR_TYPE, self._model._error_type(error))
-        span.set_status(Status(StatusCode.ERROR, str(error)))
+        _fail(self.span, self._model._error_type(error), str(error), error)
+
+
+def _start_span(model: 'ChatModel', stream: bool) -> Span:
+    """Start the CLIENT span of a model call, with the attributes every call has."""
+    span = _tracer.start_span(f'{type(model).__name__}.chat', kind=SpanKind.CLIENT)
+    if not span.is_recording():
+        return span
+    # The gateway's own task context does not describe this span.
+    span.set_attribute(SpanAttributes.TRACELOOP_WORKFLOW_NAME, '')
+    span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_PATH, '')
+    span.set_attribute(GenAIAttributes.GEN_AI_PROVIDER_NAME, model._gen_ai_provider)
+    span.set_attribute(GenAIAttributes.GEN_AI_OPERATION_NAME, 'chat')
+    if stream:
+        span.set_attribute(GenAIAttributes.GEN_AI_REQUEST_STREAM, True)
+    try:
+        url = urlparse(model._server_url() or '')
+        if url.hostname:
+            span.set_attribute(SERVER_ADDRESS, url.hostname)
+            _set(span, SERVER_PORT, url.port or _DEFAULT_PORTS.get(url.scheme))
+    except Exception:
+        logger.debug('Failed to read the server of %s', type(model).__name__)
+    return span
+
+
+def _set_time_to_first_chunk(span: Span, start_time: float) -> None:
+    if span.is_recording():
+        span.set_attribute(_RESPONSE_TIME_TO_FIRST_CHUNK, time.time() - start_time)
+
+
+def _record_tokens(
+    provider: str, input_tokens: int, output_tokens: int, model: str
+) -> None:
+    for token_type, count in (('input', input_tokens), ('output', output_tokens)):
+        if count > 0:
+            _token_histogram.record(
+                count,
+                attributes={
+                    GenAIAttributes.GEN_AI_PROVIDER_NAME: provider,
+                    GenAIAttributes.GEN_AI_TOKEN_TYPE: token_type,
+                    GenAIAttributes.GEN_AI_RESPONSE_MODEL: model,
+                },
+            )
+
+
+def _fail(
+    span: Span, error_type: str, message: str, error: BaseException | None = None
+) -> None:
+    span.set_attribute(SpanAttributes.GEN_AI_TASK_STATUS, 'failure')
+    span.set_attribute(ERROR_TYPE, error_type)
+    span.set_status(Status(StatusCode.ERROR, message))
+    if error is not None:
         span.record_exception(error)
+    span.end()
+
+
+# ── Responses API ────────────────────────────────────────────────────────────
+
+# Stream events whose payload carries the final response object.
+_RESPONSES_FINAL_EVENTS = frozenset(
+    {'response.completed', 'response.incomplete', 'response.failed'}
+)
+_RESPONSES_ROLES = {'developer': 'system'}
+_RESPONSES_INCOMPLETE_REASONS = {
+    'max_output_tokens': 'length',
+    'content_filter': 'content_filter',
+}
+
+
+def _responses_content_parts(content: Any) -> list[dict]:
+    """Return the parts of a Responses message's ``content``, a string or blocks."""
+    if not isinstance(content, list):
+        return _content_to_parts(content)
+    parts = []
+    for block in content:
+        block_type = block.get('type') if isinstance(block, dict) else None
+        if block_type in ('input_text', 'output_text'):
+            if text := block.get('text'):
+                parts.append({'type': 'text', 'content': text})
+        elif block_type == 'input_image' and (url := block.get('image_url')):
+            parts.append({'type': 'uri', 'modality': 'image', 'uri': url})
+        else:
+            parts.extend(_content_to_parts([block]))
+    return parts
+
+
+def _responses_item(item: dict) -> tuple[str, list[dict]]:
+    """Return the role and the parts of a Responses input or output item."""
+    item_type = item.get('type', 'message')
+    if item_type == 'message':
+        role = item.get('role', 'user')
+        parts = _responses_content_parts(item.get('content'))
+        return _RESPONSES_ROLES.get(role, role), parts
+    if item_type == 'function_call':
+        call = {
+            'id': item.get('call_id', ''),
+            'name': item.get('name', ''),
+            'args': item.get('arguments'),
+        }
+        return 'assistant', _tool_calls_to_parts([call])
+    if item_type == 'function_call_output':
+        output = item.get('output')
+        part = {
+            'type': 'tool_call_response',
+            'id': item.get('call_id', ''),
+            'response': output if isinstance(output, str) else _dumps(output),
+        }
+        return 'tool', [part]
+    if item_type == 'reasoning':
+        # Encrypted reasoning is not reported, only its summary.
+        summary = ''.join(s.get('text', '') for s in item.get('summary') or [])
+        return 'assistant', [
+            {'type': 'reasoning', 'content': summary}
+        ] if summary else []
+    # A built-in tool call (web search...) or another item: a generic part.
+    return 'assistant', [item]
+
+
+def _responses_input_attributes(body: dict) -> dict[str, str]:
+    """Return the system instructions and input messages of a Responses request.
+
+    Consecutive items of a role are one message, as a chat message carries
+    both its text and its tool calls.
+    """
+    items = body.get('input')
+    if isinstance(items, str):
+        items = [{'role': 'user', 'content': items}]
+    system_instructions = _responses_content_parts(body.get('instructions'))
+    input_messages: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        role, parts = _responses_item(item)
+        if role == 'system':
+            system_instructions.extend(parts)
+        elif input_messages and input_messages[-1]['role'] == role:
+            input_messages[-1]['parts'].extend(parts)
+        else:
+            input_messages.append({'role': role, 'parts': parts})
+    attributes = {}
+    if system_instructions:
+        attributes[GenAIAttributes.GEN_AI_SYSTEM_INSTRUCTIONS] = _dumps(
+            system_instructions
+        )
+    if input_messages:
+        attributes[GenAIAttributes.GEN_AI_INPUT_MESSAGES] = _dumps(input_messages)
+    return attributes
+
+
+def _responses_finish_reason(response: dict) -> str | None:
+    status = response.get('status')
+    if status == 'incomplete':
+        reason = (response.get('incomplete_details') or {}).get('reason')
+        return _RESPONSES_INCOMPLETE_REASONS.get(reason, reason)
+    if status == 'completed':
+        output = response.get('output') or []
+        if any(item.get('type') == 'function_call' for item in output):
+            return 'tool_call'
+        return 'stop'
+    return None
+
+
+class ResponsesTrace:
+    """The span of one native Responses API call, from the request to its reply.
+
+    It is the span of a chat call (``ChatTrace``), with the same name,
+    attributes and metrics, read from the client's request body and the
+    upstream's response object rather than from messages. The request params
+    are the client's, falling back to the model's settings, as the provider
+    merges them. Create it with ``start``; it is ``None`` when tracing failed
+    to start.
+    """
+
+    def __init__(self, model: 'ChatModel', body: dict, stream: bool = False):
+        self._model = model
+        self._provider = model._gen_ai_provider
+        self._start_time = time.time()
+        # A stream's final response object, or its error event.
+        self._response: dict | None = None
+        self._error: dict | None = None
+        self._first_event = True
+        settings = model._serialized_kwargs()
+        self._request_model = (
+            settings.get('model') or settings.get('model_name') or 'unknown'
+        )
+        self.span = _start_span(model, stream)
+        span = self.span
+        if not span.is_recording():
+            return
+        span.set_attribute(GenAIAttributes.GEN_AI_REQUEST_MODEL, self._request_model)
+        # Replaced by the response's model.
+        span.set_attribute(GenAIAttributes.GEN_AI_RESPONSE_MODEL, self._request_model)
+        for attribute, key, setting in (
+            (
+                GenAIAttributes.GEN_AI_REQUEST_MAX_TOKENS,
+                'max_output_tokens',
+                'max_tokens',
+            ),
+            (GenAIAttributes.GEN_AI_REQUEST_TEMPERATURE, 'temperature', 'temperature'),
+            (GenAIAttributes.GEN_AI_REQUEST_TOP_P, 'top_p', 'top_p'),
+        ):
+            value = body.get(key)
+            _set(span, attribute, settings.get(setting) if value is None else value)
+        reasoning = getattr(model, 'reasoning', None) or {}
+        _set(
+            span,
+            _REQUEST_REASONING_LEVEL,
+            (body.get('reasoning') or {}).get('effort')
+            or reasoning.get('effort')
+            or getattr(model, 'reasoning_effort', None),
+        )
+        _set(span, _REQUEST_PREVIOUS_RESPONSE_ID, body.get('previous_response_id'))
+        conversation = body.get('conversation')
+        if isinstance(conversation, dict):
+            conversation = conversation.get('id')
+        _set(span, GenAIAttributes.GEN_AI_CONVERSATION_ID, conversation)
+        if tools := body.get('tools'):
+            # Built-in tools (web search...) have a type and no name.
+            definitions = [
+                _tool_definition({**tool, 'name': tool.get('name') or tool.get('type')})
+                for tool in tools
+            ]
+            span.set_attribute(
+                GenAIAttributes.GEN_AI_TOOL_DEFINITIONS, _dumps(definitions)
+            )
+        if _should_send_prompts():
+            for key, value in _responses_input_attributes(body).items():
+                span.set_attribute(key, value)
+
+    @classmethod
+    @_dont_throw
+    def start(
+        cls, model: 'ChatModel', body: dict, stream: bool = False
+    ) -> 'ResponsesTrace':
+        return cls(model, body, stream)
+
+    @_dont_throw
+    def add_event(self, event: str, data: str) -> None:
+        """Keep the final response object, or the error, of a stream event."""
+        if self._first_event:
+            self._first_event = False
+            _set_time_to_first_chunk(self.span, self._start_time)
+        if event in _RESPONSES_FINAL_EVENTS:
+            self._response = json.loads(data).get('response')
+        elif event == 'error':
+            self._error = json.loads(data)
+
+    @_dont_throw
+    def end_stream(self) -> None:
+        if self._response is None and self._error is not None:
+            _fail(
+                self.span,
+                self._error.get('code') or 'error',
+                self._error.get('message') or '',
+            )
+            return
+        self.end(self._response)
+
+    @_dont_throw
+    def end(self, response: dict | None) -> None:
+        span = self.span
+        if not span.is_recording() or response is None:
+            span.end()
+            return
+        model_name = response.get('model') or self._request_model
+        span.set_attribute(GenAIAttributes.GEN_AI_RESPONSE_MODEL, model_name)
+        _set(span, GenAIAttributes.GEN_AI_RESPONSE_ID, response.get('id'))
+        self._set_usage(response.get('usage'), model_name)
+        finish_reason = _responses_finish_reason(response)
+        if finish_reason:
+            span.set_attribute(
+                GenAIAttributes.GEN_AI_RESPONSE_FINISH_REASONS, [finish_reason]
+            )
+        if _should_send_prompts():
+            parts = []
+            for item in response.get('output') or []:
+                parts.extend(_responses_item(item)[1])
+            output = {
+                'role': 'assistant',
+                'parts': parts,
+                'finish_reason': finish_reason or '',
+            }
+            span.set_attribute(GenAIAttributes.GEN_AI_OUTPUT_MESSAGES, _dumps([output]))
+        _duration_histogram.record(
+            time.time() - self._start_time,
+            attributes={
+                GenAIAttributes.GEN_AI_PROVIDER_NAME: self._provider,
+                GenAIAttributes.GEN_AI_RESPONSE_MODEL: model_name,
+            },
+        )
+        if response.get('status') == 'failed':
+            error = response.get('error') or {}
+            _fail(
+                span,
+                error.get('code') or 'response.failed',
+                error.get('message') or '',
+            )
+            return
         span.end()
+
+    def _set_usage(self, usage: dict | None, model_name: str) -> None:
+        if not usage:
+            return
+        span = self.span
+        input_tokens = usage.get('input_tokens') or 0
+        output_tokens = usage.get('output_tokens') or 0
+        span.set_attribute(GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
+        span.set_attribute(GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
+        span.set_attribute(
+            SpanAttributes.GEN_AI_USAGE_TOTAL_TOKENS,
+            usage.get('total_tokens') or input_tokens + output_tokens,
+        )
+        # Each set when non-zero, as the semantic conventions recommend.
+        input_details = usage.get('input_tokens_details') or {}
+        output_details = usage.get('output_tokens_details') or {}
+        for attribute, count in (
+            (
+                GenAIAttributes.GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS,
+                input_details.get('cached_tokens'),
+            ),
+            (
+                GenAIAttributes.GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS,
+                input_details.get('cache_write_tokens'),
+            ),
+            (
+                GenAIAttributes.GEN_AI_USAGE_REASONING_OUTPUT_TOKENS,
+                output_details.get('reasoning_tokens'),
+            ),
+        ):
+            if count:
+                span.set_attribute(attribute, count)
+        _record_tokens(self._provider, input_tokens, output_tokens, model_name)
+
+    @_dont_throw
+    def fail(self, error: BaseException) -> None:
+        if self._response is not None:
+            # The stream already carried its final response: the call is
+            # done, whatever stops the stream after it. A client that closes
+            # the connection once it has ``response.completed`` (opencode
+            # does) cancels the stream while it waits for the upstream to
+            # close.
+            self.end(self._response)
+            return
+        _fail(self.span, self._model._error_type(error), str(error), error)
 
 
 def _tool_definition(function: dict, tool: dict | None = None) -> dict:
