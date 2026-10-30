@@ -1,6 +1,7 @@
 import HtmlAnchor from '@Components/html-anchor';
+import InfoPopover from '@Components/info-popover';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
-import { Popover, Tag } from '@radicalbit/radicalbit-design-system';
+import { Tag } from '@radicalbit/radicalbit-design-system';
 import { useNavigate } from 'react-router-dom';
 
 const VISIBLE_PROJECTS = 3;
@@ -49,7 +50,7 @@ function HiddenProjects({ usedIn }) {
   };
 
   return (
-    <Popover
+    <InfoPopover
       arrow={false}
       content={(
         <div className="flex flex-col gap-2" style={{ maxHeight: 200, overflowY: 'auto' }}>
@@ -62,7 +63,7 @@ function HiddenProjects({ usedIn }) {
       title={<strong>Projects</strong>}
     >
       <Tag onClick={handleOnClick} rounded type="secondary">{`+${hiddenCount}`}</Tag>
-    </Popover>
+    </InfoPopover>
   );
 }
 

@@ -25,6 +25,7 @@ def _build_router(embeddings_mock):
         config=routing_config,
         models_by_id=models_by_id,
         embeddings_model=embeddings_mock,
+        embedding_model_config=config.embedding_models_by_id['embedder'],
     )
 
 

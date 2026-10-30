@@ -27,6 +27,7 @@ class ModelInvocationPayload(EventBase):
     model_type: str
     cache_type: str | None = None
     is_judge: bool = False
+    is_routing: bool = False
 
 
 class InputTokenProcessedPayload(EventBase):
@@ -36,6 +37,7 @@ class InputTokenProcessedPayload(EventBase):
     cache_type: str | None = None
     is_cached_tokens: bool = False
     is_judge: bool = False
+    is_routing: bool = False
 
 
 class OutputTokenProcessedPayload(EventBase):
@@ -44,6 +46,7 @@ class OutputTokenProcessedPayload(EventBase):
     model_type: str | None = None
     cache_type: str | None = None
     is_judge: bool = False
+    is_routing: bool = False
 
 
 class FallbackEventPayload(EventBase):
@@ -51,6 +54,7 @@ class FallbackEventPayload(EventBase):
     target: str
     fallback: str
     is_judge: bool = False
+    is_routing: bool = False
 
 
 class CacheEventPayload(EventBase):

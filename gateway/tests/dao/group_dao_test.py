@@ -4,6 +4,8 @@ from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
+from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
+from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 
@@ -13,6 +15,8 @@ class GroupDAOTest(DatabaseIntegration):
     def setUpClass(cls):
         super().setUpClass()
         cls.group_dao = GroupDAO(cls.db)
+        cls.key_dao = KeyDAO(cls.db)
+        cls.key_limit_dao = KeyLimitDAO(cls.db)
         cls.project_dao = ProjectDAO(cls.db)
         cls.project_uuid = uuid.uuid4()
 
@@ -62,6 +66,23 @@ class GroupDAOTest(DatabaseIntegration):
         assert deleted_group.uuid == groups[0].uuid
         res = self.group_dao.get_all()
         assert len(res) == 1
+
+    def test_deleting_a_group_keeps_its_credentials_and_their_limits(self):
+        group = db_mock.get_sample_group(uuid=uuid.uuid4(), group_routes=[])
+        self.group_dao.insert(group)
+        key = db_mock.get_sample_key(uuid=uuid.uuid4(), group_uuid=group.uuid)
+        self.key_dao.insert(key)
+        limit = db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
+        self.key_limit_dao.insert(limit)
+
+        self.group_dao.delete_by_uuid(group.uuid)
+
+        kept = self.key_dao.get_by_uuid(key.uuid)
+        assert kept is not None
+        assert kept.group_uuid is None
+        assert [item.uuid for item in self.key_limit_dao.get_by_key_uuid(key.uuid)] == [
+            limit.uuid
+        ]
 
     def test_get_group_by_uuid(self):
         group = db_mock.get_sample_group(group_routes=[])

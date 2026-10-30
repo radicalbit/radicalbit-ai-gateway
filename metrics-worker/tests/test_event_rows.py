@@ -93,6 +93,19 @@ def test_an_event_without_the_mcp_fields_writes_the_empty_default(buffer):
     assert row['MCP_TARGET'] == ''
 
 
+def test_a_routing_call_writes_the_routing_flag(buffer):
+    insert_event_record_connect_async([_event(IS_ROUTING=True)])
+
+    assert _row(buffer)['IS_ROUTING'] is True
+
+
+def test_an_event_without_the_routing_flag_is_not_routing(buffer):
+    """Every other call, and anything emitted by an older gateway."""
+    insert_event_record_connect_async([_event()])
+
+    assert _row(buffer)['IS_ROUTING'] is False
+
+
 def test_the_envelope_survives_the_round_trip(buffer):
     event = _event(MCP_METHOD='prompts/get', MCP_ALIAS='jira')
 

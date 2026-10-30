@@ -7,9 +7,9 @@ import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
-  Board, Button, DataTable, Dropdown, Tooltip, Void,
+  Board, Button, DataTable, Tooltip, Void,
 } from '@radicalbit/radicalbit-design-system';
-import { EllipsisVertical, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import Conflicts from './conflicts';
 import DeleteBudget from './delete-budget';
 import { ScreenEnum } from './schema';
@@ -149,14 +149,10 @@ function Actions({ limit }) {
     e.stopPropagation();
   };
 
-  const items = [{ key: 'delete', label: <DeleteBudget limit={limit} /> }];
-
   return (
-    <Dropdown menu={{ items }}>
-      <Button aria-label="More actions" onClick={handleOnClick} type="text">
-        <Lucide icon={EllipsisVertical} />
-      </Button>
-    </Dropdown>
+    <span onClick={handleOnClick} role="presentation">
+      <DeleteBudget limit={limit} />
+    </span>
   );
 }
 

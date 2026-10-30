@@ -17,6 +17,7 @@ from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
 )
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
 from radicalbit_ai_gateway.llm.embeddings import Embeddings
 from radicalbit_ai_gateway.llm.factory import init_embeddings
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -24,11 +25,13 @@ from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.model import MockGatewayEmbeddings, Model
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.routing import (
+    DecisionRoutingConfig,
     SemanticRoutingConfig,
     TextClassificationRoutingConfig,
 )
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routing import (
+    DecisionRouter,
     DeterministicRouter,
     SemanticRouter,
     TextClassificationRouter,
@@ -181,6 +184,18 @@ def build_gateway_routes_from_config(
                         config=routing_config,
                         models_by_id=route_models_by_id,
                         embeddings_model=embeddings_instance,
+                        embedding_model_config=emb_model,
+                    )
+                elif isinstance(routing_config, DecisionRoutingConfig):
+                    # Any decision model of the project can answer, as for judges.
+                    router = DecisionRouter(
+                        config=routing_config,
+                        models_by_id=route_models_by_id,
+                        invoker=DecisionModelInvoker(
+                            models=gateway_config.decision_models,
+                            cost_service=cost_service,
+                            httpx_client=httpx_client,
+                        ),
                     )
                 else:
                     router = DeterministicRouter(

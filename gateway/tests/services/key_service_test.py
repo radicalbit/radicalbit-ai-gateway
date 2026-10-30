@@ -5,11 +5,11 @@ import uuid
 
 from freezegun import freeze_time
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from tests.common import db_mock
 
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
-from radicalbit_ai_gateway.db.dao.group_limit_dao import GroupLimitDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.models.auth_dto import (
@@ -24,6 +24,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitOut,
     CredentialLimitsIn,
 )
+from radicalbit_ai_gateway.models.group_limiting import GroupLimitOutcome, GroupLimitsIn
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -52,18 +53,15 @@ class KeyServiceTest(unittest.TestCase):
         cls.group_dao: GroupDAO = MagicMock(spec_set=GroupDAO)
         cls.api_key_security: ApiKeySecurity = MagicMock(spec_set=ApiKeySecurity)
         cls.key_limit_dao: KeyLimitDAO = MagicMock(spec_set=KeyLimitDAO)
-        cls.group_limit_dao: GroupLimitDAO = MagicMock(spec_set=GroupLimitDAO)
         cls.key_service = KeyService(
             key_dao=cls.key_dao,
             api_key_security=cls.api_key_security,
             group_dao=cls.group_dao,
             key_limit_dao=cls.key_limit_dao,
-            group_limit_dao=cls.group_limit_dao,
         )
-        cls.mocks = [cls.key_dao, cls.group_dao, cls.key_limit_dao, cls.group_limit_dao]
+        cls.mocks = [cls.key_dao, cls.group_dao, cls.key_limit_dao]
 
     def setUp(self):
-        self.group_limit_dao.get_by_group_uuid = MagicMock(return_value=[])
         self.key_limit_dao.get_by_key_uuid = MagicMock(return_value=[])
 
     def test_create_key_ok(self):
@@ -504,25 +502,6 @@ class KeyServiceTest(unittest.TestCase):
             self.key_service.add_limits_to_key(key_uuid, limits_in)
         self.key_limit_dao.insert_many.assert_not_called()
 
-    def test_add_limits_to_key_duplicate_of_group_derived_limit_also_raises(self):
-        """No silent overwrite here regardless of the existing limit's
-        origin: delete it first, then add the new one, to replace it.
-        """
-        key_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid, name='my-credential')
-        existing = db_mock.get_sample_key_limit(
-            key_uuid=key_uuid, group_limit_uuid=uuid.uuid4()
-        )
-        self.key_dao.get_by_uuid = MagicMock(return_value=key)
-        self.key_limit_dao.get_by_key_uuid = MagicMock(return_value=[existing])
-        self.key_limit_dao.insert_many = MagicMock()
-        with pytest.raises(CredentialLimitAlreadyExistsError):
-            self.key_service.add_limits_to_key(
-                key_uuid, db_mock.get_sample_credential_limits_in()
-            )
-        self.key_limit_dao.insert_many.assert_not_called()
-        assert existing.group_limit_uuid is not None
-
     def test_get_limits_for_key_ok(self):
         key_uuid = uuid.uuid4()
         key = db_mock.get_sample_key(uuid=key_uuid)
@@ -551,7 +530,6 @@ class TestDeleteLimitFromKey:
             api_key_security=MagicMock(spec_set=ApiKeySecurity),
             group_dao=MagicMock(spec_set=GroupDAO),
             key_limit_dao=key_limit_dao,
-            group_limit_dao=MagicMock(spec_set=GroupLimitDAO),
         )
         return service, key_dao, key_limit_dao
 
@@ -643,326 +621,253 @@ class TestDeleteLimitFromKey:
         assert res == CredentialLimitOut.from_key_limit(limit)
 
 
-class TestPropagateGroupLimits:
-    def _make_service(self):
-        key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
-        service = KeyService(
-            key_dao=MagicMock(spec_set=KeyDAO),
-            api_key_security=MagicMock(spec_set=ApiKeySecurity),
-            group_dao=MagicMock(spec_set=GroupDAO),
-            key_limit_dao=key_limit_dao,
-            group_limit_dao=MagicMock(spec_set=GroupLimitDAO),
-        )
-        return service, key_limit_dao
+def _make_limits_service():
+    key_dao = MagicMock(spec_set=KeyDAO)
+    key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
+    service = KeyService(
+        key_dao=key_dao,
+        api_key_security=MagicMock(spec_set=ApiKeySecurity),
+        group_dao=MagicMock(spec_set=GroupDAO),
+        key_limit_dao=key_limit_dao,
+    )
+    return service, key_dao, key_limit_dao
 
-    def test_no_group_limits_or_no_keys_is_a_noop(self):
-        service, key_limit_dao = self._make_service()
-        key = db_mock.get_sample_key()
-        assert service.propagate_group_limits(group_limits=[], keys=[key]) == ([], [])
-        group_limit = db_mock.get_sample_group_limit()
-        assert service.propagate_group_limits(group_limits=[group_limit], keys=[]) == (
-            [],
-            [],
-        )
-        key_limit_dao.get_all_by_key_uuids.assert_not_called()
 
-    def test_propagates_onto_every_member_with_no_existing_limits(self):
-        service, key_limit_dao = self._make_service()
-        key_a, key_b = (
-            db_mock.get_sample_key(uuid=uuid.uuid4()),
-            db_mock.get_sample_key(uuid=uuid.uuid4()),
-        )
-        group_limit = db_mock.get_sample_group_limit()
+def _group_limits_in(limits=None, skip=None) -> GroupLimitsIn:
+    return GroupLimitsIn.model_validate(
+        {
+            'limits': limits
+            or [
+                {
+                    'category': 'request_rate',
+                    'algorithm': 'FIXED_WINDOW',
+                    'windowSize': '1 minute',
+                    'value': 42,
+                }
+            ],
+            'skip': skip or [],
+        }
+    )
+
+
+class TestApplyLimitsToKeys:
+    def test_adds_onto_every_member_with_no_existing_limits(self):
+        service, _, key_limit_dao = _make_limits_service()
+        key_a = db_mock.get_sample_key(uuid=uuid.uuid4(), name='a')
+        key_b = db_mock.get_sample_key(uuid=uuid.uuid4(), name='b')
         key_limit_dao.get_all_by_key_uuids = MagicMock(return_value=[])
-        key_limit_dao.insert_many = MagicMock(side_effect=_fake_insert_many)
 
-        applied, overwritten = service.propagate_group_limits(
-            group_limits=[group_limit], keys=[key_a, key_b]
+        members = service.apply_limits_to_keys([key_a, key_b], _group_limits_in())
+
+        key_limit_dao.get_all_by_key_uuids.assert_called_once_with(
+            [key_a.uuid, key_b.uuid]
+        )
+        to_insert, to_update = key_limit_dao.save_many.call_args.args
+        assert {limit.key_uuid for limit in to_insert} == {key_a.uuid, key_b.uuid}
+        assert all(limit.window_size == '1 minute' for limit in to_insert)
+        assert to_update == []
+        assert [m.key_name for m in members] == ['a', 'b']
+        assert all(
+            m.limits[0].outcome == GroupLimitOutcome.ADDED
+            and m.limits[0].previous_value is None
+            and m.limits[0].new_value == 42
+            for m in members
         )
 
-        inserted = key_limit_dao.insert_many.call_args[0][0]
-        assert {limit.key_uuid for limit in inserted} == {key_a.uuid, key_b.uuid}
-        assert all(limit.group_limit_uuid == group_limit.uuid for limit in inserted)
-        assert len(applied) == 2
-        assert overwritten == []
-
-    def test_overwrites_a_conflicting_individual_limit(self):
-        service, key_limit_dao = self._make_service()
-        key_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid, name='has-own-limit')
-        group_limit = db_mock.get_sample_group_limit(
-            category=CredentialLimitCategory.RATE.value,
-            algorithm='FIXED_WINDOW',
-            window_size='1 minute',
-            max_value=42.0,
-        )
+    def test_overwrites_the_max_of_a_conflict_not_listed_in_skip(self):
+        service, _, key_limit_dao = _make_limits_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
         existing = db_mock.get_sample_key_limit(
-            key_uuid=key_uuid,
+            uuid=uuid.uuid4(),
+            key_uuid=key.uuid,
             category=CredentialLimitCategory.RATE.value,
-            algorithm='FIXED_WINDOW',
             window_size='1 minute',
+            max_value=10,
         )
         key_limit_dao.get_all_by_key_uuids = MagicMock(return_value=[existing])
-        key_limit_dao.update_many = MagicMock(side_effect=lambda limits: limits)
 
-        applied, overwritten = service.propagate_group_limits(
-            group_limits=[group_limit], keys=[key]
-        )
+        [member] = service.apply_limits_to_keys([key], _group_limits_in())
 
-        key_limit_dao.insert_many.assert_not_called()
-        key_limit_dao.update_many.assert_called_once_with([existing])
-        assert existing.max_value == 42.0
-        assert existing.group_limit_uuid == group_limit.uuid
-        assert len(applied) == 1
-        assert len(overwritten) == 1
-        assert overwritten[0].key_uuid == key_uuid
-        assert overwritten[0].key_name == 'has-own-limit'
+        key_limit_dao.save_many.assert_called_once_with([], [existing])
+        # Same row, so the counter, keyed by the signature, is kept
+        assert existing.max_value == 42
+        [result] = member.limits
+        assert result.outcome == GroupLimitOutcome.OVERWRITTEN
+        assert result.previous_value == 10
+        assert result.new_value == 42
 
-    def test_different_window_on_same_category_is_not_overwritten(self):
-        service, key_limit_dao = self._make_service()
-        key_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid)
-        group_limit = db_mock.get_sample_group_limit(
-            category=CredentialLimitCategory.RATE.value, window_size='1 hour'
-        )
+    def test_the_same_window_in_another_unit_is_a_conflict(self):
+        service, _, key_limit_dao = _make_limits_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
         existing = db_mock.get_sample_key_limit(
-            key_uuid=key_uuid,
+            uuid=uuid.uuid4(),
+            key_uuid=key.uuid,
             category=CredentialLimitCategory.RATE.value,
             window_size='1 minute',
         )
         key_limit_dao.get_all_by_key_uuids = MagicMock(return_value=[existing])
-        key_limit_dao.insert_many = MagicMock(side_effect=_fake_insert_many)
+        limits = [
+            {
+                'category': 'request_rate',
+                'algorithm': 'FIXED_WINDOW',
+                'windowSize': '60 seconds',
+                'value': 42,
+            }
+        ]
 
-        applied, overwritten = service.propagate_group_limits(
-            group_limits=[group_limit], keys=[key]
-        )
+        [member] = service.apply_limits_to_keys([key], _group_limits_in(limits))
 
-        assert len(applied) == 1
-        assert overwritten == []
+        key_limit_dao.save_many.assert_called_once_with([], [existing])
+        assert member.limits[0].outcome == GroupLimitOutcome.OVERWRITTEN
 
-    def test_refreshing_an_already_propagated_limit_is_not_reported_as_overwritten(
-        self,
-    ):
-        """Re-applying (e.g. updating the value of) a group limit that a key
-        already has from this SAME group limit is a refresh, not an
-        overwrite of something foreign — it shouldn't show up as a warning.
-        """
-        service, key_limit_dao = self._make_service()
-        key_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid)
-        group_limit = db_mock.get_sample_group_limit(
-            category=CredentialLimitCategory.BUDGET.value,
-            window_size='1 day',
-            max_value=99.0,
-        )
+    def test_leaves_a_conflict_listed_in_skip_as_it_is(self):
+        service, _, key_limit_dao = _make_limits_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
         existing = db_mock.get_sample_key_limit(
-            key_uuid=key_uuid,
-            category=CredentialLimitCategory.BUDGET.value,
-            window_size='1 day',
-            group_limit_uuid=group_limit.uuid,
+            uuid=uuid.uuid4(),
+            key_uuid=key.uuid,
+            category=CredentialLimitCategory.RATE.value,
+            window_size='1 minute',
+            max_value=10,
         )
         key_limit_dao.get_all_by_key_uuids = MagicMock(return_value=[existing])
-        key_limit_dao.update_many = MagicMock(side_effect=lambda limits: limits)
+        skip = [
+            {
+                'keyUuid': str(key.uuid),
+                'category': 'request_rate',
+                'algorithm': 'FIXED_WINDOW',
+                # Another unit for the same window
+                'windowSize': '60 seconds',
+            }
+        ]
 
-        applied, overwritten = service.propagate_group_limits(
-            group_limits=[group_limit], keys=[key]
+        [member] = service.apply_limits_to_keys([key], _group_limits_in(skip=skip))
+
+        key_limit_dao.save_many.assert_called_once_with([], [])
+        assert existing.max_value == 10
+        [result] = member.limits
+        assert result.outcome == GroupLimitOutcome.SKIPPED
+        assert result.previous_value == 10
+        assert result.new_value == 42
+
+    def test_a_skip_on_another_member_does_not_skip_this_one(self):
+        service, _, key_limit_dao = _make_limits_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
+        existing = db_mock.get_sample_key_limit(
+            uuid=uuid.uuid4(),
+            key_uuid=key.uuid,
+            category=CredentialLimitCategory.RATE.value,
+            window_size='1 minute',
+        )
+        key_limit_dao.get_all_by_key_uuids = MagicMock(return_value=[existing])
+        skip = [
+            {
+                'keyUuid': str(uuid.uuid4()),
+                'category': 'request_rate',
+                'algorithm': 'FIXED_WINDOW',
+                'windowSize': '1 minute',
+            }
+        ]
+
+        [member] = service.apply_limits_to_keys([key], _group_limits_in(skip=skip))
+
+        assert member.limits[0].outcome == GroupLimitOutcome.OVERWRITTEN
+
+    def test_another_window_or_window_type_is_not_a_conflict(self):
+        service, _, key_limit_dao = _make_limits_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
+        key_limit_dao.get_all_by_key_uuids = MagicMock(
+            return_value=[
+                db_mock.get_sample_key_limit(
+                    key_uuid=key.uuid,
+                    category=CredentialLimitCategory.RATE.value,
+                    window_size='1 hour',
+                ),
+                db_mock.get_sample_key_limit(
+                    key_uuid=key.uuid,
+                    category=CredentialLimitCategory.RATE.value,
+                    algorithm='ALIGNED_FIXED_WINDOW',
+                    window_size='1 minute',
+                ),
+            ]
         )
 
-        key_limit_dao.update_many.assert_called_once_with([existing])
-        assert existing.max_value == 99.0
-        assert len(applied) == 1
-        assert overwritten == []
+        [member] = service.apply_limits_to_keys([key], _group_limits_in())
 
+        assert member.limits[0].outcome == GroupLimitOutcome.ADDED
 
-class TestClearPropagatedLimitCounters:
-    def _make_service(self):
-        key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
-        service = KeyService(
-            key_dao=MagicMock(spec_set=KeyDAO),
-            api_key_security=MagicMock(spec_set=ApiKeySecurity),
-            group_dao=MagicMock(spec_set=GroupDAO),
-            key_limit_dao=key_limit_dao,
-            group_limit_dao=MagicMock(spec_set=GroupLimitDAO),
+    def test_expired_members_are_written_and_marked_expired(self):
+        service, _, key_limit_dao = _make_limits_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
+        key.expires_on = datetime.date(2020, 1, 1)
+        key_limit_dao.get_all_by_key_uuids = MagicMock(return_value=[])
+
+        [member] = service.apply_limits_to_keys([key], _group_limits_in())
+
+        [inserted], _ = key_limit_dao.save_many.call_args.args
+        assert inserted.key_uuid == key.uuid
+        assert member.expired is True
+
+    def test_a_limit_added_meanwhile_is_a_conflict_error(self):
+        service, _, key_limit_dao = _make_limits_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
+        key_limit_dao.get_all_by_key_uuids = MagicMock(return_value=[])
+        key_limit_dao.save_many = MagicMock(
+            side_effect=IntegrityError(
+                'INSERT',
+                {},
+                Exception('uq_key_limit_KEY_UUID_CATEGORY_ALGORITHM_WINDOW_SIZE'),
+            )
         )
-        return service, key_limit_dao
+
+        with pytest.raises(CredentialLimitAlreadyExistsError):
+            service.apply_limits_to_keys([key], _group_limits_in())
+
+
+class TestGroupMembershipLeavesLimitsAlone:
+    def test_joining_a_group_writes_no_limit(self):
+        service, key_dao, key_limit_dao = _make_limits_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
+        group = db_mock.get_sample_group(uuid=uuid.uuid4())
+        service.group_dao.get_by_uuid = MagicMock(return_value=group)
+        key_dao.get_by_uuid = MagicMock(return_value=key)
+        key_dao.assign_group = MagicMock(return_value=key)
+
+        service.add_group_to_key(
+            key_uuid=key.uuid,
+            key_group_in=KeyGroupIn(group=group.uuid),
+            include_groups=False,
+        )
+
+        assert key_limit_dao.method_calls == []
 
     @pytest.mark.asyncio
-    async def test_clears_every_propagated_copy(self):
-        service, key_limit_dao = self._make_service()
-        group_limit_uuid = uuid.uuid4()
-        propagated = [
-            db_mock.get_sample_key_limit(
-                key_uuid=uuid.uuid4(), group_limit_uuid=group_limit_uuid
-            ),
-            db_mock.get_sample_key_limit(
-                key_uuid=uuid.uuid4(), group_limit_uuid=group_limit_uuid
-            ),
-        ]
-        key_limit_dao.get_by_group_limit_uuid = MagicMock(return_value=propagated)
+    async def test_leaving_a_group_keeps_limits_and_counters(self):
+        service, key_dao, key_limit_dao = _make_limits_service()
+        group_uuid = uuid.uuid4()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4(), group_uuid=group_uuid)
+        key.group = db_mock.get_sample_group(uuid=group_uuid)
+        key_dao.get_by_uuid = MagicMock(return_value=key)
+        key_dao.remove_group = MagicMock(return_value=1)
 
         with patch(
             'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
             new=AsyncMock(),
         ) as mock_clear:
-            await service.clear_propagated_limit_counters(group_limit_uuid)
+            await service.remove_group_from_key(key.uuid, group_uuid)
 
-        key_limit_dao.get_by_group_limit_uuid.assert_called_once_with(group_limit_uuid)
-        assert mock_clear.await_count == 2
-
-    @pytest.mark.asyncio
-    async def test_redis_failure_on_one_does_not_stop_the_others(self):
-        service, key_limit_dao = self._make_service()
-        group_limit_uuid = uuid.uuid4()
-        propagated = [
-            db_mock.get_sample_key_limit(
-                key_uuid=uuid.uuid4(), group_limit_uuid=group_limit_uuid
-            ),
-            db_mock.get_sample_key_limit(
-                key_uuid=uuid.uuid4(), group_limit_uuid=group_limit_uuid
-            ),
-        ]
-        key_limit_dao.get_by_group_limit_uuid = MagicMock(return_value=propagated)
-
-        with patch(
-            'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
-            new=AsyncMock(side_effect=ConnectionError('redis unreachable')),
-        ) as mock_clear:
-            await service.clear_propagated_limit_counters(group_limit_uuid)
-
-        assert mock_clear.await_count == 2
-
-
-class TestAddGroupToKeyPropagatesLimits:
-    def _make_service(self):
-        key_dao = MagicMock(spec_set=KeyDAO)
-        group_dao = MagicMock(spec_set=GroupDAO)
-        key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
-        group_limit_dao = MagicMock(spec_set=GroupLimitDAO)
-        service = KeyService(
-            key_dao=key_dao,
-            api_key_security=MagicMock(spec_set=ApiKeySecurity),
-            group_dao=group_dao,
-            key_limit_dao=key_limit_dao,
-            group_limit_dao=group_limit_dao,
-        )
-        return service, key_dao, group_dao, key_limit_dao, group_limit_dao
-
-    def test_joining_key_inherits_existing_group_limits(self):
-        service, key_dao, group_dao, key_limit_dao, group_limit_dao = (
-            self._make_service()
-        )
-        key_uuid, group_uuid = uuid.uuid4(), uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid)
-        group = db_mock.get_sample_group(uuid=group_uuid)
-        group_limit = db_mock.get_sample_group_limit(group_uuid=group_uuid)
-        key_dao.get_by_uuid = MagicMock(return_value=key)
-        group_dao.get_by_uuid = MagicMock(return_value=group)
-        key_dao.assign_group = MagicMock(return_value=key)
-        group_limit_dao.get_by_group_uuid = MagicMock(return_value=[group_limit])
-        key_limit_dao.get_all_by_key_uuids = MagicMock(return_value=[])
-        key_limit_dao.insert_many = MagicMock(side_effect=_fake_insert_many)
-
-        service.add_group_to_key(
-            key_uuid=key_uuid,
-            key_group_in=KeyGroupIn(group=group_uuid),
-            include_groups=False,
-        )
-
-        group_limit_dao.get_by_group_uuid.assert_called_once_with(group_uuid)
-        inserted = key_limit_dao.insert_many.call_args[0][0]
-        assert len(inserted) == 1
-        assert inserted[0].key_uuid == key_uuid
-        assert inserted[0].group_limit_uuid == group_limit.uuid
-
-    def test_joining_key_with_no_group_limits_inserts_nothing(self):
-        service, key_dao, group_dao, key_limit_dao, group_limit_dao = (
-            self._make_service()
-        )
-        key_uuid, group_uuid = uuid.uuid4(), uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid)
-        group = db_mock.get_sample_group(uuid=group_uuid)
-        key_dao.get_by_uuid = MagicMock(return_value=key)
-        group_dao.get_by_uuid = MagicMock(return_value=group)
-        key_dao.assign_group = MagicMock(return_value=key)
-        group_limit_dao.get_by_group_uuid = MagicMock(return_value=[])
-
-        service.add_group_to_key(
-            key_uuid=key_uuid,
-            key_group_in=KeyGroupIn(group=group_uuid),
-            include_groups=False,
-        )
-
-        key_limit_dao.insert_many.assert_not_called()
-
-
-class TestRemoveGroupFromKey:
-    def _make_service(self):
-        key_dao = MagicMock(spec_set=KeyDAO)
-        key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
-        service = KeyService(
-            key_dao=key_dao,
-            api_key_security=MagicMock(spec_set=ApiKeySecurity),
-            group_dao=MagicMock(spec_set=GroupDAO),
-            key_limit_dao=key_limit_dao,
-            group_limit_dao=MagicMock(spec_set=GroupLimitDAO),
-        )
-        return service, key_dao, key_limit_dao
+        key_dao.remove_group.assert_called_once_with(key_uuid=key.uuid)
+        assert key_limit_dao.method_calls == []
+        mock_clear.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_ok(self):
-        service, key_dao, key_limit_dao = self._make_service()
-        key_uuid = uuid.uuid4()
+    async def test_keycloak_key_cannot_leave_its_group(self):
+        service, key_dao, _ = _make_limits_service()
         group_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid, group_uuid=group_uuid)
-        group = db_mock.get_sample_group(uuid=group_uuid)
-        key.group = group
-        key_dao.get_by_uuid = MagicMock(return_value=key)
-        key_dao.remove_group = MagicMock(return_value=1)
-        key_limit_dao.delete_group_limits_by_key_uuid = MagicMock(return_value=[])
-
-        await service.remove_group_from_key(key_uuid, group_uuid)
-
-        key_dao.get_by_uuid.assert_called_once_with(key_uuid)
-        key_dao.remove_group.assert_called_once_with(key_uuid=key_uuid)
-        key_limit_dao.delete_group_limits_by_key_uuid.assert_called_once_with(key_uuid)
-
-    @pytest.mark.asyncio
-    async def test_clears_propagated_limit_counters(self):
-        service, key_dao, key_limit_dao = self._make_service()
-        key_uuid = uuid.uuid4()
-        group_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid, group_uuid=group_uuid)
-        group = db_mock.get_sample_group(uuid=group_uuid)
-        key.group = group
-        propagated = db_mock.get_sample_key_limit(
-            key_uuid=key_uuid, group_limit_uuid=uuid.uuid4()
-        )
-        key_dao.get_by_uuid = MagicMock(return_value=key)
-        key_dao.remove_group = MagicMock(return_value=1)
-        key_limit_dao.delete_group_limits_by_key_uuid = MagicMock(
-            return_value=[propagated]
-        )
-        with patch(
-            'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
-            new=AsyncMock(),
-        ) as mock_clear:
-            await service.remove_group_from_key(key_uuid, group_uuid)
-        mock_clear.assert_awaited_once_with(
-            credential_uuid=str(key_uuid),
-            category=propagated.category,
-            algorithm=propagated.algorithm,
-            window_size=propagated.window_size,
-        )
-
-    @pytest.mark.asyncio
-    async def test_keycloak_key_raises(self):
-        service, key_dao, key_limit_dao = self._make_service()
-        key_uuid = uuid.uuid4()
-        group_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid, group_uuid=group_uuid)
+        key = db_mock.get_sample_key(uuid=uuid.uuid4(), group_uuid=group_uuid)
         key.owner = 'keycloak'
         key_dao.get_by_uuid = MagicMock(return_value=key)
         key_dao.remove_group = MagicMock()
         with pytest.raises(KeyOperationNotAllowedError):
-            await service.remove_group_from_key(key_uuid, group_uuid)
+            await service.remove_group_from_key(key.uuid, group_uuid)
         key_dao.remove_group.assert_not_called()

@@ -8,6 +8,11 @@ coverage:
       default:
         target: 89%        # minimum coverage required on new/changed code in a PR
 
+# Each component uploads under its own flag, and its workflow runs only when its
+# folder changes. Without carryforward, a commit that touches one component
+# reports only that one, and the next PR compares the whole project against it
+# (a metrics-worker-only base made the gateway look 6% lower). carryforward
+# copies a flag's last coverage to commits that do not upload it.
 flags:
   # Each component uploads only when its path-filtered workflow runs, so carry
   # the last upload forward for commits that did not touch it.

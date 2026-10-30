@@ -1,12 +1,13 @@
 import Lucide from '@Components/lucide';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetAlertHistoryQuery } from '@State/alerts/api';
+import withChartAria from '@Helpers/chart-aria';
 import {
   Button, Collapse, Skeleton, Void,
 } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
-import { GridComponent, TooltipComponent } from 'echarts/components';
+import { AriaComponent, GridComponent, TooltipComponent } from 'echarts/components';
 import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import dayjs from 'dayjs';
@@ -15,7 +16,7 @@ import { useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import option from './option';
 
-echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([AriaComponent, BarChart, GridComponent, TooltipComponent, CanvasRenderer]);
 
 const HISTORY_HOURS = 48;
 
@@ -138,7 +139,7 @@ function HistoryChart({ buckets }) {
       echarts={echarts}
       notMerge
       onChartReady={handleOnChartReady}
-      option={option({ buckets })}
+      option={withChartAria(option({ buckets }))}
       ref={chartRef}
       style={chartStyle}
     />

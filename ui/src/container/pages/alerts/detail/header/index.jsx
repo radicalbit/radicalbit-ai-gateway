@@ -39,6 +39,7 @@ function AlertDetailHeader() {
       prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={handleOnBack} />}
       title={(
         <SectionTitle
+          level={2}
           subtitle={description ?? '--'}
           title={name}
         />

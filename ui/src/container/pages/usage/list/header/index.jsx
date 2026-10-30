@@ -1,18 +1,23 @@
 import Lucide from '@Components/lucide';
-import { NewHeader, SectionTitle } from '@radicalbit/radicalbit-design-system';
+import { Helmet, NewHeader, SectionTitle } from '@radicalbit/radicalbit-design-system';
 import { ChartColumn } from 'lucide-react';
 
 function UsageListHeader() {
   return (
-    <NewHeader
-      title={(
-        <SectionTitle
-          subtitle="Monitor request volume, costs, and limits across your projects."
-          title="Usage"
-          titlePrefix={<Lucide icon={ChartColumn} />}
-        />
-      )}
-    />
+    <>
+      <Helmet title="Usage – Radicalbit Platform" />
+
+      <NewHeader
+        title={(
+          <SectionTitle
+            level={1}
+            subtitle="Monitor request volume, costs, and limits across your projects."
+            title="Usage"
+            titlePrefix={<Lucide icon={ChartColumn} />}
+          />
+        )}
+      />
+    </>
   );
 }
 

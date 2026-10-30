@@ -28,6 +28,7 @@ from radicalbit_ai_gateway.invocation.decision_model_invoker import (
 from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EmbeddingModelInvoker,
 )
+from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
 from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
     TranscriptionModelInvoker,
 )
@@ -76,6 +77,7 @@ from radicalbit_ai_gateway.responses.request import (
     references_stored_state,
 )
 from radicalbit_ai_gateway.routing import (
+    DecisionRouter,
     DeterministicRouter,
     SemanticRouter,
     TextClassificationRouter,
@@ -105,8 +107,12 @@ from radicalbit_ai_gateway.utils.exceptions import (
     JudgeInternalError,
 )
 from radicalbit_ai_gateway.utils.request_context import (
+    RoutingSpendRecorder,
     get_current_credential_limiter,
     get_current_project_budget_limiter,
+    get_current_request_identity,
+    set_current_request_identity,
+    set_routing_spend_recorder,
 )
 from radicalbit_ai_gateway.utils.state_leaves import string_leaves, with_string_leaves
 from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
@@ -157,6 +163,7 @@ class GatewayRoute:
         router: DeterministicRouter
         | SemanticRouter
         | TextClassificationRouter
+        | DecisionRouter
         | None = None,
         token_limiter: TokenLimiter | None = None,
         rate_limiter: RequestRateLimiter | None = None,
@@ -638,6 +645,16 @@ class GatewayRoute:
         that goes upstream.
         """
         route_name = self.gateway_route_config.route_name
+        # Who sent the request: routing charges its own calls to them.
+        set_current_request_identity(
+            self._request_identity(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+            )
+        )
         if not self.chat_invoker:
             raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
         identity = {
@@ -657,7 +674,7 @@ class GatewayRoute:
         messages = await run_preprocessing(
             request.messages(), self.gateway_route_config.plugins
         )
-        model_selected = await self._route_chat_request(
+        redaction = await self._redact_input_guardrails(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -665,20 +682,29 @@ class GatewayRoute:
             group_name=group_name,
             messages=messages,
         )
+        # Route on the redacted messages, as the chat path does.
+        model_selected = await self._route_chat_request(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            messages=redaction.redacted_messages,
+        )
         if not self.chat_invoker.supports_responses(model_selected.model_id):
             raise GatewayBadRequest(
                 f'Model {model_selected.model_id} of route {route_name} '
                 'does not serve the Responses API'
             )
 
-        self._apply_config_prompt(messages, model_selected)
-        input_guardrails = await self._apply_input_guardrails(
+        self._apply_config_prompt(redaction.redacted_messages, model_selected)
+        input_guardrails = await self._check_input_guardrails(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
             api_key_name=api_key_name,
             group_name=group_name,
-            messages=messages,
+            redaction=redaction,
         )
         if input_guardrails.soft_block:
             return ResponsesPrepared(
@@ -1755,6 +1781,32 @@ class GatewayRoute:
 
         return count
 
+    def _routing_spend_recorder(
+        self, identity: RequestIdentity, metrics: ModelInvoker
+    ) -> RoutingSpendRecorder:
+        """Charge a routing call to the request, as a judge call is (ADR 0006)."""
+
+        async def record(
+            model: Model,
+            input_tokens: int,
+            latency_ms: float,
+            *,
+            model_type: str,
+            target_model_id: str | None = None,
+        ) -> None:
+            metrics.record_routing_call(
+                identity=identity,
+                model=model,
+                target_model_id=target_model_id or model.model_id,
+                input_tokens=input_tokens,
+                latency_ms=latency_ms,
+                model_type=model_type,
+            )
+            # Routing calls bill input tokens only, as decision calls do.
+            await self._count_decision_usage(input_tokens, model, identity)
+
+        return record
+
     async def _count_decision_usage(
         self, input_tokens: int, model: Model, identity: RequestIdentity
     ) -> None:
@@ -1809,6 +1861,16 @@ class GatewayRoute:
         """Prepare a common pre-invocation logic: validation, guardrails, cache, limiters."""
         if route_name != self.gateway_route_config.route_name:
             raise GatewayBadRequest(f'{route_name} must be the route name')
+        # Who sent the request: routing charges its own calls to them.
+        set_current_request_identity(
+            self._request_identity(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+            )
+        )
 
         if not self.chat_invoker:
             raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
@@ -1841,29 +1903,42 @@ class GatewayRoute:
         set_operation_category(OperationCategory.PREPROCESSING)
         messages = await run_preprocessing(messages, self.gateway_route_config.plugins)
 
-        # Prepare request for processing: route on the preprocessed messages.
+        redaction = await self._redact_input_guardrails(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            messages=messages,
+        )
+        redacted_messages = redaction.redacted_messages
+
+        # Route on the redacted messages, so no router (and no service it
+        # calls) sees text a redact guardrail masks.
         model_selected = await self._route_chat_request(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
             api_key_name=api_key_name,
             group_name=group_name,
-            messages=messages,
+            messages=redacted_messages,
         )
 
-        # Inject the route's configured system prompt AFTER preprocessing, so
-        # preprocessing plugins can never see or modify it.
-        self._apply_config_prompt(messages, model_selected)
+        # Inject the route's configured system prompt after routing and after
+        # redaction: plugins, routers and redact guardrails never see it.
+        self._apply_config_prompt(redacted_messages, model_selected)
+        if redacted_messages is not messages:
+            # The cache still reads the unredacted list: keep the prompt there too.
+            self._apply_config_prompt(messages, model_selected)
 
-        input_guardrails = await self._apply_input_guardrails(
+        input_guardrails = await self._check_input_guardrails(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
             api_key_name=api_key_name,
             group_name=group_name,
-            messages=messages,
+            redaction=redaction,
         )
-        redacted_messages = input_guardrails.redacted_messages
         guardrails_input_triggered = input_guardrails.input_triggered
         guardrails_block_triggered = (
             False  # Only tracks BLOCK/SOFT_BLOCK, not REDACT or WARN
@@ -1928,7 +2003,17 @@ class GatewayRoute:
     async def _select_chat_model(self, messages: list[BaseMessage]) -> Model:
         """Select the chat model for this request based on the routing config."""
         if self.router:
-            model_selected = await self.router.select_model(messages)
+            identity = get_current_request_identity()
+            # Routing runs on chat routes: the chat invoker emits its cost events.
+            set_routing_spend_recorder(
+                self._routing_spend_recorder(identity, self.chat_invoker)
+                if identity and self.chat_invoker
+                else None
+            )
+            try:
+                model_selected = await self.router.select_model(messages)
+            finally:
+                set_routing_spend_recorder(None)
         else:
             model_selected = self._chat_models[0]
 
@@ -2454,7 +2539,7 @@ class GatewayRoute:
     # ============================================================================
     # Guardrails
     # ============================================================================
-    async def _apply_input_guardrails(
+    async def _redact_input_guardrails(
         self,
         request_uuid: str,
         api_key_uuid: str,
@@ -2463,91 +2548,110 @@ class GatewayRoute:
         group_name: str,
         messages: list[BaseMessage],
     ) -> InputGuardrailsResult:
-        """Redact, then check the input messages of a chat request."""
-        guardrails_input_triggered = False
-        redacted_messages = messages
-
-        if not self.gateway_route_config.guardrails:
+        """Apply the input REDACT guardrails of a chat request."""
+        if not self.gateway_route_config.guardrails or not (
+            self.guardrail_engine.has_guardrails_for_route(
+                self.gateway_route_config,
+                GuardrailWhereType.INPUT,
+                GuardrailClass.REDACT,
+            )
+        ):
             return InputGuardrailsResult(
-                redacted_messages=redacted_messages,
+                redacted_messages=messages,
                 input_triggered=False,
                 soft_block=None,
             )
 
-        has_redact_input = self.guardrail_engine.has_guardrails_for_route(
-            self.gateway_route_config,
-            GuardrailWhereType.INPUT,
-            GuardrailClass.REDACT,
+        set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+        redacted_messages = await self._apply_redact_guardrails(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            group_name=group_name,
+            api_key_name=api_key_name,
+            messages=messages,
+            where=GuardrailWhereType.INPUT,
         )
-        if has_redact_input:
-            set_operation_category(OperationCategory.GUARDRAIL_INPUT)
-            redacted_messages = await self._apply_redact_guardrails(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                api_key_name=api_key_name,
-                messages=messages,
-                where=GuardrailWhereType.INPUT,
+
+        # Mark as triggered if input was redacted (but NOT for block header)
+        guardrails_input_triggered = False
+        try:
+            if (len(messages) != len(redacted_messages)) or any(
+                (m1.content != m2.content)
+                for m1, m2 in zip(messages, redacted_messages)
+            ):
+                guardrails_input_triggered = True
+        except Exception:
+            pass
+
+        return InputGuardrailsResult(
+            redacted_messages=redacted_messages,
+            input_triggered=guardrails_input_triggered,
+            soft_block=None,
+        )
+
+    async def _check_input_guardrails(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        redaction: InputGuardrailsResult,
+    ) -> InputGuardrailsResult:
+        """Apply the input CHECK guardrails of a chat request to its redacted messages."""
+        redacted_messages = redaction.redacted_messages
+        guardrails_input_triggered = redaction.input_triggered
+
+        if not self.gateway_route_config.guardrails or not (
+            self.guardrail_engine.has_guardrails_for_route(
+                self.gateway_route_config,
+                GuardrailWhereType.INPUT,
+                GuardrailClass.CHECK,
             )
-
-            # Mark as triggered if input was redacted (but NOT for block header)
-            try:
-                if (len(messages) != len(redacted_messages)) or any(
-                    (m1.content != m2.content)
-                    for m1, m2 in zip(messages, redacted_messages)
-                ):
-                    guardrails_input_triggered = True
-            except Exception:
-                pass
-
-        if self.guardrail_engine.has_guardrails_for_route(
-            self.gateway_route_config,
-            GuardrailWhereType.INPUT,
-            GuardrailClass.CHECK,
         ):
-            if not has_redact_input:
-                set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+            return redaction
 
-            input_soft_block = await self._apply_check_guardrails(
+        set_operation_category(OperationCategory.GUARDRAIL_INPUT)
+        input_soft_block = await self._apply_check_guardrails(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            group_name=group_name,
+            api_key_name=api_key_name,
+            messages=redacted_messages,
+            where=GuardrailWhereType.INPUT,
+        )
+
+        if input_soft_block:
+            return InputGuardrailsResult(
+                redacted_messages=redacted_messages,
+                input_triggered=guardrails_input_triggered,
+                soft_block=input_soft_block,
+            )
+
+        # Evaluate WARN-only guardrails on input (does NOT trigger block header)
+        try:
+            if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
+                self.gateway_route_config,
+                redacted_messages,
+                GuardrailWhereType.INPUT,
                 request_uuid=request_uuid,
                 api_key_uuid=api_key_uuid,
                 group_uuid=group_uuid,
-                group_name=group_name,
                 api_key_name=api_key_name,
-                messages=redacted_messages,
-                where=GuardrailWhereType.INPUT,
-            )
-
-            if input_soft_block:
-                return InputGuardrailsResult(
-                    redacted_messages=redacted_messages,
-                    input_triggered=guardrails_input_triggered,
-                    soft_block=input_soft_block,
-                )
-
-            # Evaluate WARN-only guardrails on input (does NOT trigger block header)
-            try:
-                if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
-                    self.gateway_route_config,
-                    redacted_messages,
-                    GuardrailWhereType.INPUT,
+                group_name=group_name,
+                count_judge_usage=self._judge_usage_counter(
                     request_uuid=request_uuid,
                     api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
                     api_key_name=api_key_name,
+                    group_uuid=group_uuid,
                     group_name=group_name,
-                    count_judge_usage=self._judge_usage_counter(
-                        request_uuid=request_uuid,
-                        api_key_uuid=api_key_uuid,
-                        api_key_name=api_key_name,
-                        group_uuid=group_uuid,
-                        group_name=group_name,
-                    ),
-                ):
-                    guardrails_input_triggered = True
-            except Exception:
-                pass
+                ),
+            ):
+                guardrails_input_triggered = True
+        except Exception:
+            pass
 
         return InputGuardrailsResult(
             redacted_messages=redacted_messages,

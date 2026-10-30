@@ -26,10 +26,12 @@ const modals = {
   CREATE_PROJECT: 'CREATE_PROJECT',
   DELETE_GROUP_WITH_ASSOCIATED_ITEMS: 'DELETE_GROUP_WITH_ASSOCIATED_ITEMS',
   DELETE_KEY_WITH_GROUPS: 'DELETE_KEY_WITH_GROUPS',
+  DELETE_PROJECT: 'DELETE_PROJECT',
   EDIT_GROUP: 'EDIT_GROUP',
   EDIT_KEY: 'EDIT_KEY',
   EDIT_PROJECT_CONFIG: 'EDIT_PROJECT_CONFIG',
   MANAGE_KEY_LIMITS: 'MANAGE_KEY_LIMITS',
+  APPLY_GROUP_LIMITS: 'APPLY_GROUP_LIMITS',
   MANAGE_PROJECT_BUDGET: 'MANAGE_PROJECT_BUDGET',
   ROTATE_KEY: 'ROTATE_KEY',
   ROUTE_ANALYTICS: 'ROUTE_ANALYTICS',
@@ -53,12 +55,36 @@ const _getModal = (search) => {
   }
 };
 
+let focusBeforeModal;
+
+const _getFocusTarget = () => {
+  const { activeElement } = document;
+
+  if (activeElement?.closest('.ant-dropdown')) {
+    return document.querySelector('.ant-dropdown-open button') ?? activeElement;
+  }
+
+  return activeElement;
+};
+
+const restoreFocusBeforeModal = () => {
+  if (focusBeforeModal?.isConnected) {
+    focusBeforeModal.focus();
+  }
+
+  focusBeforeModal = undefined;
+};
+
 const useModals = () => {
   const navigate = useNavigate();
   const { search } = useLocation();
 
   const showModal = useCallback(
     (modalName, data = {}) => {
+      if (!_getModal(window.location.search)) {
+        focusBeforeModal = _getFocusTarget();
+      }
+
       // FIXME: with react-router-dom v6 probably we can use useSearcParams and remove the window.location.search
       const parsedSearch = _handleQueryString(window.location.search, modals.QUERY_NAME, btoa(JSON.stringify({ modalName, data })));
 
@@ -80,4 +106,4 @@ const useModals = () => {
 };
 
 export default useModals;
-export { modals };
+export { modals, restoreFocusBeforeModal };

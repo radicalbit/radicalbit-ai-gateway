@@ -2,11 +2,7 @@ import Lucide from '@Components/lucide';
 import { CollapsedTitle } from '@Container/layout';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetGroupsQuery } from '@State/groups/api';
-import {
-  Button, NewHeader,
-  SectionTitle,
-  Tooltip,
-} from '@radicalbit/radicalbit-design-system';
+import { Button, Helmet, NewHeader, SectionTitle, Tooltip } from '@radicalbit/radicalbit-design-system';
 import { Layers, Plus } from 'lucide-react';
 import { useEffect } from 'react';
 import Subtitle from './subtitle';
@@ -19,18 +15,23 @@ function GroupsListHeader() {
   useOpenModalWithKeyboard();
 
   return (
-    <NewHeader
-      details={{
-        one: hasCreateButton && <CreateGroupButton />,
-      }}
-      title={(
-        <SectionTitle
-          subtitle={<Subtitle />}
-          title="Groups"
-          titlePrefix={<Lucide icon={Layers} />}
-        />
-      )}
-    />
+    <>
+      <Helmet title="Groups – Radicalbit Platform" />
+
+      <NewHeader
+        details={{
+          one: hasCreateButton && <CreateGroupButton />,
+        }}
+        title={(
+          <SectionTitle
+            level={1}
+            subtitle={<Subtitle />}
+            title="Groups"
+            titlePrefix={<Lucide icon={Layers} />}
+          />
+        )}
+      />
+    </>
   );
 }
 

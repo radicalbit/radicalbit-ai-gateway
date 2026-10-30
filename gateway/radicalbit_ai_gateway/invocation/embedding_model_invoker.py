@@ -25,6 +25,8 @@ from radicalbit_ai_gateway.utils.token_encoding import count_tokens
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
+EMBEDDINGS_MODEL_TYPE = 'embeddings'
+
 
 class EmbeddingModelInvoker(ModelInvoker):
     def __init__(
@@ -155,7 +157,7 @@ class EmbeddingModelInvoker(ModelInvoker):
             target_model_id=model.model_id,
             model=model_invoked,
             latency_ms=latency_ms,
-            model_type='embeddings',
+            model_type=EMBEDDINGS_MODEL_TYPE,
             token_input_count=token_input_count,
             fallback_triggered=fallback_triggered,
             is_semantic_search=is_semantic_search,

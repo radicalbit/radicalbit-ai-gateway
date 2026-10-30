@@ -1,11 +1,9 @@
 import HtmlAnchor from '@Components/html-anchor';
+import InfoPopover from '@Components/info-popover';
 import {
   CredentialStateEnum, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum, SEARCH_PARAMS,
 } from '@Src/constants';
-import {
-  Popover,
-  Tooltip,
-} from '@radicalbit/radicalbit-design-system';
+import { Tooltip } from '@radicalbit/radicalbit-design-system';
 import classNames from 'classnames';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
@@ -14,9 +12,9 @@ const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
 
 function Keys({ keys }) {
   return (
-    <Popover content={<PopoverContent keys={keys} />} minWidth="200" title={<strong>Credentials</strong>}>
+    <InfoPopover content={<PopoverContent keys={keys} />} minWidth="200" title={<strong>Credentials</strong>}>
       {keys.length}
-    </Popover>
+    </InfoPopover>
   );
 }
 

@@ -1,4 +1,4 @@
-import { formatCount } from '@Components/limits/helpers';
+import { formatCount, isLimitComplete } from '@Components/limits/helpers';
 import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
@@ -94,11 +94,18 @@ function AddActions() {
 
   const saveLabel = `Save ${formatCount(count, 'budget')}`;
 
+  const rows = form?.limits ?? [];
+  const isIncomplete = !rows.every(isLimitComplete);
+  const hint = isIncomplete ? <span className="mr-auto self-center text-xs text-[var(--coo-fg-secondary)]" id="manage-project-budget-hint">Fill in every field of each budget to save</span> : false;
+  const hintId = isIncomplete ? 'manage-project-budget-hint' : undefined;
+
   return (
     <div className="flex gap-2 justify-end">
+      {hint}
+
       <Button onClick={handleOnCancel} type="secondary-light">Cancel</Button>
 
-      <Button disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{saveLabel}</Button>
+      <Button aria-describedby={hintId} disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{saveLabel}</Button>
     </div>
   );
 }
