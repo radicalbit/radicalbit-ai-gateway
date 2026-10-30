@@ -18,8 +18,9 @@ export function useGetModelItem() {
   const chatModels = data?.configuration?.chatModels;
   const embeddingModels = data?.configuration?.embeddingModels;
   const transcriptionModels = data?.configuration?.transcriptionModels;
+  const decisionModels = data?.configuration?.decisionModels;
 
-  if (isEmpty(chatModels) && isEmpty(embeddingModels) && isEmpty(transcriptionModels)) {
+  if (isEmpty(chatModels) && isEmpty(embeddingModels) && isEmpty(transcriptionModels) && isEmpty(decisionModels)) {
     return {
       collapsible: 'disabled',
       showArrow: false,
@@ -53,8 +54,13 @@ export function Models() {
   const chatModels = data?.configuration?.chatModels || [];
   const embeddingModels = data?.configuration?.embeddingModels || [];
   const transcriptionModels = data?.configuration?.transcriptionModels || [];
+  const decisionModels = data?.configuration?.decisionModels || [];
 
-  return <Json data={{ chatModels, embeddingModels, transcriptionModels }} />;
+  const models = {
+    chatModels, embeddingModels, transcriptionModels, decisionModels,
+  };
+
+  return <Json data={models} />;
 }
 
 // *** Fallback ***
@@ -229,10 +235,11 @@ export function useGetTokenLimitingItem() {
   const tokenOutputLimitTriggered = data?.metrics?.tokenOutputLimitTriggered;
   const chatModels = data?.configuration?.chatModels;
   const embeddingModels = data?.configuration?.embeddingModels;
+  const decisionModels = data?.configuration?.decisionModels;
 
   if (isEmpty(tokenLimiting)) {
-    const tooltip = isEmpty(chatModels) && isEmpty(embeddingModels)
-      ? 'Requires a chat or embedding model on this route'
+    const tooltip = isEmpty(chatModels) && isEmpty(embeddingModels) && isEmpty(decisionModels)
+      ? 'Requires a chat, embedding or decision model on this route'
       : 'Configure this section into your configuration file';
 
     return {

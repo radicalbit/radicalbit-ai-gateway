@@ -38,7 +38,9 @@ function PopoverContent({ configuration, metrics }) {
   const tokenLimitingOutput = configuration?.tokenLimiting?.output;
   const durationLimiting = configuration?.durationLimiting;
 
-  const supportsTokenLimiting = !!configuration?.chatModels?.length || !!configuration?.embeddingModels?.length;
+  // A route with only decision models limits input tokens only: they produce no output.
+  const supportsTokenOutputLimiting = !!configuration?.chatModels?.length || !!configuration?.embeddingModels?.length;
+  const supportsTokenLimiting = supportsTokenOutputLimiting || !!configuration?.decisionModels?.length;
   const supportsDurationLimiting = !!configuration?.transcriptionModels?.length;
 
   const rate = numberFormatterInt(metrics.rateLimitTriggered) ?? '--';
@@ -66,7 +68,7 @@ function PopoverContent({ configuration, metrics }) {
     <>
       <PopoverRow label="Token in:" value={tokenIn} />
 
-      <PopoverRow label="Token out:" value={tokenOut} />
+      {supportsTokenOutputLimiting && <PopoverRow label="Token out:" value={tokenOut} />}
     </>
   ) : false;
 
@@ -86,15 +88,19 @@ function PopoverContent({ configuration, metrics }) {
 
       <PopoverRow label="Max tokens:" value={tokenLimitingInputMaxTokens} />
 
-      <Divider style={{ margin: '.5rem' }} />
+      {supportsTokenOutputLimiting && (
+        <>
+          <Divider style={{ margin: '.5rem' }} />
 
-      <strong>Token Limiting Output</strong>
+          <strong>Token Limiting Output</strong>
 
-      <PopoverRow label="Algorithm:" value={tokenLimitingOutputAlgorithm} />
+          <PopoverRow label="Algorithm:" value={tokenLimitingOutputAlgorithm} />
 
-      <PopoverRow label="Window size:" value={tokenLimitingOutputWindowSize} />
+          <PopoverRow label="Window size:" value={tokenLimitingOutputWindowSize} />
 
-      <PopoverRow label="Max tokens:" value={tokenLimitingOutputMaxTokens} />
+          <PopoverRow label="Max tokens:" value={tokenLimitingOutputMaxTokens} />
+        </>
+      )}
     </>
   ) : false;
 

@@ -4,6 +4,7 @@ import { useGetRouteByNameWithRange } from '@State/routes/vertical-hooks';
 import { Board, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
 import { useParams, useSearchParams } from 'react-router-dom';
 import ChatCurl from './chat';
+import DecisionCurl from './decision';
 import TranscriptionCurl from './transcription';
 
 function Curl() {
@@ -19,6 +20,7 @@ function Curl() {
     isSuccess: isRouteSuccess } = useGetRouteByNameWithRange(name);
   const chatModels = route?.configuration?.chatModels;
   const transcriptionModels = route?.configuration?.transcriptionModels;
+  const decisionModels = route?.configuration?.decisionModels;
 
   if (isLoading || isRouteLoading) {
     return <Skeleton.Input active block />;
@@ -28,7 +30,7 @@ function Curl() {
     return <SomethingWentWrong />;
   }
 
-  if (!chatModels?.length && !transcriptionModels?.length) {
+  if (!chatModels?.length && !transcriptionModels?.length && !decisionModels?.length) {
     return <IsEmpty />;
   }
 
@@ -41,6 +43,8 @@ function Curl() {
       <ChatCurl />
 
       <TranscriptionCurl />
+
+      <DecisionCurl />
     </div>
   );
 }
@@ -50,7 +54,7 @@ function IsEmpty() {
     <Board
       main={(
         <Void
-          description="This route has no models configured yet. cURL examples appear once you add a chat or transcription model."
+          description="This route has no models configured yet. cURL examples appear once you add a chat, transcription or decision model."
           size="small"
           title="No cURL available"
         />
