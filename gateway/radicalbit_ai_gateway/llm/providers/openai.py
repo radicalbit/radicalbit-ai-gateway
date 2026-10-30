@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 import os
 import re
 from typing import Any, ClassVar
+from urllib.parse import urlparse
 
 import openai
 from pydantic import (
@@ -781,6 +782,37 @@ def _messages_after_last_response(
     return messages, None
 
 
+# The id prefix OpenAI requires for each input item type it checks.
+_OPENAI_ITEM_ID_PREFIXES = {
+    'message': 'msg_',
+    'function_call': 'fc_',
+    'custom_tool_call': 'ctc_',
+}
+
+
+def is_openai_reasoning_blob(encrypted_content: Any) -> bool:
+    # OpenAI's encrypted reasoning always starts with ``gAAAA``.
+    return isinstance(encrypted_content, str) and encrypted_content.startswith('gAAAA')
+
+
+def _is_openai_reasoning(item: dict) -> bool:
+    # DeepSeek's ``encrypted_content`` is a ``<response id>-<index>`` label, not
+    # encrypted, so it fails both checks.
+    return str(item.get('id', '')).startswith('rs_') or is_openai_reasoning_blob(
+        item.get('encrypted_content')
+    )
+
+
+# OpenAI never returns these on reasoning and rejects them on input: reasoning
+# carrying them came from elsewhere (OpenRouter), even with an OpenAI blob.
+_FOREIGN_REASONING_FIELDS = frozenset({'status', 'format', 'signature'})
+
+
+def _has_foreign_id(item: dict) -> bool:
+    prefix = _OPENAI_ITEM_ID_PREFIXES.get(item.get('type'))
+    return bool(prefix and 'id' in item and not str(item['id']).startswith(prefix))
+
+
 class ChatOpenAI(_BaseChatOpenAI):
     """OpenAI chat model (also any OpenAI-compatible endpoint via ``base_url``)."""
 
@@ -849,6 +881,37 @@ class ChatOpenAI(_BaseChatOpenAI):
 
     def supports_native_responses(self) -> bool:
         return True
+
+    def _keeps_reasoning(self, item: dict) -> bool:
+        """Whether this endpoint gets the reasoning item back: only its own."""
+        hostname = urlparse(self.openai_api_base or '').hostname
+        if hostname == 'openrouter.ai':
+            # OpenRouter marks its reasoning with ``format``; its models reject
+            # other providers' encrypted reasoning.
+            return 'format' in item
+        # OpenAI reads only its own reasoning and rejects any other shape.
+        return _is_openai_reasoning(item) and not (
+            hostname in (None, 'api.openai.com')
+            and _FOREIGN_REASONING_FIELDS & item.keys()
+        )
+
+    def adapt_responses_input(self, items: list) -> list:
+        adapted = []
+        for item in items:
+            if not isinstance(item, dict):
+                adapted.append(item)
+            elif item.get('type') == 'reasoning':
+                if self._keeps_reasoning(item):
+                    adapted.append(item)
+            elif _has_foreign_id(item):
+                # OpenAI checks each item id's prefix; without the id it takes
+                # the item only without its ``status`` too.
+                adapted.append(
+                    {k: v for k, v in item.items() if k not in ('id', 'status')}
+                )
+            else:
+                adapted.append(item)
+        return adapted
 
     def _routes_stream_to_responses_api(self, kwargs: dict) -> bool:
         return self._use_responses_api({**kwargs, **self.model_kwargs})
