@@ -9,6 +9,7 @@ limit is saved, not an error.
 from collections.abc import Iterable, Mapping
 from typing import NamedTuple
 
+from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.limiter.window_config import format_window, parse_window
 from radicalbit_ai_gateway.models.credential_limiting import (
     CATEGORY_TO_LIMITING_FIELD,
@@ -35,6 +36,15 @@ class LimitMax(NamedTuple):
             limit_in.value,
         )
 
+    @staticmethod
+    def of_saved(limit: KeyLimit) -> 'LimitMax':
+        return LimitMax(
+            CredentialLimitCategory(limit.category),
+            LimitingAlgorithmType(limit.algorithm),
+            limit.window_size,
+            float(limit.max_value),
+        )
+
 
 def route_limit_warnings(
     limits: Iterable[LimitMax], routes: Mapping[str, GatewayRouteConfig]
@@ -52,8 +62,12 @@ def route_limit_warnings(
             )
             if route_value is None:
                 continue
+            try:
+                credential_seconds = _seconds(limit.window_size)
+            except ValueError:
+                # A legacy saved window the gateway can't read: nothing to compare
+                continue
             route_seconds = _seconds(route_limiting.window_size)
-            credential_seconds = _seconds(limit.window_size)
             # value / seconds compared without dividing, so equal rates stay equal
             if limit.value * route_seconds > route_value * credential_seconds:
                 warnings.append(

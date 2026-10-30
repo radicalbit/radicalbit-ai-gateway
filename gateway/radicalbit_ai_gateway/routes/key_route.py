@@ -51,16 +51,22 @@ class KeyRoute:
             include_groups: bool = False,
             only_unassigned: bool = Query(False),
             include_limits: bool = Query(False),
+            route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
-            return key_service.get_all(include_groups, only_unassigned, include_limits)
+            return key_service.get_all(
+                include_groups, only_unassigned, include_limits, route_configs
+            )
 
         @router.get('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
         def get_key_by_uuid(
             key_uuid: UUID,
             include_groups: bool = False,
             include_limits: bool = Query(False),
+            route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
-            return key_service.get_key_by_uuid(key_uuid, include_groups, include_limits)
+            return key_service.get_key_by_uuid(
+                key_uuid, include_groups, include_limits, route_configs
+            )
 
         @router.patch('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')

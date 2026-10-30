@@ -143,7 +143,9 @@ class TestKeyRoute(unittest.TestCase):
         res = self.client.get(f'{self.prefix}/keys/{key.uuid}')
         assert res.status_code == 200
         assert jsonable_encoder(key_out) == res.json()
-        self.key_service.get_key_by_uuid.assert_called_once_with(key.uuid, False, False)
+        self.key_service.get_key_by_uuid.assert_called_once_with(
+            key.uuid, False, False, {}
+        )
 
     def test_get_missing_key_by_uuid(self):
         key = db_mock.get_sample_key()
@@ -158,7 +160,9 @@ class TestKeyRoute(unittest.TestCase):
                 'error', 'auth_registry_error', code='key_not_found', param=None
             ).error
         )
-        self.key_service.get_key_by_uuid.assert_called_once_with(key.uuid, False, False)
+        self.key_service.get_key_by_uuid.assert_called_once_with(
+            key.uuid, False, False, {}
+        )
 
     def test_update_key_name(self):
         key_in = db_mock.get_sample_key_update_in()

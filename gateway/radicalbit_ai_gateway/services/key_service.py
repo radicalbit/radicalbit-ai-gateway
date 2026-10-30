@@ -96,14 +96,44 @@ class KeyService:
         key_uuid: UUID,
         include_groups: bool = False,
         include_limits: bool = False,
+        route_configs: Mapping[str, GatewayRouteConfig] | None = None,
     ) -> KeyFullOut:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
-        return KeyFullOut.from_key_obscured(
+        key_out = KeyFullOut.from_key_obscured(
             key=key,
             include_groups=include_groups,
             include_limits=include_limits,
+        )
+        if not include_limits:
+            return key_out
+        return self._with_limit_warnings(
+            key_out, key, self._reached_routes(key.group_uuid, route_configs or {})
+        )
+
+    def _reached_routes(
+        self, group_uuid: UUID | None, route_configs: Mapping[str, GatewayRouteConfig]
+    ) -> dict[str, GatewayRouteConfig]:
+        """Return the served routes the group is associated with."""
+        if group_uuid is None:
+            return {}
+        return {
+            name: route_configs[name]
+            for name in self.group_dao.get_route_names_by_group_uuid(group_uuid)
+            if name in route_configs
+        }
+
+    @staticmethod
+    def _with_limit_warnings(
+        key_out: KeyFullOut, key: Key, reached: Mapping[str, GatewayRouteConfig]
+    ) -> KeyFullOut:
+        return key_out.model_copy(
+            update={
+                'limit_warnings': route_limit_warnings(
+                    map(LimitMax.of_saved, key.limits), reached
+                )
+            }
         )
 
     def _route_limit_warnings(
@@ -113,14 +143,9 @@ class KeyService:
         route_configs: Mapping[str, GatewayRouteConfig],
     ) -> list[RouteLimitConsistencyWarning]:
         """Against the served routes the credential's group reaches (AG-947)."""
-        if group_uuid is None:
-            return []
-        reached = {
-            name: route_configs[name]
-            for name in self.group_dao.get_route_names_by_group_uuid(group_uuid)
-            if name in route_configs
-        }
-        return route_limit_warnings(limits, reached)
+        return route_limit_warnings(
+            limits, self._reached_routes(group_uuid, route_configs)
+        )
 
     def create_key(self, key_in: KeyCreateIn) -> KeyFullOut:
         try:
@@ -151,16 +176,27 @@ class KeyService:
         include_groups: bool,
         only_unassigned: bool,
         include_limits: bool = False,
+        route_configs: Mapping[str, GatewayRouteConfig] | None = None,
     ) -> list[KeyFullOut]:
         keys = self.key_dao.get_all(only_unassigned=only_unassigned)
-        return [
-            KeyFullOut.from_key_obscured(
+        reached_by_group: dict[UUID | None, dict[str, GatewayRouteConfig]] = {}
+        result: list[KeyFullOut] = []
+        for key in keys:
+            key_out = KeyFullOut.from_key_obscured(
                 key=key,
                 include_groups=include_groups,
                 include_limits=include_limits,
             )
-            for key in keys
-        ]
+            if include_limits:
+                if key.group_uuid not in reached_by_group:
+                    reached_by_group[key.group_uuid] = self._reached_routes(
+                        key.group_uuid, route_configs or {}
+                    )
+                key_out = self._with_limit_warnings(
+                    key_out, key, reached_by_group[key.group_uuid]
+                )
+            result.append(key_out)
+        return result
 
     def delete_key(self, key_uuid: UUID, include_groups: bool = False) -> KeyFullOut:
         key = self.key_dao.get_by_uuid(key_uuid)
@@ -180,11 +216,13 @@ class KeyService:
         key_uuid: UUID,
         include_groups: bool,
         include_limits: bool = False,
+        route_configs: Mapping[str, GatewayRouteConfig] | None = None,
     ) -> KeyFullOut:
         return self._get_key(
             key_uuid=key_uuid,
             include_groups=include_groups,
             include_limits=include_limits,
+            route_configs=route_configs,
         )
 
     def update_key_name(self, key_uuid: UUID, key_in: KeyUpdateIn) -> KeyFullOut:
@@ -534,15 +572,24 @@ class KeyService:
             raise KeyInternalError(
                 f'An error occurred while adding the limits: {e}'
             ) from e
+        key_out = self._get_key(
+            key_uuid,
+            include_groups=include_groups,
+            include_limits=True,
+            route_configs=route_configs,
+        )
+        added = {
+            (limit.category, limit.algorithm, limit.window_size)
+            for limit in map(LimitMax.of, limits_in.limits)
+        }
         return KeyLimitsAddedOut(
-            key=self._get_key(
-                key_uuid, include_groups=include_groups, include_limits=True
-            ),
-            warnings=self._route_limit_warnings(
-                key.group_uuid,
-                map(LimitMax.of, limits_in.limits),
-                route_configs or {},
-            ),
+            key=key_out,
+            warnings=[
+                warning
+                for warning in key_out.limit_warnings or []
+                if (warning.category, warning.algorithm, warning.credential_window_size)
+                in added
+            ],
         )
 
     def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:

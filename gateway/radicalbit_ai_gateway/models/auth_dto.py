@@ -274,6 +274,8 @@ class GroupOut(BaseModel):
 class KeyFullOut(KeyOut):
     group: GroupOut | None
     limits: list[CredentialLimitOut] | None = None
+    # Saved limits never reached on a route the credential reaches: with limits only
+    limit_warnings: list[RouteLimitConsistencyWarning] | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()

@@ -135,3 +135,9 @@ def test_each_route_gets_its_own_warning():
 
 def test_no_routes_no_warnings():
     assert route_limit_warnings([LimitMax(RATE, FIXED, '1 minute', 100)], {}) == []
+
+
+def test_a_saved_window_without_a_unit_is_skipped_not_an_error():
+    routes = {'proj/chat': _rate_route(50)}
+
+    assert route_limit_warnings([LimitMax(RATE, FIXED, '60', 100)], routes) == []
