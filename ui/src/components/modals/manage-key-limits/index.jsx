@@ -1,10 +1,12 @@
 import { formatCount, isLimitComplete } from '@Components/limits/helpers';
 import useModals from '@Hooks/use-modals';
 import { useGetKeyQuery } from '@State/keys/api';
+import { useKeyLimitSaveWarnings } from '@State/keys/hooks';
 import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
   Alert, Button, RbitModal, SectionTitle, Skeleton, Spinner,
 } from '@radicalbit/radicalbit-design-system';
+import { useEffect } from 'react';
 import AddScreen from './add-screen';
 import DeleteScreen from './delete-screen';
 import EditConfirmScreen from './edit-confirm-screen';
@@ -36,6 +38,8 @@ const SCREEN_ACTIONS = {
 };
 
 function ManageKeyLimits() {
+  useResetSavedWarningsOnUnmount();
+
   return (
     <FormbitContextProvider initialValues={getInitialValues()} schema={schema}>
       <ManageKeyLimitsInner />
@@ -187,6 +191,15 @@ function EditConfirmActions() {
       <Button disabled={isConfirmDisabled} loading={isLoading} onClick={handleOnConfirm} type="primary">Replace limit</Button>
     </div>
   );
+}
+
+function useResetSavedWarningsOnUnmount() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { clearWarnings } = useKeyLimitSaveWarnings(uuid);
+
+  useEffect(() => clearWarnings, [clearWarnings]);
 }
 
 export default ManageKeyLimits;

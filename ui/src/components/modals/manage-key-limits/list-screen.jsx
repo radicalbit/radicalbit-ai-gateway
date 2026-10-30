@@ -1,11 +1,13 @@
 import Lucide from '@Components/lucide';
 import { LIMIT_CATEGORIES, LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import {
-  formatLimitValue, formatLimitWindow, formatLimitsCount, sortLimits,
+  formatLimitValue, formatLimitWindow, formatLimitsCount, formatRouteLimitWarning, sortLimits,
 } from '@Components/limits/helpers';
+import RouteLimitWarnings from '@Components/limits/route-limit-warnings';
 import useModals from '@Hooks/use-modals';
 import { CredentialStateEnum } from '@Src/constants';
 import { useGetKeyQuery } from '@State/keys/api';
+import { useKeyLimitSaveWarnings } from '@State/keys/hooks';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
   Alert, Board, Button, DataTable, Void,
@@ -20,6 +22,8 @@ import { ScreenEnum } from './schema';
 const EXPIRED_MESSAGE = 'This credential has expired: its limits can no longer be changed.';
 
 const NO_LIMITS_TITLE = 'This credential has no limits';
+
+const ROUTE_WARNINGS_TITLE = 'Saved. Some routes this credential reaches have a stricter limit';
 
 const NO_LIMITS_DESCRIPTION = 'Only route and project limits apply.';
 
@@ -69,6 +73,8 @@ function IsSuccess() {
     <div className="flex flex-col gap-6">
       <ExpiredAlert />
 
+      <SavedWarnings />
+
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <strong>{count}</strong>
@@ -94,6 +100,17 @@ function ExpiredAlert() {
   }
 
   return <Alert title={EXPIRED_MESSAGE} type="info" />;
+}
+
+function SavedWarnings() {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { clearWarnings, warnings } = useKeyLimitSaveWarnings(uuid);
+
+  const lines = warnings.map((warning) => formatRouteLimitWarning(warning));
+
+  return <RouteLimitWarnings lines={lines} onClose={clearWarnings} title={ROUTE_WARNINGS_TITLE} />;
 }
 
 function AddLimits() {
