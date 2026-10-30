@@ -15,7 +15,12 @@ import pytest
 from starlette.requests import Request
 
 from tests.common import db_mock
-from tests.test_responses_native import OPENCODE_TURN, FakeChatModel, _status_error
+from tests.test_responses_native import (
+    OPENCODE_TURN,
+    FakeChatModel,
+    _openai,
+    _status_error,
+)
 from tests.utils.test_responses_output import events_of
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
@@ -260,6 +265,8 @@ OPENCODE_REQUEST = {
 
 def test_request_goes_upstream_as_sent(post):
     model = FakeChatModel(events=upstream_events())
+    # An OpenAI upstream gets its own history back unchanged.
+    model.adapt_responses_input = _openai().adapt_responses_input
     route = build_route({'openai': model})
 
     response = post(route, **OPENCODE_REQUEST)

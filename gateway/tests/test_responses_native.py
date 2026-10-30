@@ -299,16 +299,35 @@ class TestStreamResponses:
         assert metrics['token_output_count'] == 7
         assert metrics['fallback_triggered'] is False
 
-    async def test_fallback_gets_no_reasoning(self):
+    async def test_each_attempt_gets_the_input_adapted_for_its_model(self):
         primary = FakeChatModel(error=RuntimeError('503'))
+        primary.adapt_responses_input = lambda items: [*items, 'for primary']
         fallback = FakeChatModel(events=UPSTREAM_EVENTS)
+        fallback.adapt_responses_input = lambda items: [*items, 'for fallback']
         invoker = _invoker(primary, fallback)
+        body = {'input': OPENCODE_TURN, 'store': False}
 
-        await _stream(invoker, {'input': OPENCODE_TURN})
+        await _stream(invoker, body)
 
-        assert primary.bodies[0]['input'] == OPENCODE_TURN
-        assert 'reasoning' not in [item['type'] for item in fallback.bodies[0]['input']]
+        assert primary.bodies[0] == {**body, 'input': [*OPENCODE_TURN, 'for primary']}
+        assert fallback.bodies[0]['input'] == [*OPENCODE_TURN, 'for fallback']
+        assert body['input'] == OPENCODE_TURN
         assert invoker._record_metrics.call_args.kwargs['fallback_triggered'] is True
+
+    async def test_primary_attempt_is_adapted_too(self):
+        primary = FakeChatModel(events=UPSTREAM_EVENTS)
+
+        await _stream(_invoker(primary), {'input': OPENCODE_TURN})
+
+        # The fake keeps the base behaviour: it reads no reasoning.
+        assert 'reasoning' not in [item['type'] for item in primary.bodies[0]['input']]
+
+    async def test_string_input_is_left_alone(self):
+        primary = FakeChatModel(events=UPSTREAM_EVENTS)
+
+        await _stream(_invoker(primary), {'input': 'Hi'})
+
+        assert primary.bodies[0] == {'input': 'Hi'}
 
     async def test_fallbacks_without_responses_api_are_skipped(self):
         primary = FakeChatModel(error=RuntimeError('503'))
@@ -373,8 +392,9 @@ class TestCompleteResponses:
         assert model.model_id == 'm0'
         assert invoker._record_metrics.call_args.kwargs['token_input_count'] == 60
 
-    async def test_fallback_answers_without_reasoning(self):
+    async def test_fallback_answers_with_the_input_adapted_for_it(self):
         primary = FakeChatModel(error=RuntimeError('503'))
+        primary.adapt_responses_input = lambda items: [*items, 'for primary']
         fallback = FakeChatModel(events=UPSTREAM_EVENTS)
         invoker = _invoker(primary, fallback)
 
@@ -383,6 +403,8 @@ class TestCompleteResponses:
         )
 
         assert model.model_id == 'm1'
+        assert primary.bodies[0]['input'] == [*OPENCODE_TURN, 'for primary']
+        # The fake keeps the base behaviour: it reads no reasoning.
         assert 'reasoning' not in [item['type'] for item in fallback.bodies[0]['input']]
         assert invoker._record_metrics.call_args.kwargs['fallback_triggered'] is True
 

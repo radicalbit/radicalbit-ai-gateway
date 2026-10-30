@@ -355,18 +355,3 @@ def cache_signature(body: dict) -> dict | None:
         turn = items[last_user:]
     params = {key: value for key, value in body.items() if key not in _UNCACHED_FIELDS}
     return {'input': turn, 'params': params}
-
-
-def without_reasoning(body: dict) -> dict:
-    """Drop the reasoning items, which only the model that produced them can resume."""
-    items: Any = body.get('input')
-    if not isinstance(items, list):
-        return body
-    return {
-        **body,
-        'input': [
-            item
-            for item in items
-            if not (isinstance(item, dict) and item.get('type') == 'reasoning')
-        ],
-    }

@@ -20,7 +20,6 @@ from radicalbit_ai_gateway.models.model import (
 )
 from radicalbit_ai_gateway.responses.events import NativeResponsesEvent
 from radicalbit_ai_gateway.responses.output import usage_token_counts
-from radicalbit_ai_gateway.responses.request import without_reasoning
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
@@ -510,23 +509,33 @@ class ChatModelInvoker(ModelInvoker):
         """Return the model, then its fallbacks that serve the Responses API, each
         with the body to send it.
 
-        Only the model that reasoned can resume its reasoning: a fallback gets
-        the body without the reasoning items.
+        The history may hold items another provider produced: each model, the
+        first included, gets the input adapted to what it accepts.
         """
         if not self.supports_responses(model_id):
             raise ModelInvokerBadRequest(
                 f'Chat model {model_id} does not serve the Responses API'
             )
         model, chat_model, fallbacks = self.model_map[model_id]
-        attempts = [(model, chat_model, body)]
+        candidates = [(model, chat_model)]
         if allow_fallback:
-            fallback_body = without_reasoning(body)
-            attempts += [
-                (fallback, fallback_model, fallback_body)
+            candidates += [
+                (fallback, fallback_model)
                 for fallback, fallback_model in fallbacks or []
                 if fallback_model.supports_native_responses()
             ]
-        return attempts
+        return [
+            (candidate, candidate_model, self._responses_body(candidate_model, body))
+            for candidate, candidate_model in candidates
+        ]
+
+    @staticmethod
+    def _responses_body(chat_model: ChatModel, body: dict) -> dict:
+        """Return the body with its input adapted for ``chat_model``."""
+        items = body.get('input')
+        if not isinstance(items, list):
+            return body
+        return {**body, 'input': chat_model.adapt_responses_input(items)}
 
     @staticmethod
     def _responses_failure(route_name: str, error: Exception) -> ModelInvokerError:

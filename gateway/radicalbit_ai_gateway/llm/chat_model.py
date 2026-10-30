@@ -98,6 +98,15 @@ class ChatModel(ABC):
         """Whether this model can serve a Responses API request body as is."""
         return False
 
+    def adapt_responses_input(self, items: list) -> list:
+        """Return the Responses ``input`` items reduced to what this model accepts."""
+        # Reasoning can be resumed only by the model that produced it.
+        return [
+            item
+            for item in items
+            if not (isinstance(item, dict) and item.get('type') == 'reasoning')
+        ]
+
     async def ainvoke_native_responses(self, body: dict) -> dict:
         """Send a Responses API request body and return the response object."""
         trace = ResponsesTrace.start(self, body)
