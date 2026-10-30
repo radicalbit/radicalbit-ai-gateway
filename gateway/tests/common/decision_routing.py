@@ -3,7 +3,7 @@
 TYPESAFE_URL = 'https://api.typesafe.ai/v1/systemone'
 TYPESAFE_KEY = 'ts-upstream-secret'
 BACKOFF_SLEEP = 'radicalbit_ai_gateway.invocation.decision_model_invoker.asyncio.sleep'
-ROUTER_SPAN = 'radicalbit_ai_gateway.routing.decision_router.trace.get_current_span'
+ROUTER_SPAN = 'radicalbit_ai_gateway.routing.common.trace.get_current_span'
 QUESTION_ID = 'decision_routing'
 
 INSTRUCTIONS = 'Choose the model best suited to answer this request.'

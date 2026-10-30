@@ -196,10 +196,12 @@ class ModelInvoker:
         input_tokens: int,
         latency_ms: float,
         model_type: str,
+        output_tokens: int | None = None,
     ) -> None:
         """Emit the cost events of a routing call, flagged as routing.
 
-        Input tokens only, at the model's input price.
+        Input tokens at the model's input price, and the output tokens of a
+        chat model router at its output price.
         """
         self._record_metrics(
             **identity.event_fields(),
@@ -208,6 +210,7 @@ class ModelInvoker:
             latency_ms=latency_ms,
             model_type=model_type,
             token_input_count=input_tokens,
+            token_output_count=output_tokens,
             fallback_triggered=target_model_id != model.model_id,
             is_routing=True,
         )
