@@ -1,9 +1,8 @@
 import asyncio
-from collections.abc import Iterable
 from contextvars import ContextVar
 import logging
 import re
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 import httpx
 from opentelemetry import trace
@@ -36,6 +35,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     Guardrail,
     GuardrailBehaviorType,
     GuardrailClass,
+    GuardrailHistory,
     GuardrailMessageRole,
     GuardrailParameter,
     GuardrailsAIParameter,
@@ -118,24 +118,155 @@ class GuardrailCheckFunction(Protocol):
     ) -> bool: ...
 
 
-def _iter_texts(messages: Iterable[BaseMessage]) -> Iterable[str]:
-    """Yield plain text for each message.content."""
-    for m in messages:
-        yield ContentUtils.extract_text_content(getattr(m, 'content', ''))
+# A check function sets this when it triggers. apply_guardrails reads it.
+_reason_payload_ctx: ContextVar[dict | None] = ContextVar(
+    'guardrail_reason_payload', default=None
+)
+
+_TYPE_TO_ROLE = {'human': 'user', 'ai': 'assistant', 'system': 'system', 'tool': 'tool'}
 
 
-def _texts_from_messages(messages: list[BaseMessage]) -> list[str]:
-    """Return a list of non-empty strings extracted from messages (never lists)."""
-    texts = [
-        ContentUtils.extract_text_content(getattr(m, 'content', '')) for m in messages
-    ]
-    return [t for t in texts if isinstance(t, str) and t]
+class _Text(NamedTuple):
+    """The text of one message, with its position in the full message list."""
+
+    index: int
+    role: str
+    text: str
 
 
-def _blob_from_messages(messages: list[BaseMessage]) -> str:
-    """Build a single text blob from messages (safe for spaCy/Presidio)."""
-    texts = _texts_from_messages(messages)
-    return '\n'.join(texts) if texts else ''
+def _indexed_texts(
+    messages: list[BaseMessage], indices: list[int] | None = None
+) -> list[_Text]:
+    """One item per message that has text. Blank text does not count.
+
+    ``indices`` gives the position of each message in the full list. Without
+    it, the position in ``messages`` is used.
+    """
+    if indices is None:
+        indices = list(range(len(messages)))
+    items: list[_Text] = []
+    for i, m in zip(indices, messages):
+        text = ContentUtils.extract_text_content(getattr(m, 'content', ''))
+        # A judge drops blank text too, so the reported indexes stay true.
+        if isinstance(text, str) and text.strip():
+            msg_type = getattr(m, 'type', '')
+            items.append(_Text(i, _TYPE_TO_ROLE.get(msg_type, msg_type), text))
+    return items
+
+
+def _blob_with_spans(items: list[_Text]) -> tuple[str, list[tuple[int, int, _Text]]]:
+    """Join the texts with newlines. Return the blob and the span of each text."""
+    parts: list[str] = []
+    spans: list[tuple[int, int, _Text]] = []
+    pos = 0
+    for it in items:
+        if parts:
+            pos += 1  # the newline
+        spans.append((pos, pos + len(it.text), it))
+        parts.append(it.text)
+        pos += len(it.text)
+    return '\n'.join(parts), spans
+
+
+def _text_at_offset(
+    spans: list[tuple[int, int, _Text]], offset: int
+) -> tuple[int, _Text] | None:
+    """Return (span start, text) of the text that holds the blob offset."""
+    for start, end, it in spans:
+        if start <= offset < end:
+            return start, it
+    return None
+
+
+def _window_payload(items: list[_Text]) -> dict:
+    """Index fields for a check that reads all texts as one (a judge).
+
+    It cannot point at one message, so ``message_indices`` lists every message
+    it read.
+    """
+    one = items[0] if len(items) == 1 else None
+    return {
+        'message_indices': [it.index for it in items],
+        'role': one.role if one else None,
+        'context': _trunc(items[-1].text, max_len=200) if items else '',
+    }
+
+
+def _judge_texts(messages: list[BaseMessage], kwargs: dict) -> list[_Text]:
+    """Return the texts a judge reads. Mirrors utils.judge.content_extractor."""
+    items = _indexed_texts(messages, kwargs.get('message_indices'))
+    if kwargs.get('where') == GuardrailWhereType.OUTPUT:
+        return [it for it in items if it.role == 'assistant'][-1:]
+    if kwargs.get('message_roles') is None:
+        return [it for it in items if it.role == 'user']
+    return items
+
+
+def _match_check(
+    kind: GuardrailType, params: CheckParameter, items: list[_Text]
+) -> dict | None:
+    """Find the first text that matches. Return the reason payload or None."""
+    values = params.values or []
+    if not values:
+        return None
+
+    def payload(it: _Text, span: tuple[int, int], **extra) -> dict:
+        return {
+            'kind': kind.value.lower(),
+            **extra,
+            'message_indices': [it.index],
+            'role': it.role,
+            'context': _context_words(it.text, span=span),
+        }
+
+    if kind == GuardrailType.REGEX:
+        flags = re.IGNORECASE if params.ignore_case else 0
+        compiled: list[tuple[str, re.Pattern]] = []
+        for i, raw in enumerate(values):
+            try:
+                compiled.append((raw, re.compile(raw, flags)))
+            except re.error as e:
+                logger.warning(
+                    'REGEX guardrail: invalid pattern[%d]=%r (%s)', i, raw, e
+                )
+        for it in items:
+            for raw, pat in compiled:
+                m = pat.search(it.text)
+                if m:
+                    return payload(it, m.span(), pattern=raw)
+        return None
+
+    for it in items:
+        text = it.text
+        for v in values:
+            if kind == GuardrailType.STARTS_WITH and text.startswith(v):
+                return payload(it, (0, len(v)), value=v)
+            if kind == GuardrailType.ENDS_WITH and text.endswith(v):
+                return payload(it, (max(0, len(text) - len(v)), len(text)), value=v)
+            if kind == GuardrailType.CONTAINS:
+                idx = text.lower().find(v.lower())
+                if idx != -1:
+                    return payload(it, (idx, idx + len(v)), value=v)
+    return None
+
+
+def _run_check(
+    kind: GuardrailType,
+    messages: list[BaseMessage],
+    params: CheckParameter,
+    route_config: GatewayRouteConfig,
+    kwargs: dict,
+) -> bool:
+    logger.debug('Applying Guardrail %s on route %s', kind, route_config.route_name)
+    items = _indexed_texts(messages, kwargs.get('message_indices'))
+    reason = _match_check(kind, params, items)
+    if reason is None:
+        return False
+    logger.debug(
+        '%s guardrail: match on message[%s]', kind, reason.get('message_indices')
+    )
+    _reason_payload_ctx.set(reason)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +305,53 @@ def _filter_messages_by_roles(
     return [m for m in messages if isinstance(m, allowed)]
 
 
+_JUDGE_TYPES = (GuardrailType.JUDGE, GuardrailType.DECISION_JUDGE)
+
+
+def _window_roles(
+    guardrail: Guardrail, where: GuardrailWhereType
+) -> list[GuardrailMessageRole] | None:
+    """Return the roles the window counts. A judge reads user messages by default."""
+    if (
+        guardrail.message_roles is None
+        and guardrail.type in _JUDGE_TYPES
+        and where != GuardrailWhereType.OUTPUT
+    ):
+        return [GuardrailMessageRole.USER]
+    return guardrail.message_roles
+
+
+def _select_messages(
+    messages: list[BaseMessage],
+    guardrail: Guardrail,
+    where: GuardrailWhereType,
+    *,
+    windowed: bool = True,
+    skip: int = 0,
+) -> list[tuple[int, BaseMessage]]:
+    """Keep the roles first. Then cut the window on what is left.
+
+    ``skip`` drops the first messages: the system prompt the gateway adds is
+    not part of the conversation. The window only applies on input, and only
+    when ``windowed`` (a call with no conversation turns it off).
+
+    Each item keeps its index in ``messages``, so a redacted copy can go back
+    in its place.
+    """
+    indexed = list(enumerate(messages))[skip:]
+    kept = _filter_messages_by_roles(
+        [m for _, m in indexed], _window_roles(guardrail, where)
+    )
+    selected = [(i, m) for i, m in indexed if any(m is k for k in kept)]
+    if not windowed or where == GuardrailWhereType.OUTPUT:
+        return selected
+    if guardrail.history == GuardrailHistory.LAST:
+        return selected[-1:]
+    if guardrail.history == GuardrailHistory.LAST_N:
+        return selected[-(guardrail.last_n or 1) :]
+    return selected
+
+
 class GuardrailCheck:
     def __init__(
         self,
@@ -190,9 +368,7 @@ class GuardrailCheck:
         self._guardrails_by_name = guardrails_by_name or {}
         self._chat_models_by_id = chat_models_by_id or {}
         self._cost_service = cost_service
-        self._reason_payload_ctx: ContextVar[dict | None] = ContextVar(
-            'guardrail_reason_payload', default=None
-        )
+        self._reason_payload_ctx = _reason_payload_ctx
 
         self._guardrail_check_mapping: dict[GuardrailType, GuardrailCheckFunction] = {
             GuardrailType.STARTS_WITH: self._check_starts_with,
@@ -214,19 +390,9 @@ class GuardrailCheck:
         **kwargs,
     ) -> bool:
         """Check if any message text starts with a given value."""
-        logger.debug(
-            'Applying Guardrail %s on route %s',
-            GuardrailType.STARTS_WITH,
-            route_config.route_name,
+        return _run_check(
+            GuardrailType.STARTS_WITH, messages, params, route_config, kwargs
         )
-        values = params.values
-        if not values:
-            return False
-        for text in _iter_texts(messages):
-            for p in values:
-                if text.startswith(p):
-                    return True
-        return False
 
     @staticmethod
     @task(name='check_ends_with')
@@ -237,19 +403,9 @@ class GuardrailCheck:
         **kwargs,
     ) -> bool:
         """Check if any message text ends with a given value."""
-        logger.debug(
-            'Applying Guardrail %s on route %s',
-            GuardrailType.ENDS_WITH,
-            route_config.route_name,
+        return _run_check(
+            GuardrailType.ENDS_WITH, messages, params, route_config, kwargs
         )
-        values = params.values
-        if not values:
-            return False
-        for text in _iter_texts(messages):
-            for p in values:
-                if text.endswith(p):
-                    return True
-        return False
 
     @staticmethod
     @task(name='check_contains')
@@ -259,20 +415,10 @@ class GuardrailCheck:
         route_config: GatewayRouteConfig,
         **kwargs,
     ) -> bool:
-        """Check if any message text contains a given value."""
-        logger.debug(
-            'Applying Guardrail %s on route %s',
-            GuardrailType.CONTAINS,
-            route_config.route_name,
+        """Check if any message text contains a given value (ignores case)."""
+        return _run_check(
+            GuardrailType.CONTAINS, messages, params, route_config, kwargs
         )
-        values = params.values
-        if not values:
-            return False
-        for text in _iter_texts(messages):
-            for p in values:
-                if p.lower() in text.lower():
-                    return True
-        return False
 
     @staticmethod
     @task(name='check_regex')
@@ -282,52 +428,8 @@ class GuardrailCheck:
         route_config: GatewayRouteConfig,
         **kwargs,
     ) -> bool:
-        """Check message text against regex patterns (case-insensitive by default)."""
-
-        def _safe_compile_pattern(raw: str, flags: int, idx: int) -> re.Pattern | None:
-            try:
-                return re.compile(raw, flags)
-            except re.error as e:
-                logger.warning(
-                    'REGEX guardrail: invalid pattern[%d]=%r (%s)', idx, raw, e
-                )
-                return None
-
-        logger.debug(
-            'Applying Guardrail %s on route %s',
-            GuardrailType.REGEX,
-            route_config.route_name,
-        )
-
-        patterns = params.values
-        ignore_case = params.ignore_case
-        flags = re.IGNORECASE if ignore_case else 0
-
-        compiled = []
-        for i, raw in enumerate(patterns):
-            pat = _safe_compile_pattern(raw, flags, i)
-            if pat is not None:
-                compiled.append(pat)
-
-        if not compiled:
-            return False
-
-        texts = _texts_from_messages(messages)
-        if not texts:
-            return False
-
-        for mi, text in enumerate(texts):
-            for pat in compiled:
-                m = pat.search(text)
-                if m:
-                    logger.debug(
-                        'REGEX guardrail: match on message[%d] with pattern %r at %s',
-                        mi,
-                        pat.pattern,
-                        m.span(),
-                    )
-                    return True
-        return False
+        """Check message text against regex patterns."""
+        return _run_check(GuardrailType.REGEX, messages, params, route_config, kwargs)
 
     @task(name='presidio_analyzer')
     async def _check_presidio_analyzer(
@@ -347,8 +449,9 @@ class GuardrailCheck:
         language = params.language
         entities = params.entities
 
-        # Build one safe string for spaCy (prevents E1041).
-        blob = _blob_from_messages(messages)
+        # One safe string for spaCy (prevents E1041). Spans map it back.
+        items = _indexed_texts(messages, kwargs.get('message_indices'))
+        blob, spans = _blob_with_spans(items)
 
         if not blob:
             return False
@@ -370,14 +473,24 @@ class GuardrailCheck:
         if results:
             first_res = results[0]
             val = blob[first_res.start : first_res.end]
+            hit = _text_at_offset(spans, first_res.start)
+            if hit:
+                span_start, it = hit
+                local = (first_res.start - span_start, first_res.end - span_start)
+                where_found = {
+                    'message_indices': [it.index],
+                    'role': it.role,
+                    'context': _context_words(it.text, span=local),
+                }
+            else:
+                where_found = {'message_indices': [], 'role': None, 'context': None}
             reason = {
                 'kind': 'presidio',
                 'entity_type': first_res.entity_type,
                 'value': val,
-                'message_index': 0,
-                'context': _context_words(blob, span=(first_res.start, first_res.end)),
+                **where_found,
             }
-            self._reason_payload_ctx.set(reason)
+            _reason_payload_ctx.set(reason)
 
             try:
                 span = trace.get_current_span()
@@ -447,17 +560,14 @@ class GuardrailCheck:
         else:
             if result.triggered:
                 # Capture structured reason payload for logs/response.
-                texts = _texts_from_messages(messages)
-                last_text = texts[-1] if texts else ''
-                mi = max(0, len(texts) - 1)
                 phase = kwargs.get('where')
-                self._reason_payload_ctx.set(
+                _reason_payload_ctx.set(
                     {
                         'kind': 'judge',
-                        # Align with other guardrails: value/message_index/context
                         'value': getattr(result, 'violation_type', None),
-                        'message_index': mi,
-                        'context': _trunc(last_text, max_len=200),
+                        # The judge reads the texts as one: the index is
+                        # exact only when it read one message.
+                        **_window_payload(_judge_texts(messages, kwargs)),
                         'phase': getattr(phase, 'name', None),
                         # Extra fields (for logs), will be sanitized out from API responses
                         'prompt_ref': params.prompt_ref,
@@ -524,13 +634,11 @@ class GuardrailCheck:
             triggered,
         )
         if triggered:
-            texts = _texts_from_messages(messages)
             phase = kwargs.get('where')
-            self._reason_payload_ctx.set(
+            _reason_payload_ctx.set(
                 {
                     'kind': 'decision_judge',
-                    'message_index': max(0, len(texts) - 1),
-                    'context': _trunc(texts[-1] if texts else '', max_len=200),
+                    **_window_payload(_judge_texts(messages, kwargs)),
                     'phase': getattr(phase, 'name', None),
                     # Extra fields (for logs), sanitized out from API responses
                     'model_id': params.model_id,
@@ -555,7 +663,8 @@ class GuardrailCheck:
             GuardrailType.GUARDRAILS_AI,
             route_config.route_name,
         )
-        blob = _blob_from_messages(messages)
+        items = _indexed_texts(messages, kwargs.get('message_indices'))
+        blob, _ = _blob_with_spans(items)
         if not blob:
             return False
 
@@ -599,16 +708,12 @@ class GuardrailCheck:
         triggered = not validation_passed
 
         if triggered:
-            texts = _texts_from_messages(messages)
-            last_text = texts[-1] if texts else ''
-            mi = max(0, len(texts) - 1)
             phase = kwargs.get('where')
-            self._reason_payload_ctx.set(
+            _reason_payload_ctx.set(
                 {
                     'kind': 'guardrails_ai',
                     'value': params.guard_name,
-                    'message_index': mi,
-                    'context': _trunc(last_text, max_len=200),
+                    **_window_payload(items),
                     'phase': getattr(phase, 'name', None),
                     'guard_name': params.guard_name,
                 }
@@ -629,8 +734,16 @@ class GuardrailCheck:
         project_uuid: str = '',
         project_name: str = '',
         count_judge_usage: JudgeUsageCounter | None = None,
+        windowed: bool = True,
+        skip: int = 0,
     ) -> SoftBlockInfo | None:
-        """Apply guardrails to messages and return SoftBlockInfo on SOFT_BLOCK."""
+        """Apply guardrails to messages and return SoftBlockInfo on SOFT_BLOCK.
+
+        ``windowed`` is False on calls with no conversation (embeddings,
+        decision models): every guardrail then reads every message. ``skip``
+        is how many leading messages the gateway added (its system prompt).
+        They are not checked and do not count in the message indexes.
+        """
         kwargs = {
             'request_uuid': request_uuid,
             'api_key_uuid': api_key_uuid,
@@ -670,34 +783,35 @@ class GuardrailCheck:
                     f'Unknown guardrail type: {guardrail.type}', guardrail
                 )
 
-            # Filter messages to the roles configured for this guardrail.
-            # Default: [user] for backward compatibility.
-            filtered_messages = _filter_messages_by_roles(
-                messages, guardrail.message_roles
+            selected = _select_messages(
+                messages, guardrail, where, windowed=windowed, skip=skip
             )
-            if not filtered_messages:
+            if not selected:
                 logger.debug(
-                    'Guardrail %s: no messages match message_roles=%s — skipping.',
+                    'Guardrail %s: no messages in history=%s roles=%s, skipping.',
                     guardrail.name,
+                    guardrail.history,
                     guardrail.message_roles,
                 )
                 continue
 
             try:
-                token = self._reason_payload_ctx.set(None)
+                token = _reason_payload_ctx.set(None)
                 is_triggered = await check_function(
-                    filtered_messages,
+                    [m for _, m in selected],
                     guardrail.parameters,
                     route_config,
                     message_roles=guardrail.message_roles,
+                    # Indexes in the client's own list.
+                    message_indices=[i - skip for i, _ in selected],
                     **kwargs,
                 )
             except Exception as e:
                 logger.error('Error applying guardrail %s: %s', guardrail.name, e)
                 raise
             finally:
-                reason_override = self._reason_payload_ctx.get()
-                self._reason_payload_ctx.reset(token)
+                reason_payload = _reason_payload_ctx.get()
+                _reason_payload_ctx.reset(token)
 
             if not is_triggered:
                 continue
@@ -712,8 +826,7 @@ class GuardrailCheck:
                 group_name=group_name,
                 project_uuid=project_uuid,
                 project_name=project_name,
-                messages=messages,
-                reason_payload_override=reason_override,
+                reason_payload=reason_payload,
             )
             if soft_block is not None:
                 return soft_block
@@ -724,123 +837,25 @@ class GuardrailCheck:
 
         return None
 
-    def _find_first_check_match(
-        self, guardrail: Guardrail, messages: list[BaseMessage]
-    ) -> tuple[dict, str] | None:
-        """Return (match_info, text) for the first matching CHECK guardrail.
+    @staticmethod
+    def _indices_for_logs(reason_payload: dict) -> str:
+        mi = reason_payload.get('message_indices')
+        if mi:
+            return f' message_indices={mi}'
+        return ''
 
-        match_info always contains:
-        - kind: starts_with | ends_with | contains | regex
-        - message_index: int
-        - span: (start, end) int tuple in the selected message text
-        and one of:
-        - value: str (for starts_with/ends_with/contains)
-        - pattern: str (for regex)
-        """
-        if not isinstance(guardrail.parameters, CheckParameter):
+    @staticmethod
+    def _format_presidio_reason_for_logs(reason_payload: dict) -> str | None:
+        et = reason_payload.get('entity_type')
+        val = reason_payload.get('value')
+        if et is None or val is None:
             return None
-
-        values = guardrail.parameters.values or []
-        if not values:
-            return None
-
-        texts = _texts_from_messages(messages)
-        if not texts:
-            return None
-
-        if guardrail.type == GuardrailType.STARTS_WITH:
-            for mi, text in enumerate(texts):
-                for v in values:
-                    if text.startswith(v):
-                        return (
-                            {
-                                'kind': 'starts_with',
-                                'value': v,
-                                'message_index': mi,
-                                'span': (0, len(v)),
-                            },
-                            text,
-                        )
-            return None
-
-        if guardrail.type == GuardrailType.ENDS_WITH:
-            for mi, text in enumerate(texts):
-                for v in values:
-                    if text.endswith(v):
-                        start = max(0, len(text) - len(v))
-                        return (
-                            {
-                                'kind': 'ends_with',
-                                'value': v,
-                                'message_index': mi,
-                                'span': (start, len(text)),
-                            },
-                            text,
-                        )
-            return None
-
-        if guardrail.type == GuardrailType.CONTAINS:
-            for mi, text in enumerate(texts):
-                tl = text.lower()
-                for v in values:
-                    idx = tl.find(v.lower())
-                    if idx != -1:
-                        return (
-                            {
-                                'kind': 'contains',
-                                'value': v,
-                                'message_index': mi,
-                                'span': (idx, idx + len(v)),
-                            },
-                            text,
-                        )
-            return None
-
-        if guardrail.type == GuardrailType.REGEX:
-            flags = re.IGNORECASE if guardrail.parameters.ignore_case else 0
-            for mi, text in enumerate(texts):
-                for raw in values:
-                    try:
-                        pat = re.compile(raw, flags)
-                    except re.error:
-                        continue
-                    m = pat.search(text)
-                    if m:
-                        return (
-                            {
-                                'kind': 'regex',
-                                'pattern': raw,
-                                'message_index': mi,
-                                'span': m.span(),
-                            },
-                            text,
-                        )
-            return None
-
-        return None
-
-    def _build_check_guardrail_reason_payload(
-        self, guardrail: Guardrail, messages: list[BaseMessage]
-    ) -> dict | None:
-        """Build a structured reason payload to expose to clients in error.param.reason."""
-        # For JUDGE and GUARDRAILS_AI, the payload is produced by the check function and passed via `reason_payload_override`.
-        if guardrail.type in (
-            GuardrailType.JUDGE,
-            GuardrailType.DECISION_JUDGE,
-            GuardrailType.GUARDRAILS_AI,
-        ) or isinstance(
-            guardrail.parameters,
-            JudgeParameter | DecisionJudgeParameter | GuardrailsAIParameter,
-        ):
-            return None
-        found = self._find_first_check_match(guardrail, messages)
-        if not found:
-            return None
-        match, text = found
-        ctx = _context_words(text, span=match['span'])
-        payload: dict = {k: v for k, v in match.items() if k != 'span'}
-        payload['context'] = ctx
-        return payload
+        s = f'presidio entity_type={_trunc(repr(et))} value={_trunc(repr(val))}'
+        s += GuardrailCheck._indices_for_logs(reason_payload)
+        excerpt = reason_payload.get('context')
+        if isinstance(excerpt, str) and excerpt:
+            s += f' context="{_trunc(excerpt, max_len=120)}"'
+        return s
 
     @staticmethod
     def _format_check_reason_for_logs(reason_payload: dict | None) -> str | None:
@@ -848,28 +863,19 @@ class GuardrailCheck:
         if not isinstance(reason_payload, dict):
             return None
         kind = reason_payload.get('kind')
-        mi = reason_payload.get('message_index')
+        mi = reason_payload.get('message_indices')
         if kind == 'presidio':
-            et = reason_payload.get('entity_type')
-            val = reason_payload.get('value')
-            if et is not None and val is not None:
-                s = f'presidio entity_type={_trunc(repr(et))} value={_trunc(repr(val))}'
-            else:
-                return None
-            excerpt = reason_payload.get('context')
-            if isinstance(excerpt, str) and excerpt:
-                s += f' context="{_trunc(excerpt, max_len=120)}"'
-            return s
+            return GuardrailCheck._format_presidio_reason_for_logs(reason_payload)
         if kind in ('starts_with', 'ends_with', 'contains'):
             val = reason_payload.get('value')
             if kind and val is not None and mi is not None:
-                s = f'{kind} value={_trunc(repr(val))} message_index={mi}'
+                s = f'{kind} value={_trunc(repr(val))} message_indices={mi}'
             else:
                 return None
         elif kind == 'regex':
             pat = reason_payload.get('pattern')
             if pat is not None and mi is not None:
-                s = f'regex pattern={_trunc(repr(pat))} message_index={mi}'
+                s = f'regex pattern={_trunc(repr(pat))} message_indices={mi}'
             else:
                 return None
         elif kind == 'judge':
@@ -889,6 +895,7 @@ class GuardrailCheck:
             reasoning = reason_payload.get('reasoning')
             if isinstance(reasoning, str) and reasoning:
                 s += f' reasoning={_trunc(repr(reasoning), max_len=200)}'
+            s += GuardrailCheck._indices_for_logs(reason_payload)
             excerpt = reason_payload.get('context')
             if isinstance(excerpt, str) and excerpt:
                 s += f' text="{_trunc(excerpt, max_len=120)}"'
@@ -899,6 +906,7 @@ class GuardrailCheck:
                 value = reason_payload.get(key)
                 if value is not None:
                     s += f' {key}={_trunc(repr(value), max_len=120)}'
+            s += GuardrailCheck._indices_for_logs(reason_payload)
             excerpt = reason_payload.get('context')
             if isinstance(excerpt, str) and excerpt:
                 s += f' text="{_trunc(excerpt, max_len=120)}"'
@@ -911,6 +919,7 @@ class GuardrailCheck:
                 s += f' guard_name={_trunc(repr(gn), max_len=120)}'
             if ph:
                 s += f' phase={_trunc(repr(ph), max_len=40)}'
+            s += GuardrailCheck._indices_for_logs(reason_payload)
             excerpt = reason_payload.get('context')
             if isinstance(excerpt, str) and excerpt:
                 s += f' text="{_trunc(excerpt, max_len=120)}"'
@@ -936,8 +945,7 @@ class GuardrailCheck:
         group_name: str,
         project_uuid: str = '',
         project_name: str = '',
-        messages: list[BaseMessage],
-        reason_payload_override: dict | None = None,
+        reason_payload: dict | None = None,
     ) -> tuple[bool, SoftBlockInfo | None]:
         attrs = {
             'name': guardrail.name,
@@ -981,12 +989,6 @@ class GuardrailCheck:
                 )
 
                 # Expose specific match reason details (value/pattern) to tracing attributes
-                reason_payload = (
-                    reason_payload_override
-                    if isinstance(reason_payload_override, dict)
-                    and reason_payload_override
-                    else self._build_check_guardrail_reason_payload(guardrail, messages)
-                )
                 if reason_payload:
                     if 'value' in reason_payload and reason_payload['value']:
                         span.set_attribute(
@@ -1015,16 +1017,15 @@ class GuardrailCheck:
                             'guardrail.triggered.context',
                             str(reason_payload['context']),
                         )
+                    # The message that matched, or every message a judge read.
+                    mi = reason_payload.get('message_indices')
+                    if mi:
+                        span.set_attribute('guardrail.triggered.message_indices', mi)
         except Exception:
             pass
 
         # Expose structured details via GuardrailBadRequest.reason (surfaced in error.param.reason),
         # and also append a readable reason to logs for easier debugging.
-        reason_payload = (
-            reason_payload_override
-            if isinstance(reason_payload_override, dict) and reason_payload_override
-            else self._build_check_guardrail_reason_payload(guardrail, messages)
-        )
         reason = self._format_check_reason_for_logs(reason_payload)
         log_message = (
             f'[GUARDRAIL TRIGGERED] [route={route_name}] '
@@ -1066,9 +1067,11 @@ class GuardrailCheck:
         api_key_name: str,
         group_name: str,
         count_judge_usage: JudgeUsageCounter | None = None,
+        skip: int = 0,
     ) -> bool:
         """Evaluate only WARN-behavior guardrails without emitting events/logs.
         Used to surface a response header for non-blocking guardrails.
+        ``skip`` works as in apply_guardrails.
         """
 
         check_guardrails = self._get_guardrails_for_route(
@@ -1097,17 +1100,17 @@ class GuardrailCheck:
             check_function = self._guardrail_check_mapping.get(guardrail.type)
             if not check_function:
                 continue
-            filtered_messages = _filter_messages_by_roles(
-                messages, guardrail.message_roles
-            )
-            if not filtered_messages:
+            selected = _select_messages(messages, guardrail, where, skip=skip)
+            if not selected:
                 continue
             try:
                 if await check_function(
-                    filtered_messages,
+                    [m for _, m in selected],
                     guardrail.parameters,
                     route_config,
                     message_roles=guardrail.message_roles,
+                    # Indexes in the client's own list.
+                    message_indices=[i - skip for i, _ in selected],
                     **kwargs,
                 ):
                     return True

@@ -1499,7 +1499,8 @@ class GatewayRoute:
 
         # Inject the route's configured system prompt after routing and after
         # redaction: plugins, routers and redact guardrails never see it.
-        self._apply_config_prompt(redacted_messages, model_selected)
+        # Input guardrails skip the prompt: it is not part of the conversation.
+        prompt_messages = self._apply_config_prompt(redacted_messages, model_selected)
         if redacted_messages is not messages:
             # The cache still reads the unredacted list: keep the prompt there too.
             self._apply_config_prompt(messages, model_selected)
@@ -1520,6 +1521,7 @@ class GatewayRoute:
                     api_key_name=api_key_name,
                     messages=redacted_messages,
                     where=GuardrailWhereType.INPUT,
+                    skip=prompt_messages,
                 )
 
                 if input_soft_block:
@@ -1541,6 +1543,7 @@ class GatewayRoute:
                         self.gateway_route_config,
                         redacted_messages,
                         GuardrailWhereType.INPUT,
+                        skip=prompt_messages,
                         request_uuid=request_uuid,
                         api_key_uuid=api_key_uuid,
                         group_uuid=group_uuid,
@@ -1625,11 +1628,11 @@ class GatewayRoute:
 
     def _apply_config_prompt(
         self, messages: list[BaseMessage], model_selected: Model
-    ) -> None:
+    ) -> int:
         """Prepend the route's configured system prompt to *messages* in place.
 
         Runs *after* preprocessing so the configured prompt is never exposed to
-        preprocessing plugins.
+        preprocessing plugins. Return how many messages it added (0 or 1).
         """
         config_prompt, role = model_selected.effective_prompt, model_selected.role
 
@@ -1662,6 +1665,8 @@ class GatewayRoute:
                     content=config_prompt, role=role, tool_calls=[], tool_call_id=None
                 )
             messages[:] = [system_msg, *messages]
+            return 1
+        return 0
 
     def _get_first_embedding_model(self) -> Model | None:
         """Return the first embedding model"""
@@ -2135,6 +2140,8 @@ class GatewayRoute:
                 where=where,
                 project_uuid=self.project_uuid,
                 project_name=self.project_name,
+                # No conversation here: the window does not apply.
+                windowed=False,
             )
         )
 
@@ -2152,8 +2159,9 @@ class GatewayRoute:
         group_name: str,
         messages: list[BaseMessage],
         where: GuardrailWhereType,
+        skip: int = 0,
     ) -> ChatCompletion | None:
-        """Handle check guardrails"""
+        """Handle check guardrails. ``skip``: see GuardrailCheck.apply_guardrails."""
         try:
             soft_block = await self.guardrail_engine.guardrail_check.apply_guardrails(
                 request_uuid=request_uuid,
@@ -2173,6 +2181,7 @@ class GatewayRoute:
                     group_uuid=group_uuid,
                     group_name=group_name,
                 ),
+                skip=skip,
             )
         except (GuardrailBadRequest, JudgeInternalError):
             raise
@@ -2223,6 +2232,8 @@ class GatewayRoute:
                         group_uuid=group_uuid,
                         group_name=group_name,
                     ),
+                    # No conversation here: the window does not apply.
+                    windowed=False,
                 )
             )
         except GuardrailBadRequest as e:
@@ -2306,6 +2317,8 @@ class GatewayRoute:
                             group_uuid=group_uuid,
                             group_name=group_name,
                         ),
+                        # A decision model has no conversation: no window.
+                        windowed=False,
                     )
                 )
             except (GuardrailBadRequest, JudgeInternalError):
