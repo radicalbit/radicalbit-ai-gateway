@@ -1,14 +1,19 @@
 import { Divider, Popover } from '@radicalbit/radicalbit-design-system';
+import { Fragment } from 'react';
+
+const MODEL_GROUPS = [
+  { key: 'chatModels', title: 'Chat models' },
+  { key: 'embeddingModels', title: 'Embedding models' },
+  { key: 'transcriptionModels', title: 'Transcription models' },
+  { key: 'decisionModels', title: 'Decision models' },
+];
 
 function Models({ configuration }) {
-  const chatModels = configuration?.chatModels || [];
-  const embeddingModels = configuration?.embeddingModels || [];
-  const transcriptionModels = configuration?.transcriptionModels || [];
+  const groups = MODEL_GROUPS
+    .map(({ key, title }) => ({ key, title, models: configuration?.[key] || [] }))
+    .filter(({ models }) => models.length > 0);
 
-  const chatModelsCount = chatModels.length;
-  const embeddingModelsCount = embeddingModels.length;
-  const transcriptionModelsCount = transcriptionModels.length;
-  const count = chatModelsCount + embeddingModelsCount + transcriptionModelsCount;
+  const count = groups.reduce((sum, { models }) => sum + models.length, 0);
 
   if (count === 0) {
     return '--';
@@ -16,45 +21,21 @@ function Models({ configuration }) {
 
   const content = (
     <div className="flex flex-col gap-2">
-      {chatModelsCount > 0 && (
-        <div className="flex flex-col justify-center w-full gap-1">
-          <strong>Chat models</strong>
+      {groups.map(({ key, title, models }, index) => (
+        <Fragment key={key}>
+          {index > 0 && <Divider style={{ margin: 0 }} />}
 
-          <div className="flex flex-col">
-            {chatModels.map(({ model }) => (
-              <div>{model}</div>
-            ))}
+          <div className="flex flex-col justify-center w-full gap-1">
+            <strong>{title}</strong>
+
+            <div className="flex flex-col">
+              {models.map(({ model, modelId }) => (
+                <div key={modelId}>{model}</div>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
-
-      {chatModelsCount > 0 && embeddingModelsCount > 0 && <Divider style={{ margin: 0 }} />}
-
-      {embeddingModelsCount > 0 && (
-        <div className="flex flex-col justify-center w-full gap-1">
-          <strong>Embedding models</strong>
-
-          <div className="flex flex-col">
-            {embeddingModels.map(({ model }) => (
-              <div>{model}</div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(chatModelsCount > 0 || embeddingModelsCount > 0) && transcriptionModelsCount > 0 && <Divider style={{ margin: 0 }} />}
-
-      {transcriptionModelsCount > 0 && (
-        <div className="flex flex-col justify-center w-full gap-1">
-          <strong>Transcription models</strong>
-
-          <div className="flex flex-col">
-            {transcriptionModels.map(({ model }) => (
-              <div>{model}</div>
-            ))}
-          </div>
-        </div>
-      )}
+        </Fragment>
+      ))}
     </div>
   );
 
