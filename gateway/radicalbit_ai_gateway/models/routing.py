@@ -190,7 +190,7 @@ class SemanticRoutingConfig(RoutingConfig):
 
 
 class DecisionOutputMappingEntry(BaseModel):
-    """One option offered to the decision model."""
+    """One option offered to a routing model: decision or LLM routing."""
 
     model_config = ConfigDict(extra='forbid')
 
@@ -205,34 +205,12 @@ class DecisionOutputMappingEntry(BaseModel):
         return v
 
 
-class DecisionRoutingConfig(RoutingConfig):
-    """A decision model chooses the chat model among the output_mapping options."""
+class ModelChoiceRoutingConfig(RoutingConfig):
+    """A routing model reads the request and picks among described options."""
 
-    type: Literal['decision'] = 'decision'
-    decision_model_id: str
-    fallback_model_id: str | None = None
-    instructions: str
     output_mapping: list[DecisionOutputMappingEntry]
-    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     history: Literal['last', 'all'] = 'last'
     message_roles: list[GuardrailMessageRole] | None = None
-
-    @field_validator('instructions')
-    @classmethod
-    def validate_instructions(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError('instructions must not be empty')
-        return v
-
-    @field_validator('output_mapping')
-    @classmethod
-    def validate_at_least_two_options(
-        cls, v: list[DecisionOutputMappingEntry]
-    ) -> list[DecisionOutputMappingEntry]:
-        # The base validator only rejects an empty list.
-        if len(v) < 2:
-            raise ValueError('decision routing needs at least 2 output_mapping entries')
-        return v
 
     @field_validator('message_roles', mode='before')
     @classmethod
@@ -252,12 +230,61 @@ class DecisionRoutingConfig(RoutingConfig):
         return self
 
 
+class DecisionRoutingConfig(ModelChoiceRoutingConfig):
+    """A decision model chooses the chat model among the output_mapping options."""
+
+    type: Literal['decision'] = 'decision'
+    decision_model_id: str
+    fallback_model_id: str | None = None
+    instructions: str
+    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @field_validator('instructions')
+    @classmethod
+    def validate_instructions(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError('instructions must not be empty')
+        return v
+
+    @field_validator('output_mapping')
+    @classmethod
+    def validate_at_least_two_options(
+        cls, v: list[DecisionOutputMappingEntry]
+    ) -> list[DecisionOutputMappingEntry]:
+        # The base validator only rejects an empty list.
+        if len(v) < 2:
+            raise ValueError('decision routing needs at least 2 output_mapping entries')
+        return v
+
+
+class LLMRoutingConfig(ModelChoiceRoutingConfig):
+    """A chat model scores the request against every output_mapping option."""
+
+    type: Literal['llm'] = 'llm'
+    router_model_id: str
+    fallback_model_id: str | None = None
+    threshold: float = Field(default=0.375, ge=0.0, le=1.0)
+    timeout: float = Field(
+        default=10.0,
+        gt=0,
+        description='Timeout in seconds for each router model call',
+    )
+
+    @model_validator(mode='after')
+    def validate_unique_model_ids(self) -> Self:
+        model_ids = [entry.model_id for entry in self.output_mapping]
+        if len(model_ids) != len(set(model_ids)):
+            raise ValueError('LLM routing: output_mapping model_ids must be unique')
+        return self
+
+
 AnyRoutingConfig = Annotated[
     Union[
         DeterministicRoutingConfig,
         TextClassificationRoutingConfig,
         SemanticRoutingConfig,
         DecisionRoutingConfig,
+        LLMRoutingConfig,
     ],
     Field(discriminator='type'),
 ]
