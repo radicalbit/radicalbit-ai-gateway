@@ -6,7 +6,11 @@ import SuccessMessage from '@Components/success-message';
 import useModals from '@Hooks/use-modals';
 import { useGetAlertsQuery } from '@State/alerts/api';
 import { useDeleteProjectBudgetLimitMutation, useGetProjectBudgetQuery } from '@State/projects/api';
-import { Popconfirm, SectionTitle, Skeleton, TextWithBold } from '@radicalbit/radicalbit-design-system';
+import Lucide from '@Components/lucide';
+import {
+  Button, Popconfirm, SectionTitle, Skeleton, TextWithBold,
+} from '@radicalbit/radicalbit-design-system';
+import { Trash2 } from 'lucide-react';
 
 const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this budget.';
 
@@ -58,7 +62,11 @@ function DeleteBudget({ limit }) {
           <StaleRules limit={limit} />
         </div>
       )}
-      label={<div className="is-error">Delete</div>}
+      label={(
+        <Button aria-label={`Delete budget ${label}`} type="text">
+          <Lucide icon={Trash2} type="error" />
+        </Button>
+      )}
       okText={<div className="is-error">Delete</div>}
       okType="error-light"
       onCancel={handleOnCancel}

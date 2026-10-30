@@ -1,4 +1,5 @@
-import { Divider, Popover } from '@radicalbit/radicalbit-design-system';
+import InfoPopover from '@Components/info-popover';
+import { Divider } from '@radicalbit/radicalbit-design-system';
 
 function Errors({ errors }) {
   if (!errors) {
@@ -8,7 +9,7 @@ function Errors({ errors }) {
   const { requestErrorPercentage } = errors;
 
   return (
-    <Popover
+    <InfoPopover
       content={<PopoverContent errors={errors} />}
       minWidth="250"
       title={<strong>Errors</strong>}
@@ -16,7 +17,7 @@ function Errors({ errors }) {
       <span>
         {`${requestErrorPercentage}%`}
       </span>
-    </Popover>
+    </InfoPopover>
   );
 }
 

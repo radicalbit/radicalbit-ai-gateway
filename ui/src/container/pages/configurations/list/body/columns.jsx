@@ -1,4 +1,6 @@
+import TableRowButton from '@Components/table-row-button';
 import ConfigStatusTag from '@Container/pages/projects/components/config-status-tag';
+import useModals, { modals } from '@Hooks/use-modals';
 import { DATE_FORMAT, DATE_FORMAT_SHORT } from '@Src/constants';
 import {
   DataTableAction,
@@ -7,6 +9,16 @@ import {
   Truncate,
 } from '@radicalbit/radicalbit-design-system';
 import SlotActions from './slot-actions';
+
+function EditConfiguration({ children, uuid }) {
+  const { showModal } = useModals();
+
+  const handleOnClick = () => {
+    showModal(modals.EDIT_PROJECT_CONFIG, { uuid });
+  };
+
+  return <TableRowButton onClick={handleOnClick}>{children}</TableRowButton>;
+}
 
 const getColumns = () => [
   {
@@ -20,7 +32,7 @@ const getColumns = () => [
     title: 'Projects',
     dataIndex: 'name',
     key: 'name',
-    render: (value, { description }) => (
+    render: (value, { description, uuid }) => (
       <SectionTitle
         size="small"
         subtitle={(
@@ -30,7 +42,7 @@ const getColumns = () => [
         )}
         title={(
           <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-            {value}
+            <EditConfiguration uuid={uuid}>{value}</EditConfiguration>
           </Truncate>
         )}
       />

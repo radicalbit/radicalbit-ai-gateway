@@ -6,6 +6,8 @@ import {
   formatCount, formatLimitValue, formatLimitWindow, sortLimits,
 } from './helpers';
 
+const TRIGGER = ['hover', 'focus'];
+
 function LimitsSummary({ limits = [], noun = 'limit', onManage, withCategory = true }) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -34,6 +36,7 @@ function LimitsSummary({ limits = [], noun = 'limit', onManage, withCategory = t
       open={isOpen}
       placement="bottomLeft"
       title={<strong>{title}</strong>}
+      trigger={TRIGGER}
     >
       <HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>
     </Popover>

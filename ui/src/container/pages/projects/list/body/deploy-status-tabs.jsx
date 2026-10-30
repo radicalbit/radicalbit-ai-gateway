@@ -41,6 +41,7 @@ function DeployStatusTabs() {
             return (
               <Button
                 key={key}
+                aria-pressed={activeStatus === key}
                 onClick={handleOnClick}
                 type={activeStatus === key ? 'primary' : 'text'}
               >

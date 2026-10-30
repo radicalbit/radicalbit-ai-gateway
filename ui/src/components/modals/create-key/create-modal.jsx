@@ -147,7 +147,7 @@ function Expiration() {
       message={error('expiresOn')}
     >
       <div className="flex flex-col gap-2">
-        <Radio.Group disabled={isLoading} onChange={handleOnChangeExpiryMode} value={expiryMode}>
+        <Radio.Group aria-label="Expiration" disabled={isLoading} onChange={handleOnChangeExpiryMode} value={expiryMode}>
           <Radio value={ExpiryModeEnum.NEVER}>Never</Radio>
 
           <Radio value={ExpiryModeEnum.DATE}>On date</Radio>

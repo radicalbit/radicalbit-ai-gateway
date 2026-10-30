@@ -1,9 +1,8 @@
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
+import InfoPopover from '@Components/info-popover';
 import { numberFormatterInt } from '@Src/constants';
-import {
-  Divider, Popover,
-} from '@radicalbit/radicalbit-design-system';
+import { Divider } from '@radicalbit/radicalbit-design-system';
 import { SlidersHorizontal } from 'lucide-react';
 
 function Limits({ metrics, configuration }) {
@@ -14,21 +13,22 @@ function Limits({ metrics, configuration }) {
 
   if (rateLimitTriggered === undefined && tokenInputLimitTriggered === undefined && tokenOutputLimitTriggered === undefined && durationLimitTriggered === undefined) {
     return (
-      <IconBadge aria-label="Limits" disabled>
+      <IconBadge aria-label="Limits: not configured" disabled>
         <Lucide icon={SlidersHorizontal} />
       </IconBadge>
     );
   }
 
-  const hasTriggered = rateLimitTriggered > 0 || tokenInputLimitTriggered > 0 || tokenOutputLimitTriggered > 0 || durationLimitTriggered > 0;
-  const btnType = hasTriggered ? { type: 'primary' } : { type: 'primary-light' };
+  const isTriggered = rateLimitTriggered > 0 || tokenInputLimitTriggered > 0 || tokenOutputLimitTriggered > 0 || durationLimitTriggered > 0;
+  const btnType = isTriggered ? { type: 'primary' } : { type: 'primary-light' };
+  const ariaLabel = isTriggered ? 'Limits: triggered' : 'Limits: not triggered';
 
   return (
-    <Popover content={<PopoverContent configuration={configuration} metrics={metrics} />} minWidth="250" title={<strong>Limits</strong>}>
-      <IconBadge aria-label="Limits" {...btnType}>
+    <InfoPopover content={<PopoverContent configuration={configuration} metrics={metrics} />} minWidth="250" title={<strong>Limits</strong>}>
+      <IconBadge aria-label={ariaLabel} {...btnType}>
         <Lucide icon={SlidersHorizontal} />
       </IconBadge>
-    </Popover>
+    </InfoPopover>
   );
 }
 
