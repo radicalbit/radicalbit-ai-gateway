@@ -17,12 +17,20 @@ from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.models.api_key_dto import ApiKeySec
-from radicalbit_ai_gateway.models.auth_dto import GroupFullOut, KeyCreateIn, KeyFullOut
+from radicalbit_ai_gateway.models.auth_dto import (
+    GroupFullOut,
+    KeyCreateIn,
+    KeyFullOut,
+    KeyLimitsAddedOut,
+)
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitOut,
     CredentialLimitUpdatedOut,
     CredentialLimitValueIn,
+    RouteLimitConsistencyWarning,
 )
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
+from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType, RateLimiting
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.server import validation_exception_handler
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
@@ -293,16 +301,62 @@ class TestKeyRoute(unittest.TestCase):
     def test_add_limits_to_key_success(self):
         key = db_mock.get_sample_key()
         limits_in = db_mock.get_sample_credential_limits_in()
-        key_out = db_mock.get_sample_key_full_out()
-        self.key_service.add_limits_to_key = MagicMock(return_value=key_out)
+        result = KeyLimitsAddedOut(key=db_mock.get_sample_key_full_out(), warnings=[])
+        self.key_service.add_limits_to_key = MagicMock(return_value=result)
         res = self.client.post(
             f'{self.prefix}/keys/{key.uuid}/limits',
             json=jsonable_encoder(limits_in),
         )
         assert res.status_code == 201
-        assert res.json() == jsonable_encoder(key_out)
+        assert res.json() == jsonable_encoder(result)
+        # No routes built yet: nothing to compare with, the save still goes on
         self.key_service.add_limits_to_key.assert_called_once_with(
-            key.uuid, limits_in, False
+            key.uuid, limits_in, False, {}
+        )
+
+    def test_add_limits_to_key_compares_with_the_served_routes(self):
+        key = db_mock.get_sample_key()
+        limits_in = db_mock.get_sample_credential_limits_in()
+        route_config = GatewayRouteConfig(
+            route_name='chat', rate_limiting=RateLimiting(max_requests=50)
+        )
+        self.client.app.state.routes = {
+            'proj/chat': MagicMock(gateway_route_config=route_config)
+        }
+        warning = RouteLimitConsistencyWarning(
+            category='request_rate',
+            algorithm=LimitingAlgorithmType.FIXED_WINDOW,
+            route_name='proj/chat',
+            credential_value=100,
+            credential_window_size='1 minute',
+            route_value=50,
+            route_window_size='1 minute',
+        )
+        self.key_service.add_limits_to_key = MagicMock(
+            return_value=KeyLimitsAddedOut(
+                key=db_mock.get_sample_key_full_out(), warnings=[warning]
+            )
+        )
+
+        res = self.client.post(
+            f'{self.prefix}/keys/{key.uuid}/limits',
+            json=jsonable_encoder(limits_in),
+        )
+
+        assert res.status_code == 201
+        assert res.json()['warnings'] == [
+            {
+                'category': 'request_rate',
+                'algorithm': 'FIXED_WINDOW',
+                'routeName': 'proj/chat',
+                'credentialValue': 100.0,
+                'credentialWindowSize': '1 minute',
+                'routeValue': 50.0,
+                'routeWindowSize': '1 minute',
+            }
+        ]
+        self.key_service.add_limits_to_key.assert_called_once_with(
+            key.uuid, limits_in, False, {'proj/chat': route_config}
         )
 
     def test_add_limits_to_key_not_found(self):
@@ -418,7 +472,7 @@ class TestKeyRoute(unittest.TestCase):
         assert res.json()['value'] == 25.0
         assert res.json()['previousValue'] == 10.0
         self.key_service.update_limit_value.assert_called_once_with(
-            key_uuid, limit_uuid, CredentialLimitValueIn(value=25)
+            key_uuid, limit_uuid, CredentialLimitValueIn(value=25), {}
         )
 
     def test_update_limit_value_rejects_a_max_not_above_zero(self):

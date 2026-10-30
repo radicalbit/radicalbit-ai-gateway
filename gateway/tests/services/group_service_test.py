@@ -845,14 +845,18 @@ class TestApplyLimitsToGroup(_AsyncGroupServiceTestBase):
         group = db_mock.get_sample_group(uuid=uuid.uuid4(), keys=[key])
         limits_in = db_mock.get_sample_group_limits_in()
         member = GroupMemberLimitsOut(
-            key_uuid=key.uuid, key_name=key.name, expired=False, limits=[]
+            key_uuid=key.uuid, key_name=key.name, expired=False, limits=[], warnings=[]
         )
         group_dao.get_by_uuid = MagicMock(return_value=group)
         key_service.apply_limits_to_keys = MagicMock(return_value=[member])
 
-        res = service.apply_limits_to_group(group.uuid, limits_in)
+        route_configs = {'proj/chat': MagicMock()}
 
-        key_service.apply_limits_to_keys.assert_called_once_with([key], limits_in)
+        res = service.apply_limits_to_group(group.uuid, limits_in, route_configs)
+
+        key_service.apply_limits_to_keys.assert_called_once_with(
+            [key], limits_in, route_configs
+        )
         assert res == GroupLimitsApplyOut(members=[member])
 
     def test_externally_managed_group_ok(self):

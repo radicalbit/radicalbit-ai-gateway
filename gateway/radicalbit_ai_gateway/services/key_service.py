@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 import datetime
 import logging
 from uuid import UUID
@@ -11,11 +11,16 @@ from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.limiting.credential_limiter import clear_limit_counter
+from radicalbit_ai_gateway.limiting.route_limit_consistency import (
+    LimitMax,
+    route_limit_warnings,
+)
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     KeyCreateIn,
     KeyFullOut,
     KeyGroupIn,
+    KeyLimitsAddedOut,
     KeyRotationIn,
     KeyUpdateIn,
 )
@@ -30,12 +35,14 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitsIn,
     CredentialLimitUpdatedOut,
     CredentialLimitValueIn,
+    RouteLimitConsistencyWarning,
     validate_limit_value,
 )
 from radicalbit_ai_gateway.models.credential_rotation import (
     get_grace_end,
     previous_value_authenticates,
 )
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.group_limiting import (
     GroupLimitOutcome,
     GroupLimitResultOut,
@@ -98,6 +105,22 @@ class KeyService:
             include_groups=include_groups,
             include_limits=include_limits,
         )
+
+    def _route_limit_warnings(
+        self,
+        group_uuid: UUID | None,
+        limits: Iterable[LimitMax],
+        route_configs: Mapping[str, GatewayRouteConfig],
+    ) -> list[RouteLimitConsistencyWarning]:
+        """Against the served routes the credential's group reaches (AG-947)."""
+        if group_uuid is None:
+            return []
+        reached = {
+            name: route_configs[name]
+            for name in self.group_dao.get_route_names_by_group_uuid(group_uuid)
+            if name in route_configs
+        }
+        return route_limit_warnings(limits, reached)
 
     def create_key(self, key_in: KeyCreateIn) -> KeyFullOut:
         try:
@@ -298,13 +321,18 @@ class KeyService:
         return KeyFullOut.from_key_obscured(key=key, include_groups=True)
 
     def apply_limits_to_keys(
-        self, keys: Sequence[Key], limits_in: GroupLimitsIn
+        self,
+        keys: Sequence[Key],
+        limits_in: GroupLimitsIn,
+        route_configs: Mapping[str, GatewayRouteConfig] | None = None,
     ) -> list[GroupMemberLimitsOut]:
         """Copy the limits onto each key (bulk assignment), in one transaction.
 
         A key that already has the same limit is a conflict: skipped when listed
         in `limits_in.skip`, otherwise its max is overwritten on the same row,
-        so the counter is kept. Expired keys are written too.
+        so the counter is kept. Expired keys are written too. Each member is
+        warned on the limits it received that are looser than a route its group
+        reaches.
         """
         existing_by_signature = {
             (limit.key_uuid, limit.category, limit.algorithm, limit.window_size): limit
@@ -320,7 +348,14 @@ class KeyService:
         to_insert: list[KeyLimit] = []
         to_update: list[KeyLimit] = []
         members: list[GroupMemberLimitsOut] = []
+        warnings_by_group: dict[UUID | None, list[RouteLimitConsistencyWarning]] = {}
         for key in keys:
+            if key.group_uuid not in warnings_by_group:
+                warnings_by_group[key.group_uuid] = self._route_limit_warnings(
+                    key.group_uuid,
+                    map(LimitMax.of, limits_in.limits),
+                    route_configs or {},
+                )
             results: list[GroupLimitResultOut] = []
             for limit_in in limits_in.limits:
                 signature = (
@@ -353,6 +388,11 @@ class KeyService:
                         new_value=limit_in.value,
                     )
                 )
+            received = {
+                (result.category, result.algorithm, result.window_size)
+                for result in results
+                if result.outcome != GroupLimitOutcome.SKIPPED
+            }
             members.append(
                 GroupMemberLimitsOut(
                     key_uuid=key.uuid,
@@ -360,6 +400,16 @@ class KeyService:
                     expired=get_credential_state(key.expires_on)
                     == CredentialState.EXPIRED,
                     limits=results,
+                    warnings=[
+                        warning
+                        for warning in warnings_by_group[key.group_uuid]
+                        if (
+                            warning.category,
+                            warning.algorithm,
+                            warning.credential_window_size,
+                        )
+                        in received
+                    ],
                 )
             )
         try:
@@ -444,7 +494,8 @@ class KeyService:
         key_uuid: UUID,
         limits_in: CredentialLimitsIn,
         include_groups: bool = False,
-    ) -> KeyFullOut:
+        route_configs: Mapping[str, GatewayRouteConfig] | None = None,
+    ) -> KeyLimitsAddedOut:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
@@ -483,8 +534,15 @@ class KeyService:
             raise KeyInternalError(
                 f'An error occurred while adding the limits: {e}'
             ) from e
-        return self._get_key(
-            key_uuid, include_groups=include_groups, include_limits=True
+        return KeyLimitsAddedOut(
+            key=self._get_key(
+                key_uuid, include_groups=include_groups, include_limits=True
+            ),
+            warnings=self._route_limit_warnings(
+                key.group_uuid,
+                map(LimitMax.of, limits_in.limits),
+                route_configs or {},
+            ),
         )
 
     def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:
@@ -497,7 +555,11 @@ class KeyService:
         ]
 
     def update_limit_value(
-        self, key_uuid: UUID, limit_uuid: UUID, value_in: CredentialLimitValueIn
+        self,
+        key_uuid: UUID,
+        limit_uuid: UUID,
+        value_in: CredentialLimitValueIn,
+        route_configs: Mapping[str, GatewayRouteConfig] | None = None,
     ) -> CredentialLimitUpdatedOut:
         key = self.key_dao.get_by_uuid(key_uuid)
         if not key:
@@ -533,6 +595,18 @@ class KeyService:
         return CredentialLimitUpdatedOut(
             **CredentialLimitOut.from_key_limit(limit).model_dump(),
             previous_value=previous_value,
+            warnings=self._route_limit_warnings(
+                key.group_uuid,
+                [
+                    LimitMax(
+                        CredentialLimitCategory(limit.category),
+                        LimitingAlgorithmType(limit.algorithm),
+                        limit.window_size,
+                        value_in.value,
+                    )
+                ],
+                route_configs or {},
+            ),
         )
 
     async def delete_limit_from_key(

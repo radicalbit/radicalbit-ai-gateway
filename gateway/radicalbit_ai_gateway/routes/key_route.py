@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import RequestValidationError
 
 from radicalbit_ai_gateway.models.auth_dto import (
@@ -9,6 +9,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyCreateIn,
     KeyFullOut,
     KeyGroupIn,
+    KeyLimitsAddedOut,
     KeyRotationIn,
     KeyUpdateIn,
 )
@@ -19,9 +20,11 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitValueIn,
 )
 from radicalbit_ai_gateway.models.credential_rotation import GracePeriodOutOfBoundsError
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.dependencies import get_route_configs
 from radicalbit_ai_gateway.utils.exceptions import CredentialLimitValueError
 
 app_config = get_app_config()
@@ -130,17 +133,22 @@ class KeyRoute:
             )
 
         @router.post(
-            '/keys/{key_uuid}/limits', status_code=201, response_model=KeyFullOut
+            '/keys/{key_uuid}/limits',
+            status_code=201,
+            response_model=KeyLimitsAddedOut,
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid', action='ADD_LIMIT')
         def add_limits_to_key(
             key_uuid: UUID,
             limits_in: CredentialLimitsIn,
             include_groups: bool = Query(False),
+            route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
-            key = key_service.add_limits_to_key(key_uuid, limits_in, include_groups)
+            result = key_service.add_limits_to_key(
+                key_uuid, limits_in, include_groups, route_configs
+            )
             logger.info('Added %s limit(s) to key %s', len(limits_in.limits), key_uuid)
-            return key
+            return result
 
         @router.get(
             '/keys/{key_uuid}/limits',
@@ -157,10 +165,15 @@ class KeyRoute:
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
         def update_limit_value(
-            key_uuid: UUID, limit_uuid: UUID, value_in: CredentialLimitValueIn
+            key_uuid: UUID,
+            limit_uuid: UUID,
+            value_in: CredentialLimitValueIn,
+            route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
             try:
-                return key_service.update_limit_value(key_uuid, limit_uuid, value_in)
+                return key_service.update_limit_value(
+                    key_uuid, limit_uuid, value_in, route_configs
+                )
             except CredentialLimitValueError as e:
                 raise RequestValidationError(
                     [
