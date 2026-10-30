@@ -19,6 +19,7 @@ from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitIn,
     ProjectBudgetLimitsIn,
+    ProjectBudgetLimitValueIn,
 )
 from radicalbit_ai_gateway.models.project_dto import (
     ConfigListFilter,
@@ -614,6 +615,42 @@ class ProjectServiceTest(DatabaseIntegration):
         with pytest.raises(ProjectBudgetLimitNotFoundError):
             asyncio.run(
                 self.svc.delete_budget_limit_from_project(other.uuid, limit.uuid)
+            )
+
+    def test_update_budget_limit_value_keeps_the_row_and_returns_the_previous_max(
+        self,
+    ):
+        out, _, _ = self._create(name='budget-update-ok')
+        [limit] = self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+
+        updated = self.svc.update_budget_limit_value(
+            out.uuid, limit.uuid, ProjectBudgetLimitValueIn(value=42.5)
+        )
+
+        assert updated.uuid == limit.uuid
+        assert updated.value == 42.5
+        assert updated.previous_value == limit.value
+        assert updated.window_size == limit.window_size
+        [saved] = self.svc.get_budget_limits_for_project(out.uuid)
+        assert (saved.uuid, saved.value) == (limit.uuid, 42.5)
+
+    def test_update_budget_limit_value_project_not_found(self):
+        with pytest.raises(ProjectNotFoundError):
+            self.svc.update_budget_limit_value(
+                uuid.uuid4(), uuid.uuid4(), ProjectBudgetLimitValueIn(value=1)
+            )
+
+    def test_update_budget_limit_value_of_another_project_is_not_found(self):
+        owner, _, _ = self._create(name='budget-update-owner')
+        other, _, _ = self._create(name='budget-update-other')
+        [limit] = self.svc.add_budget_limits_to_project(
+            owner.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        with pytest.raises(ProjectBudgetLimitNotFoundError):
+            self.svc.update_budget_limit_value(
+                other.uuid, limit.uuid, ProjectBudgetLimitValueIn(value=1)
             )
 
     # --- reverse validation: route config vs. existing project budget limit ---

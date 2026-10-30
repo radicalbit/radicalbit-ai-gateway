@@ -79,6 +79,7 @@ from radicalbit_ai_gateway.responses.request import (
 from radicalbit_ai_gateway.routing import (
     DecisionRouter,
     DeterministicRouter,
+    LLMRouter,
     SemanticRouter,
     TextClassificationRouter,
 )
@@ -164,6 +165,7 @@ class GatewayRoute:
         | SemanticRouter
         | TextClassificationRouter
         | DecisionRouter
+        | LLMRouter
         | None = None,
         token_limiter: TokenLimiter | None = None,
         rate_limiter: RequestRateLimiter | None = None,
@@ -1793,6 +1795,7 @@ class GatewayRoute:
             *,
             model_type: str,
             target_model_id: str | None = None,
+            output_tokens: int | None = None,
         ) -> None:
             metrics.record_routing_call(
                 identity=identity,
@@ -1801,9 +1804,19 @@ class GatewayRoute:
                 input_tokens=input_tokens,
                 latency_ms=latency_ms,
                 model_type=model_type,
+                output_tokens=output_tokens,
             )
-            # Routing calls bill input tokens only, as decision calls do.
-            await self._count_decision_usage(input_tokens, model, identity)
+            if output_tokens is None:
+                # Embedding and decision calls bill input tokens only.
+                await self._count_decision_usage(input_tokens, model, identity)
+            else:
+                # A chat model router also bills the tokens it answers with.
+                await self._count_usage(
+                    prompt_tokens=input_tokens,
+                    completion_tokens=output_tokens,
+                    model_selected=model,
+                    identity=identity,
+                )
 
         return record
 

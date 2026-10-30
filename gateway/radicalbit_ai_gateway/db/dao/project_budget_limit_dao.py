@@ -1,7 +1,8 @@
 from collections.abc import Sequence
+import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.project_budget_limit_table import (
@@ -43,6 +44,17 @@ class ProjectBudgetLimitDAO:
                 ProjectBudgetLimit.project_uuid == project_uuid
             )
             return session.scalars(stmt).all()
+
+    def update_max_value(self, limit_uuid: UUID, max_value: float) -> None:
+        with self.db.begin_session() as session:
+            session.execute(
+                update(ProjectBudgetLimit)
+                .where(ProjectBudgetLimit.uuid == limit_uuid)
+                .values(
+                    max_value=max_value,
+                    updated_at=datetime.datetime.now(tz=datetime.timezone.utc),
+                )
+            )
 
     def delete_by_uuid(self, limit_uuid: UUID) -> int:
         with self.db.begin_session() as session:

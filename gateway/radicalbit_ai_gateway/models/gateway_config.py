@@ -26,6 +26,7 @@ from radicalbit_ai_gateway.models.routing import (
     AnyRoutingConfig,
     DecisionRoutingConfig,
     DeterministicRoutingConfig,
+    LLMRoutingConfig,
     RoutingRuleType,
     SemanticRoutingConfig,
 )
@@ -479,6 +480,10 @@ class GatewayConfig(BaseModel):
         for routing_config in self.routing:
             if isinstance(routing_config, DecisionRoutingConfig):
                 self._validate_decision_routing_models(routing_config)
+            elif isinstance(routing_config, SemanticRoutingConfig):
+                self._validate_semantic_routing_models(routing_config)
+            elif isinstance(routing_config, LLMRoutingConfig):
+                self._validate_llm_routing_models(routing_config)
 
         for route_name, route in self.routes.items():
             if not route.routing:
@@ -501,15 +506,6 @@ class GatewayConfig(BaseModel):
                     raise ValueError(
                         f"Route '{route_name}': routing cannot reference decision "
                         f"model '{model_id}'. Routing supports chat models only."
-                    )
-
-            if isinstance(routing_config, SemanticRoutingConfig):
-                if routing_config.embedding_model_id not in set(
-                    self.embedding_models_by_id
-                ):
-                    raise ValueError(
-                        f"Route '{route_name}': semantic routing embedding_model_id '{routing_config.embedding_model_id}' "
-                        f'not found in top-level embedding_models.'
                     )
 
             # default_model_id must be in route's chat_models
@@ -547,6 +543,29 @@ class GatewayConfig(BaseModel):
                 raise ValueError(
                     f"Decision routing '{routing_config.name}': {label} "
                     f"'{model_id}' not declared in top-level decision_models."
+                )
+
+    def _validate_semantic_routing_models(
+        self, routing_config: SemanticRoutingConfig
+    ) -> None:
+        """Any embedding model of the project can embed, not only those on the route."""
+        model_id = routing_config.embedding_model_id
+        if model_id not in self.embedding_models_by_id:
+            raise ValueError(
+                f"Semantic routing '{routing_config.name}': embedding model "
+                f"'{model_id}' not declared in top-level embedding_models."
+            )
+
+    def _validate_llm_routing_models(self, routing_config: LLMRoutingConfig) -> None:
+        """Any chat model of the project can route, not only those on the route."""
+        for label, model_id in (
+            ('router model', routing_config.router_model_id),
+            ('fallback model', routing_config.fallback_model_id),
+        ):
+            if model_id is not None and model_id not in self.chat_models_by_id:
+                raise ValueError(
+                    f"LLM routing '{routing_config.name}': {label} "
+                    f"'{model_id}' not declared in top-level chat_models."
                 )
 
     @model_validator(mode='after')
