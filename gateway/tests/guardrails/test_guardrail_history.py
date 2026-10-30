@@ -233,7 +233,7 @@ class TestDeterministicChecks:
         """Default: a system message the client sent is message 0 and counts."""
         err = await _run(_check(_guardrail()), HISTORY)
         assert err is not None
-        assert err.reason['message_index'] == 0
+        assert err.reason['message_indices'] == [0]
         assert err.reason['role'] == 'system'
 
     @pytest.mark.asyncio
@@ -248,7 +248,7 @@ class TestDeterministicChecks:
         g = _guardrail(message_roles=[GuardrailMessageRole.ASSISTANT])
         err = await _run(_check(g), [injected, *HISTORY], skip=1)
         assert err is not None
-        assert err.reason['message_index'] == 2
+        assert err.reason['message_indices'] == [2]
 
     @pytest.mark.asyncio
     async def test_no_window_sees_old_messages(self):
@@ -256,7 +256,7 @@ class TestDeterministicChecks:
         g = _guardrail(history='last')
         err = await _run(_check(g), HISTORY, windowed=False)
         assert err is not None
-        assert err.reason['message_index'] == 0
+        assert err.reason['message_indices'] == [0]
 
     @pytest.mark.asyncio
     async def test_roles_point_at_the_matched_message_not_the_prompt(self):
@@ -264,7 +264,7 @@ class TestDeterministicChecks:
         g = _guardrail(message_roles=[GuardrailMessageRole.ASSISTANT])
         err = await _run(_check(g), HISTORY)
         assert err is not None
-        assert err.reason['message_index'] == 2
+        assert err.reason['message_indices'] == [2]
         assert err.reason['role'] == 'assistant'
         assert 'Never mention' not in err.reason['context']
         assert f'<<{BAD}>>' in err.reason['context']
@@ -279,7 +279,7 @@ class TestDeterministicChecks:
         g = _guardrail(history='last')
         err = await _run(_check(g), [*HISTORY, HumanMessage(content=f'Tell {BAD}')])
         assert err is not None
-        assert err.reason['message_index'] == 4
+        assert err.reason['message_indices'] == [4]
         assert err.reason['role'] == 'user'
 
     @pytest.mark.asyncio
@@ -287,7 +287,7 @@ class TestDeterministicChecks:
         g = _guardrail(history='last_n', last_n=2)
         err = await _run(_check(g), HISTORY)
         assert err is not None
-        assert err.reason['message_index'] == 2
+        assert err.reason['message_indices'] == [2]
 
         g = _guardrail(history='last_n', last_n=1)
         assert await _run(_check(g), HISTORY) is None
@@ -297,7 +297,7 @@ class TestDeterministicChecks:
         msgs = [HumanMessage(content=''), HumanMessage(content=f'say {BAD}')]
         err = await _run(_check(_guardrail()), msgs)
         assert err is not None
-        assert err.reason['message_index'] == 1
+        assert err.reason['message_indices'] == [1]
 
     @pytest.mark.asyncio
     async def test_regex_reports_pattern_and_index(self):
@@ -310,7 +310,7 @@ class TestDeterministicChecks:
         assert err is not None
         assert err.reason['kind'] == 'regex'
         assert err.reason['pattern'] == r'\d \+ \d'
-        assert err.reason['message_index'] == 3
+        assert err.reason['message_indices'] == [3]
 
     @pytest.mark.asyncio
     async def test_starts_with_and_ends_with(self):
@@ -318,13 +318,13 @@ class TestDeterministicChecks:
             type=GuardrailType.STARTS_WITH, parameters=CheckParameter(values=['What'])
         )
         err = await _run(_check(g), HISTORY)
-        assert err is not None and err.reason['message_index'] == 3
+        assert err is not None and err.reason['message_indices'] == [3]
 
         g = _guardrail(
             type=GuardrailType.ENDS_WITH, parameters=CheckParameter(values=['there'])
         )
         err = await _run(_check(g), HISTORY)
-        assert err is not None and err.reason['message_index'] == 1
+        assert err is not None and err.reason['message_indices'] == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +358,7 @@ class TestPresidioAnalyzer:
         assert err is not None
         assert err.reason['kind'] == 'presidio'
         assert err.reason['value'] == 'a@b.io'
-        assert err.reason['message_index'] == 1
+        assert err.reason['message_indices'] == [1]
         assert err.reason['role'] == 'user'
         assert '<<a@b.io>>' in err.reason['context']
         assert 'first line' not in err.reason['context']
@@ -410,7 +410,7 @@ class TestJudge:
         """No roles: the judge reads every user turn as one text."""
         err = await _run(_judge_check(_judge_guardrail()), HISTORY)
         assert err is not None
-        assert err.reason['message_index'] == [1, 3]
+        assert err.reason['message_indices'] == [1, 3]
         assert err.reason['role'] is None
 
     @pytest.mark.asyncio
@@ -418,7 +418,7 @@ class TestJudge:
         g = _judge_guardrail(history='last_n', last_n=2)
         err = await _run(_judge_check(g), HISTORY)
         assert err is not None
-        assert err.reason['message_index'] == [1, 3]
+        assert err.reason['message_indices'] == [1, 3]
 
     @pytest.mark.asyncio
     async def test_blank_messages_are_not_counted_as_read(self):
@@ -426,14 +426,14 @@ class TestJudge:
         msgs = [HumanMessage(content='   '), HumanMessage(content='real')]
         err = await _run(_judge_check(_judge_guardrail()), msgs)
         assert err is not None
-        assert err.reason['message_index'] == [1]
+        assert err.reason['message_indices'] == [1]
 
     @pytest.mark.asyncio
     async def test_last_reads_the_last_user_message(self):
         msgs = [*HISTORY, AIMessage(content='4')]
         err = await _run(_judge_check(_judge_guardrail(history='last')), msgs)
         assert err is not None
-        assert err.reason['message_index'] == [3]
+        assert err.reason['message_indices'] == [3]
         assert err.reason['role'] == 'user'
         assert err.reason['context'] == USER_2.content
 
@@ -446,7 +446,7 @@ class TestJudge:
         )
         err = await _run(_judge_check(g), HISTORY)
         assert err is not None
-        assert err.reason['message_index'] == [2, 3]
+        assert err.reason['message_indices'] == [2, 3]
 
 
 # ---------------------------------------------------------------------------

@@ -181,12 +181,12 @@ def _text_at_offset(
 def _window_payload(items: list[_Text]) -> dict:
     """Index fields for a check that reads all texts as one (a judge).
 
-    It cannot point at one message, so ``message_index`` lists every message
+    It cannot point at one message, so ``message_indices`` lists every message
     it read.
     """
     one = items[0] if len(items) == 1 else None
     return {
-        'message_index': [it.index for it in items],
+        'message_indices': [it.index for it in items],
         'role': one.role if one else None,
         'context': _trunc(items[-1].text, max_len=200) if items else '',
     }
@@ -214,7 +214,7 @@ def _match_check(
         return {
             'kind': kind.value.lower(),
             **extra,
-            'message_index': it.index,
+            'message_indices': [it.index],
             'role': it.role,
             'context': _context_words(it.text, span=span),
         }
@@ -263,7 +263,7 @@ def _run_check(
     if reason is None:
         return False
     logger.debug(
-        '%s guardrail: match on message[%s]', kind, reason.get('message_index')
+        '%s guardrail: match on message[%s]', kind, reason.get('message_indices')
     )
     _reason_payload_ctx.set(reason)
     return True
@@ -478,12 +478,12 @@ class GuardrailCheck:
                 span_start, it = hit
                 local = (first_res.start - span_start, first_res.end - span_start)
                 where_found = {
-                    'message_index': it.index,
+                    'message_indices': [it.index],
                     'role': it.role,
                     'context': _context_words(it.text, span=local),
                 }
             else:
-                where_found = {'message_index': None, 'role': None, 'context': None}
+                where_found = {'message_indices': [], 'role': None, 'context': None}
             reason = {
                 'kind': 'presidio',
                 'entity_type': first_res.entity_type,
@@ -839,9 +839,9 @@ class GuardrailCheck:
 
     @staticmethod
     def _indices_for_logs(reason_payload: dict) -> str:
-        mi = reason_payload.get('message_index')
-        if mi is not None and mi != []:
-            return f' message_index={mi}'
+        mi = reason_payload.get('message_indices')
+        if mi:
+            return f' message_indices={mi}'
         return ''
 
     @staticmethod
@@ -863,19 +863,19 @@ class GuardrailCheck:
         if not isinstance(reason_payload, dict):
             return None
         kind = reason_payload.get('kind')
-        mi = reason_payload.get('message_index')
+        mi = reason_payload.get('message_indices')
         if kind == 'presidio':
             return GuardrailCheck._format_presidio_reason_for_logs(reason_payload)
         if kind in ('starts_with', 'ends_with', 'contains'):
             val = reason_payload.get('value')
             if kind and val is not None and mi is not None:
-                s = f'{kind} value={_trunc(repr(val))} message_index={mi}'
+                s = f'{kind} value={_trunc(repr(val))} message_indices={mi}'
             else:
                 return None
         elif kind == 'regex':
             pat = reason_payload.get('pattern')
             if pat is not None and mi is not None:
-                s = f'regex pattern={_trunc(repr(pat))} message_index={mi}'
+                s = f'regex pattern={_trunc(repr(pat))} message_indices={mi}'
             else:
                 return None
         elif kind == 'judge':
@@ -1017,10 +1017,10 @@ class GuardrailCheck:
                             'guardrail.triggered.context',
                             str(reason_payload['context']),
                         )
-                    # An int, or the list of what a judge read.
-                    mi = reason_payload.get('message_index')
-                    if mi is not None:
-                        span.set_attribute('guardrail.triggered.message_index', mi)
+                    # The message that matched, or every message a judge read.
+                    mi = reason_payload.get('message_indices')
+                    if mi:
+                        span.set_attribute('guardrail.triggered.message_indices', mi)
         except Exception:
             pass
 
