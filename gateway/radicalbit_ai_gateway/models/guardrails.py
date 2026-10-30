@@ -59,14 +59,14 @@ class GuardrailMessageRole(str, Enum):
     ASSISTANT = 'ASSISTANT'
 
 
-class GuardrailMessageWindow(str, Enum):
+class GuardrailHistory(str, Enum):
     """Which messages of the conversation a guardrail reads, on input.
 
-    ``message_roles`` filters first. Then the window keeps the tail of what
+    ``message_roles`` filters first. Then history keeps the tail of what
     is left. So ``last`` with ``[user]`` is the last user message. The system
-    prompt the gateway adds from the route config is never in the window.
+    prompt the gateway adds from the route config is never counted.
     On output, and on calls with no conversation (embeddings, decision
-    models), the window is ignored.
+    models), history is ignored.
     """
 
     ALL = 'ALL'
@@ -364,12 +364,12 @@ class Guardrail(BaseModel):
         ),
         examples=[['user'], ['user', 'tool'], ['system'], ['tool']],
     )
-    message_window: GuardrailMessageWindow = Field(
-        default=GuardrailMessageWindow.ALL,
+    history: GuardrailHistory = Field(
+        default=GuardrailHistory.ALL,
         description=(
             'Which input messages to read: all (default), last (the last '
             'message) or last_n (the last N messages). message_roles filters '
-            'first, then the window is cut. Not allowed with where: output.'
+            'first, then history keeps the tail. Not allowed with where: output.'
         ),
         examples=['all', 'last', 'last_n'],
     )
@@ -401,38 +401,37 @@ class Guardrail(BaseModel):
             'parameters': {'type': parameters_type, **data['parameters']},
         }
 
-    @field_validator('type', 'where', 'behavior', 'message_window', mode='before')
+    @field_validator('type', 'where', 'behavior', 'history', mode='before')
     def validate_lower_case_enum(cls, value: GuardrailBehaviorType) -> str:
         return value.upper()
 
     @model_validator(mode='after')
-    def validate_message_window(self):
-        if self.message_window == GuardrailMessageWindow.LAST_N:
+    def validate_history(self):
+        if self.history == GuardrailHistory.LAST_N:
             if self.last_n is None:
-                raise ValueError('message_window last_n needs last_n')
+                raise ValueError('history: last_n needs last_n')
         elif self.last_n is not None:
-            raise ValueError('last_n is only allowed with message_window last_n')
+            raise ValueError('last_n is only allowed with history: last_n')
         # all is the default and a no-op on output: a dumped config carries
         # it, so it must load again.
         if (
             self.where == GuardrailWhereType.OUTPUT
-            and self.message_window != GuardrailMessageWindow.ALL
+            and self.history != GuardrailHistory.ALL
         ):
             raise ValueError(
-                'message_window is not allowed with where: output, '
-                'the window applies to input only'
+                'history is not allowed with where: output, it applies to input only'
             )
         if (
             self.type == GuardrailType.PRESIDIO_ANONYMIZER
-            and self.message_window != GuardrailMessageWindow.ALL
+            and self.history != GuardrailHistory.ALL
         ):
             # The client sends back its own copy of the history, not the
             # redacted one. Older messages reach the model in clear text.
             logger.warning(
-                'Guardrail %s: presidio_anonymizer with message_window %s '
+                'Guardrail %s: presidio_anonymizer with history: %s '
                 'does not redact older messages, they reach the model as sent.',
                 self.name,
-                self.message_window.value.lower(),
+                self.history.value.lower(),
             )
         return self
 

@@ -1,6 +1,6 @@
-"""Tests for message_window and the message index in the guardrail reason.
+"""Tests for history and the message index in the guardrail reason.
 
-message_roles filters first. Then the window keeps the tail of what is left.
+message_roles filters first. Then history keeps the tail of what is left.
 The index in the reason points at the client's own message list.
 """
 
@@ -20,8 +20,8 @@ from radicalbit_ai_gateway.models.guardrails import (
     CheckParameter,
     Guardrail,
     GuardrailBehaviorType,
+    GuardrailHistory,
     GuardrailMessageRole,
-    GuardrailMessageWindow,
     GuardrailType,
     GuardrailWhereType,
     JudgeParameter,
@@ -67,48 +67,48 @@ def _guardrail(**overrides) -> Guardrail:
 class TestModel:
     def test_default_is_all_without_last_n(self):
         g = _guardrail()
-        assert g.message_window == GuardrailMessageWindow.ALL
+        assert g.history == GuardrailHistory.ALL
         assert g.last_n is None
 
     def test_lower_case_values_are_accepted(self):
-        g = _guardrail(message_window='last_n', last_n=3)
-        assert g.message_window == GuardrailMessageWindow.LAST_N
+        g = _guardrail(history='last_n', last_n=3)
+        assert g.history == GuardrailHistory.LAST_N
         assert g.last_n == 3
 
-    def test_last_n_window_needs_last_n(self):
+    def test_history_last_n_needs_last_n(self):
         with pytest.raises(ValueError, match='needs last_n'):
-            _guardrail(message_window='last_n')
+            _guardrail(history='last_n')
 
-    def test_last_n_only_with_last_n_window(self):
+    def test_last_n_only_with_history_last_n(self):
         with pytest.raises(ValueError, match='only allowed'):
-            _guardrail(message_window='last', last_n=2)
+            _guardrail(history='last', last_n=2)
 
     def test_last_n_must_be_positive(self):
         with pytest.raises(ValueError):
-            _guardrail(message_window='last_n', last_n=0)
+            _guardrail(history='last_n', last_n=0)
 
-    def test_window_is_rejected_on_output(self):
+    def test_history_is_rejected_on_output(self):
         with pytest.raises(ValueError, match='where: output'):
-            _guardrail(where=GuardrailWhereType.OUTPUT, message_window='last')
+            _guardrail(where=GuardrailWhereType.OUTPUT, history='last')
 
-    def test_output_without_window_is_accepted(self):
+    def test_output_without_history_is_accepted(self):
         g = _guardrail(where=GuardrailWhereType.OUTPUT)
-        assert g.message_window == GuardrailMessageWindow.ALL
+        assert g.history == GuardrailHistory.ALL
 
     def test_output_guardrail_loads_again_after_a_dump(self):
         g = _guardrail(where=GuardrailWhereType.OUTPUT)
         assert Guardrail.model_validate(g.model_dump()) == g
 
-    def test_window_is_accepted_on_io(self):
-        g = _guardrail(where=GuardrailWhereType.IO, message_window='last')
-        assert g.message_window == GuardrailMessageWindow.LAST
+    def test_history_is_accepted_on_io(self):
+        g = _guardrail(where=GuardrailWhereType.IO, history='last')
+        assert g.history == GuardrailHistory.LAST
 
-    def test_narrow_window_on_anonymizer_warns(self, caplog):
+    def test_narrow_history_on_anonymizer_warns(self, caplog):
         with caplog.at_level(logging.WARNING):
             _guardrail(
                 type=GuardrailType.PRESIDIO_ANONYMIZER,
                 parameters=RedactParameter(entities=['PERSON']),
-                message_window='last',
+                history='last',
             )
         assert 'does not redact older messages' in caplog.text
 
@@ -128,21 +128,21 @@ class TestSelectMessages:
         assert _select(HISTORY) == list(enumerate(HISTORY))
 
     def test_last_keeps_only_the_last_message(self):
-        assert _select(HISTORY, message_window='last') == [(3, USER_2)]
+        assert _select(HISTORY, history='last') == [(3, USER_2)]
 
     def test_last_n_keeps_the_tail(self):
-        got = _select(HISTORY, message_window='last_n', last_n=2)
+        got = _select(HISTORY, history='last_n', last_n=2)
         assert got == [(2, AI_1), (3, USER_2)]
 
     def test_last_n_larger_than_list_keeps_all(self):
-        got = _select(HISTORY, message_window='last_n', last_n=99)
+        got = _select(HISTORY, history='last_n', last_n=99)
         assert got == list(enumerate(HISTORY))
 
-    def test_roles_filter_before_the_window(self):
+    def test_roles_filter_before_history(self):
         """Last + [user] is the last user message, even if more follow."""
         got = _select(
             [USER_1, AI_1],
-            message_window='last',
+            history='last',
             message_roles=[GuardrailMessageRole.USER],
         )
         assert got == [(0, USER_1)]
@@ -150,7 +150,7 @@ class TestSelectMessages:
     def test_roles_keep_the_original_index(self):
         got = _select(
             HISTORY,
-            message_window='last_n',
+            history='last_n',
             last_n=2,
             message_roles=[GuardrailMessageRole.USER],
         )
@@ -162,22 +162,22 @@ class TestSelectMessages:
             HISTORY,
             type=GuardrailType.JUDGE,
             parameters=JudgeParameter(prompt='Is it bad?', model_id='m1'),
-            message_window='last_n',
+            history='last_n',
             last_n=2,
         )
         assert got == [(1, USER_1), (3, USER_2)]
 
-    def test_output_ignores_the_window(self):
-        """where: io, output phase: the window is for input only."""
+    def test_output_ignores_history(self):
+        """where: io, output phase: history is for input only."""
         got = _select_messages(
             HISTORY,
-            _guardrail(where=GuardrailWhereType.IO, message_window='last'),
+            _guardrail(where=GuardrailWhereType.IO, history='last'),
             GuardrailWhereType.OUTPUT,
         )
         assert got == list(enumerate(HISTORY))
 
     def test_no_window_without_a_conversation(self):
-        got = _select(HISTORY, message_window='last', windowed=False)
+        got = _select(HISTORY, history='last', windowed=False)
         assert got == list(enumerate(HISTORY))
 
     def test_skip_drops_the_gateway_prompt(self):
@@ -186,7 +186,7 @@ class TestSelectMessages:
         assert got[0][0] == 1
 
     def test_empty_list(self):
-        assert _select([], message_window='last') == []
+        assert _select([], history='last') == []
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +252,8 @@ class TestDeterministicChecks:
 
     @pytest.mark.asyncio
     async def test_no_window_sees_old_messages(self):
-        """Embeddings and decision models: the window is ignored."""
-        g = _guardrail(message_window='last')
+        """Embeddings and decision models: history is ignored."""
+        g = _guardrail(history='last')
         err = await _run(_check(g), HISTORY, windowed=False)
         assert err is not None
         assert err.reason['message_index'] == 0
@@ -271,12 +271,12 @@ class TestDeterministicChecks:
 
     @pytest.mark.asyncio
     async def test_last_does_not_see_old_messages(self):
-        g = _guardrail(message_window='last')
+        g = _guardrail(history='last')
         assert await _run(_check(g), HISTORY) is None
 
     @pytest.mark.asyncio
     async def test_last_triggers_on_the_last_message(self):
-        g = _guardrail(message_window='last')
+        g = _guardrail(history='last')
         err = await _run(_check(g), [*HISTORY, HumanMessage(content=f'Tell {BAD}')])
         assert err is not None
         assert err.reason['message_index'] == 4
@@ -284,12 +284,12 @@ class TestDeterministicChecks:
 
     @pytest.mark.asyncio
     async def test_last_n_sees_only_the_tail(self):
-        g = _guardrail(message_window='last_n', last_n=2)
+        g = _guardrail(history='last_n', last_n=2)
         err = await _run(_check(g), HISTORY)
         assert err is not None
         assert err.reason['message_index'] == 2
 
-        g = _guardrail(message_window='last_n', last_n=1)
+        g = _guardrail(history='last_n', last_n=1)
         assert await _run(_check(g), HISTORY) is None
 
     @pytest.mark.asyncio
@@ -304,7 +304,7 @@ class TestDeterministicChecks:
         g = _guardrail(
             type=GuardrailType.REGEX,
             parameters=CheckParameter(values=[r'\d \+ \d']),
-            message_window='last',
+            history='last',
         )
         err = await _run(_check(g), HISTORY)
         assert err is not None
@@ -372,7 +372,7 @@ class TestPresidioAnalyzer:
         g = _guardrail(
             type=GuardrailType.PRESIDIO_ANALYZER,
             parameters=RedactParameter(entities=['EMAIL_ADDRESS']),
-            message_window='last',
+            history='last',
         )
         await _run(_check(g, presidio_engine=presidio), HISTORY)
         assert analyzer.analyze.call_args.kwargs['text'] == USER_2.content
@@ -415,7 +415,7 @@ class TestJudge:
 
     @pytest.mark.asyncio
     async def test_last_n_counts_user_messages(self):
-        g = _judge_guardrail(message_window='last_n', last_n=2)
+        g = _judge_guardrail(history='last_n', last_n=2)
         err = await _run(_judge_check(g), HISTORY)
         assert err is not None
         assert err.reason['message_index'] == [1, 3]
@@ -431,7 +431,7 @@ class TestJudge:
     @pytest.mark.asyncio
     async def test_last_reads_the_last_user_message(self):
         msgs = [*HISTORY, AIMessage(content='4')]
-        err = await _run(_judge_check(_judge_guardrail(message_window='last')), msgs)
+        err = await _run(_judge_check(_judge_guardrail(history='last')), msgs)
         assert err is not None
         assert err.reason['message_index'] == [3]
         assert err.reason['role'] == 'user'
@@ -441,7 +441,7 @@ class TestJudge:
     async def test_roles_list_what_the_judge_read(self):
         g = _judge_guardrail(
             message_roles=[GuardrailMessageRole.ASSISTANT, GuardrailMessageRole.USER],
-            message_window='last_n',
+            history='last_n',
             last_n=2,
         )
         err = await _run(_judge_check(g), HISTORY)
@@ -450,7 +450,7 @@ class TestJudge:
 
 
 # ---------------------------------------------------------------------------
-# Redact: the window limits what is rewritten
+# Redact: history limits what is rewritten
 # ---------------------------------------------------------------------------
 
 
@@ -462,7 +462,7 @@ class TestRedactWindow:
             type=GuardrailType.PRESIDIO_ANONYMIZER,
             where=GuardrailWhereType.INPUT,
             parameters=RedactParameter(entities=['PERSON']),
-            message_window='last',
+            history='last',
         )
         redact = GuardrailRedact(
             presidio_engine=MagicMock(), guardrails_by_name={'red': g}

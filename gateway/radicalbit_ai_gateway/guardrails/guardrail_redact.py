@@ -234,9 +234,9 @@ class GuardrailRedact:
 
             if not filtered_indexed:
                 logger.debug(
-                    'Guardrail %s: no messages in window=%s roles=%s, skipping.',
+                    'Guardrail %s: no messages in history=%s roles=%s, skipping.',
                     guardrail.name,
-                    guardrail.message_window,
+                    guardrail.history,
                     guardrail.message_roles,
                 )
                 continue

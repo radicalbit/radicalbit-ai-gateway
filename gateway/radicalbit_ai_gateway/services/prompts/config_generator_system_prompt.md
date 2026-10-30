@@ -128,6 +128,8 @@ Common fields:
 | `description` | No | Human-readable description |
 | `enabled` | No | Default `true` |
 | `message_roles` | No | Restrict scanning to roles: `user`, `system`, `tool`, `assistant`. Omit to use the default |
+| `history` | No | Which input messages to read: `all` (default), `last` or `last_n`. Applied after `message_roles`. Not allowed with `where: output` |
+| `last_n` | With `history: last_n` | How many messages `last_n` reads, at least 1. Only allowed with `history: last_n` |
 
 Guardrail names are matched **exactly** (case-sensitive) when a route references them.
 A guardrail with `where: output` can only go on a route that has `chat_models`: other

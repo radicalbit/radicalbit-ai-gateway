@@ -35,8 +35,8 @@ from radicalbit_ai_gateway.models.guardrails import (
     Guardrail,
     GuardrailBehaviorType,
     GuardrailClass,
+    GuardrailHistory,
     GuardrailMessageRole,
-    GuardrailMessageWindow,
     GuardrailParameter,
     GuardrailsAIParameter,
     GuardrailType,
@@ -345,9 +345,9 @@ def _select_messages(
     selected = [(i, m) for i, m in indexed if any(m is k for k in kept)]
     if not windowed or where == GuardrailWhereType.OUTPUT:
         return selected
-    if guardrail.message_window == GuardrailMessageWindow.LAST:
+    if guardrail.history == GuardrailHistory.LAST:
         return selected[-1:]
-    if guardrail.message_window == GuardrailMessageWindow.LAST_N:
+    if guardrail.history == GuardrailHistory.LAST_N:
         return selected[-(guardrail.last_n or 1) :]
     return selected
 
@@ -788,9 +788,9 @@ class GuardrailCheck:
             )
             if not selected:
                 logger.debug(
-                    'Guardrail %s: no messages in window=%s roles=%s, skipping.',
+                    'Guardrail %s: no messages in history=%s roles=%s, skipping.',
                     guardrail.name,
-                    guardrail.message_window,
+                    guardrail.history,
                     guardrail.message_roles,
                 )
                 continue
