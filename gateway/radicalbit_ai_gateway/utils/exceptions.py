@@ -580,6 +580,16 @@ class CredentialLimitAlreadyExistsError(AuthRegistryError):
         )
 
 
+class CredentialLimitValueError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            'credential_limit_value_unprocessable_entity',
+            log_message=log_message,
+        )
+
+
 class CredentialLimitNotFoundError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(

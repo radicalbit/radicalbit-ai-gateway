@@ -23,6 +23,8 @@ from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitConflictsOut,
     ProjectBudgetLimitOut,
     ProjectBudgetLimitsIn,
+    ProjectBudgetLimitUpdatedOut,
+    ProjectBudgetLimitValueIn,
 )
 from radicalbit_ai_gateway.models.project_dto import (
     ConfigListFilter,
@@ -411,6 +413,33 @@ class ProjectService:
             ProjectBudgetLimitOut.from_project_budget_limit(limit)
             for limit in self.project_budget_limit_dao.get_by_project_uuid(project_uuid)
         ]
+
+    def update_budget_limit_value(
+        self,
+        project_uuid: UUID,
+        limit_uuid: UUID,
+        value_in: ProjectBudgetLimitValueIn,
+    ) -> ProjectBudgetLimitUpdatedOut:
+        self._get_project_or_raise(project_uuid)
+        limit = self.project_budget_limit_dao.get_by_uuid(limit_uuid)
+        if not limit or limit.project_uuid != project_uuid:
+            raise ProjectBudgetLimitNotFoundError(
+                f'Budget limit {limit_uuid} not found for project {project_uuid}'
+            )
+        previous_value = float(limit.max_value)
+        self.project_budget_limit_dao.update_max_value(limit_uuid, value_in.value)
+        logger.info(
+            'Budget limit %s of project %s: max %s -> %s',
+            limit_uuid,
+            project_uuid,
+            previous_value,
+            value_in.value,
+        )
+        updated = self.project_budget_limit_dao.get_by_uuid(limit_uuid)
+        return ProjectBudgetLimitUpdatedOut(
+            **ProjectBudgetLimitOut.from_project_budget_limit(updated).model_dump(),
+            previous_value=previous_value,
+        )
 
     async def delete_budget_limit_from_project(
         self, project_uuid: UUID, limit_uuid: UUID

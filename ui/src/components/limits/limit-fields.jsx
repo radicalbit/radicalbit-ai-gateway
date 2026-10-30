@@ -15,7 +15,7 @@ const SELECT_PLACEHOLDER = 'Select';
 // The design system forces its own widths on these inputs: they fill flex-1 wrappers instead
 const FULL_WIDTH = { width: '100%' };
 
-function LimitFields({ limit, onChange, rowLabel, withCategory = true }) {
+function LimitFields({ isCategoryLocked = false, limit, onChange, rowLabel, withCategory = true }) {
   const id = useId();
 
   const category = limit?.category;
@@ -45,10 +45,12 @@ function LimitFields({ limit, onChange, rowLabel, withCategory = true }) {
   const precision = isBudget ? 2 : 0;
   const prefix = isBudget ? '$' : undefined;
   const windowOptions = getWindowOptions(algorithm);
+  const getAriaLabel = (label) => (rowLabel ? `${label}, ${rowLabel}` : undefined);
   const categoryField = withCategory ? (
     <Field htmlFor={`${id}-category`} label="Category">
       <Select
         aria-label={getAriaLabel('Category')}
+        disabled={isCategoryLocked}
         id={`${id}-category`}
         onChange={handleOnChangeCategory}
         options={CATEGORY_OPTIONS}
@@ -60,7 +62,6 @@ function LimitFields({ limit, onChange, rowLabel, withCategory = true }) {
     </Field>
   ) : false;
   const maxLabel = MAX_LABELS[category] ?? MAX_LABEL;
-  const getAriaLabel = (label) => (rowLabel ? `${label}, ${rowLabel}` : undefined);
 
   return (
     <div className="flex gap-2 items-end w-0 min-w-full" data-limit-row>
