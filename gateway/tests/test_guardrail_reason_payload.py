@@ -38,7 +38,7 @@ def test_guardrail_reason_is_included_in_error_param_payload():
         reason={
             'kind': 'contains',
             'value': 'sensitive',
-            'message_index': 0,
+            'message_indices': [0],
             'context': '… very <<sensitive>> data …',
         },
     )
@@ -68,7 +68,7 @@ def test_guardrail_judge_reason_does_not_expose_prompt_or_model_in_response():
         reason={
             'kind': 'judge',
             'value': 'BUSINESS_CONTEXT',
-            'message_index': 0,
+            'message_indices': [0],
             'context': 'Some excerpt',
             'prompt_ref': 'business_context_check.md',
             'model_id': 'gpt-4o-mini',
