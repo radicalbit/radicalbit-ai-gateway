@@ -418,6 +418,9 @@ class ChatAnthropic(ChatModel):
 
     # ── tracing ─────────────────────────────────────────────────────────────
 
+    def _server_url(self) -> str | None:
+        return self.anthropic_api_url
+
     def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
         return {
             'model': self.model,

@@ -204,6 +204,19 @@ class StreamingUtils:
                 )
                 for i, tc_chunk in enumerate(chunk.tool_call_chunks)
             ]
+            # A provider streams one call's deltas per chunk: the call's index is
+            # the provider's, not the position in the chunk, or a client merges
+            # parallel calls into the first.
+            for tool_call, tc_chunk in zip(
+                tool_calls, chunk.tool_call_chunks, strict=True
+            ):
+                if tc_chunk.get('index') is not None:
+                    tool_call.index = tc_chunk['index']
+
+        # DeepSeek (and OpenRouter) stream the model's reasoning beside its content.
+        delta_extra = {}
+        if reasoning_content := chunk.additional_kwargs.get('reasoning_content'):
+            delta_extra['reasoning_content'] = reasoning_content
 
         finish_reason = None
         if chunk.response_metadata:
@@ -222,6 +235,7 @@ class StreamingUtils:
                     role='assistant',
                     content=delta_content if delta_content else None,
                     tool_calls=tool_calls,
+                    **delta_extra,
                 ),
                 finish_reason=finish_reason,
                 logprobs=None,

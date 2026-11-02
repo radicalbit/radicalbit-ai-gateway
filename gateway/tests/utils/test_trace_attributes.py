@@ -1,6 +1,12 @@
 from unittest.mock import patch
 
+from opentelemetry import context as context_api, trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
 from radicalbit_ai_gateway.utils.trace_attributes import (
+    in_request_trace,
     set_mcp_attributes,
     set_trace_attributes,
 )
@@ -189,3 +195,34 @@ def test_set_mcp_attributes_records_a_zero_error_code(mock_set_props):
         set_mcp_attributes(error_code=0)
 
     mock_set_props.assert_called_once_with({'rb.gateway.mcp_error_code': '0'})
+
+
+async def test_in_request_trace_keeps_a_stream_in_the_endpoint_trace():
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer('test')
+    before = context_api.get_current()
+
+    async def model_call():
+        with tracer.start_as_current_span('model'):
+            yield 'chunk'
+
+    # The endpoint: its span ends and its context is gone before the
+    # response body is iterated.
+    endpoint = tracer.start_span('endpoint')
+    token = context_api.attach(trace.set_span_in_context(endpoint))
+    stream = in_request_trace(model_call())
+    unrelated = model_call()
+    context_api.detach(token)
+    endpoint.end()
+
+    assert [item async for item in stream] == ['chunk']
+    assert [item async for item in unrelated] == ['chunk']
+
+    _, model, orphan = exporter.get_finished_spans()
+    assert model.context.trace_id == endpoint.context.trace_id
+    assert model.parent.span_id == endpoint.context.span_id
+    # Without it, the stream's spans open a trace of their own.
+    assert orphan.parent is None
+    assert context_api.get_current() == before

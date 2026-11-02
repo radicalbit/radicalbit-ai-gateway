@@ -31,6 +31,7 @@ from radicalbit_ai_gateway.utils.gateway_route_factory import (
 
 ROUTE_KEY = 'proj/support'
 OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
+OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
 CLASSIFIER_URL = 'http://text-classifier:8888'
 
 MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.model_invoker.emit_event'
@@ -218,6 +219,60 @@ class TestRedactBeforeRouting(unittest.TestCase):
         )
         return mock
 
+    def _openai_response(self) -> dict:
+        return {
+            'id': 'resp_1',
+            'object': 'response',
+            'created_at': 1,
+            'model': 'gpt-4o',
+            'status': 'completed',
+            'output': [
+                {
+                    'type': 'message',
+                    'id': 'msg_1',
+                    'role': 'assistant',
+                    'status': 'completed',
+                    'content': [
+                        {'type': 'output_text', 'text': 'Done', 'annotations': []}
+                    ],
+                }
+            ],
+            'parallel_tool_calls': True,
+            'tool_choice': 'auto',
+            'tools': [],
+            'usage': {
+                'input_tokens': 10,
+                'input_tokens_details': {'cached_tokens': 0},
+                'output_tokens': 1,
+                'output_tokens_details': {'reasoning_tokens': 0},
+                'total_tokens': 11,
+            },
+        }
+
+    def _mock_openai_responses(self):
+        mock = pook.post(OPENAI_RESPONSES_URL).times(1)
+        mock.reply(200).json(self._openai_response())
+        return mock
+
+    def _mock_openai_responses_stream(self):
+        events = [
+            {
+                'type': 'response.output_text.delta',
+                'item_id': 'msg_1',
+                'output_index': 0,
+                'content_index': 0,
+                'delta': 'Done',
+                'logprobs': [],
+            },
+            {'type': 'response.completed', 'response': self._openai_response()},
+        ]
+        body = ''.join(
+            f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events
+        )
+        mock = pook.post(OPENAI_RESPONSES_URL).times(1)
+        mock.reply(200).header('Content-Type', 'text/event-stream').body(body)
+        return mock
+
     def _mock_classifier(self, text: str, label: str = 'billing'):
         mock = pook.post(f'{CLASSIFIER_URL}/invocations').json(
             {'dataframe_records': [{'inputs': text}]}
@@ -306,7 +361,7 @@ class TestRedactBeforeRouting(unittest.TestCase):
     def test_responses_endpoint_routes_on_the_redacted_message(self):
         app.state.routes = _build_routes(TEXT_CLASSIFICATION, [REDACT_EMAIL])
         classifier = self._mock_classifier(REDACTED_TEXT)
-        openai = self._mock_openai()
+        openai = self._mock_openai_responses()
 
         response = self._responses()
 
@@ -329,7 +384,7 @@ class TestRedactBeforeRouting(unittest.TestCase):
     def test_streamed_responses_route_on_the_redacted_message(self):
         app.state.routes = _build_routes(TEXT_CLASSIFICATION, [REDACT_EMAIL])
         classifier = self._mock_classifier(REDACTED_TEXT)
-        openai = self._mock_openai_stream()
+        openai = self._mock_openai_responses_stream()
 
         response = self._responses(stream=True)
 

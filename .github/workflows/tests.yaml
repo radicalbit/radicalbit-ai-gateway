@@ -73,4 +73,6 @@ jobs:
           flags: ${{ steps.safe-name.outputs.name }}
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: radicalbit/radicalbit-ai-gateway
+          disable_search: true   # upload only the file above
+          plugins: noop          # skip the gcov/xcode/pycoverage auto-discovery
           fail_ci_if_error: false

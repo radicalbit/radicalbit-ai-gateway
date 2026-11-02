@@ -93,7 +93,6 @@ class SpanRecord(BaseModel):
     # Token usage from span_attributes (stored as strings in ClickHouse)
     output_tokens: str | None = None
     input_tokens: str | None = None
-    total_tokens: str | None = None
     tags: list[str] = Field(default_factory=list)
     # Additional fields for span detail
     span_attributes: dict = Field(default_factory=dict)

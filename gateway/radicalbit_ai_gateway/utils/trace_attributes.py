@@ -1,8 +1,12 @@
+from collections.abc import AsyncIterator
 from enum import Enum
 from functools import wraps
+from typing import TypeVar
 
-from opentelemetry.context import attach, get_value, set_value
+from opentelemetry.context import attach, detach, get_current, get_value, set_value
 from traceloop.sdk import Traceloop
+
+T = TypeVar('T')
 
 
 class OperationCategory(str, Enum):
@@ -119,3 +123,25 @@ def ensure_endpoint_category(func):
             set_operation_category(OperationCategory.ENDPOINT)
 
     return wrapper
+
+
+def in_request_trace(stream: AsyncIterator[T]) -> AsyncIterator[T]:
+    """Return ``stream`` iterated in the current trace context.
+
+    A streaming endpoint returns before its stream is iterated, so its
+    workflow span has ended and its context is gone when the stream's spans
+    (the model call...) start: they would each open a trace of their own. Call
+    this in the endpoint, while its workflow span is current, to keep them in
+    the request's trace as children of that span.
+    """
+    context = get_current()
+
+    async def iterate() -> AsyncIterator[T]:
+        token = attach(context)
+        try:
+            async for item in stream:
+                yield item
+        finally:
+            detach(token)
+
+    return iterate()
