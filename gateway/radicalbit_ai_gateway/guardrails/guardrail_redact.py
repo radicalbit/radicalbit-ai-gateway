@@ -6,7 +6,7 @@ from typing import Any
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
-from radicalbit_ai_gateway.guardrails.guardrail_check import _filter_messages_by_roles
+from radicalbit_ai_gateway.guardrails.guardrail_check import _select_messages
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
@@ -196,7 +196,11 @@ class GuardrailRedact:
         where: GuardrailWhereType,
         project_uuid: str = '',
         project_name: str = '',
+        windowed: bool = True,
     ) -> list[BaseMessage]:
+        """``windowed`` is False on calls with no conversation (embeddings,
+        decision models): every guardrail then reads every message.
+        """
         redact_guardrails = self._get_redact_guardrails_for_route(
             route_config=route_config,
             where=where,
@@ -222,18 +226,17 @@ class GuardrailRedact:
                     f'Unknown guardrail type: {guardrail.type}', guardrail
                 )
 
-            # Filter to only the roles this guardrail is scoped to.
-            # Indices track positions so we can reintegrate after redacting.
-            filtered_indexed = [
-                (i, m)
-                for i, m in enumerate(messages_to_redact)
-                if m in _filter_messages_by_roles([m], guardrail.message_roles)
-            ]
+            # Each message keeps its index, so the redacted copy goes back
+            # in its place.
+            filtered_indexed = _select_messages(
+                messages_to_redact, guardrail, where, windowed=windowed
+            )
 
             if not filtered_indexed:
                 logger.debug(
-                    'Guardrail %s: no messages match message_roles=%s — skipping.',
+                    'Guardrail %s: no messages in history=%s roles=%s, skipping.',
                     guardrail.name,
+                    guardrail.history,
                     guardrail.message_roles,
                 )
                 continue

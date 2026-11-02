@@ -12,6 +12,7 @@ from radicalbit_ai_gateway.models.limiting import (
     RateLimiting,
     TokenLimiting,
 )
+from radicalbit_ai_gateway.models.responses import ResponsesSettings
 
 
 class GatewayRouteConfig(BaseModel):
@@ -78,6 +79,10 @@ class GatewayRouteConfig(BaseModel):
     mcp_servers: list[str] | None = Field(
         default=None,
         description='Aliases of top-level MCP servers exposed on this route.',
+    )
+    responses: ResponsesSettings | None = Field(
+        default=None,
+        description='Governance of the OpenAI Responses API on this route.',
     )
 
     def get_token_limiter(self, project_uuid: str) -> TokenLimiter:

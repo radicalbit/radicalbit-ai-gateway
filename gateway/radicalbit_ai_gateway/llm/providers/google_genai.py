@@ -229,6 +229,10 @@ class ChatGoogleGenerativeAI(ChatModel):
 
     _gen_ai_provider = 'gcp.gen_ai'
 
+    def _server_url(self) -> str | None:
+        # The SDK resolves it (Gemini API or Vertex AI) but does not expose it.
+        return self._client._api_client._http_options.base_url
+
     def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
         return {
             'model': self.model,

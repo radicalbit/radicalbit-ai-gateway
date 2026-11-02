@@ -1,4 +1,5 @@
 from enum import Enum
+import logging
 import re
 from typing import Annotated, Literal, Union
 
@@ -15,6 +16,7 @@ from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 app_config = get_app_config()
+logger = logging.getLogger(app_config.log_config.logger_name)
 
 
 class GuardrailClass(str, Enum):
@@ -55,6 +57,21 @@ class GuardrailMessageRole(str, Enum):
     SYSTEM = 'SYSTEM'
     TOOL = 'TOOL'
     ASSISTANT = 'ASSISTANT'
+
+
+class GuardrailHistory(str, Enum):
+    """Which messages of the conversation a guardrail reads, on input.
+
+    ``message_roles`` filters first. Then history keeps the tail of what
+    is left. So ``last`` with ``[user]`` is the last user message. The system
+    prompt the gateway adds from the route config is never counted.
+    On output, and on calls with no conversation (embeddings, decision
+    models), history is ignored.
+    """
+
+    ALL = 'ALL'
+    LAST = 'LAST'
+    LAST_N = 'LAST_N'
 
 
 class GuardrailBehaviorType(str, Enum):
@@ -347,6 +364,21 @@ class Guardrail(BaseModel):
         ),
         examples=[['user'], ['user', 'tool'], ['system'], ['tool']],
     )
+    history: GuardrailHistory = Field(
+        default=GuardrailHistory.ALL,
+        description=(
+            'Which input messages to read: all (default), last (the last '
+            'message) or last_n (the last N messages). message_roles filters '
+            'first, then history keeps the tail. Not allowed with where: output.'
+        ),
+        examples=['all', 'last', 'last_n'],
+    )
+    last_n: int | None = Field(
+        default=None,
+        ge=1,
+        description='How many messages last_n reads. Required with last_n only.',
+        examples=[1, 3, 10],
+    )
 
     @model_validator(mode='before')
     @classmethod
@@ -369,9 +401,39 @@ class Guardrail(BaseModel):
             'parameters': {'type': parameters_type, **data['parameters']},
         }
 
-    @field_validator('type', 'where', 'behavior', mode='before')
+    @field_validator('type', 'where', 'behavior', 'history', mode='before')
     def validate_lower_case_enum(cls, value: GuardrailBehaviorType) -> str:
         return value.upper()
+
+    @model_validator(mode='after')
+    def validate_history(self):
+        if self.history == GuardrailHistory.LAST_N:
+            if self.last_n is None:
+                raise ValueError('history: last_n needs last_n')
+        elif self.last_n is not None:
+            raise ValueError('last_n is only allowed with history: last_n')
+        # all is the default and a no-op on output: a dumped config carries
+        # it, so it must load again.
+        if (
+            self.where == GuardrailWhereType.OUTPUT
+            and self.history != GuardrailHistory.ALL
+        ):
+            raise ValueError(
+                'history is not allowed with where: output, it applies to input only'
+            )
+        if (
+            self.type == GuardrailType.PRESIDIO_ANONYMIZER
+            and self.history != GuardrailHistory.ALL
+        ):
+            # The client sends back its own copy of the history, not the
+            # redacted one. Older messages reach the model in clear text.
+            logger.warning(
+                'Guardrail %s: presidio_anonymizer with history: %s '
+                'does not redact older messages, they reach the model as sent.',
+                self.name,
+                self.history.value.lower(),
+            )
+        return self
 
     @field_validator('message_roles', mode='before')
     @classmethod

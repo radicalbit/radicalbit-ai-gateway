@@ -7,6 +7,7 @@ payloads and returns replies in the same content-block format (a list of
 blocks rather than a string).
 """
 
+from collections.abc import AsyncIterator
 import json
 from typing import Any, Literal
 
@@ -575,6 +576,31 @@ def response_to_message(
         tool_calls=tool_calls,
         invalid_tool_calls=invalid_tool_calls,
     )
+
+
+async def iter_sse_events(lines: AsyncIterator[str]) -> AsyncIterator[tuple[str, str]]:
+    """Parse server-sent event lines into ``(event, data)`` pairs.
+
+    An event without an ``event:`` field takes its name from the data's
+    ``type``, as every Responses API stream event carries one. A ``[DONE]``
+    terminator, which OpenAI does not send but compatible servers may, is
+    skipped.
+    """
+    event = ''
+    data: list[str] = []
+    async for line in lines:
+        if line.startswith('event:'):
+            event = line[6:].strip()
+        elif line.startswith('data:'):
+            data.append(line[5:].removeprefix(' '))
+        elif not line and data:
+            payload = '\n'.join(data)
+            if payload != '[DONE]':
+                yield event or json.loads(payload).get('type', ''), payload
+            event, data = '', []
+    if data and data != ['[DONE]']:
+        payload = '\n'.join(data)
+        yield event or json.loads(payload).get('type', ''), payload
 
 
 def _coerce_response(response: Any) -> Any:
