@@ -1,21 +1,25 @@
 import Lucide from '@Components/lucide';
 import { Button } from '@radicalbit/radicalbit-design-system';
-import { Copy } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import useHandleOnSubmit from './use-handle-on-submit';
 
 function Actions({ onClose }) {
-  const { handleOnSubmit, isSubmitDisabled } = useHandleOnSubmit(onClose);
+  const { handleOnSubmit, isCopied, isSubmitDisabled } = useHandleOnSubmit();
 
   return (
-    <Button
-      disabled={isSubmitDisabled}
-      onClick={handleOnSubmit}
-      type="primary"
-    >
-      <Lucide icon={Copy} />
+    <div className="flex gap-2 justify-end">
+      <Button onClick={onClose} type="text">Close</Button>
 
-      <div>Copy</div>
-    </Button>
+      <Button
+        disabled={isSubmitDisabled}
+        onClick={handleOnSubmit}
+        type="primary"
+      >
+        <Lucide icon={isCopied ? Check : Copy} />
+
+        <div>{isCopied ? 'Copied' : 'Copy'}</div>
+      </Button>
+    </div>
   );
 }
 

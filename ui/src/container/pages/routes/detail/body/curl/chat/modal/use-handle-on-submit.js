@@ -1,11 +1,27 @@
 import { useFormbitContext } from '@radicalbit/formbit';
+import { useEffect, useState } from 'react';
 import { CHAT_CURL } from '../../commands';
 import useCurlParams from '../../use-curl-params';
 
-export default (onClose) => {
+// How long the Copy button shows it copied.
+const COPIED_FEEDBACK_MS = 2000;
+
+export default () => {
   const { projectName, routeName } = useCurlParams();
 
   const { isFormInvalid, submitForm } = useFormbitContext();
+
+  const [isCopied, setIsCopied] = useState(false);
+
+  useEffect(() => {
+    if (!isCopied) {
+      return undefined;
+    }
+
+    const timeout = setTimeout(() => { setIsCopied(false); }, COPIED_FEEDBACK_MS);
+
+    return () => { clearTimeout(timeout); };
+  }, [isCopied]);
 
   const isSubmitDisabled = isFormInvalid();
 
@@ -13,9 +29,9 @@ export default (onClose) => {
     submitForm(async ({ form: formData }) => {
       await navigator.clipboard.writeText(CHAT_CURL(projectName, routeName, formData.apiKey));
 
-      onClose();
+      setIsCopied(true);
     });
   };
 
-  return { handleOnSubmit, isSubmitDisabled };
+  return { handleOnSubmit, isCopied, isSubmitDisabled };
 };
