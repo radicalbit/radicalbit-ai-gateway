@@ -1,4 +1,5 @@
-import { formatCount, isLimitComplete } from '@Components/limits/helpers';
+import { formatCount, formatRouteLimitWarning, isLimitComplete } from '@Components/limits/helpers';
+import RouteLimitWarnings from '@Components/limits/route-limit-warnings';
 import useModals from '@Hooks/use-modals';
 import { useApplyGroupLimitsMutation, useGetGroupQuery } from '@State/groups/api';
 import { FCK_APPLY_GROUP_LIMITS } from '@State/groups/fixed-cache-key';
@@ -18,6 +19,8 @@ import useTouchedCount from './use-touched-count';
 const UNAVAILABLE_MESSAGE = 'Unable to load this group, please close and retry later';
 
 const MODAL_WIDTH = 820;
+
+const ROUTE_WARNINGS_TITLE = 'Some routes these credentials reach have a stricter limit';
 
 const OutcomeEnum = {
   ADDED: 'added',
@@ -188,17 +191,35 @@ function Result({ result }) {
   const countOf = (outcome) => outcomes.filter((item) => item === outcome).length;
 
   const summary = `${formatCount(countOf(OutcomeEnum.ADDED), 'limit')} added, ${countOf(OutcomeEnum.OVERWRITTEN)} overwritten, ${countOf(OutcomeEnum.SKIPPED)} skipped.`;
+  const warningLines = getWarningLines(result?.members ?? []);
 
   return (
-    <div className="flex flex-col gap-2">
-      <strong>Limits applied</strong>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-2">
+        <strong>Limits applied</strong>
 
-      <span>{summary}</span>
+        <span>{summary}</span>
 
-      <span className="text-xs opacity-70">From now on they belong to each credential: change or delete them from Credentials.</span>
+        <span className="text-xs opacity-70">From now on they belong to each credential: change or delete them from Credentials.</span>
+      </div>
+
+      <RouteLimitWarnings lines={warningLines} title={ROUTE_WARNINGS_TITLE} />
     </div>
   );
 }
+
+const getWarningLines = (members) => {
+  const byWarning = new Map();
+
+  members.flatMap(({ warnings }) => warnings ?? []).forEach((warning) => {
+    const id = JSON.stringify(warning);
+    const entry = byWarning.get(id) ?? { count: 0, warning };
+
+    byWarning.set(id, { ...entry, count: entry.count + 1 });
+  });
+
+  return [...byWarning.values()].map(({ count, warning }) => formatRouteLimitWarning(warning, formatCount(count, 'credential')));
+};
 
 function useResetApplyOnUnmount() {
   const { modalPayload } = useModals();

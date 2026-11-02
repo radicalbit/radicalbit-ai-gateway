@@ -23,7 +23,7 @@ export default () => {
   const limits = data?.limits ?? [];
   const limit = limits.find((item) => item.uuid === limitUuid);
 
-  const [createLimits, createArgs] = useCreateKeyLimitsMutation({ fixedCacheKey: `${FCK_REPLACE_KEY_LIMIT_CREATE}-${limitUuid}` });
+  const [createLimits, createArgs] = useCreateKeyLimitsMutation({ fixedCacheKey: `${FCK_REPLACE_KEY_LIMIT_CREATE}-${uuid}` });
   const [deleteLimit, deleteArgs] = useDeleteKeyLimitMutation({ fixedCacheKey: `${FCK_REPLACE_KEY_LIMIT_DELETE}-${limitUuid}` });
 
   const args = { isLoading: createArgs.isLoading || deleteArgs.isLoading };
@@ -35,7 +35,10 @@ export default () => {
   const errorMessage = isOldLimitLeft ? OLD_LIMIT_LEFT_MESSAGE : createErrorMessage;
 
   const resetMutations = () => {
-    createArgs.reset();
+    if (createArgs.isError) {
+      createArgs.reset();
+    }
+
     deleteArgs.reset();
   };
 
@@ -46,7 +49,7 @@ export default () => {
 
     const { algorithm, category, value, windowSize } = row;
 
-    const { data: key, error: createError } = await createLimits({
+    const { data: createResponse, error: createError } = await createLimits({
       uuid,
       data: {
         limits: [{
@@ -69,7 +72,7 @@ export default () => {
       return;
     }
 
-    const newLimitUuid = (key?.limits ?? []).find((item) => getLimitSignature(item) === getLimitSignature(row))?.uuid;
+    const newLimitUuid = (createResponse?.key?.limits ?? []).find((item) => getLimitSignature(item) === getLimitSignature(row))?.uuid;
 
     await refetch();
     resetMutations();

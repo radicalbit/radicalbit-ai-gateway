@@ -163,5 +163,22 @@ class CredentialLimitOut(BaseModel):
         )
 
 
+class RouteLimitConsistencyWarning(BaseModel):
+    """A credential limit looser than a route its group reaches: advisory only,
+    the limit is saved anyway, and the route limit is the one reached first.
+    """
+
+    category: CredentialLimitCategory
+    algorithm: LimitingAlgorithmType
+    route_name: str
+    credential_value: float
+    credential_window_size: str
+    route_value: float
+    route_window_size: str
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+
 class CredentialLimitUpdatedOut(CredentialLimitOut):
     previous_value: float
+    warnings: list[RouteLimitConsistencyWarning] = Field(default_factory=list)

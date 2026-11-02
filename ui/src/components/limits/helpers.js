@@ -36,6 +36,15 @@ export const formatLimitValue = (category, value) => {
   return `${NUMBER_FORMAT.format(value)} ${unit}`;
 };
 
+export const formatRouteLimitWarning = ({
+  category, credentialValue, credentialWindowSize, routeName, routeValue, routeWindowSize,
+}, subject = 'this credential') => `${routeName}: route allows ${formatLimitValue(category, routeValue)} / ${formatLimitWindow(routeWindowSize)}, ${subject} ${formatLimitValue(category, credentialValue)} / ${formatLimitWindow(credentialWindowSize)}. The route limit is reached first.`;
+
+export const getLimitWarnings = (warnings, { algorithm, category, windowSize }) => (warnings ?? [])
+  .filter((warning) => warning.category === category && warning.algorithm === algorithm && warning.credentialWindowSize === windowSize);
+
+export const formatNeverReached = ({ category, routeName, routeValue, routeWindowSize }) => `Never reached on ${routeName}: the route allows ${formatLimitValue(category, routeValue)} / ${formatLimitWindow(routeWindowSize)}.`;
+
 export const formatCount = (count, noun) => (count === 1 ? `1 ${noun}` : `${count} ${noun}s`);
 
 export const formatLimitsCount = (count) => formatCount(count, 'limit');

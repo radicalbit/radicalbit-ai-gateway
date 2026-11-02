@@ -4,6 +4,7 @@ import SuccessMessage from '@Components/success-message';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
 import { useCreateKeyLimitsMutation, useGetKeyQuery } from '@State/keys/api';
+import { FCK_CREATE_KEY_LIMITS } from '@State/keys/fixed-cache-key';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { getInitialValues } from './schema';
 
@@ -44,7 +45,7 @@ export default () => {
   const name = data?.name;
   const limits = data?.limits ?? [];
 
-  const [trigger, args] = useCreateKeyLimitsMutation({ fixedCacheKey: `create-key-limits-${uuid}` });
+  const [trigger, args] = useCreateKeyLimitsMutation({ fixedCacheKey: `${FCK_CREATE_KEY_LIMITS}-${uuid}` });
 
   const hasRowErrors = getNewLimitsErrors({ limits, rows }).some(Boolean);
   const isSubmitDisabled = isFormInvalid() || hasRowErrors || !rows.every(isLimitComplete) || args.isLoading;

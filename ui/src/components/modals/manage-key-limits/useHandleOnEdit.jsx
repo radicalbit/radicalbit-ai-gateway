@@ -22,7 +22,7 @@ export default () => {
   const limits = data?.limits ?? [];
   const limit = limits.find((item) => item.uuid === limitUuid);
 
-  const [trigger, args] = useUpdateKeyLimitValueMutation({ fixedCacheKey: `${FCK_UPDATE_KEY_LIMIT_VALUE}-${limitUuid}` });
+  const [trigger, args] = useUpdateKeyLimitValueMutation({ fixedCacheKey: `${FCK_UPDATE_KEY_LIMIT_VALUE}-${uuid}` });
 
   const otherLimits = limits.filter((item) => item.uuid !== limitUuid);
   const [duplicateError] = getNewLimitsErrors({ limits: otherLimits, rows: row ? [row] : [] });
@@ -60,7 +60,10 @@ export default () => {
   };
 
   const handleOnCancel = () => {
-    args.reset();
+    if (args.isError) {
+      args.reset();
+    }
+
     initialize(getInitialValues());
     focusLimitMenu(limitUuid);
   };

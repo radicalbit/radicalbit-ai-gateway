@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +17,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeysUuidIn,
     RouteGroupsIn,
 )
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.group_limiting import (
     GroupLimitsApplyOut,
     GroupLimitsIn,
@@ -363,7 +365,10 @@ class GroupService:
         return self.group_dao.get_names_by_uuids(uuids)
 
     def apply_limits_to_group(
-        self, group_uuid: UUID, limits_in: GroupLimitsIn
+        self,
+        group_uuid: UUID,
+        limits_in: GroupLimitsIn,
+        route_configs: Mapping[str, GatewayRouteConfig] | None = None,
     ) -> GroupLimitsApplyOut:
         """Copy the limits onto the credentials in the group now (ADR 0009).
 
@@ -378,5 +383,7 @@ class GroupService:
                 'the credentials in the group, not to the group'
             )
         return GroupLimitsApplyOut(
-            members=self.key_service.apply_limits_to_keys(group.keys, limits_in)
+            members=self.key_service.apply_limits_to_keys(
+                group.keys, limits_in, route_configs
+            )
         )

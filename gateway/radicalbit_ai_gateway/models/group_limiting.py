@@ -9,6 +9,7 @@ from pydantic.alias_generators import to_camel
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitsIn,
+    RouteLimitConsistencyWarning,
 )
 from radicalbit_ai_gateway.models.limiting import (
     LimitingAlgorithmType,
@@ -67,6 +68,8 @@ class GroupMemberLimitsOut(BaseModel):
     key_name: str
     expired: bool
     limits: list[GroupLimitResultOut]
+    # On the limits the member received: skipped ones keep the member's own max
+    warnings: list[RouteLimitConsistencyWarning]
 
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 

@@ -274,6 +274,7 @@ class TestGroupRoute(unittest.TestCase):
                             new_value=50,
                         )
                     ],
+                    warnings=[],
                 )
             ]
         )
@@ -298,11 +299,12 @@ class TestGroupRoute(unittest.TestCase):
                             'newValue': 50.0,
                         }
                     ],
+                    'warnings': [],
                 }
             ]
         }
         self.group_service.apply_limits_to_group.assert_called_once_with(
-            group.uuid, GroupLimitsIn.model_validate(body)
+            group.uuid, GroupLimitsIn.model_validate(body), {}
         )
 
     def test_apply_limits_to_group_with_no_credentials(self):

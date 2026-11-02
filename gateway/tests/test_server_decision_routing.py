@@ -664,7 +664,11 @@ class TestDecisionRoutingEndpoint(unittest.TestCase):
         second = self._chat()
 
         assert (first.status_code, second.status_code) == (200, 200)
-        assert second.json() == first.json()
+        # A cache hit is stamped with the time it is served: across a second
+        # boundary `created` differs, the rest is the cached answer
+        first_body, second_body = first.json(), second.json()
+        assert second_body.pop('created') >= first_body.pop('created')
+        assert second_body == first_body
         assert typesafe.isdone()
         assert openai.isdone()
         # One routing call per request, never more.

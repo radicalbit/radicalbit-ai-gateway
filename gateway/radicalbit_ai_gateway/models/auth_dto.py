@@ -14,7 +14,10 @@ from radicalbit_ai_gateway.models.credential_expiry import (
     get_credential_state,
     utc_today,
 )
-from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitOut
+from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitOut,
+    RouteLimitConsistencyWarning,
+)
 from radicalbit_ai_gateway.models.credential_rotation import (
     RotationState,
     get_rotation_state,
@@ -271,6 +274,8 @@ class GroupOut(BaseModel):
 class KeyFullOut(KeyOut):
     group: GroupOut | None
     limits: list[CredentialLimitOut] | None = None
+    # Saved limits never reached on a route the credential reaches: with limits only
+    limit_warnings: list[RouteLimitConsistencyWarning] | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -330,6 +335,13 @@ class KeyFullOut(KeyOut):
             state=get_credential_state(key.expires_on),
             **_rotation_fields(key),
         )
+
+
+class KeyLimitsAddedOut(BaseModel):
+    key: KeyFullOut
+    warnings: list[RouteLimitConsistencyWarning]
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
 
 class GroupFullOut(GroupOut):

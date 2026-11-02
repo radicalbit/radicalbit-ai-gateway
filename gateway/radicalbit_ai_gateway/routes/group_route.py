@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -11,6 +11,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyFullOut,
     KeysUuidIn,
 )
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.group_limiting import (
     GroupLimitsApplyOut,
     GroupLimitsIn,
@@ -19,6 +20,7 @@ from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.dependencies import get_route_configs
 
 app_config = get_app_config()
 
@@ -158,8 +160,14 @@ class GroupRoute:
         @route_meta(
             entity_type='GROUP', entity_uuid_param='group_uuid', action='ADD_LIMIT'
         )
-        def apply_limits_to_group(group_uuid: UUID, limits_in: GroupLimitsIn):
-            result = group_service.apply_limits_to_group(group_uuid, limits_in)
+        def apply_limits_to_group(
+            group_uuid: UUID,
+            limits_in: GroupLimitsIn,
+            route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
+        ):
+            result = group_service.apply_limits_to_group(
+                group_uuid, limits_in, route_configs
+            )
             logger.info(
                 'Applied %s limit(s) to the %s credential(s) of group %s',
                 len(limits_in.limits),

@@ -65,7 +65,7 @@ function PublishedConflict() {
       )}
       showIcon
       title={title}
-      type="error"
+      type="warning"
     />
   );
 }
