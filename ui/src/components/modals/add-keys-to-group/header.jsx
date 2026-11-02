@@ -1,13 +1,10 @@
 import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
+import InfoPopover from '@Components/info-popover';
 import useModals from '@Hooks/use-modals';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useGetGroupQuery } from '@State/groups/api';
-import {
-  Popover,
-  SectionTitle,
-  Skeleton,
-} from '@radicalbit/radicalbit-design-system';
+import { SectionTitle, Skeleton } from '@radicalbit/radicalbit-design-system';
 import { Info } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -85,9 +82,9 @@ function AssociatedKeys() {
     <div className="flex flex-row items-center gap-2">
       <span>{`Credentials already associated: ${associated.length}`}</span>
 
-      <Popover content={popoverContent}>
+      <InfoPopover content={popoverContent}>
         <Lucide icon={Info} />
-      </Popover>
+      </InfoPopover>
     </div>
   );
 }

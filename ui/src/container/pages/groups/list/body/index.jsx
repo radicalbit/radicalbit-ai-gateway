@@ -44,6 +44,7 @@ function GroupsList() {
       <div className="flex flex-row items-center gap-4">
         <Search
           allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
+          aria-label="Search groups by name"
           onChange={handleSearchChange}
           placeholder="Search groups by name"
           style={{ width: '300px' }}

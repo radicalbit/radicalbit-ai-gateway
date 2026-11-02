@@ -1,15 +1,13 @@
 import HtmlAnchor from '@Components/html-anchor';
+import InfoPopover from '@Components/info-popover';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
-import {
-  Popover,
-} from '@radicalbit/radicalbit-design-system';
 import { useNavigate } from 'react-router-dom';
 
 function Routes({ routes }) {
   return (
-    <Popover content={<PopoverContent routes={routes} />} minWidth="200" title={<strong>Routes</strong>}>
+    <InfoPopover content={<PopoverContent routes={routes} />} minWidth="200" title={<strong>Routes</strong>}>
       {routes.length}
-    </Popover>
+    </InfoPopover>
   );
 }
 

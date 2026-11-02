@@ -92,6 +92,19 @@ class ProjectBudgetLimitsIn(BaseModel):
         return [limit.to_project_budget_limit(project_uuid) for limit in self.limits]
 
 
+class ProjectBudgetLimitValueIn(BaseModel):
+    value: float = Field(
+        ...,
+        gt=0,
+        description='New budget threshold; window type and window stay as they are.',
+        examples=[1.0, 15.0],
+    )
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, extra='forbid'
+    )
+
+
 class ProjectBudgetLimitOut(BaseModel):
     uuid: UUID
     algorithm: LimitingAlgorithmType
@@ -114,6 +127,10 @@ class ProjectBudgetLimitOut(BaseModel):
             created_at=str(project_budget_limit.created_at),
             updated_at=str(project_budget_limit.updated_at),
         )
+
+
+class ProjectBudgetLimitUpdatedOut(ProjectBudgetLimitOut):
+    previous_value: float
 
 
 class ProjectBudgetLimitConflictsOut(BaseModel):

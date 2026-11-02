@@ -33,6 +33,7 @@ from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
+from radicalbit_ai_gateway.routing.llm_router import LLMRouter
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_gateway_routes_from_config,
@@ -620,3 +621,56 @@ def test_enabled_route_caching_falls_back_to_memory_without_redis():
 
     cache = routes['my-route'].gateway_cache
     assert isinstance(cache.cache_client, CacheToolsInMemory)
+
+
+_LLM_ROUTING_YAML = """
+chat_models:
+  - model_id: mini
+    model: openai/gpt-4o-mini
+    credentials:
+      api_key: sk-dummy
+  - model_id: coder
+    model: openai/gpt-4o
+    credentials:
+      api_key: sk-dummy
+  - model_id: router
+    model: openai/gpt-4o-mini
+    credentials:
+      api_key: sk-dummy
+  - model_id: router-backup
+    model: openai/gpt-4o-mini
+    credentials:
+      api_key: sk-dummy
+routing:
+  - name: by-topic
+    type: llm
+    router_model_id: router
+    fallback_model_id: router-backup
+    default_model_id: mini
+    output_mapping:
+      - model_id: coder
+        description: writing, debugging or reviewing code
+routes:
+  my-route:
+    chat_models: [mini, coder]
+    routing: by-topic
+"""
+
+
+def test_llm_routing_builds_router_and_fallback_models():
+    """The router and fallback models come from top-level chat_models, off the route."""
+    routes = _build_routes(_LLM_ROUTING_YAML, redis_client=None)
+
+    router = routes['my-route'].router
+    assert isinstance(router, LLMRouter)
+    assert set(router._router_models) == {'router', 'router-backup'}
+    assert router._router_models['router'].model.model_id == 'router'
+
+
+def test_llm_routing_without_fallback_builds_only_the_router_model():
+    yaml_content = _LLM_ROUTING_YAML.replace(
+        '    fallback_model_id: router-backup\n', ''
+    )
+    routes = _build_routes(yaml_content, redis_client=None)
+
+    assert set(routes['my-route'].router._router_models) == {'router'}

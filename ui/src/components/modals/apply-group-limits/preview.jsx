@@ -169,15 +169,15 @@ function NameCell({ isCollapsed, record }) {
   const chevron = isCollapsed ? ChevronRight : ChevronDown;
 
   return (
-    <div className="flex items-center gap-2">
+    <button aria-expanded={!isCollapsed} className="flex items-center gap-2 p-0 border-0 bg-transparent text-inherit text-left font-[inherit] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--coo-fg-black)]" type="button">
       <Lucide icon={chevron} />
 
-      <div className="flex flex-col">
+      <span className="flex flex-col">
         <strong>{member.name}</strong>
 
         <ExpiredMark member={member} />
-      </div>
-    </div>
+      </span>
+    </button>
   );
 }
 
@@ -209,7 +209,7 @@ function ChoiceCell({ record }) {
   const { form, write } = useFormbitContext();
   const overwrite = form?.overwrite ?? [];
 
-  const { existing, isHeader, key } = record;
+  const { existing, isHeader, key, limit, member } = record;
 
   if (isHeader || !existing) {
     return false;
@@ -222,7 +222,9 @@ function ChoiceCell({ record }) {
 
   const value = overwrite.includes(key) ? ChoiceEnum.OVERWRITE : ChoiceEnum.SKIP;
 
-  return <Segmented onChange={handleOnChange} options={CHOICE_OPTIONS} size="small" value={value} />;
+  const ariaLabel = `${member?.name}: ${LIMIT_CATEGORY_LABELS[limit?.category]} · ${formatLimitWindow(limit?.windowSize)}`;
+
+  return <Segmented aria-label={ariaLabel} onChange={handleOnChange} options={CHOICE_OPTIONS} size="small" value={value} />;
 }
 
 export default Preview;

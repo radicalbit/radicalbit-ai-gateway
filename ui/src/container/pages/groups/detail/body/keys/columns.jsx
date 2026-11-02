@@ -1,7 +1,8 @@
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
+import TableRowLink from '@Components/table-row-link';
 import {
-  CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, ROTATION_FORMAT, RotationStateEnum,
+  CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum, SEARCH_PARAMS,
 } from '@Src/constants';
 import { useGetGroupQuery, useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import {
@@ -69,7 +70,9 @@ function Name({ record }) {
       )}
       title={(
         <Truncate tooltip={{ title: name, placement: 'topLeft' }}>
-          <span className={className}>{name}</span>
+          <TableRowLink to={`/${PathsEnum.CREDENTIALS}?${SEARCH_PARAMS.credentials}=${encodeURIComponent(name)}`}>
+            <span className={className}>{name}</span>
+          </TableRowLink>
         </Truncate>
       )}
     />

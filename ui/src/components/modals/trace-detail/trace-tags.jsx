@@ -1,6 +1,7 @@
+import InfoPopover from '@Components/info-popover';
 import useModals from '@Hooks/use-modals';
 import { useGetTraceByIdVertical } from '@State/tracing/vertical-hooks';
-import { Popover, SectionTitle } from '@radicalbit/radicalbit-design-system';
+import { SectionTitle } from '@radicalbit/radicalbit-design-system';
 
 function TraceTags() {
   const { modalPayload } = useModals();
@@ -14,7 +15,7 @@ function TraceTags() {
   }
 
   return (
-    <Popover
+    <InfoPopover
       arrow={false}
       content={(
         <div className="flex flex-col gap-1 font-mono text-xs">
@@ -33,7 +34,7 @@ function TraceTags() {
           title={<span className="underline decoration-dotted">{tags.length}</span>}
         />
       </div>
-    </Popover>
+    </InfoPopover>
   );
 }
 

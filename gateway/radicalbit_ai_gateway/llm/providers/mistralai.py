@@ -176,6 +176,9 @@ class ChatMistralAI(ChatModel):
         }
         return {k: v for k, v in params.items() if v is not None}
 
+    def _server_url(self) -> str | None:
+        return self.base_url
+
     def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
         return {**self._default_params(), 'stop': stop, **self.bound, **kwargs}
 

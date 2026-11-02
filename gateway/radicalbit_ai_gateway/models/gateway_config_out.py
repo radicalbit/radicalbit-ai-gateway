@@ -28,6 +28,7 @@ from radicalbit_ai_gateway.models.routing import (
     DecisionOutputMappingEntry,
     DecisionRoutingConfig,
     DeterministicRoutingConfig,
+    LLMRoutingConfig,
     OutputMappingEntry,
     SemanticRoutingConfig,
     TextClassificationRoutingConfig,
@@ -222,6 +223,14 @@ class DecisionRoutingConfigOut(DecisionRoutingConfig):
     )
 
 
+class LLMRoutingConfigOut(LLMRoutingConfig):
+    output_mapping: list[DecisionOutputMappingEntryOut]
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+
 AnyCachingOut = Annotated[
     Union[CachingOut, SemanticCachingOut],
     Field(discriminator='type'),
@@ -233,6 +242,7 @@ AnyRoutingConfigOut = Annotated[
         TextClassificationRoutingConfigOut,
         SemanticRoutingConfigOut,
         DecisionRoutingConfigOut,
+        LLMRoutingConfigOut,
     ],
     Field(discriminator='type'),
 ]

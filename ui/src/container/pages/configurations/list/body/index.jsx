@@ -38,6 +38,7 @@ function ConfigurationsList() {
       <div className="flex flex-row items-center gap-4">
         <Search
           allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
+          aria-label="Search by project name"
           onChange={handleSearchChange}
           placeholder="Search by project name"
           style={{ width: '300px' }}

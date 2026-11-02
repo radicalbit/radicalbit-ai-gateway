@@ -1,3 +1,4 @@
+import focusFirstInvalidField from '@Helpers/focus-first-invalid-field';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { paths } from './schema';
 
@@ -9,6 +10,7 @@ export default () => {
       successCallback: () => {
         write('__metadata.step', 1);
       },
+      errorCallback: focusFirstInvalidField,
     });
   };
 

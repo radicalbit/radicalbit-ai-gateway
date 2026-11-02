@@ -71,7 +71,7 @@ async def test_reason_logged_for_starts_with():
     assert exc.value.reason is not None
     assert exc.value.reason['kind'] == 'starts_with'
     assert exc.value.reason['value'] == 'Hello'
-    assert exc.value.reason['message_index'] == 0
+    assert exc.value.reason['message_indices'] == [0]
     assert isinstance(exc.value.reason.get('context'), str)
 
 
@@ -116,7 +116,7 @@ async def test_reason_logged_for_contains_case_insensitive():
     assert exc.value.reason is not None
     assert exc.value.reason['kind'] == 'contains'
     assert exc.value.reason['value'] == 'sensitive'
-    assert exc.value.reason['message_index'] == 0
+    assert exc.value.reason['message_indices'] == [0]
     assert isinstance(exc.value.reason.get('context'), str)
 
 
@@ -161,7 +161,7 @@ async def test_reason_logged_for_regex():
     assert exc.value.reason is not None
     assert exc.value.reason['kind'] == 'regex'
     assert exc.value.reason['pattern'] == r'\d+'
-    assert exc.value.reason['message_index'] == 0
+    assert exc.value.reason['message_indices'] == [0]
     assert isinstance(exc.value.reason.get('context'), str)
 
 

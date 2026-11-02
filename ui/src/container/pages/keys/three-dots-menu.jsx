@@ -1,7 +1,6 @@
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
 import { CredentialStateEnum, GATEWAY_OWNER, RotationStateEnum } from '@Src/constants';
-import DeleteKey from '@Container/pages/keys/list/delete-key';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useRemoveKeyFromGroupMutation } from '@State/groups/api';
 import {
@@ -15,15 +14,41 @@ import {
 import { EllipsisVertical } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { useEndGracePeriodMutation, useGetKeyQuery } from '@State/keys/api';
+import { useRef, useState } from 'react';
+
+const MENU_TRIGGER = ['hover', 'click'];
 
 function ThreeDotsMenu() {
+  const buttonRef = useRef(null);
+
+  const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);
+
   const { uuid } = useParams();
   const items = useGetThreeDotsMenuItems(uuid);
 
+  const handleOnOpenChange = (isOpen) => {
+    const { activeElement } = document;
+    const isFocusLost = activeElement === document.body || activeElement?.closest('.ant-dropdown');
+
+    if (!isOpen) {
+      setIsOpenedByKeyboard(false);
+    }
+
+    if (!isOpen && isFocusLost) {
+      buttonRef.current?.focus();
+    }
+  };
+
+  const handleOnKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      setIsOpenedByKeyboard(true);
+    }
+  };
+
   return (
     <Tooltip title="More actions">
-      <Dropdown menu={{ items }}>
-        <Button aria-label="More actions" type="text">
+      <Dropdown autoFocus={isOpenedByKeyboard} destroyOnHidden menu={{ items }} onOpenChange={handleOnOpenChange} trigger={MENU_TRIGGER}>
+        <Button aria-label="More actions" onKeyDown={handleOnKeyDown} ref={buttonRef} type="text">
           <Lucide icon={EllipsisVertical} />
         </Button>
       </Dropdown>
@@ -55,6 +80,10 @@ export const useGetThreeDotsMenuItems = (uuid) => {
 
   const handleOnRotateKey = () => {
     showModal(modals.ROTATE_KEY, { uuid });
+  };
+
+  const handleOnDeleteKey = () => {
+    showModal(modals.DELETE_KEY_WITH_GROUPS, { uuid });
   };
 
   const handleOnManageLimits = () => {
@@ -150,10 +179,8 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         type: 'divider',
       },
       {
-        label: (
-          <DeleteKey uuid={uuid}>
-            <div className="is-error">Delete credential</div>
-          </DeleteKey>),
+        label: <div className="is-error">Delete credential</div>,
+        onClick: handleOnDeleteKey,
       },
     ];
   }
@@ -174,10 +201,8 @@ export const useGetThreeDotsMenuItems = (uuid) => {
       type: 'divider',
     },
     {
-      label: (
-        <DeleteKey uuid={uuid}>
-          <div className="is-error">Delete credential</div>
-        </DeleteKey>),
+      label: <div className="is-error">Delete credential</div>,
+      onClick: handleOnDeleteKey,
     },
   ].filter(Boolean);
 };

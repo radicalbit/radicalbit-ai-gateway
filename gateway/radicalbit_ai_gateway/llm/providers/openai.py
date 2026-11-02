@@ -622,7 +622,70 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
                     is_first_chunk = False
                     yield chunk
 
+    # ── Native Responses API ─────────────────────────────────────────────
+
+    def supports_native_responses(self) -> bool:
+        # Every endpoint on the OpenAI client is tried; one that does not serve
+        # the Responses API answers with its own error.
+        return True
+
+    def _native_responses_payload(self, body: dict) -> dict:
+        """Merge the model's configured settings into a client's Responses body.
+
+        The client's values win; nested ``reasoning`` and ``text`` are merged
+        key by key. ``model`` is always the configured one.
+        """
+        reasoning = self.reasoning
+        if reasoning is None and self.reasoning_effort is not None:
+            reasoning = {'effort': self.reasoning_effort}
+        configured = {
+            'temperature': self.temperature,
+            'top_p': self.top_p,
+            'max_output_tokens': self.max_tokens,
+            'service_tier': self.service_tier,
+            'truncation': self.truncation,
+            'store': self.store,
+            'include': self.include,
+            'reasoning': reasoning,
+            'text': {'verbosity': self.verbosity} if self.verbosity else None,
+            **self.model_kwargs,
+        }
+        payload = {k: v for k, v in configured.items() if v is not None}
+        for key, value in body.items():
+            if isinstance(value, dict) and isinstance(payload.get(key), dict):
+                payload[key] = {**payload[key], **value}
+            else:
+                payload[key] = value
+        payload.pop('model', None)
+        payload.pop('stream', None)
+        return payload
+
+    async def _ainvoke_native_responses(self, body: dict) -> dict:
+        response = await self._client.responses.with_raw_response.create(
+            model=self.model_name,
+            extra_body=self._native_responses_payload(body),
+        )
+        return response.http_response.json()
+
+    async def _astream_native_responses(
+        self, body: dict
+    ) -> AsyncIterator[tuple[str, str]]:
+        async with self._client.responses.with_streaming_response.create(
+            model=self.model_name,
+            stream=True,
+            extra_body=self._native_responses_payload(body),
+        ) as response:
+            async for event in with_chunk_timeout(
+                responses_api.iter_sse_events(response.iter_lines()),
+                self.stream_chunk_timeout,
+                self.model_name,
+            ):
+                yield event
+
     # ── Tracing ──────────────────────────────────────────────────────────
+
+    def _server_url(self) -> str | None:
+        return str(self._client.base_url)
 
     def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
         return {
@@ -723,6 +786,37 @@ def _messages_after_last_response(
     return messages, None
 
 
+# The id prefix OpenAI requires for each input item type it checks.
+_OPENAI_ITEM_ID_PREFIXES = {
+    'message': 'msg_',
+    'function_call': 'fc_',
+    'custom_tool_call': 'ctc_',
+}
+
+
+def is_openai_reasoning_blob(encrypted_content: Any) -> bool:
+    # OpenAI's encrypted reasoning always starts with ``gAAAA``.
+    return isinstance(encrypted_content, str) and encrypted_content.startswith('gAAAA')
+
+
+def _is_openai_reasoning(item: dict) -> bool:
+    # DeepSeek's ``encrypted_content`` is a ``<response id>-<index>`` label, not
+    # encrypted, so it fails both checks.
+    return str(item.get('id', '')).startswith('rs_') or is_openai_reasoning_blob(
+        item.get('encrypted_content')
+    )
+
+
+# OpenAI never returns these on reasoning and rejects them on input: reasoning
+# carrying them came from elsewhere, even with an OpenAI blob.
+_FOREIGN_REASONING_FIELDS = frozenset({'status', 'format', 'signature'})
+
+
+def _has_foreign_id(item: dict) -> bool:
+    prefix = _OPENAI_ITEM_ID_PREFIXES.get(item.get('type'))
+    return bool(prefix and 'id' in item and not str(item['id']).startswith(prefix))
+
+
 class ChatOpenAI(_BaseChatOpenAI):
     """OpenAI chat model (also any OpenAI-compatible endpoint via ``base_url``)."""
 
@@ -788,6 +882,37 @@ class ChatOpenAI(_BaseChatOpenAI):
         if 'max_tokens' in params:
             params['max_completion_tokens'] = params.pop('max_tokens')
         return params
+
+    def adapt_responses_input(self, items: list) -> list:
+        if self.openai_api_base:
+            # Another OpenAI-compatible endpoint, whose own items can't be told
+            # apart: no reasoning, and no item ids, which each provider checks
+            # its own way.
+            return [
+                {k: v for k, v in item.items() if k not in ('id', 'status')}
+                if isinstance(item, dict)
+                else item
+                for item in super().adapt_responses_input(items)
+            ]
+        adapted = []
+        for item in items:
+            if not isinstance(item, dict):
+                adapted.append(item)
+            elif item.get('type') == 'reasoning':
+                # OpenAI reads only its own reasoning and rejects any other shape.
+                if _is_openai_reasoning(item) and not (
+                    _FOREIGN_REASONING_FIELDS & item.keys()
+                ):
+                    adapted.append(item)
+            elif _has_foreign_id(item):
+                # OpenAI checks each item id's prefix; without the id it takes
+                # the item only without its ``status`` too.
+                adapted.append(
+                    {k: v for k, v in item.items() if k not in ('id', 'status')}
+                )
+            else:
+                adapted.append(item)
+        return adapted
 
     def _routes_stream_to_responses_api(self, kwargs: dict) -> bool:
         return self._use_responses_api({**kwargs, **self.model_kwargs})

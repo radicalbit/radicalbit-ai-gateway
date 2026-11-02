@@ -4,31 +4,19 @@ import logging
 from cron_converter import Cron
 
 from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
-from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
     DeterministicRoutingConfig,
     RoutingRuleType,
 )
+from radicalbit_ai_gateway.routing.common import last_human_text
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.build_user_content import (
-    build_user_content,
-    stringify_message_content,
-)
+from radicalbit_ai_gateway.utils.build_user_content import build_user_content
 from radicalbit_ai_gateway.utils.token_encoding import count_tokens
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
-
-
-def _last_human_text(messages: list[BaseMessage]) -> str | None:
-    """Return the text content of the last HumanMessage, or None."""
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage):
-            text = stringify_message_content(msg.content)
-            if text:
-                return text
-    return None
 
 
 class DeterministicRouter:
@@ -56,7 +44,7 @@ class DeterministicRouter:
         return self._default_model()
 
     def _apply_keyword_rule(self, messages: list[BaseMessage]) -> Model:
-        last_text = _last_human_text(messages)
+        last_text = last_human_text(messages)
         if not last_text:
             logger.debug('No human message found, selecting default model')
             return self._default_model()
@@ -75,7 +63,7 @@ class DeterministicRouter:
         return self._default_model()
 
     def _apply_token_length_rule(self, messages: list[BaseMessage]) -> Model:
-        last_text = _last_human_text(messages)
+        last_text = last_human_text(messages)
         if not last_text:
             logger.debug('No human message found, selecting default model')
             return self._default_model()

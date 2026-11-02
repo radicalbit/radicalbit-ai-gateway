@@ -1,6 +1,7 @@
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
-import { DATE_FORMAT } from '@Src/constants';
+import TableRowLink from '@Components/table-row-link';
+import { DATE_FORMAT, PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useRemoveRouteFromGroupMutation } from '@State/groups/api';
 import {
   Button,
@@ -15,9 +16,11 @@ const columns = [
     title: 'Name',
     dataIndex: 'name',
     key: 'name',
-    render: (value) => (
+    render: (value, { uuid }) => (
       <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        <TableRowLink to={`/${PathsEnum.GROUPS}/${uuid}?${SEARCH_PARAMS.groups}=${encodeURIComponent(value)}`}>
+          <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        </TableRowLink>
       </Truncate>
     ),
   },

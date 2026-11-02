@@ -483,6 +483,14 @@ class ModelInvokerBadGateway(ModelInvokerError):
         )
 
 
+class ModelInvokerUpstreamError(ModelInvokerError):
+    """The upstream refused a native Responses call; its status and body are relayed as is."""
+
+    def __init__(self, message: str, status_code: int, body: Any):
+        super().__init__(message, status_code, code='model_invoker_upstream_error')
+        self.body = body
+
+
 class ModelInvokerBadRequest(ModelInvokerError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
@@ -576,6 +584,16 @@ class CredentialLimitAlreadyExistsError(AuthRegistryError):
             message,
             status.HTTP_400_BAD_REQUEST,
             'credential_limit_already_exists_bad_request',
+            log_message=log_message,
+        )
+
+
+class CredentialLimitValueError(AuthRegistryError):
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(
+            message,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            'credential_limit_value_unprocessable_entity',
             log_message=log_message,
         )
 
@@ -837,6 +855,9 @@ def token_limiter_exception_handler(request: Request, err: TokenLimitExceeded):
 
 def model_invoker_exception_handler(request: Request, err: ModelInvokerError):
     set_request_error_info(request, err)
+    if isinstance(err, ModelInvokerUpstreamError):
+        _log_and_json_response(err, 'model_invoker_error')
+        return JSONResponse(status_code=err.status_code, content=err.body)
     return _log_and_json_response(err, 'model_invoker_error')
 
 

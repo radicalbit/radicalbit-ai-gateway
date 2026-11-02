@@ -1,4 +1,5 @@
-import useModals, { modals } from '@Src/hooks/use-modals';
+import useModals, { modals, restoreFocusBeforeModal } from '@Src/hooks/use-modals';
+import { useEffect, useRef } from 'react';
 import AddGroupToKey from './add-group-to-key';
 import AddGroupsToRoute from './add-groups-to-route';
 import AddKeysToGroups from './add-keys-to-group';
@@ -10,6 +11,7 @@ import CreateKey from './create-key';
 import CreateProject from './create-project';
 import DeleteGroupWithAssociatedItems from './delete-group-with-associated-items';
 import DeleteKeyWithGroups from './delete-key-with-groups';
+import DeleteProject from './delete-project';
 import EditGroup from './edit-group';
 import EditKey from './edit-key';
 import EditProjectConfig from './edit-project-config';
@@ -22,6 +24,8 @@ import TraceDetail from './trace-detail';
 export default function ModalsProvider() {
   const { modalPayload } = useModals();
   const modalName = modalPayload?.modalName;
+
+  useRestoreFocusOnModalClose();
 
   switch (modalName) {
     case modals.ADD_KEYS_TO_GROUP:
@@ -50,6 +54,9 @@ export default function ModalsProvider() {
 
     case modals.DELETE_KEY_WITH_GROUPS:
       return <DeleteKeyWithGroups />;
+
+    case modals.DELETE_PROJECT:
+      return <DeleteProject />;
 
     case modals.DELETE_GROUP_WITH_ASSOCIATED_ITEMS:
       return <DeleteGroupWithAssociatedItems />;
@@ -84,4 +91,19 @@ export default function ModalsProvider() {
     default:
       return false;
   }
+}
+
+function useRestoreFocusOnModalClose() {
+  const { modalPayload } = useModals();
+  const modalName = modalPayload?.modalName;
+
+  const previousModalName = useRef(modalName);
+
+  useEffect(() => {
+    if (previousModalName.current && !modalName) {
+      requestAnimationFrame(restoreFocusBeforeModal);
+    }
+
+    previousModalName.current = modalName;
+  }, [modalName]);
 }

@@ -2,6 +2,8 @@ import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import Lucide from '@Components/lucide';
 import { useGetGroupQuery } from '@State/groups/api';
 import { useGetKeyQuery } from '@State/keys/api';
+import ChartData from '@Components/chart-data';
+import withChartAria from '@Helpers/chart-aria';
 import {
   useGetCostsByGroupStreamWithRange,
   useGetCostsByKeyStreamWithRange,
@@ -11,6 +13,7 @@ import { Board, Button, Skeleton, Void } from '@radicalbit/radicalbit-design-sys
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
+  AriaComponent,
   DataZoomComponent,
   GraphicComponent,
   GridComponent,
@@ -28,7 +31,7 @@ import '../_styles.less';
 import { GROUP_BY } from '../group-by';
 import option from './option';
 
-echarts.use([
+echarts.use([AriaComponent,
   BarChart,
   GridComponent,
   TooltipComponent,
@@ -116,13 +119,13 @@ function IsSuccess() {
         lazyUpdate
         notMerge={false}
         onChartReady={() => updateTheme(chartRef)}
-        option={option({
+        option={withChartAria(option({
           xAxisData: timestamp || [],
           series,
           granularity,
           total,
           drillDownEntity,
-        })}
+        }))}
         ref={chartRef}
         style={{
           ...chartWidthAndHeight,
@@ -130,6 +133,8 @@ function IsSuccess() {
           overflow: 'hidden',
         }}
       />
+
+      <ChartData granularity={granularity} series={series} xAxisData={timestamp || []} />
 
       <BackButton />
     </div>

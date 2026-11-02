@@ -390,3 +390,178 @@ def test_time_routing_model_id_not_in_route():
     }
     with pytest.raises(ValueError, match='not in route chat_models'):
         GatewayConfig.model_validate(raw)
+
+
+def _llm_routing_raw(**routing_overrides) -> dict:
+    model = {'model': 'openai/gpt-4o', 'credentials': {'api_key': 'sk-dummy'}}
+    routing = {
+        'name': 'llm_router',
+        'type': 'llm',
+        'router_model_id': 'router',
+        'default_model_id': 'm1',
+        'output_mapping': [
+            {'model_id': 'm2', 'description': 'coding questions'},
+        ],
+        **routing_overrides,
+    }
+    return {
+        'chat_models': [
+            {'model_id': 'm1', **model},
+            {'model_id': 'm2', **model},
+            {'model_id': 'router', **model},
+            {'model_id': 'router_backup', **model},
+        ],
+        'decision_models': [
+            {
+                'model_id': 'decider',
+                'model': 'typesafe/jev-latest',
+                'credentials': {'api_key': 'ts-dummy'},
+            },
+        ],
+        'routing': [routing],
+        'routes': {
+            'r': {'chat_models': ['m1', 'm2'], 'routing': 'llm_router'},
+        },
+    }
+
+
+def test_llm_routing_valid():
+    gateway_config = GatewayConfig.model_validate(_llm_routing_raw())
+    routing_config = gateway_config.routing_by_name['llm_router']
+    assert routing_config.router_model_id == 'router'
+    assert routing_config.threshold == 0.375
+    assert routing_config.timeout == 10.0
+
+
+def test_llm_routing_router_model_not_in_top_level_chat_models():
+    with pytest.raises(ValueError, match='not declared in top-level chat_models'):
+        GatewayConfig.model_validate(_llm_routing_raw(router_model_id='missing'))
+
+
+def test_llm_routing_router_model_cannot_be_a_decision_model():
+    with pytest.raises(ValueError, match='not declared in top-level chat_models'):
+        GatewayConfig.model_validate(_llm_routing_raw(router_model_id='decider'))
+
+
+def test_llm_routing_router_model_checked_when_no_route_uses_it():
+    raw = _llm_routing_raw(router_model_id='missing')
+    raw['routes'] = {'r': {'chat_models': ['m1', 'm2']}}
+    with pytest.raises(ValueError, match="LLM routing 'llm_router': router model"):
+        GatewayConfig.model_validate(raw)
+
+
+def test_llm_routing_fallback_model_valid():
+    gateway_config = GatewayConfig.model_validate(
+        _llm_routing_raw(fallback_model_id='router_backup')
+    )
+    routing_config = gateway_config.routing_by_name['llm_router']
+    assert routing_config.fallback_model_id == 'router_backup'
+
+
+def test_llm_routing_fallback_model_not_in_top_level_chat_models():
+    with pytest.raises(ValueError, match="fallback model 'missing' not declared"):
+        GatewayConfig.model_validate(_llm_routing_raw(fallback_model_id='missing'))
+
+
+def test_llm_routing_duplicate_model_ids():
+    raw = _llm_routing_raw(
+        output_mapping=[
+            {'model_id': 'm2', 'description': 'coding questions'},
+            {'model_id': 'm2', 'description': 'math questions'},
+        ]
+    )
+    with pytest.raises(ValueError, match='model_ids must be unique'):
+        GatewayConfig.model_validate(raw)
+
+
+def test_llm_routing_entries_need_a_description():
+    raw = _llm_routing_raw(
+        output_mapping=[{'model_id': 'm2', 'conditions': ['coding questions']}]
+    )
+    with pytest.raises(ValueError, match='description'):
+        GatewayConfig.model_validate(raw)
+
+
+def test_llm_routing_description_must_not_be_blank():
+    raw = _llm_routing_raw(output_mapping=[{'model_id': 'm2', 'description': '  '}])
+    with pytest.raises(ValueError, match='description must not be empty'):
+        GatewayConfig.model_validate(raw)
+
+
+def test_llm_routing_message_roles_need_history_all():
+    with pytest.raises(ValueError, match='message_roles needs history: all'):
+        GatewayConfig.model_validate(_llm_routing_raw(message_roles=['user']))
+
+
+def test_llm_routing_message_roles_with_history_all():
+    gateway_config = GatewayConfig.model_validate(
+        _llm_routing_raw(history='all', message_roles=['user', 'assistant'])
+    )
+    routing_config = gateway_config.routing_by_name['llm_router']
+    assert routing_config.history == 'all'
+    assert [r.value for r in routing_config.message_roles] == ['USER', 'ASSISTANT']
+
+
+def test_llm_routing_explicit_null_message_roles():
+    gateway_config = GatewayConfig.model_validate(
+        _llm_routing_raw(history='all', message_roles=None)
+    )
+    assert gateway_config.routing_by_name['llm_router'].message_roles is None
+
+
+def test_llm_routing_threshold_out_of_range():
+    with pytest.raises(ValueError):
+        GatewayConfig.model_validate(_llm_routing_raw(threshold=1.5))
+
+
+def _semantic_routing_raw(**routing_overrides) -> dict:
+    model = {'model': 'openai/gpt-4o', 'credentials': {'api_key': 'sk-dummy'}}
+    routing = {
+        'name': 'semantic_router',
+        'type': 'semantic',
+        'embedding_model_id': 'emb',
+        'default_model_id': 'm1',
+        'output_mapping': [
+            {'model_id': 'm2', 'conditions': ['coding questions']},
+        ],
+        **routing_overrides,
+    }
+    return {
+        'chat_models': [
+            {'model_id': 'm1', **model},
+            {'model_id': 'm2', **model},
+        ],
+        'embedding_models': [
+            {
+                'model_id': 'emb',
+                'model': 'openai/text-embedding-3-small',
+                'credentials': {'api_key': 'sk-dummy'},
+            },
+        ],
+        'routing': [routing],
+        'routes': {
+            'r': {'chat_models': ['m1', 'm2'], 'routing': 'semantic_router'},
+        },
+    }
+
+
+def test_semantic_routing_valid():
+    gateway_config = GatewayConfig.model_validate(_semantic_routing_raw())
+    routing_config = gateway_config.routing_by_name['semantic_router']
+    assert routing_config.embedding_model_id == 'emb'
+
+
+def test_semantic_routing_embedding_model_not_in_top_level_embedding_models():
+    with pytest.raises(ValueError, match='not declared in top-level embedding_models'):
+        GatewayConfig.model_validate(
+            _semantic_routing_raw(embedding_model_id='missing')
+        )
+
+
+def test_semantic_routing_embedding_model_checked_when_no_route_uses_it():
+    raw = _semantic_routing_raw(embedding_model_id='missing')
+    raw['routes'] = {'r': {'chat_models': ['m1', 'm2']}}
+    with pytest.raises(
+        ValueError, match="Semantic routing 'semantic_router': embedding model"
+    ):
+        GatewayConfig.model_validate(raw)

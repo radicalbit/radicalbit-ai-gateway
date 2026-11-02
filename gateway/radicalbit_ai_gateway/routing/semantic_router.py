@@ -7,25 +7,16 @@ from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EMBEDDINGS_MODEL_TYPE,
 )
 from radicalbit_ai_gateway.llm.embeddings import Embeddings
-from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import SemanticRoutingConfig
+from radicalbit_ai_gateway.routing.common import last_human_text
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.build_user_content import stringify_message_content
 from radicalbit_ai_gateway.utils.request_context import record_routing_spend
 from radicalbit_ai_gateway.utils.token_encoding import count_tokens
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
-
-
-def _last_human_text(messages: list[BaseMessage]) -> str | None:
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage):
-            text = stringify_message_content(msg.content)
-            if text:
-                return text
-    return None
 
 
 def _normalize(v: np.ndarray) -> np.ndarray:
@@ -75,7 +66,7 @@ class SemanticRouter:
             logger.warning('SemanticRouter not initialized, using default model')
             return self._models_by_id[self._config.default_model_id]
 
-        last_text = _last_human_text(messages)
+        last_text = last_human_text(messages)
         if not last_text:
             return self._models_by_id[self._config.default_model_id]
 

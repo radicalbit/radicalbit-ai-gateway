@@ -1,6 +1,7 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetTracesChartWithRange } from '@Src/store/state/tracing/vertical-hooks';
+import withChartAria from '@Helpers/chart-aria';
 import { Board, Skeleton, Spinner, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { useEffect, useMemo, useRef } from 'react';
@@ -99,12 +100,12 @@ function TracesChartSuccess() {
       lazyUpdate
       notMerge={false}
       onChartReady={() => updateTheme(chartRef)}
-      option={tracesBarChartOption({
+      option={withChartAria(tracesBarChartOption({
         xAxisData: data.timestamp || [],
         series,
         granularity: data.granularity,
         total: data.total,
-      })}
+      }))}
       ref={chartRef}
       style={{
         width: '100%',

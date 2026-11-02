@@ -240,7 +240,6 @@ class TracingService:
         error_count = 0
         output_tokens = 0
         input_tokens = 0
-        total_tokens = 0
         latest_timestamp = spans[0].timestamp
 
         for span in spans:
@@ -257,8 +256,9 @@ class TracingService:
                 error_count += 1
             output_tokens += _safe_parse_int(span.output_tokens)
             input_tokens += _safe_parse_int(span.input_tokens)
-            total_tokens += _safe_parse_int(span.total_tokens)
             latest_timestamp = max(latest_timestamp, span.timestamp)
+        # Spans report no total of their own: it is input plus output.
+        total_tokens = input_tokens + output_tokens
 
         if root_span is None:
             root_span = spans[0]
@@ -267,7 +267,7 @@ class TracingService:
             children = children_map.get(span.span_id, [])
             output = _safe_parse_int(span.output_tokens)
             input_tokens = _safe_parse_int(span.input_tokens)
-            total = _safe_parse_int(span.total_tokens)
+            total = input_tokens + output
             number_of_errors = 1 if span.status_code.upper() == 'ERROR' else 0
 
             return TreeNodeDTO(
@@ -455,7 +455,7 @@ class TracingService:
         # Parse tokens
         output_tokens = _safe_parse_int(span.output_tokens)
         input_tokens = _safe_parse_int(span.input_tokens)
-        total_tokens = _safe_parse_int(span.total_tokens)
+        total_tokens = input_tokens + output_tokens
 
         # TODO: Implement soft delete for keys/groups in Postgres (deleted_at column)
         # so that deleted keys still have resolvable names, removing the need for this fallback.

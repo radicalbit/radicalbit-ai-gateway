@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from httpx_aiohttp import HttpxAiohttpClient
@@ -58,6 +58,7 @@ from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.responses.serving import serve_stream
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
@@ -108,6 +109,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     BudgetLimitExceeded,
     GatewayBadRequest,
     GatewayError,
+    GatewayNotFoundError,
     GuardrailError,
     InvalidApiKey,
     JudgeInternalError,
@@ -147,17 +149,6 @@ from radicalbit_ai_gateway.utils.request_context import (
     set_current_project_budget_limiter,
     set_current_route_config,
 )
-from radicalbit_ai_gateway.utils.responses_streaming import (
-    build_skeleton_response,
-    chat_chunks_to_response_events,
-    list_chunks_to_response_events,
-)
-from radicalbit_ai_gateway.utils.responses_translation import (
-    chat_completion_to_response,
-    input_to_messages,
-    responses_tools_to_chat_completions_tools,
-    translate_tool_choice,
-)
 from radicalbit_ai_gateway.utils.streaming_response import (
     StreamingResponseWithStatusCode,
 )
@@ -165,6 +156,7 @@ from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     ensure_endpoint_category,
+    in_request_trace,
     set_operation_category,
     set_trace_attributes,
 )
@@ -503,6 +495,23 @@ app.include_router(
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = [{'loc': e.get('loc'), 'type': e.get('type')} for e in exc.errors()]
     logger.error('Validation error: %s', errors)
+    if request.url.path.startswith('/v1/responses'):
+        # Responses API clients read errors in OpenAI's format.
+        first = exc.errors()[0] if exc.errors() else {}
+        param = '.'.join(str(part) for part in (first.get('loc') or ())[1:]) or None
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                'error': {
+                    'message': f'Invalid value for {param}: {first.get("msg")}'
+                    if param
+                    else 'Invalid request body',
+                    'type': 'invalid_request_error',
+                    'param': param,
+                    'code': first.get('type'),
+                }
+            },
+        )
     try:
         body = (await request.body()).decode()
     except RuntimeError:
@@ -751,7 +760,9 @@ async def chat_completions(
 
         set_operation_category(OperationCategory.ENDPOINT)
         return StreamingResponseWithStatusCode(
-            event_generator(), media_type='text/event-stream', headers=headers
+            in_request_trace(event_generator()),
+            media_type='text/event-stream',
+            headers=headers,
         )
 
     invoke_response = await route.invoke(
@@ -1046,7 +1057,7 @@ async def audio_transcriptions(
                 yield error_body, 500
 
         return StreamingResponseWithStatusCode(
-            event_generator(), media_type='text/event-stream'
+            in_request_trace(event_generator()), media_type='text/event-stream'
         )
 
     result = await route.invoke_transcription(
@@ -1068,8 +1079,10 @@ async def audio_transcriptions(
     return JSONResponse(content=jsonable_encoder(result))
 
 
-# This endpoint follows the OpenAI Responses API standard (stateless Phase 1):
+# This endpoint follows the OpenAI Responses API standard:
 # https://platform.openai.com/docs/api-reference/responses
+# A request is served by a model that serves the Responses API, as the client
+# sent it once the route's policies applied.
 @app.post('/v1/responses')
 @otel_metrics_decorator
 @workflow(name='responses')
@@ -1083,11 +1096,6 @@ async def responses(
 ):
     # Mark the root workflow span with ENDPOINT category
     set_operation_category(OperationCategory.ENDPOINT)
-
-    if response_create_params.get('previous_response_id'):
-        raise GatewayBadRequest(
-            'previous_response_id is not supported by this gateway (stateless mode only)'
-        )
 
     route_key = response_create_params.get('model', 'unknown')
     route = gateway_routes.get(route_key)
@@ -1112,9 +1120,10 @@ async def responses(
         tags=list(get_current_request_tags()),
     )
 
+    is_stream = bool(response_create_params.get('stream'))
     ctx = RequestEventContext.get_or_create(request)
     ctx.route_name = route_name
-    ctx.is_streaming = bool(response_create_params.get('stream'))
+    ctx.is_streaming = is_stream
 
     set_operation_category(OperationCategory.AUTH)
     key_details = await set_api_key_uuid(
@@ -1132,44 +1141,9 @@ async def responses(
         tags=list(get_current_request_tags()),
     )
 
-    instructions = response_create_params.get('instructions')
-    raw_input = response_create_params.get('input', '')
-    raw_tools = list(response_create_params.get('tools') or [])
-    raw_tool_choice = response_create_params.get('tool_choice')
-    is_stream = bool(response_create_params.get('stream'))
-
-    # Translate to Chat Completions-compatible formats
-    chat_messages = input_to_messages(raw_input, instructions)
-    tools = responses_tools_to_chat_completions_tools(raw_tools)
-    tool_choice = translate_tool_choice(raw_tool_choice)
-
-    # Build extra params (temperature, top_p, max_output_tokens → max_completion_tokens, …)
-    known_keys = {
-        'model',
-        'input',
-        'instructions',
-        'tools',
-        'tool_choice',
-        'stream',
-        'previous_response_id',
-        'store',
-        'stream_options',
-        'background',
-        'metadata',  # OpenAI-only, not a Chat Completions runtime param
-    }
-    extra_params = {
-        key: value
-        for key, value in response_create_params.items()
-        if key not in known_keys and value is not None
-    }
-    # Map Responses API token limit param to the Chat Completions name
-    if 'max_output_tokens' in extra_params:
-        extra_params.setdefault(
-            'max_completion_tokens', extra_params.pop('max_output_tokens')
-        )
-    # Inject stream_options so providers include usage in the final streaming chunk
-    if is_stream:
-        extra_params.setdefault('stream_options', {'include_usage': True})
+    # The request as the client sent it: the gateway's policies apply to it,
+    # then it goes upstream.
+    body = await request.json()
 
     logger.info('Invoked route name (responses): %s', route_name)
 
@@ -1212,107 +1186,35 @@ async def responses(
             project_name=route.project_name,
         )
 
+    identity = {
+        'request_uuid': request_uuid,
+        'api_key_uuid': key_details.api_key_uuid,
+        'api_key_name': key_details.api_key_name,
+        'group_uuid': key_details.group_uuid,
+        'group_name': key_details.group_name,
+    }
+    prepared = await route.prepare_responses(body=body, **identity)
+
     if is_stream:
-        skeleton = build_skeleton_response(
-            route_name=route_name,
-            request_id=request_uuid,
-            instructions=instructions,
-            temperature=response_create_params.get('temperature'),
-            top_p=response_create_params.get('top_p'),
-            tool_choice=str(tool_choice) if isinstance(tool_choice, str) else 'auto',
-        )
-
-        prepared = await route.prepare_stream(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            api_key_name=key_details.api_key_name,
-            messages=chat_messages,
-            route_name=route_name,
-            tools=tools,
-            tool_choice=tool_choice,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            **extra_params,
-        )
-
-        headers: dict[str, str] = {}
-
-        if route.has_output_guardrails():
-            chunks, headers = await route.invoke_stream_buffered(
-                prepared=prepared,
-                request_uuid=request_uuid,
-                api_key_uuid=key_details.api_key_uuid,
-                api_key_name=key_details.api_key_name,
-                route_name=route_name,
-                tools=tools,
-                tool_choice=tool_choice,
-                group_uuid=key_details.group_uuid,
-                group_name=key_details.group_name,
-                **extra_params,
-            )
-
-            async def event_generator_buffered():
-                async for sse_line in list_chunks_to_response_events(chunks, skeleton):
-                    yield sse_line
-                yield 'data: [DONE]\n\n'
-
-            set_operation_category(OperationCategory.ENDPOINT)
-            return StreamingResponse(
-                event_generator_buffered(),
-                media_type='text/event-stream',
-                headers=headers,
-            )
-
-        if prepared.guardrails_block_triggered:
-            headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
-        if prepared.cached_response:
-            headers['X-RB-AIGATEWAY-CACHE-HIT'] = 'true'
-
-        async def event_generator():
-            async for sse_line in chat_chunks_to_response_events(
-                route.invoke_stream(
-                    prepared=prepared,
-                    request_uuid=request_uuid,
-                    api_key_uuid=key_details.api_key_uuid,
-                    api_key_name=key_details.api_key_name,
-                    route_name=route_name,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    group_uuid=key_details.group_uuid,
-                    group_name=key_details.group_name,
-                    **extra_params,
-                ),
-                skeleton,
-            ):
-                yield sse_line
-            yield 'data: [DONE]\n\n'
-
+        frames, headers = await route.open_responses_stream(prepared)
         set_operation_category(OperationCategory.ENDPOINT)
-        return StreamingResponse(
-            event_generator(),
+        return StreamingResponseWithStatusCode(
+            in_request_trace(serve_stream(frames)),
             media_type='text/event-stream',
             headers=headers,
         )
 
-    # Non-streaming path
-    invoke_response = await route.invoke(
-        request_uuid=request_uuid,
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        messages=chat_messages,
-        route_name=route_name,
-        tools=tools,
-        tool_choice=tool_choice,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        **extra_params,
-    )
-
-    response_obj = chat_completion_to_response(invoke_response.content, route_name)
+    response_obj, headers = await route.invoke_responses(prepared)
     set_operation_category(OperationCategory.ENDPOINT)
-    return JSONResponse(
-        content=jsonable_encoder(response_obj),
-        headers=invoke_response.headers,
+    return JSONResponse(content=response_obj, headers=headers)
+
+
+# The Responses API endpoints the gateway does not serve yet: those on stored
+# responses (retrieve, delete, cancel, input_items), compact and input_tokens.
+@app.api_route('/v1/responses/{path:path}', methods=['GET', 'POST', 'DELETE'])
+async def responses_unsupported(request: Request, path: str):
+    raise GatewayNotFoundError(
+        f'{request.method} /v1/responses/{path} is not supported by the gateway yet'
     )
 
 

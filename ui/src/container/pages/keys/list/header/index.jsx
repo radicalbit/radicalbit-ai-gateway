@@ -2,12 +2,7 @@ import Lucide from '@Components/lucide';
 import { CollapsedTitle } from '@Container/layout';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetKeysQuery } from '@State/keys/api';
-import {
-  Button,
-  NewHeader,
-  SectionTitle,
-  Tooltip,
-} from '@radicalbit/radicalbit-design-system';
+import { Button, Helmet, NewHeader, SectionTitle, Tooltip } from '@radicalbit/radicalbit-design-system';
 import { Key, Plus } from 'lucide-react';
 import { useEffect } from 'react';
 import Subtitle from './subtitle';
@@ -20,18 +15,23 @@ function KeysListHeader() {
   useOpenModalWithKeyboard();
 
   return (
-    <NewHeader
-      details={{
-        one: hasCreateButton && <CreateKeyButton />,
-      }}
-      title={(
-        <SectionTitle
-          subtitle={<Subtitle />}
-          title="Credentials"
-          titlePrefix={<Lucide icon={Key} />}
-        />
-      )}
-    />
+    <>
+      <Helmet title="Credentials – Radicalbit Platform" />
+
+      <NewHeader
+        details={{
+          one: hasCreateButton && <CreateKeyButton />,
+        }}
+        title={(
+          <SectionTitle
+            level={1}
+            subtitle={<Subtitle />}
+            title="Credentials"
+            titlePrefix={<Lucide icon={Key} />}
+          />
+        )}
+      />
+    </>
   );
 }
 

@@ -25,8 +25,12 @@ from radicalbit_ai_gateway.models.credential_expiry import (
     get_credential_state,
 )
 from radicalbit_ai_gateway.models.credential_limiting import (
+    CredentialLimitCategory,
     CredentialLimitOut,
     CredentialLimitsIn,
+    CredentialLimitUpdatedOut,
+    CredentialLimitValueIn,
+    validate_limit_value,
 )
 from radicalbit_ai_gateway.models.credential_rotation import (
     get_grace_end,
@@ -38,11 +42,13 @@ from radicalbit_ai_gateway.models.group_limiting import (
     GroupLimitsIn,
     GroupMemberLimitsOut,
 )
+from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     CredentialLimitAlreadyExistsError,
     CredentialLimitNotFoundError,
+    CredentialLimitValueError,
     GroupNotFoundError,
     KeyAlreadyExistsError,
     KeyGroupAlreadyExistsError,
@@ -489,6 +495,45 @@ class KeyService:
             CredentialLimitOut.from_key_limit(limit)
             for limit in self.key_limit_dao.get_by_key_uuid(key_uuid)
         ]
+
+    def update_limit_value(
+        self, key_uuid: UUID, limit_uuid: UUID, value_in: CredentialLimitValueIn
+    ) -> CredentialLimitUpdatedOut:
+        key = self.key_dao.get_by_uuid(key_uuid)
+        if not key:
+            raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
+        _ensure_not_expired(key)
+        limit = self.key_limit_dao.get_by_uuid(limit_uuid)
+        if not limit or limit.key_uuid != key_uuid:
+            raise CredentialLimitNotFoundError(
+                f'Limit {limit_uuid} not found for key "{key.name}"'
+            )
+        try:
+            validate_limit_value(
+                CredentialLimitCategory(limit.category),
+                LimitingAlgorithmType(limit.algorithm),
+                limit.window_size,
+                value_in.value,
+            )
+        except ValueError as e:
+            raise CredentialLimitValueError(
+                f'{value_in.value:g} is not a valid max for a {limit.category} limit'
+            ) from e
+        previous_value = float(limit.max_value)
+        limit.max_value = value_in.value
+        limit.updated_at = datetime.datetime.now(tz=UTC)
+        self.key_limit_dao.save_many([], [limit])
+        logger.info(
+            'Limit %s of key %s: max %s -> %s',
+            limit_uuid,
+            key_uuid,
+            previous_value,
+            value_in.value,
+        )
+        return CredentialLimitUpdatedOut(
+            **CredentialLimitOut.from_key_limit(limit).model_dump(),
+            previous_value=previous_value,
+        )
 
     async def delete_limit_from_key(
         self, key_uuid: UUID, limit_uuid: UUID

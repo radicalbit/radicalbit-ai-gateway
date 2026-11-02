@@ -1,12 +1,15 @@
 import Lucide from '@Components/lucide';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetMcpServersChartSseWithRange } from '@State/usage/vertical-hooks';
+import ChartData from '@Components/chart-data';
+import withChartAria from '@Helpers/chart-aria';
 import {
   Board, Button, Segmented, Spinner, Void,
 } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { BarChart } from 'echarts/charts';
 import {
+  AriaComponent,
   DataZoomComponent,
   GraphicComponent,
   GridComponent,
@@ -23,7 +26,7 @@ import { MCP_DEFAULT_GROUP_BY, MCP_GROUP_BY } from '../group-by';
 import option from './option';
 import useGetNameToId from './use-get-name-to-id';
 
-echarts.use([
+echarts.use([AriaComponent,
   BarChart,
   GridComponent,
   TooltipComponent,
@@ -197,12 +200,12 @@ function IsSuccess({ chart }) {
         notMerge={false}
         onChartReady={handleOnChartReady}
         onEvents={{ click: handleOnClick }}
-        option={option({
+        option={withChartAria(option({
           xAxisData: chart?.timestamp || [],
           series,
           granularity: chart?.granularity,
           total: chart?.total,
-        })}
+        }))}
         ref={chartRef}
         style={{
           ...chartWidthAndHeight,
@@ -210,6 +213,8 @@ function IsSuccess({ chart }) {
           overflow: 'hidden',
         }}
       />
+
+      <ChartData granularity={chart?.granularity} series={series} xAxisData={chart?.timestamp || []} />
 
       <GroupByTabs />
     </div>

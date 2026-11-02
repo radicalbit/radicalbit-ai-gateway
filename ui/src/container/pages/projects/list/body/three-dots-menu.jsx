@@ -1,6 +1,5 @@
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
-import DeleteProject from '@Container/pages/projects/list/delete-project';
 import useGetVisibleConfig from '@Container/pages/projects/use-get-visible-config';
 import useModals, { modals } from '@Hooks/use-modals';
 import { ConfigStatusEnum } from '@Src/constants';
@@ -209,17 +208,24 @@ const useVisibleConfigItems = (uuid, config) => {
   return items;
 };
 
-const useDeleteProjectItems = (uuid) => [
-  { type: 'divider', key: 'configuration-divider' },
-  {
-    key: 'delete-project',
-    label: (
-      <DeleteProject uuid={uuid}>
+const useDeleteProjectItems = (uuid) => {
+  const { showModal } = useModals();
+
+  const handleOnDeleteProject = () => {
+    showModal(modals.DELETE_PROJECT, { uuid });
+  };
+
+  return [
+    { type: 'divider', key: 'configuration-divider' },
+    {
+      key: 'delete-project',
+      label: (
         <div className="is-error flex items-center gap-2">
           <Lucide icon={Trash} type="error" />
 
           Delete project
         </div>
-      </DeleteProject>
-    ),
-  }];
+      ),
+      onClick: handleOnDeleteProject,
+    }];
+};

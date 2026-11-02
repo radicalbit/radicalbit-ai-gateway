@@ -34,12 +34,6 @@ _REQUEST_UUID_ATTR = "SpanAttributes['traceloop.association.properties.request_u
 _PROJECT_UUID_ATTR = "SpanAttributes['traceloop.association.properties.project_uuid']"
 _OUTPUT_TOKENS_ATTR = "SpanAttributes['gen_ai.usage.output_tokens']"
 _INPUT_TOKENS_ATTR = "SpanAttributes['gen_ai.usage.input_tokens']"
-# Spans now write gen_ai.usage.total_tokens. Older ones wrote the llm.* key.
-_TOTAL_TOKENS_EXPR = (
-    "if(SpanAttributes['gen_ai.usage.total_tokens'] = '', "
-    "SpanAttributes['llm.usage.total_tokens'], "
-    "SpanAttributes['gen_ai.usage.total_tokens'])"
-)
 _OPERATION_CATEGORY_ATTR = (
     "SpanAttributes['traceloop.association.properties.rb.gateway.operation_category']"
 )
@@ -97,7 +91,6 @@ _SPAN_FIELD_NAMES = [
     'group_name',
     'output_tokens',
     'input_tokens',
-    'total_tokens',
     'tags',
 ]
 _SPAN_DETAIL_FIELD_NAMES = [
@@ -117,7 +110,6 @@ _SPAN_DETAIL_FIELD_NAMES = [
     'group_name',
     'output_tokens',
     'input_tokens',
-    'total_tokens',
     'span_attributes',
     'status_message',
     'events_timestamp',
@@ -320,7 +312,6 @@ class OtelTracesDAO:
                 literal_column(_GROUP_NAME_ATTR).label('group_name'),
                 literal_column(_OUTPUT_TOKENS_ATTR).label('output_tokens'),
                 literal_column(_INPUT_TOKENS_ATTR).label('input_tokens'),
-                literal_column(_TOTAL_TOKENS_EXPR).label('total_tokens'),
                 literal_column(_TAGS_EXPR).label('tags'),
             )
             .select_from(OtelTraces)
@@ -360,7 +351,6 @@ class OtelTracesDAO:
                 literal_column(_GROUP_NAME_ATTR).label('group_name'),
                 literal_column(_OUTPUT_TOKENS_ATTR).label('output_tokens'),
                 literal_column(_INPUT_TOKENS_ATTR).label('input_tokens'),
-                literal_column(_TOTAL_TOKENS_EXPR).label('total_tokens'),
                 T.c['SpanAttributes'].label('span_attributes'),
                 T.c['StatusMessage'].label('status_message'),
                 T.c['Events.Timestamp'].label('events_timestamp'),

@@ -17,6 +17,7 @@ from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
 )
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.invocation.chat_model_invoker import build_chat_model
 from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
 from radicalbit_ai_gateway.llm.embeddings import Embeddings
 from radicalbit_ai_gateway.llm.factory import init_embeddings
@@ -26,6 +27,7 @@ from radicalbit_ai_gateway.models.model import MockGatewayEmbeddings, Model
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.routing import (
     DecisionRoutingConfig,
+    LLMRoutingConfig,
     SemanticRoutingConfig,
     TextClassificationRoutingConfig,
 )
@@ -33,9 +35,11 @@ from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routing import (
     DecisionRouter,
     DeterministicRouter,
+    LLMRouter,
     SemanticRouter,
     TextClassificationRouter,
 )
+from radicalbit_ai_gateway.routing.llm_router import RouterModel
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.parse_provider_and_model import (
@@ -196,6 +200,26 @@ def build_gateway_routes_from_config(
                             cost_service=cost_service,
                             httpx_client=httpx_client,
                         ),
+                    )
+                elif isinstance(routing_config, LLMRoutingConfig):
+                    # Any chat model of the project can route, as for decision routing.
+                    router_ids = (
+                        routing_config.router_model_id,
+                        routing_config.fallback_model_id,
+                    )
+                    router = LLMRouter(
+                        config=routing_config,
+                        models_by_id=route_models_by_id,
+                        router_models={
+                            mid: RouterModel(
+                                model=chat_by_id[mid],
+                                chat_model=build_chat_model(
+                                    chat_by_id[mid], httpx_client
+                                ),
+                            )
+                            for mid in router_ids
+                            if mid is not None
+                        },
                     )
                 else:
                     router = DeterministicRouter(

@@ -1,5 +1,6 @@
 import Lucide from '@Components/lucide';
-import { ALERT_SCOPE_LABELS } from '@Src/constants';
+import TableRowLink from '@Components/table-row-link';
+import { ALERT_SCOPE_LABELS, PathsEnum } from '@Src/constants';
 import { useToggleAlertMutation } from '@State/alerts/api';
 import { FCK_TOGGLE_ALERT } from '@State/alerts/fixed-cache-key';
 import {
@@ -21,9 +22,11 @@ const columns = [
     title: 'Rule Name',
     dataIndex: 'name',
     key: 'name',
-    render: (value) => (
+    render: (value, { uuid }) => (
       <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        <TableRowLink keepSearch to={`/${PathsEnum.ALERTS}/${uuid}`}>
+          <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        </TableRowLink>
       </Truncate>
     ),
   },

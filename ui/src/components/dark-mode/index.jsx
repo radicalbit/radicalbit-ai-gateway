@@ -1,28 +1,26 @@
 import Lucide from '@Components/lucide';
 import { Tooltip } from '@radicalbit/radicalbit-design-system';
 import { CollapsedTitle } from '@Container/layout';
-import { useInitDarkMode, useIsDarkMode, useSetDarkMode } from '@Components/dark-mode/hooks';
+import { useInitDarkMode, useIsDarkMode } from '@Components/dark-mode/hooks';
 import { Moon, Sun } from 'lucide-react';
 
 function DarkMode({ darkActions, lightActions }) {
   const isDarkMode = useIsDarkMode();
-  const { enableDarkMode, enableLightMode } = useSetDarkMode(darkActions, lightActions);
 
   useInitDarkMode(darkActions, lightActions);
 
   if (isDarkMode) {
     return (
       <Tooltip placement="bottomLeft" title={<TooltipTitle title="Light mode" />}>
-        <Lucide aria-label="Light mode" icon={Sun} onClick={enableDarkMode} />
+        <Lucide icon={Sun} />
       </Tooltip>
     );
   }
 
   return (
     <Tooltip placement="bottomLeft" title={<TooltipTitle title="Dark mode" />}>
-      <Lucide aria-label="Dark mode" icon={Moon} onClick={enableLightMode} />
+      <Lucide icon={Moon} />
     </Tooltip>
-
   );
 }
 

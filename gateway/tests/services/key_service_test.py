@@ -23,6 +23,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitIn,
     CredentialLimitOut,
     CredentialLimitsIn,
+    CredentialLimitValueIn,
 )
 from radicalbit_ai_gateway.models.group_limiting import GroupLimitOutcome, GroupLimitsIn
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
@@ -30,6 +31,7 @@ from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
     CredentialLimitAlreadyExistsError,
     CredentialLimitNotFoundError,
+    CredentialLimitValueError,
     KeyGroupAlreadyExistsError,
     KeyInternalError,
     KeyNotFoundError,
@@ -619,6 +621,97 @@ class TestDeleteLimitFromKey:
 
         key_limit_dao.delete_by_uuid.assert_called_once_with(limit_uuid)
         assert res == CredentialLimitOut.from_key_limit(limit)
+
+
+class TestUpdateLimitValue:
+    def _make_service(self):
+        key_dao = MagicMock(spec_set=KeyDAO)
+        key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
+        service = KeyService(
+            key_dao=key_dao,
+            api_key_security=MagicMock(spec_set=ApiKeySecurity),
+            group_dao=MagicMock(spec_set=GroupDAO),
+            key_limit_dao=key_limit_dao,
+        )
+        return service, key_dao, key_limit_dao
+
+    def _stub(self, key_dao, key_limit_dao, *, key=None, limit=None):
+        key_dao.get_by_uuid = MagicMock(return_value=key)
+        key_limit_dao.get_by_uuid = MagicMock(return_value=limit)
+        key_limit_dao.save_many = MagicMock()
+
+    def test_saves_the_new_max_on_the_same_row_and_returns_the_previous_one(self):
+        service, key_dao, key_limit_dao = self._make_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
+        limit = db_mock.get_sample_key_limit(
+            uuid=uuid.uuid4(), key_uuid=key.uuid, max_value=10.0
+        )
+        self._stub(key_dao, key_limit_dao, key=key, limit=limit)
+
+        res = service.update_limit_value(
+            key.uuid, limit.uuid, CredentialLimitValueIn(value=25.0)
+        )
+
+        _, to_update = key_limit_dao.save_many.call_args.args
+        assert [(row.uuid, row.max_value) for row in to_update] == [(limit.uuid, 25.0)]
+        assert res.uuid == limit.uuid
+        assert res.value == 25.0
+        assert res.previous_value == 10.0
+        assert res.window_size == limit.window_size
+
+    def test_key_not_found(self):
+        service, key_dao, key_limit_dao = self._make_service()
+        self._stub(key_dao, key_limit_dao)
+
+        with pytest.raises(KeyNotFoundError):
+            service.update_limit_value(
+                uuid.uuid4(), uuid.uuid4(), CredentialLimitValueIn(value=5)
+            )
+        key_limit_dao.save_many.assert_not_called()
+
+    def test_limit_of_another_key_is_not_found(self):
+        service, key_dao, key_limit_dao = self._make_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
+        limit = db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=uuid.uuid4())
+        self._stub(key_dao, key_limit_dao, key=key, limit=limit)
+
+        with pytest.raises(CredentialLimitNotFoundError):
+            service.update_limit_value(
+                key.uuid, limit.uuid, CredentialLimitValueIn(value=5)
+            )
+        key_limit_dao.save_many.assert_not_called()
+
+    @freeze_time('2026-11-11 00:00:00')
+    def test_expired_key_is_refused(self):
+        service, key_dao, key_limit_dao = self._make_service()
+        key = db_mock.get_sample_key(
+            uuid=uuid.uuid4(), expires_on=datetime.date(2026, 11, 10)
+        )
+        limit = db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
+        self._stub(key_dao, key_limit_dao, key=key, limit=limit)
+
+        with pytest.raises(KeyOperationNotAllowedError):
+            service.update_limit_value(
+                key.uuid, limit.uuid, CredentialLimitValueIn(value=5)
+            )
+        key_limit_dao.save_many.assert_not_called()
+
+    def test_a_request_limit_must_stay_a_whole_number(self):
+        service, key_dao, key_limit_dao = self._make_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4())
+        limit = db_mock.get_sample_key_limit(
+            uuid=uuid.uuid4(),
+            key_uuid=key.uuid,
+            category=CredentialLimitCategory.RATE.value,
+            window_size='1 minute',
+        )
+        self._stub(key_dao, key_limit_dao, key=key, limit=limit)
+
+        with pytest.raises(CredentialLimitValueError):
+            service.update_limit_value(
+                key.uuid, limit.uuid, CredentialLimitValueIn(value=2.5)
+            )
+        key_limit_dao.save_many.assert_not_called()
 
 
 def _make_limits_service():

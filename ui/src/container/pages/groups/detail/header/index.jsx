@@ -39,6 +39,7 @@ function GroupDetailHeader() {
       prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={handleOnClick} />}
       title={(
         <SectionTitle
+          level={2}
           subtitle={<Subtitle />}
           title={name}
         />

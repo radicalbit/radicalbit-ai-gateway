@@ -1,4 +1,5 @@
 import { InputNumber, Select } from '@radicalbit/radicalbit-design-system';
+import { useId } from 'react';
 import {
   LIMIT_CATEGORIES, LIMIT_CATEGORY_LABELS, MAX_LABEL, MAX_LABELS, LimitCategoryEnum, WINDOW_TYPE_LABELS, WindowTypeEnum,
 } from './constants';
@@ -14,7 +15,9 @@ const SELECT_PLACEHOLDER = 'Select';
 // The design system forces its own widths on these inputs: they fill flex-1 wrappers instead
 const FULL_WIDTH = { width: '100%' };
 
-function LimitFields({ limit, onChange, withCategory = true }) {
+function LimitFields({ isCategoryLocked = false, limit, onChange, rowLabel, withCategory = true }) {
+  const id = useId();
+
   const category = limit?.category;
   const algorithm = limit?.algorithm;
   const windowSize = limit?.windowSize;
@@ -42,9 +45,13 @@ function LimitFields({ limit, onChange, withCategory = true }) {
   const precision = isBudget ? 2 : 0;
   const prefix = isBudget ? '$' : undefined;
   const windowOptions = getWindowOptions(algorithm);
+  const getAriaLabel = (label) => (rowLabel ? `${label}, ${rowLabel}` : undefined);
   const categoryField = withCategory ? (
-    <Field label="Category">
+    <Field htmlFor={`${id}-category`} label="Category">
       <Select
+        aria-label={getAriaLabel('Category')}
+        disabled={isCategoryLocked}
+        id={`${id}-category`}
         onChange={handleOnChangeCategory}
         options={CATEGORY_OPTIONS}
         placeholder={SELECT_PLACEHOLDER}
@@ -57,11 +64,13 @@ function LimitFields({ limit, onChange, withCategory = true }) {
   const maxLabel = MAX_LABELS[category] ?? MAX_LABEL;
 
   return (
-    <div className="flex gap-2 items-end w-0 min-w-full">
+    <div className="flex gap-2 items-end w-0 min-w-full" data-limit-row>
       {categoryField}
 
-      <Field label="Window type">
+      <Field htmlFor={`${id}-window-type`} label="Window type">
         <Select
+          aria-label={getAriaLabel('Window type')}
+          id={`${id}-window-type`}
           onChange={handleOnChangeAlgorithm}
           options={WINDOW_TYPE_OPTIONS}
           placeholder={SELECT_PLACEHOLDER}
@@ -71,8 +80,10 @@ function LimitFields({ limit, onChange, withCategory = true }) {
         />
       </Field>
 
-      <Field label="Window">
+      <Field htmlFor={`${id}-window`} label="Window">
         <Select
+          aria-label={getAriaLabel('Window')}
+          id={`${id}-window`}
           onChange={handleOnChangeWindow}
           options={windowOptions}
           placeholder={SELECT_PLACEHOLDER}
@@ -82,8 +93,10 @@ function LimitFields({ limit, onChange, withCategory = true }) {
         />
       </Field>
 
-      <Field label={maxLabel}>
+      <Field htmlFor={`${id}-max`} label={maxLabel}>
         <InputNumber
+          aria-label={getAriaLabel(maxLabel)}
+          id={`${id}-max`}
           min={minMax}
           onChange={handleOnChangeMax}
           precision={precision}
@@ -96,10 +109,12 @@ function LimitFields({ limit, onChange, withCategory = true }) {
   );
 }
 
-function Field({ children, label }) {
+function Field({ children, htmlFor, label }) {
   return (
     <div className="flex flex-col flex-1 gap-1 min-w-0">
-      <small className="opacity-70">{label}</small>
+      <label htmlFor={htmlFor}>
+        <small className="opacity-70">{label}</small>
+      </label>
 
       {children}
     </div>

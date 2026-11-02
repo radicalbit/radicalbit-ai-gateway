@@ -1,9 +1,12 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { useGetTokensChartStreamWithRange } from '@State/usage/vertical-hooks';
+import ChartData from '@Components/chart-data';
+import withChartAria from '@Helpers/chart-aria';
 import { Board, Skeleton, Void } from '@radicalbit/radicalbit-design-system';
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { LineChart } from 'echarts/charts';
 import {
+  AriaComponent,
   DataZoomComponent,
   GridComponent,
   LegendComponent,
@@ -17,7 +20,7 @@ import { useSearchParams } from 'react-router-dom';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import option from './option';
 
-echarts.use([
+echarts.use([AriaComponent,
   LineChart,
   GridComponent,
   TooltipComponent,
@@ -113,24 +116,28 @@ function IsSuccess() {
   useDarkModeChart(chartRef, series);
 
   return (
-    <ReactEChartsCore
-      echarts={echarts}
-      lazyUpdate
-      notMerge={false}
-      onChartReady={() => updateTheme(chartRef)}
-      option={option({
-        xAxisData: timestamp || [],
-        series,
-        granularity,
-        total,
-      })}
-      ref={chartRef}
-      style={{
-        ...chartWidthAndHeight,
-        borderRadius: 'var(--coo-border-radius-small)',
-        overflow: 'hidden',
-      }}
-    />
+    <>
+      <ReactEChartsCore
+        echarts={echarts}
+        lazyUpdate
+        notMerge={false}
+        onChartReady={() => updateTheme(chartRef)}
+        option={withChartAria(option({
+          xAxisData: timestamp || [],
+          series,
+          granularity,
+          total,
+        }))}
+        ref={chartRef}
+        style={{
+          ...chartWidthAndHeight,
+          borderRadius: 'var(--coo-border-radius-small)',
+          overflow: 'hidden',
+        }}
+      />
+
+      <ChartData granularity={granularity} series={series} xAxisData={timestamp || []} />
+    </>
   );
 }
 

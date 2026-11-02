@@ -149,11 +149,11 @@ function GracePeriod() {
   const customFields = isCustom ? (
     <div className="flex gap-2 w-0 min-w-full">
       <div className="flex-1 min-w-0">
-        <InputNumber disabled={isLoading} min={1} onChange={handleOnChangeAmount} precision={0} style={FULL_WIDTH} value={amount} />
+        <InputNumber aria-label="Grace period amount" disabled={isLoading} min={1} onChange={handleOnChangeAmount} precision={0} style={FULL_WIDTH} value={amount} />
       </div>
 
       <div className="flex-1 min-w-0">
-        <Select disabled={isLoading} onChange={handleOnChangeUnit} options={UNIT_OPTIONS} popupMatchSelectWidth={false} style={FULL_WIDTH} value={unit} />
+        <Select aria-label="Grace period unit" disabled={isLoading} onChange={handleOnChangeUnit} options={UNIT_OPTIONS} popupMatchSelectWidth={false} style={FULL_WIDTH} value={unit} />
       </div>
     </div>
   ) : false;
@@ -161,7 +161,7 @@ function GracePeriod() {
   // inline-flex: the group takes the presets bar's width, and the Custom row stretches to it
   const graceDetails = isGrace ? (
     <div className="inline-flex flex-col gap-2 self-start">
-      <Segmented disabled={isLoading} onChange={handleOnChangePreset} options={presetOptions} value={preset} />
+      <Segmented aria-label="Grace period duration" disabled={isLoading} onChange={handleOnChangePreset} options={presetOptions} value={preset} />
 
       {customFields}
     </div>
@@ -170,7 +170,7 @@ function GracePeriod() {
   return (
     <FormField message={fieldError}>
       <div className="flex flex-col gap-2">
-        <Radio.Group disabled={isLoading} onChange={handleOnChangeMode} value={mode}>
+        <Radio.Group aria-label="Grace period" disabled={isLoading} onChange={handleOnChangeMode} value={mode}>
           {graceRadio}
 
           <Radio value={GraceModeEnum.NONE}>No grace period</Radio>

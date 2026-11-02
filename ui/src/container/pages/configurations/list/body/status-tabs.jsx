@@ -33,6 +33,7 @@ function StatusTabs() {
             return (
               <Button
                 key={status}
+                aria-pressed={activeStatus === status}
                 onClick={handleOnClick}
                 type={activeStatus === status ? 'primary' : 'text'}
               >

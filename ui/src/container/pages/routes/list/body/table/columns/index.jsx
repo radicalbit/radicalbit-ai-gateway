@@ -1,5 +1,7 @@
-import { Truncate } from '@radicalbit/radicalbit-design-system';
+import TableRowLink from '@Components/table-row-link';
 import dateFormatter from '@Helpers/date-formatter';
+import { PathsEnum } from '@Src/constants';
+import { Truncate } from '@radicalbit/radicalbit-design-system';
 import Caching from './caching';
 import Errors from './errors';
 import Fallbacks from './fallbacks';
@@ -24,7 +26,9 @@ const columns = [
     width: 250,
     render: (value) => (
       <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        <TableRowLink keepSearch to={`/${PathsEnum.ROUTES}/${value}`}>
+          <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        </TableRowLink>
       </Truncate>
     ),
   },

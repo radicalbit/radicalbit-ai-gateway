@@ -42,6 +42,7 @@ function KeysList() {
       <div className="flex flex-row items-center gap-4">
         <Search
           allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
+          aria-label="Search credentials by name"
           onChange={handleSearchChange}
           placeholder="Search credentials by name"
           style={{ width: '300px' }}

@@ -115,8 +115,10 @@ class RoutingSpendRecorder(Protocol):
 
     It emits the cost event (flagged as routing) at the model's input price
     and counts the input tokens on the route, credential and project limits.
-    ``model_type`` is ``'embeddings'`` or ``'decision_model'``. Pass
-    ``target_model_id`` when a fallback model answered instead of it.
+    ``model_type`` is ``'embeddings'``, ``'decision_model'`` or
+    ``'chat-model'``. Pass ``target_model_id`` when a fallback model answered
+    instead of it, and ``output_tokens`` for a chat model router: its output
+    tokens are then costed and counted too.
     """
 
     def __call__(
@@ -127,6 +129,7 @@ class RoutingSpendRecorder(Protocol):
         *,
         model_type: str,
         target_model_id: str | None = None,
+        output_tokens: int | None = None,
     ) -> Awaitable[None]: ...
 
 
@@ -152,6 +155,7 @@ async def record_routing_spend(
     *,
     model_type: str,
     target_model_id: str | None = None,
+    output_tokens: int | None = None,
 ) -> None:
     """Charge one routing call to the current request, if a recorder is set.
 
@@ -167,6 +171,7 @@ async def record_routing_spend(
             latency_ms,
             model_type=model_type,
             target_model_id=target_model_id,
+            output_tokens=output_tokens,
         )
     except Exception:
         logger.exception('Routing spend on model %s was not recorded', model.model_id)

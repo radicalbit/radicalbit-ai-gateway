@@ -1,4 +1,4 @@
-import { Popover } from '@radicalbit/radicalbit-design-system';
+import InfoPopover from '@Components/info-popover';
 
 const columns = [
   {
@@ -51,13 +51,13 @@ function TranscriptionCell({ value }) {
   }
 
   return (
-    <Popover
+    <InfoPopover
       content={<TranscriptionPopoverContent value={value} />}
       minWidth="250"
       title="Transcription"
     >
       <div className="underline decoration-dotted cursor-default w-fit">{value?.total}</div>
-    </Popover>
+    </InfoPopover>
   );
 }
 

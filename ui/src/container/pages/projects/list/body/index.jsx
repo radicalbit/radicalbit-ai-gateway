@@ -55,6 +55,7 @@ function ProjectsList() {
       <div className="flex flex-row items-center gap-4">
         <Search
           allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
+          aria-label="Search projects by name"
           onChange={handleSearchChange}
           placeholder="Search projects by name"
           style={{ width: '300px' }}

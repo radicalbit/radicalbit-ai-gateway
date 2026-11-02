@@ -1,22 +1,27 @@
 import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
-import { Button, NewHeader, SectionTitle } from '@radicalbit/radicalbit-design-system';
+import { Button, Helmet, NewHeader, SectionTitle } from '@radicalbit/radicalbit-design-system';
 import { FolderOpen, Plus } from 'lucide-react';
 
 function ProjectsListHeader() {
   return (
-    <NewHeader
-      details={{
-        one: <CreateProjectButton />,
-      }}
-      title={(
-        <SectionTitle
-          subtitle="Organize your AI gateway routes by use case. Create a project to get started."
-          title="Projects"
-          titlePrefix={<Lucide icon={FolderOpen} />}
-        />
-      )}
-    />
+    <>
+      <Helmet title="Projects – Radicalbit Platform" />
+
+      <NewHeader
+        details={{
+          one: <CreateProjectButton />,
+        }}
+        title={(
+          <SectionTitle
+            level={1}
+            subtitle="Organize your AI gateway routes by use case. Create a project to get started."
+            title="Projects"
+            titlePrefix={<Lucide icon={FolderOpen} />}
+          />
+        )}
+      />
+    </>
   );
 }
 

@@ -20,7 +20,9 @@ from radicalbit_ai_gateway.models.limiting import (
 )
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
+    DecisionOutputMappingEntry,
     DeterministicRoutingConfig,
+    LLMRoutingConfig,
     OutputMappingEntry,
     RoutingRuleType,
     SemanticRoutingConfig,
@@ -465,6 +467,43 @@ def get_gateway_routing_semantic() -> GatewayConfig:
     return GatewayConfig(
         chat_models=chat_models,
         embedding_models=embedding_models,
+        routes={'smart_route': route},
+        routing=[routing],
+    )
+
+
+def get_gateway_routing_llm() -> GatewayConfig:
+    chat_models = [
+        _make_model('code_model', 'openai/gpt-4o'),
+        _make_model('general_model', 'openai/gpt-4o-mini'),
+        _make_model('default_model', 'openai/gpt-3.5-turbo'),
+        _make_model('router_model', 'openai/gpt-4o-mini'),
+        _make_model('router_backup', 'openai/gpt-4o-mini'),
+    ]
+    routing = LLMRoutingConfig(
+        name='llm_routing',
+        type='llm',
+        default_model_id='default_model',
+        router_model_id='router_model',
+        threshold=0.5,
+        output_mapping=[
+            DecisionOutputMappingEntry(
+                model_id='code_model',
+                description='writing, debugging or reviewing code',
+            ),
+            DecisionOutputMappingEntry(
+                model_id='general_model',
+                description='general knowledge questions and small talk',
+            ),
+        ],
+    )
+    route = GatewayRouteConfig(
+        route_name='smart_route',
+        chat_models=['code_model', 'general_model', 'default_model'],
+        routing=routing.name,
+    )
+    return GatewayConfig(
+        chat_models=chat_models,
         routes={'smart_route': route},
         routing=[routing],
     )

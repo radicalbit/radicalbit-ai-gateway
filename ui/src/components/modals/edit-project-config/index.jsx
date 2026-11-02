@@ -9,13 +9,13 @@ import { FormbitContextProvider, useFormbitContext } from '@radicalbit/formbit';
 import {
   Button,
   Dropdown,
-  NewHeader, RbitModal, SectionTitle, Skeleton,
+  Modal, NewHeader, RbitModal, SectionTitle, Skeleton,
   Upload,
 } from '@radicalbit/radicalbit-design-system';
 import {
   ArrowLeft, FileDown, FileUp, FolderOpen,
 } from 'lucide-react';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useDispatch } from 'react-redux';
 import Chatbot from './chatbot';
 import CodeEditor from './code-editor';
@@ -50,23 +50,51 @@ function EditProjectConfig() {
 function EditProjectConfigOuter() {
   const { hideModal } = useModals();
 
+  const { isDirty } = useFormbitContext();
+
+  const [isConfirmingClose, setIsConfirmingClose] = useState(false);
+
+  const handleOnClose = useCallback(() => {
+    if (isDirty) {
+      setIsConfirmingClose(true);
+      return;
+    }
+
+    hideModal();
+  }, [hideModal, isDirty]);
+
+  const handleOnKeepEditing = () => {
+    setIsConfirmingClose(false);
+  };
+
   return (
     <RbitModal
       aria-label="Edit project configuration"
       backgroundLevel={0}
       closable={false}
       defaultMaximize
-      header={<Header />}
-      onCancel={hideModal}
+      header={<Header onClose={handleOnClose} />}
+      onCancel={handleOnClose}
       open
     >
       <Body />
+
+      <Modal
+        cancelText="Keep editing"
+        okText="Discard"
+        onCancel={handleOnKeepEditing}
+        onOk={hideModal}
+        open={isConfirmingClose}
+        title="Discard unsaved changes?"
+      >
+        The configuration has changes that are not saved.
+      </Modal>
     </RbitModal>
   );
 }
 
-function Header() {
-  const { hideModal, modalPayload } = useModals();
+function Header({ onClose }) {
+  const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
   const { data: project, isLoading } = useGetProjectQuery(uuid, { skip: !uuid });
@@ -77,7 +105,7 @@ function Header() {
   if (isLoading) {
     return (
       <NewHeader
-        prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={hideModal} />}
+        prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={onClose} />}
         title={<Skeleton.Input active />}
       />
     );
@@ -91,7 +119,7 @@ function Header() {
           two: <ExportButton />,
         }
       }
-      prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={hideModal} />}
+      prefix={<Lucide aria-label="Back" icon={ArrowLeft} onClick={onClose} />}
       title={<SectionTitle subtitle={subtitle} title={title} titlePrefix={<Lucide icon={FolderOpen} />} />}
     />
   );

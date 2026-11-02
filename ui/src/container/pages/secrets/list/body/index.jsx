@@ -48,6 +48,7 @@ function SecretsList() {
     <div className="flex flex-col gap-4 h-full">
       <Search
         allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
+        aria-label="Search secrets by key"
         onChange={handleOnSearchChange}
         placeholder="Search secrets by key"
         style={{ width: '300px' }}

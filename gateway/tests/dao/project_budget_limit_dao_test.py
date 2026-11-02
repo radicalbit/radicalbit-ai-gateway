@@ -29,6 +29,25 @@ class ProjectBudgetLimitDAOTest(DatabaseIntegration):
         inserted = self.project_budget_limit_dao.insert(limit)
         assert inserted.uuid == limit.uuid
 
+    def test_updating_the_max_keeps_the_same_row_and_window(self):
+        project = self._insert_project()
+        limit = db_mock.get_sample_project_budget_limit(
+            uuid=uuid.uuid4(),
+            project_uuid=project.uuid,
+            algorithm='ALIGNED_FIXED_WINDOW',
+            window_size='1 day',
+            max_value=10.0,
+        )
+        self.project_budget_limit_dao.insert(limit)
+
+        self.project_budget_limit_dao.update_max_value(limit.uuid, 25.0)
+
+        res = self.project_budget_limit_dao.get_by_uuid(limit.uuid)
+        assert res.max_value == 25.0
+        assert res.algorithm == 'ALIGNED_FIXED_WINDOW'
+        assert res.window_size == '1 day'
+        assert res.updated_at > limit.updated_at
+
     def test_get_by_uuid(self):
         project = self._insert_project()
         limit = db_mock.get_sample_project_budget_limit(

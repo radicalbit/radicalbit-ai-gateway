@@ -12,54 +12,24 @@ export const createRoutes = ({ hasLeftColumnCollapsed, currentPath }) => {
   const routeToCheck = currentPath.split('/')[1];
   const ar = allRoutes(hasLeftColumnCollapsed);
 
-  const selectedItem = ar.find(({ key }) => routeToCheck === key)?.position;
+  const selectedItem = ar.flatMap(({ children = [] }) => children).find(({ key }) => routeToCheck === key)?.position;
 
-  return { selectedItem, items: ar };
+  return { ariaLabel: 'Main', selectedItem, items: ar };
 };
 
-// GROUPS LABEL
-const GROUP_HEADER_CLASSNAME = 'pointer-events-none !h-auto !mb-1 !leading-none text-md';
-
-function GroupHeaderLabel({ children, collapsed = false }) {
-  const alignmentClassName = collapsed ? 'justify-center text-center tracking-tighter' : 'justify-start text-left';
-
-  return (
-    <div className={`flex w-full uppercase opacity-50 !text-[0.75rem] ${alignmentClassName}`}>
-      {children}
-    </div>
-  );
+function CollapsedGroupLabel({ children }) {
+  return <div className="flex w-full justify-center text-center tracking-tighter">{children}</div>;
 }
 
-const groupHeader = (key, label, position, hasLeftColumnCollapsed) => {
-  if (hasLeftColumnCollapsed) {
-    return {
-      position,
-      key,
-      icon: <GroupHeaderLabel collapsed>{label}</GroupHeaderLabel>,
-      className: GROUP_HEADER_CLASSNAME,
-    };
-  }
+const group = (key, label, position, hasLeftColumnCollapsed, children) => {
+  const title = hasLeftColumnCollapsed ? <CollapsedGroupLabel>{label}</CollapsedGroupLabel> : label;
 
   return {
-    position,
-    key,
-    title: <GroupHeaderLabel>{label}</GroupHeaderLabel>,
-    className: GROUP_HEADER_CLASSNAME,
+    children, key, position, title, type: 'group',
   };
 };
 
-const setupHeader = (hasLeftColumnCollapsed) => groupHeader('setup-header', 'Setup', 1, hasLeftColumnCollapsed);
-const monitorHeader = (hasLeftColumnCollapsed) => groupHeader('monitor-header', 'Monitor', 6, hasLeftColumnCollapsed);
-const manageHeader = (hasLeftColumnCollapsed) => groupHeader('manage-header', 'Manage', 11, hasLeftColumnCollapsed);
-
-// GROUPS SEPARATOR
-const separator = (key, position) => ({
-  position,
-  key,
-  className: 'c-menu-item--separator pointer-events-none !h-[1rem]',
-});
-const separator1 = separator('separator1', 5);
-const separator2 = separator('separator2', 10);
+const divider = (key, position) => ({ key, position, type: 'divider' });
 
 // GROUPS ITEMS
 const projects = (hasLeftColumnCollapsed) => ({
@@ -67,7 +37,7 @@ const projects = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '1', shape: 'circle' }] }}>Projects</CollapsedTitle> : 'Projects',
   icon: <Lucide icon={FolderOpen} size="md" />,
   key: PathsEnum.PROJECTS,
-  link: getLink(PathsEnum.PROJECTS),
+  link: getLink(PathsEnum.PROJECTS, 'Projects'),
 });
 
 const configurations = (hasLeftColumnCollapsed) => ({
@@ -75,7 +45,7 @@ const configurations = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '2', shape: 'circle' }] }}>Configurations</CollapsedTitle> : 'Configurations',
   icon: <Lucide icon={Settings2} size="md" />,
   key: PathsEnum.CONFIGURATIONS,
-  link: getLink(PathsEnum.CONFIGURATIONS),
+  link: getLink(PathsEnum.CONFIGURATIONS, 'Configurations'),
 });
 
 const secrets = (hasLeftColumnCollapsed) => ({
@@ -83,7 +53,7 @@ const secrets = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '3', shape: 'circle' }] }}>Secrets</CollapsedTitle> : 'Secrets',
   icon: <Lucide icon={Lock} size="md" />,
   key: PathsEnum.SECRETS,
-  link: getLink(PathsEnum.SECRETS),
+  link: getLink(PathsEnum.SECRETS, 'Secrets'),
 });
 
 const routes = (hasLeftColumnCollapsed) => ({
@@ -91,7 +61,7 @@ const routes = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '4', shape: 'circle' }] }}>Routes</CollapsedTitle> : 'Routes',
   icon: <Lucide icon={Gauge} size="md" />,
   key: PathsEnum.ROUTES,
-  link: getLink(PathsEnum.ROUTES),
+  link: getLink(PathsEnum.ROUTES, 'Routes'),
 });
 
 const usage = (hasLeftColumnCollapsed) => ({
@@ -99,7 +69,7 @@ const usage = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '5', shape: 'circle' }] }}>Usage</CollapsedTitle> : 'Usage',
   icon: <Lucide icon={Signpost} size="md" />,
   key: PathsEnum.USAGE,
-  link: getLink(PathsEnum.USAGE),
+  link: getLink(PathsEnum.USAGE, 'Usage'),
 });
 
 const tracing = (hasLeftColumnCollapsed) => ({
@@ -107,7 +77,7 @@ const tracing = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
   icon: <Lucide icon={Route} size="md" />,
   key: PathsEnum.TRACING,
-  link: getLink(PathsEnum.TRACING),
+  link: getLink(PathsEnum.TRACING, 'Tracing'),
 });
 
 const groups = (hasLeftColumnCollapsed) => ({
@@ -115,7 +85,7 @@ const groups = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '7', shape: 'circle' }] }}>Groups</CollapsedTitle> : 'Groups',
   icon: <Lucide icon={Users} size="md" />,
   key: PathsEnum.GROUPS,
-  link: getLink(PathsEnum.GROUPS),
+  link: getLink(PathsEnum.GROUPS, 'Groups'),
 });
 
 const keys = (hasLeftColumnCollapsed) => ({
@@ -123,7 +93,7 @@ const keys = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '8', shape: 'circle' }] }}>Credentials</CollapsedTitle> : 'Credentials',
   icon: <Lucide icon={Key} size="md" />,
   key: PathsEnum.CREDENTIALS,
-  link: getLink(PathsEnum.CREDENTIALS),
+  link: getLink(PathsEnum.CREDENTIALS, 'Credentials'),
 });
 
 const alerts = (hasLeftColumnCollapsed) => ({
@@ -131,28 +101,29 @@ const alerts = (hasLeftColumnCollapsed) => ({
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '9', shape: 'circle' }] }}>Alert</CollapsedTitle> : 'Alert',
   icon: <Lucide icon={Settings2} size="md" />,
   key: PathsEnum.ALERTS,
-  link: getLink(PathsEnum.ALERTS),
+  link: getLink(PathsEnum.ALERTS, 'Alert'),
 });
 
 // ALL ROUTES
 const allRoutes = (hasLeftColumnCollapsed) => [
-  setupHeader(hasLeftColumnCollapsed),
-  projects(hasLeftColumnCollapsed),
-  configurations(hasLeftColumnCollapsed),
-  secrets(hasLeftColumnCollapsed),
-
-  separator1,
-  monitorHeader(hasLeftColumnCollapsed),
-  routes(hasLeftColumnCollapsed),
-  usage(hasLeftColumnCollapsed),
-  tracing(hasLeftColumnCollapsed),
-
-  separator2,
-  manageHeader(hasLeftColumnCollapsed),
-  groups(hasLeftColumnCollapsed),
-  keys(hasLeftColumnCollapsed),
-  FEATURE_FLAGS.ALERTS ? alerts(hasLeftColumnCollapsed) : false,
-].filter(Boolean);
+  group('setup-header', 'Setup', 1, hasLeftColumnCollapsed, [
+    projects(hasLeftColumnCollapsed),
+    configurations(hasLeftColumnCollapsed),
+    secrets(hasLeftColumnCollapsed),
+  ]),
+  divider('separator1', 5),
+  group('monitor-header', 'Monitor', 6, hasLeftColumnCollapsed, [
+    routes(hasLeftColumnCollapsed),
+    usage(hasLeftColumnCollapsed),
+    tracing(hasLeftColumnCollapsed),
+  ]),
+  divider('separator2', 10),
+  group('manage-header', 'Manage', 11, hasLeftColumnCollapsed, [
+    groups(hasLeftColumnCollapsed),
+    keys(hasLeftColumnCollapsed),
+    FEATURE_FLAGS.ALERTS ? alerts(hasLeftColumnCollapsed) : false,
+  ].filter(Boolean)),
+];
 
 export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps = {} }) {
   const { mac } = keyboardKeys;
@@ -172,7 +143,7 @@ export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps 
       {mac && (
         <div className="flex gap-2 items-center">
           {mac.map(({ label, shape }) => (
-            <Button key={label} shape={shape} size="small" type="secondary" {...buttonProps}>
+            <Button key={label} aria-hidden shape={shape} size="small" tabIndex={-1} type="secondary" {...buttonProps}>
               {label}
             </Button>
           ))}
@@ -183,8 +154,8 @@ export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps 
   );
 }
 
-const getLink = (pathname, search) => (
-  <Link to={{ pathname, search }}>
+const getLink = (pathname, label) => (
+  <Link aria-label={label} to={{ pathname }}>
     <div className="hidden">{pathname}</div>
   </Link>
 );

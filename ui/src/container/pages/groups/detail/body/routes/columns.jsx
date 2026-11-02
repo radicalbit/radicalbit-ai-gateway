@@ -1,5 +1,8 @@
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
+import TableRowLink from '@Components/table-row-link';
+import { ROUTE_DETAIL_TABS } from '@Container/pages/routes/detail/body';
+import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useRemoveRouteFromGroupMutation } from '@State/groups/api';
 import { useGetProjectQuery } from '@State/projects/api';
 import {
@@ -16,9 +19,11 @@ const columns = [
     dataIndex: 'name',
     key: 'name',
     width: '40%',
-    render: (value) => (
+    render: (value, { projectUuid }) => (
       <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        <TableRowLink to={`/${PathsEnum.ROUTES}/${value}?tab=${ROUTE_DETAIL_TABS.associations.key}&${SEARCH_PARAMS.routes}=${encodeURIComponent(value)}&projectUuid=${projectUuid}`}>
+          <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
+        </TableRowLink>
       </Truncate>
     ),
   },
