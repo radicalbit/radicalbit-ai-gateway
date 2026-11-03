@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -21,6 +21,7 @@ from radicalbit_ai_gateway.db.models.event import (
     ModelInvocationCounter,
     MostExpensiveChartData,
     MostExpensiveRoute,
+    RequestEventsSummary,
     RouteCostBreakdown,
     RouteCostData,
     RouteDetailedCostBreakdown,
@@ -826,6 +827,52 @@ class EventDAO:
                 )
                 for row_tuple in res
             ]
+
+    def get_request_summaries(
+        self,
+        project_uuid: UUID,
+        request_uuids: list[str],
+        date_from: date,
+        date_to: date,
+    ) -> dict[str, RequestEventsSummary]:
+        """Aggregate the events of a page of requests, one row per request.
+
+        One query for the whole page, bounded to `[date_from, date_to]` on
+        DATE so ClickHouse prunes partitions. Requests with no event are
+        absent from the result. Each per-request figure is one aggregate
+        column, so more of them (e.g. "did a guardrail fire") belong here.
+        """
+        if not request_uuids:
+            return {}
+
+        T = self.T
+        processed_tokens = T.c['EVENT_TYPE'].in_(
+            ['INPUT_TOKEN_PROCESSED', 'OUTPUT_TOKEN_PROCESSED']
+        )
+        conditions = [
+            T.c['REQUEST_UUID'].in_(request_uuids),
+            T.c['DATE'] >= date_from,
+            T.c['DATE'] <= date_to,
+        ]
+        self._add_project_filter(conditions, project_uuid)
+        columns = [
+            F.sumIf(T.c['VALUE'], processed_tokens).label('total_tokens'),
+            F.sumIf(T.c['COST'], processed_tokens).label('cost'),
+        ]
+        stmt = (
+            select(T.c['REQUEST_UUID'], *columns)
+            .select_from(Event)
+            .where(*conditions)
+            .group_by(T.c['REQUEST_UUID'])
+        )
+
+        with self.db.begin_session() as session:
+            return {
+                str(row[0]): RequestEventsSummary.model_validate(
+                    {c.name: value for c, value in zip(columns, row[1:])}
+                )
+                for row in session.execute(stmt).all()
+            }
 
     def get_summary_costs(
         self,

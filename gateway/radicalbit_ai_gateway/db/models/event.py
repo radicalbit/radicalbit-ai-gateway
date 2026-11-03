@@ -274,3 +274,10 @@ class MostExpensiveRoute(Base):
 class RouteCostBreakdown(Base):
     route_name: str
     total_cost: float
+
+
+class RequestEventsSummary(BaseModel):
+    """What one request's events add up to, for its row in the Requests list."""
+
+    total_tokens: int = 0
+    cost: float = 0.0
