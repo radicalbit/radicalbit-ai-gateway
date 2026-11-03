@@ -347,3 +347,28 @@ def test_tags_stay_visible_while_a_streaming_response_is_produced():
     assert response.status_code == 200
     assert seen == [('app=x', 'env=prod')] * 3
     assert emit.call_args.args[0].tags == ['app=x', 'env=prod']
+
+
+class UpstreamTimeoutError(Exception):
+    pass
+
+
+def test_an_escaping_exception_stores_its_class_name_never_its_message(caplog):
+    """The message can carry request content or secrets: log it, never store it."""
+    secret = 'user prompt: my password is hunter2'
+
+    async def endpoint(request):
+        raise UpstreamTimeoutError(secret)
+
+    app = Starlette(routes=[Route('/v1/chat/completions', endpoint, methods=['POST'])])
+    app.add_middleware(RequestEventMiddleware)
+
+    with patch(EMIT) as emit, caplog.at_level('ERROR'):
+        TestClient(app, raise_server_exceptions=False).post('/v1/chat/completions')
+
+    payload = emit.call_args.args[0]
+    assert payload.status is RequestStatus.UNHANDLED_ERROR
+    assert payload.error_type == 'UpstreamTimeoutError'
+    assert payload.error_code == 'upstream_timeout_error'
+    assert secret not in payload.model_dump_json()
+    assert secret in caplog.text

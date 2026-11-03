@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 
+from pydantic.alias_generators import to_snake
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -127,10 +128,16 @@ class RequestEventMiddleware:
         except Exception as e:
             ctx = RequestEventContext.get(request)
             if ctx:
-                error_str = str(e)
+                # The message can carry request content or secrets: store only
+                # the class name, as unhandled_exception_handler does.
                 ctx.error_type = type(e).__name__
-                ctx.error_code = error_str[:500] if error_str else None
+                ctx.error_code = to_snake(ctx.error_type)
                 ctx.is_unhandled_error = True
+            logger.error(
+                'Unhandled exception in RequestEventMiddleware: %s (error_type=%s)',
+                e,
+                type(e).__name__,
+            )
             if not event_emitted:
                 event_emitted = True
                 self._emit_event(request, status_code, start_time)
