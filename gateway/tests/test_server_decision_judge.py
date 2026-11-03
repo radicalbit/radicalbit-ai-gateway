@@ -1254,7 +1254,7 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         response = self._decide()
 
         assert response.status_code == 200
-        assert response.json() == DECISION_ANSWER
+        assert response.json() == {**DECISION_ANSWER, 'model': 'jev'}
         assert pook.isdone()
 
     def test_io_judge_reads_decision_input(self):

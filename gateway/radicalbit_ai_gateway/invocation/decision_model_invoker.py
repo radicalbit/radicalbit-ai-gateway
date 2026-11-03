@@ -7,6 +7,10 @@ import time
 
 import httpx
 from opentelemetry import trace
+from opentelemetry.semconv._incubating.attributes import (
+    gen_ai_attributes as GenAIAttributes,
+)
+from opentelemetry.semconv_ai import SpanAttributes
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
@@ -40,12 +44,16 @@ def billed_input_tokens(payload: object) -> int:
 
     Typesafe bills input tokens only.
     """
+    return _usage_tokens(payload, 'input_tokens')
+
+
+def _usage_tokens(payload: object, key: str) -> int:
     usage = payload.get('usage') if isinstance(payload, dict) else None
-    input_tokens = usage.get('input_tokens') if isinstance(usage, dict) else None
+    tokens = usage.get(key) if isinstance(usage, dict) else None
     # bool is an int: reject it, as any non-number.
-    if isinstance(input_tokens, bool) or not isinstance(input_tokens, int):
+    if isinstance(tokens, bool) or not isinstance(tokens, int):
         return 0
-    return max(input_tokens, 0)
+    return max(tokens, 0)
 
 
 BACKOFF_BASE_SECONDS = 0.2
@@ -99,7 +107,7 @@ def _set_decision_fallback_attributes(
         pass
 
 
-def _set_decision_response_attributes(payload: dict) -> None:
+def _set_decision_response_attributes(payload: dict, input_tokens: int) -> None:
     try:
         span = trace.get_current_span()
         if span.is_recording():
@@ -108,6 +116,16 @@ def _set_decision_response_attributes(payload: dict) -> None:
             )
             span.set_attribute(
                 'decision.response.usage', json.dumps(payload.get('usage'))
+            )
+            # The token attributes tracing reads: the usage Typesafe reports.
+            # Only input is billed, but the trace shows output too.
+            output_tokens = _usage_tokens(payload, 'output_tokens')
+            span.set_attribute(GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
+            span.set_attribute(
+                GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens
+            )
+            span.set_attribute(
+                SpanAttributes.GEN_AI_USAGE_TOTAL_TOKENS, input_tokens + output_tokens
             )
     except Exception:
         pass
@@ -209,8 +227,14 @@ class DecisionModelInvoker(ModelInvoker):
 
         if response.is_success:
             payload = self._parse_json(response, model_id)
-            input_tokens = (payload.get('usage') or {}).get('input_tokens') or 0
-            _set_decision_response_attributes(payload)
+            input_tokens = billed_input_tokens(payload)
+            _set_decision_response_attributes(payload, input_tokens)
+            content = response.content
+            if payload:
+                # The client sees the gateway model-id, not Typesafe's version.
+                content = json.dumps(
+                    {**payload, 'model': model_invoked.model_id}
+                ).encode('utf-8')
             # Typesafe bills input tokens only: output is recorded as 0.
             self._record_metrics(
                 request_uuid=request_uuid,
@@ -232,7 +256,7 @@ class DecisionModelInvoker(ModelInvoker):
 
             return DecisionResponse(
                 status_code=response.status_code,
-                content=response.content,
+                content=content,
                 media_type=response.headers.get('content-type'),
                 input_tokens=input_tokens,
                 model_invoked=model_invoked,

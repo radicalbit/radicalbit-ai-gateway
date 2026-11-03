@@ -15,8 +15,9 @@ const useGetTokensLimitingItem = () => {
   const tokenOutputLimit = data?.tokenOutputLimit;
   const chatModels = route?.configuration?.chatModels;
   const embeddingModels = route?.configuration?.embeddingModels;
+  const decisionModels = route?.configuration?.decisionModels;
 
-  if (isEmpty(chatModels) && isEmpty(embeddingModels)) {
+  if (isEmpty(chatModels) && isEmpty(embeddingModels) && isEmpty(decisionModels)) {
     return { hidden: true };
   }
 

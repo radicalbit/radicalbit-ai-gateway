@@ -89,6 +89,8 @@ TYPESAFE_BODY = {
     },
     'usage': {'input_tokens': 312, 'output_tokens': 20},
 }
+# What the client gets: the gateway model-id replaces Typesafe's version.
+CLIENT_BODY = {**TYPESAFE_BODY, 'model': 'jev'}
 
 
 def _mock_request_uuid(request: Request):
@@ -248,13 +250,13 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         mock.reply(status).json(TYPESAFE_BODY if body is None else body)
         return mock
 
-    def test_success_body_and_status_reach_the_client_unchanged(self):
+    def test_success_body_reaches_the_client_with_the_model_id(self):
         self._mock_typesafe()
 
         response = self._post()
 
         assert response.status_code == 200
-        assert response.json() == TYPESAFE_BODY
+        assert response.json() == CLIENT_BODY
         assert pook.isdone()
 
     def test_upstream_client_error_is_returned_unchanged(self):
@@ -359,6 +361,19 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         )
         assert attributes['decision.response.model_id'] == 'jev'
 
+    def test_span_carries_the_token_usage_tracing_reads(self):
+        self._mock_typesafe()
+
+        self._post()
+
+        attributes = {
+            c.args[0]: c.args[1] for c in self.span.set_attribute.call_args_list
+        }
+        # The trace shows all usage, though only input is billed.
+        assert attributes['gen_ai.usage.input_tokens'] == 312
+        assert attributes['gen_ai.usage.output_tokens'] == 20
+        assert attributes['gen_ai.usage.total_tokens'] == 332
+
     def test_server_error_is_retried_and_the_later_success_is_returned(self):
         self._mock_typesafe(status=503, body={'detail': 'busy'})
         self._mock_typesafe()
@@ -366,7 +381,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         response = self._post()
 
         assert response.status_code == 200
-        assert response.json() == TYPESAFE_BODY
+        assert response.json() == CLIENT_BODY
         assert pook.isdone()
 
     def test_rate_limited_response_is_retried(self):
@@ -426,7 +441,8 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         response = self._post()
 
         assert response.status_code == 200
-        assert response.json() == TYPESAFE_BODY
+        # The model that answered, not the target.
+        assert response.json() == {**TYPESAFE_BODY, 'model': 'jev-eu'}
         assert pook.isdone()
 
     def test_client_error_does_not_fall_back(self):
