@@ -1,12 +1,8 @@
-import useModals from '@Hooks/use-modals';
 import { REQUEST_TYPE_LABELS } from '@Src/constants';
 import { useGetTraceByIdVertical } from '@State/tracing/vertical-hooks';
 import { Tag } from '@radicalbit/radicalbit-design-system';
 
-function RequestTypeTag() {
-  const { modalPayload } = useModals();
-  const traceId = modalPayload?.data?.traceId;
-
+function RequestTypeTag({ traceId }) {
   const { data } = useGetTraceByIdVertical(traceId);
   const requestType = data?.requestType;
 

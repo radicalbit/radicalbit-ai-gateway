@@ -1,6 +1,7 @@
 import { tracesPageSize } from '@Src/constants';
 import { parseTagsFromTagsKey } from '@State/tags-query-params-factory';
 import {
+  useGetRequestByIdQuery,
   useGetRequestsQuery,
   useGetSpanByIdQuery,
   useGetSpanLatenciesQuery,
@@ -79,6 +80,12 @@ const useGetRequestsWithRange = (args, options) => {
   }, { skip: !projectUuid, ...options });
 };
 
+const useGetRequestByIdVertical = (requestUuid, options) => {
+  const { projectUuid } = useQueryRangeParams();
+
+  return useGetRequestByIdQuery({ projectUuid, requestUuid }, { skip: !projectUuid || !requestUuid, ...options });
+};
+
 const useGetTraceByIdVertical = (traceId, options) => {
   const { projectUuid } = useQueryRangeParams();
 
@@ -92,6 +99,7 @@ const useGetSpanByIdVertical = ({ traceId, spanId }, options) => {
 };
 
 export {
+  useGetRequestByIdVertical,
   useGetRequestsWithRange,
   useGetSpanByIdVertical,
   useGetSpanLatenciesWithRange,

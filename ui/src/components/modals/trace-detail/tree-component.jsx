@@ -1,14 +1,10 @@
 import { useEffect } from 'react';
 import { formatMs } from '@Src/helpers/column-formatters';
-import useModals from '@Hooks/use-modals';
 import { Spin, Tree } from '@radicalbit/radicalbit-design-system';
 import { useGetSpanByIdVertical } from '@State/tracing/vertical-hooks';
 import { useSearchParams } from 'react-router-dom';
 
-function TreeComponent({ tree, tree: { spanId } }) {
-  const { modalPayload } = useModals();
-  const traceId = modalPayload?.data?.traceId;
-
+function TreeComponent({ traceId, tree, tree: { spanId } }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedSpanId = searchParams.get('spanId');
 

@@ -163,11 +163,20 @@ export const tracingApiSlice = apiService.injectEndpoints({
         });
       },
     }),
+
+    // One request by its UUID: Outcome, trace ID (nullable), events in time order.
+    getRequestById: builder.query({
+      providesTags: () => [API_TAGS.TRACING],
+      query: ({ projectUuid, requestUuid }) => ({
+        url: `/projects/${projectUuid}/requests/${requestUuid}`,
+        method: 'get',
+      }),
+    }),
   }),
 });
 
 export const {
-  useGetTracesChartQuery, useGetTraceLatenciesQuery, useGetSpanLatenciesQuery, useGetTraceByIdQuery, useGetSpanByIdQuery, useGetTracesQuery, useGetRequestsQuery,
+  useGetTracesChartQuery, useGetTraceLatenciesQuery, useGetSpanLatenciesQuery, useGetTraceByIdQuery, useGetSpanByIdQuery, useGetTracesQuery, useGetRequestsQuery, useGetRequestByIdQuery,
 } = tracingApiSlice;
 
 export const selectors = {};

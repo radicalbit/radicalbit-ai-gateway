@@ -2,8 +2,6 @@ import EventIcon from '@Components/event-icon';
 import HtmlAnchor from '@Components/html-anchor';
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
-import TableRowButton from '@Components/table-row-button';
-import useModals, { modals } from '@Hooks/use-modals';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import {
   FormatBold,
@@ -34,22 +32,6 @@ function AssociatedGroup({ groupName, groupUuid }) {
   return '--';
 }
 
-// The trace detail opens only for a traced request; AG-1109 replaces it with
-// the request detail.
-function OpenTrace({ children, traceId }) {
-  const { showModal } = useModals();
-
-  if (!traceId) {
-    return children;
-  }
-
-  const handleOnClick = () => {
-    showModal(modals.TRACE_DETAIL, { traceId });
-  };
-
-  return <TableRowButton onClick={handleOnClick}>{children}</TableRowButton>;
-}
-
 // One column per event icon: lit only when that kind of event fired in the
 // request (AG-1108), whatever the route configures.
 const eventIconColumn = (title, kind, dataIndex) => ({
@@ -66,12 +48,10 @@ const columns = [
     title: 'Route',
     dataIndex: 'routeName',
     align: 'left',
-    render: (value, { traceId, requestStatus }) => (
+    render: (value, { requestStatus }) => (
       <StatusTooltip requestStatus={requestStatus}>
         <div className="flex items-center gap-2">
-          <OpenTrace traceId={traceId}>
-            <FormatBold value={value} />
-          </OpenTrace>
+          <FormatBold value={value} />
 
           <Status requestStatus={requestStatus} />
         </div>

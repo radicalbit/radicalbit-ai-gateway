@@ -1,14 +1,10 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { formatTimestamp } from '@Helpers/column-formatters';
-import useModals from '@Hooks/use-modals';
 import { useGetSpanByIdVertical } from '@State/tracing/vertical-hooks';
 import { Json, NewHeader, SectionTitle, Skeleton, Spinner } from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
 
-function SpanDetail() {
-  const { modalPayload } = useModals();
-  const traceId = modalPayload?.data?.traceId;
-
+function SpanDetail({ traceId }) {
   const [searchParams] = useSearchParams();
   const selectedSpanId = searchParams.get('spanId');
 
@@ -56,10 +52,7 @@ function Placeholder() {
   );
 }
 
-export function SpanHeader() {
-  const { modalPayload } = useModals();
-  const traceId = modalPayload?.data?.traceId;
-
+export function SpanHeader({ traceId }) {
   const [searchParams] = useSearchParams();
   const selectedSpanId = searchParams.get('spanId');
 

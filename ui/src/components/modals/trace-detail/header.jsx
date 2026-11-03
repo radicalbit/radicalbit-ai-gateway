@@ -1,5 +1,4 @@
 import Lucide from '@Components/lucide';
-import useModals from '@Hooks/use-modals';
 import { formatMs, formatInt } from '@Src/helpers/column-formatters';
 import { useGetTraceByIdVertical } from '@State/tracing/vertical-hooks';
 import {
@@ -10,10 +9,9 @@ import { useNavigate } from 'react-router-dom';
 import RequestTypeTag from './request-type-tag';
 import TraceTags from './trace-tags';
 
-function Header() {
-  const { modalPayload } = useModals();
+function Header({ traceId }) {
   const navigate = useNavigate();
-  const traceId = modalPayload?.data?.traceId;
+
   const { data } = useGetTraceByIdVertical(traceId);
 
   const routeName = data?.routeName ?? '--';
@@ -39,7 +37,7 @@ function Header() {
       details={{
         one: (
           <div className="pr-6 border-r border-gray-200">
-            <TraceTags />
+            <TraceTags traceId={traceId} />
           </div>
         ),
         two: (
@@ -63,7 +61,7 @@ function Header() {
           subtitle={subtitle}
           title={routeName}
           titlePrefix={<Lucide aria-label="Back" className="cursor-pointer" icon={ArrowLeft} onClick={handleOnClickBack} />}
-          titleSuffix={<RequestTypeTag />}
+          titleSuffix={<RequestTypeTag traceId={traceId} />}
         />
       )}
     />

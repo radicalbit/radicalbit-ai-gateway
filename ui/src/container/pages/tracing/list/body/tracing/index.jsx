@@ -1,5 +1,4 @@
 import Lucide from '@Components/lucide';
-import useModals, { modals } from '@Hooks/use-modals';
 import { useGetRequestsWithRange } from '@Src/store/state/tracing/vertical-hooks';
 import {
   Board,
@@ -12,11 +11,15 @@ import {
 import { TriangleAlert } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import columns from './columns';
+import RequestDetail from './request-detail';
+
+// The open request lives in the URL, so a request detail can be linked to.
+const REQUEST_PARAM = 'requestUuid';
 
 function Tracing() {
-  const { showModal } = useModals();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get('tracing-table-page')) || 1;
+  const openRequestUuid = searchParams.get(REQUEST_PARAM);
 
   const {
     data, isError, isLoading, isFetching, isSuccess, refetch,
@@ -30,11 +33,21 @@ function Tracing() {
     });
   };
 
-  // Until the request detail lands (AG-1109), a row opens its trace, if any.
-  const handleOnRowClick = (record) => {
-    if (record.traceId) {
-      showModal(modals.TRACE_DETAIL, { traceId: record.traceId });
-    }
+  const expandedRowKeys = openRequestUuid ? [openRequestUuid] : [];
+
+  // One request open at a time: the span selection (?spanId) belongs to its trace.
+  const handleOnExpand = (expanded, { requestUuid }) => {
+    setSearchParams((prev) => {
+      prev.delete('spanId');
+
+      if (expanded) {
+        prev.set(REQUEST_PARAM, requestUuid);
+      } else {
+        prev.delete(REQUEST_PARAM);
+      }
+
+      return prev;
+    });
   };
 
   if (isLoading) {
@@ -60,13 +73,9 @@ function Tracing() {
         header={<SectionTitle title="Requests" />}
         main={(
           <DataTable
-            clickable
             columns={columns}
             dataSource={[]}
             onChange={handleTableChange}
-            onRow={(record) => ({
-              onClick: () => { handleOnRowClick(record); },
-            })}
             pagination={{
               current: data.page,
               pageSize: data.size,
@@ -86,10 +95,13 @@ function Tracing() {
           clickable
           columns={columns}
           dataSource={items}
+          expandable={{
+            expandedRowKeys,
+            expandedRowRender,
+            expandRowByClick: true,
+            onExpand: handleOnExpand,
+          }}
           onChange={handleTableChange}
-          onRow={(record) => ({
-            onClick: () => { handleOnRowClick(record); },
-          })}
           pagination={{
             current: data.page,
             pageSize: data.size,
@@ -100,6 +112,10 @@ function Tracing() {
       )}
     />
   );
+}
+
+function expandedRowRender({ requestUuid }) {
+  return <RequestDetail requestUuid={requestUuid} />;
 }
 
 function IsError({ isFetching, refetch }) {
