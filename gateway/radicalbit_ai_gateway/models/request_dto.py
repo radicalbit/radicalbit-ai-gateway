@@ -27,6 +27,13 @@ class RequestDTO(BaseModel):
     created_at: int
     total_tokens: int = 0
     cost: float = 0.0
+    # True only when that kind of event fired in this request, any behavior
+    # for guardrails; has_limit means a `*_LIMIT` block.
+    has_guardrail: bool = False
+    has_cache_hit: bool = False
+    has_fallback: bool = False
+    has_routing: bool = False
+    has_limit: bool = False
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()

@@ -30,6 +30,7 @@ from radicalbit_ai_gateway.db.models.event import (
     TokensCounter,
 )
 from radicalbit_ai_gateway.db.tables.event_table import Event
+from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
@@ -46,6 +47,14 @@ MCP_ENTITY_COLUMNS: dict[str, McpEntityColumn] = {
     'groups': 'GROUP_UUID',
     'keys': 'API_KEY_UUID',
 }
+
+# The events a limit leaves when it blocks a request: route, credential or
+# project; rate, token, duration or budget. LIMIT_THRESHOLD is only a warning.
+_LIMIT_BLOCK_EVENT_TYPES = [
+    t.value
+    for t in EventType
+    if t.value.endswith('_LIMIT') and t is not EventType.LIMIT_THRESHOLD
+]
 
 
 class EventDAO:
@@ -828,6 +837,11 @@ class EventDAO:
                 for row_tuple in res
             ]
 
+    @staticmethod
+    def _fired(condition: ColumnElement) -> ColumnElement:
+        """1 when at least one event of the group matches `condition`."""
+        return F.countIf(condition) > 0
+
     def get_request_summaries(
         self,
         project_uuid: UUID,
@@ -858,6 +872,13 @@ class EventDAO:
         columns = [
             F.sumIf(T.c['VALUE'], processed_tokens).label('total_tokens'),
             F.sumIf(T.c['COST'], processed_tokens).label('cost'),
+            self._fired(T.c['EVENT_TYPE'] == 'GUARDRAIL').label('has_guardrail'),
+            self._fired(T.c['EVENT_TYPE'] == 'CACHE_HIT').label('has_cache_hit'),
+            self._fired(T.c['EVENT_TYPE'] == 'FALLBACK').label('has_fallback'),
+            self._fired(T.c['EVENT_TYPE'] == 'ROUTING').label('has_routing'),
+            self._fired(T.c['EVENT_TYPE'].in_(_LIMIT_BLOCK_EVENT_TYPES)).label(
+                'has_limit'
+            ),
         ]
         stmt = (
             select(T.c['REQUEST_UUID'], *columns)
