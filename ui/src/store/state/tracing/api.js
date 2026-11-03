@@ -128,11 +128,46 @@ export const tracingApiSlice = apiService.injectEndpoints({
         });
       },
     }),
+
+    // One row per request, traced or not (ADR 0010).
+    getRequests: builder.query({
+      providesTags: () => [API_TAGS.TRACING],
+      query: ({
+        projectUuid, from, to, routes, tags, requestTypes, page, limit,
+      }) => {
+        const init = {};
+
+        const params = timeFiltersQueryParamFactory({ from, to, init });
+
+        (routes ?? []).forEach((route) => {
+          params.append('routes', route);
+        });
+
+        (requestTypes ?? []).forEach((requestType) => {
+          params.append('requestType', requestType);
+        });
+
+        appendTagsToParams(params, tags);
+
+        if (page !== undefined) {
+          params.append('_page', page);
+        }
+
+        if (limit !== undefined) {
+          params.append('_limit', limit);
+        }
+
+        return ({
+          url: `/projects/${projectUuid}/requests?${params.toString()}`,
+          method: 'get',
+        });
+      },
+    }),
   }),
 });
 
 export const {
-  useGetTracesChartQuery, useGetTraceLatenciesQuery, useGetSpanLatenciesQuery, useGetTraceByIdQuery, useGetSpanByIdQuery, useGetTracesQuery,
+  useGetTracesChartQuery, useGetTraceLatenciesQuery, useGetSpanLatenciesQuery, useGetTraceByIdQuery, useGetSpanByIdQuery, useGetTracesQuery, useGetRequestsQuery,
 } = tracingApiSlice;
 
 export const selectors = {};
