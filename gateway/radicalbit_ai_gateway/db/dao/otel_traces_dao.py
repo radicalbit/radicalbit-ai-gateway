@@ -445,8 +445,11 @@ class OtelTracesDAO:
                 T.c['ParentSpanId'] == '',
                 literal_column(_PROJECT_UUID_ATTR) == str(project_uuid),
                 req_uuid_attr.in_(request_uuids),
-                F.toDate(T.c['Timestamp']) >= date_from,
-                F.toDate(T.c['Timestamp']) <= date_to,
+                # Timestamp has no column timezone: read its date in UTC, as
+                # event and request_event DATE are, or the window shifts on a
+                # server whose timezone is not UTC.
+                F.toDate(T.c['Timestamp'], 'UTC') >= date_from,
+                F.toDate(T.c['Timestamp'], 'UTC') <= date_to,
             )
             .group_by(text(_REQUEST_UUID_ATTR))
         )

@@ -133,11 +133,8 @@ class RequestEventMiddleware:
                 ctx.error_type = type(e).__name__
                 ctx.error_code = to_snake(ctx.error_type)
                 ctx.is_unhandled_error = True
-            logger.error(
-                'Unhandled exception in RequestEventMiddleware: %s (error_type=%s)',
-                e,
-                type(e).__name__,
-            )
+            # No log here: unhandled_exception_handler, registered for
+            # Exception, logs the full message once the exception escapes.
             if not event_emitted:
                 event_emitted = True
                 self._emit_event(request, status_code, start_time)

@@ -15,13 +15,13 @@ from radicalbit_ai_gateway.db.models.event import (
     Counters,
     DetailedCostBreakdown,
     EventDetails,
+    EventsSummary,
     InvocationChartDataPoint,
     LastEventFallback,
     LastEventGuardrail,
     ModelInvocationCounter,
     MostExpensiveChartData,
     MostExpensiveRoute,
-    RequestEventsSummary,
     RouteCostBreakdown,
     RouteCostData,
     RouteDetailedCostBreakdown,
@@ -30,7 +30,7 @@ from radicalbit_ai_gateway.db.models.event import (
     TokensCounter,
 )
 from radicalbit_ai_gateway.db.tables.event_table import Event
-from radicalbit_ai_gateway.models.event_type import EventType
+from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENT_TYPES
 from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
@@ -47,14 +47,6 @@ MCP_ENTITY_COLUMNS: dict[str, McpEntityColumn] = {
     'groups': 'GROUP_UUID',
     'keys': 'API_KEY_UUID',
 }
-
-# The events a limit leaves when it blocks a request: route, credential or
-# project; rate, token, duration or budget. LIMIT_THRESHOLD is only a warning.
-_LIMIT_BLOCK_EVENT_TYPES = [
-    t.value
-    for t in EventType
-    if t.value.endswith('_LIMIT') and t is not EventType.LIMIT_THRESHOLD
-]
 
 
 class EventDAO:
@@ -848,13 +840,12 @@ class EventDAO:
         request_uuids: list[str],
         date_from: date,
         date_to: date,
-    ) -> dict[str, RequestEventsSummary]:
+    ) -> dict[str, EventsSummary]:
         """Aggregate the events of a page of requests, one row per request.
 
         One query for the whole page, bounded to `[date_from, date_to]` on
         DATE so ClickHouse prunes partitions. Requests with no event are
-        absent from the result. Each per-request figure is one aggregate
-        column, so more of them (e.g. "did a guardrail fire") belong here.
+        absent from the result.
         """
         if not request_uuids:
             return {}
@@ -876,7 +867,7 @@ class EventDAO:
             self._fired(T.c['EVENT_TYPE'] == 'CACHE_HIT').label('has_cache_hit'),
             self._fired(T.c['EVENT_TYPE'] == 'FALLBACK').label('has_fallback'),
             self._fired(T.c['EVENT_TYPE'] == 'ROUTING').label('has_routing'),
-            self._fired(T.c['EVENT_TYPE'].in_(_LIMIT_BLOCK_EVENT_TYPES)).label(
+            self._fired(T.c['EVENT_TYPE'].in_(LIMIT_BLOCK_EVENT_TYPES)).label(
                 'has_limit'
             ),
         ]
@@ -889,7 +880,7 @@ class EventDAO:
 
         with self.db.begin_session() as session:
             return {
-                str(row[0]): RequestEventsSummary.model_validate(
+                str(row[0]): EventsSummary.model_validate(
                     {c.name: value for c, value in zip(columns, row[1:])}
                 )
                 for row in session.execute(stmt).all()

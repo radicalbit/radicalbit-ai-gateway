@@ -276,7 +276,7 @@ class RouteCostBreakdown(Base):
     total_cost: float
 
 
-class RequestEventsSummary(BaseModel):
+class EventsSummary(BaseModel):
     """What one request's events add up to, for its row in the Requests list."""
 
     total_tokens: int = 0

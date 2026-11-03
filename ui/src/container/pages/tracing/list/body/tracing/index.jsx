@@ -1,4 +1,5 @@
 import Lucide from '@Components/lucide';
+import { SPAN_PARAM } from '@Components/modals/trace-detail/constants';
 import { useGetRequestsWithRange } from '@Src/store/state/tracing/vertical-hooks';
 import {
   Board,
@@ -35,10 +36,10 @@ function Tracing() {
 
   const expandedRowKeys = openRequestUuid ? [openRequestUuid] : [];
 
-  // One request open at a time: the span selection (?spanId) belongs to its trace.
+  // One request open at a time: the span selection (SPAN_PARAM) belongs to its trace.
   const handleOnExpand = (expanded, { requestUuid }) => {
     setSearchParams((prev) => {
-      prev.delete('spanId');
+      prev.delete(SPAN_PARAM);
 
       if (expanded) {
         prev.set(REQUEST_PARAM, requestUuid);

@@ -6,6 +6,7 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { SPAN_PARAM } from './constants';
 import RequestTypeTag from './request-type-tag';
 import TraceTags from './trace-tags';
 
@@ -28,7 +29,7 @@ function Header({ traceId }) {
   const handleOnClickBack = () => {
     const params = new URLSearchParams(window.location.search);
     params.delete('modal');
-    params.delete('spanId');
+    params.delete(SPAN_PARAM);
     navigate(`?${params.toString()}`);
   };
 

@@ -21,6 +21,7 @@ from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
+from radicalbit_ai_gateway.utils.exceptions import unhandled_exception_handler
 from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 
 EMIT = 'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
@@ -362,6 +363,8 @@ def test_an_escaping_exception_stores_its_class_name_never_its_message(caplog):
 
     app = Starlette(routes=[Route('/v1/chat/completions', endpoint, methods=['POST'])])
     app.add_middleware(RequestEventMiddleware)
+    # As in server.py: the catch-all handler is what logs the message.
+    app.add_exception_handler(Exception, unhandled_exception_handler)
 
     with patch(EMIT) as emit, caplog.at_level('ERROR'):
         TestClient(app, raise_server_exceptions=False).post('/v1/chat/completions')
@@ -371,4 +374,4 @@ def test_an_escaping_exception_stores_its_class_name_never_its_message(caplog):
     assert payload.error_type == 'UpstreamTimeoutError'
     assert payload.error_code == 'upstream_timeout_error'
     assert secret not in payload.model_dump_json()
-    assert secret in caplog.text
+    assert caplog.text.count(secret) == 1

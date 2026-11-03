@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from radicalbit_ai_gateway.models.request_dto import RequestDetailDTO, RequestEventDTO
+from radicalbit_ai_gateway.models.request_dto import EventDTO, RequestDetailDTO
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus
 from radicalbit_ai_gateway.routes.requests_route import RequestsRoute
 from radicalbit_ai_gateway.services.project_service import ProjectService
@@ -54,7 +54,7 @@ class TestRequestDetailRoute(unittest.TestCase):
             duration_ms=3.5,
             created_at=1773144000,
             events=[
-                RequestEventDTO(
+                EventDTO(
                     event_type='RATE_LIMIT',
                     timestamp=datetime.datetime(2026, 3, 10, tzinfo=datetime.UTC),
                     value=1,

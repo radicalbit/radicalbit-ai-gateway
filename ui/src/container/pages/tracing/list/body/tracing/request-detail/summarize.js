@@ -15,7 +15,7 @@ const summarizeLimit = (attributes) => {
   return `Blocked by the ${limit}${usage}${window}`;
 };
 
-export default function summarize(event) {
+function summarize(event) {
   const {
     eventType, value, modelId, isJudge, cacheType, target, fallback, routingName,
     routingSelectedModelId, guardrailName, guardrailType, guardrailWhere,
@@ -64,3 +64,5 @@ export default function summarize(event) {
       return eventType;
   }
 }
+
+export default summarize;

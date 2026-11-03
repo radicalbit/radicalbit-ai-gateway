@@ -8,15 +8,10 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import dayjs from 'dayjs';
 import { Unplug } from 'lucide-react';
+import { REQUEST_STATUS_LABELS, RequestStatusEnum } from '../request-status';
 import summarize from './summarize';
 
 const OUTCOME_KEY = 'outcome';
-
-const STATUS_LABELS = {
-  success: 'Success',
-  handled_error: 'Handled error',
-  unhandled_error: 'Unhandled error',
-};
 
 const eventColumns = [
   {
@@ -34,6 +29,16 @@ const eventColumns = [
   {
     title: 'What happened',
     dataIndex: 'summary',
+    render: (summary, { key, requestStatus, httpStatusCode, errorType, errorCode }) => (
+      <WhatHappened
+        errorCode={errorCode}
+        errorType={errorType}
+        httpStatusCode={httpStatusCode}
+        isOutcome={key === OUTCOME_KEY}
+        requestStatus={requestStatus}
+        summary={summary}
+      />
+    ),
   },
   {
     title: 'Cost',
@@ -60,7 +65,9 @@ const toOutcomeRow = ({ requestStatus, httpStatusCode, errorType, errorCode }) =
   key: OUTCOME_KEY,
   eventType: 'Outcome',
   requestStatus,
-  summary: <Outcome errorCode={errorCode} errorType={errorType} httpStatusCode={httpStatusCode} requestStatus={requestStatus} />,
+  httpStatusCode,
+  errorType,
+  errorCode,
   attributes: {},
 });
 
@@ -69,7 +76,7 @@ const rowClassName = ({ key, blocking, requestStatus }) => {
     return DataTable.ROW_ERROR;
   }
 
-  if (key === OUTCOME_KEY && requestStatus !== 'success') {
+  if (key === OUTCOME_KEY && requestStatus !== RequestStatusEnum.SUCCESS) {
     return DataTable.ROW_ERROR;
   }
 
@@ -133,8 +140,19 @@ function EventType({ blocking, eventType }) {
   return <code>{eventType}</code>;
 }
 
+// The Outcome row reads its fields from the row data; every other row has a summary.
+function WhatHappened({
+  errorCode, errorType, httpStatusCode, isOutcome, requestStatus, summary,
+}) {
+  if (isOutcome) {
+    return <Outcome errorCode={errorCode} errorType={errorType} httpStatusCode={httpStatusCode} requestStatus={requestStatus} />;
+  }
+
+  return summary;
+}
+
 function Outcome({ requestStatus, httpStatusCode, errorType, errorCode }) {
-  const status = STATUS_LABELS[requestStatus] ?? requestStatus ?? '--';
+  const status = REQUEST_STATUS_LABELS[requestStatus] ?? requestStatus ?? '--';
 
   return (
     <div className="flex flex-wrap gap-x-6 gap-y-1">

@@ -342,6 +342,26 @@ class RequestEventDAO:
             res = session.execute(stmt).all()
             return [self._validate_row(ErrorDetail, FIELD_NAMES, row) for row in res]
 
+    def _request_columns(self) -> list:
+        """Return the columns of one request, shared by the Requests list and detail."""
+        T = self.T
+        return [
+            T.c['REQUEST_UUID'].label('request_uuid'),
+            T.c['TIMESTAMP'].label('timestamp'),
+            T.c['DATE'].label('date'),
+            T.c['ROUTE_NAME'].label('route_name'),
+            T.c['API_KEY_UUID'].label('api_key_uuid'),
+            T.c['API_KEY_NAME'].label('api_key_name'),
+            T.c['GROUP_UUID'].label('group_uuid'),
+            T.c['GROUP_NAME'].label('group_name'),
+            T.c['REQUEST_TYPE'].label('request_type'),
+            T.c['REQUEST_STATUS'].label('request_status'),
+            T.c['HTTP_STATUS_CODE'].label('http_status_code'),
+            T.c['DURATION_MS'].label('duration_ms'),
+            T.c['ERROR_TYPE'].label('error_type'),
+            T.c['TAGS'].label('tags'),
+        ]
+
     def get_requests_paginated(
         self,
         project_uuid: UUID,
@@ -369,22 +389,7 @@ class RequestEventDAO:
             conditions.append(T.c['REQUEST_TYPE'].in_([r.value for r in request_types]))
 
         stmt = (
-            select(
-                T.c['REQUEST_UUID'].label('request_uuid'),
-                T.c['TIMESTAMP'].label('timestamp'),
-                T.c['DATE'].label('date'),
-                T.c['ROUTE_NAME'].label('route_name'),
-                T.c['API_KEY_UUID'].label('api_key_uuid'),
-                T.c['API_KEY_NAME'].label('api_key_name'),
-                T.c['GROUP_UUID'].label('group_uuid'),
-                T.c['GROUP_NAME'].label('group_name'),
-                T.c['REQUEST_TYPE'].label('request_type'),
-                T.c['REQUEST_STATUS'].label('request_status'),
-                T.c['HTTP_STATUS_CODE'].label('http_status_code'),
-                T.c['DURATION_MS'].label('duration_ms'),
-                T.c['ERROR_TYPE'].label('error_type'),
-                T.c['TAGS'].label('tags'),
-            )
+            select(*self._request_columns())
             .select_from(RequestEvent)
             .where(*conditions)
             # REQUEST_UUID breaks ties so pages never overlap.
@@ -421,22 +426,9 @@ class RequestEventDAO:
         T = self.T
         stmt = (
             select(
-                T.c['REQUEST_UUID'].label('request_uuid'),
-                T.c['TIMESTAMP'].label('timestamp'),
-                T.c['DATE'].label('date'),
-                T.c['ROUTE_NAME'].label('route_name'),
-                T.c['API_KEY_UUID'].label('api_key_uuid'),
-                T.c['API_KEY_NAME'].label('api_key_name'),
-                T.c['GROUP_UUID'].label('group_uuid'),
-                T.c['GROUP_NAME'].label('group_name'),
-                T.c['REQUEST_TYPE'].label('request_type'),
-                T.c['REQUEST_STATUS'].label('request_status'),
-                T.c['HTTP_STATUS_CODE'].label('http_status_code'),
-                T.c['DURATION_MS'].label('duration_ms'),
-                T.c['ERROR_TYPE'].label('error_type'),
+                *self._request_columns(),
                 T.c['ERROR_CODE'].label('error_code'),
                 T.c['IS_STREAMING'].label('is_streaming'),
-                T.c['TAGS'].label('tags'),
             )
             .select_from(RequestEvent)
             .where(

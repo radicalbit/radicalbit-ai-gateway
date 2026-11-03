@@ -15,6 +15,7 @@ import { Tooltip } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import RequestTypeCell from './request-type-cell';
+import { REQUEST_STATUS_LABELS, RequestStatusEnum } from './request-status';
 import TagsCell from './tags-cell';
 
 function AssociatedGroup({ groupName, groupUuid }) {
@@ -122,21 +123,15 @@ const columns = [
 ];
 
 function RequestError({ requestStatus, httpStatusCode, errorType }) {
-  if (!requestStatus || requestStatus === 'success') {
+  if (!requestStatus || requestStatus === RequestStatusEnum.SUCCESS) {
     return '--';
   }
 
   return [httpStatusCode, errorType].filter(Boolean).join(' ') || '--';
 }
 
-const STATUS_LABELS = {
-  success: 'success',
-  handled_error: 'handled error',
-  unhandled_error: 'unhandled error',
-};
-
 function StatusTooltip({ requestStatus, children }) {
-  const label = STATUS_LABELS[requestStatus] ?? STATUS_LABELS.success;
+  const label = (REQUEST_STATUS_LABELS[requestStatus] ?? REQUEST_STATUS_LABELS[RequestStatusEnum.SUCCESS]).toLowerCase();
 
   return (
     <Tooltip title={`Status: ${label}`}>
@@ -147,13 +142,13 @@ function StatusTooltip({ requestStatus, children }) {
 
 function Status({ requestStatus }) {
   switch (requestStatus) {
-    case 'unhandled_error': return (
+    case RequestStatusEnum.UNHANDLED_ERROR: return (
       <IconBadge aria-label="Status: unhandled error" className="capitalize" size="small" type="error">
         <Lucide icon={TriangleAlert} />
       </IconBadge>
     );
 
-    case 'handled_error': return (
+    case RequestStatusEnum.HANDLED_ERROR: return (
       <IconBadge aria-label="Status: handled error" className="capitalize" size="small" type="warning-light">
         <Lucide icon={TriangleAlert} />
       </IconBadge>

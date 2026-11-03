@@ -41,7 +41,7 @@ class RequestDTO(BaseModel):
     )
 
 
-class RequestEventDTO(BaseModel):
+class EventDTO(BaseModel):
     """One event of a request, as the request detail lists it.
 
     GUARDRAIL_PARAMS and the `parameters` attribute are never carried.
@@ -97,7 +97,7 @@ class RequestDetailDTO(BaseModel):
     is_streaming: bool = False
     duration_ms: float
     created_at: int
-    events: list[RequestEventDTO] = Field(default_factory=list)
+    events: list[EventDTO] = Field(default_factory=list)
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()

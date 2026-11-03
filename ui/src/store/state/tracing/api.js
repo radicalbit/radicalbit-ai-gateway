@@ -2,6 +2,33 @@ import { API_TAGS, apiService } from '@Src/store/apis';
 import { appendTagsToParams } from '@State/tags-query-params-factory';
 import timeFiltersQueryParamFactory from '@State/time-filter-query-params-factory';
 
+// The filters and page of a paginated list: the Requests list and the traces list.
+const listQueryParams = ({
+  from, to, routes, tags, requestTypes, page, limit,
+}) => {
+  const params = timeFiltersQueryParamFactory({ from, to, init: {} });
+
+  (routes ?? []).forEach((route) => {
+    params.append('routes', route);
+  });
+
+  (requestTypes ?? []).forEach((requestType) => {
+    params.append('requestType', requestType);
+  });
+
+  appendTagsToParams(params, tags);
+
+  if (page !== undefined) {
+    params.append('_page', page);
+  }
+
+  if (limit !== undefined) {
+    params.append('_limit', limit);
+  }
+
+  return params;
+};
+
 export const tracingApiSlice = apiService.injectEndpoints({
   endpoints: (builder) => ({
     getTracesChart: builder.query({
@@ -93,75 +120,19 @@ export const tracingApiSlice = apiService.injectEndpoints({
 
     getTraces: builder.query({
       providesTags: () => [API_TAGS.TRACING],
-      query: ({
-        projectUuid, from, to, routes, tags, requestTypes, page, limit,
-      }) => {
-        const init = {};
-
-        const params = timeFiltersQueryParamFactory({ from, to, init });
-
-        if (routes && routes.length > 0) {
-          routes.forEach((route) => {
-            params.append('routes', route);
-          });
-        }
-
-        if (requestTypes && requestTypes.length > 0) {
-          requestTypes.forEach((requestType) => {
-            params.append('requestType', requestType);
-          });
-        }
-
-        appendTagsToParams(params, tags);
-
-        if (page !== undefined) {
-          params.append('_page', page);
-        }
-
-        if (limit !== undefined) {
-          params.append('_limit', limit);
-        }
-
-        return ({
-          url: `/projects/${projectUuid}/traces?${params.toString()}`,
-          method: 'get',
-        });
-      },
+      query: ({ projectUuid, ...filters }) => ({
+        url: `/projects/${projectUuid}/traces?${listQueryParams(filters).toString()}`,
+        method: 'get',
+      }),
     }),
 
     // One row per request, traced or not (ADR 0010).
     getRequests: builder.query({
       providesTags: () => [API_TAGS.TRACING],
-      query: ({
-        projectUuid, from, to, routes, tags, requestTypes, page, limit,
-      }) => {
-        const init = {};
-
-        const params = timeFiltersQueryParamFactory({ from, to, init });
-
-        (routes ?? []).forEach((route) => {
-          params.append('routes', route);
-        });
-
-        (requestTypes ?? []).forEach((requestType) => {
-          params.append('requestType', requestType);
-        });
-
-        appendTagsToParams(params, tags);
-
-        if (page !== undefined) {
-          params.append('_page', page);
-        }
-
-        if (limit !== undefined) {
-          params.append('_limit', limit);
-        }
-
-        return ({
-          url: `/projects/${projectUuid}/requests?${params.toString()}`,
-          method: 'get',
-        });
-      },
+      query: ({ projectUuid, ...filters }) => ({
+        url: `/projects/${projectUuid}/requests?${listQueryParams(filters).toString()}`,
+        method: 'get',
+      }),
     }),
 
     // One request by its UUID: Outcome, trace ID (nullable), events in time order.
