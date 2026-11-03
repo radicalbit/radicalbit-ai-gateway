@@ -43,7 +43,6 @@ function LimitFields({ isCategoryLocked = false, limit, onChange, rowLabel, with
     onChange({ ...limit, value: next });
   };
 
-  // Budgets are stored in billionths of a dollar: a saved budget must show and keep its exact value
   const minMax = isBudget ? BUDGET_MIN : 1;
   const precision = isBudget ? undefined : 0;
   const prefix = isBudget ? '$' : undefined;

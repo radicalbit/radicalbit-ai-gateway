@@ -2,7 +2,6 @@ import { LimitCategoryEnum, WINDOW_TYPE_LABELS } from '@Components/limits/consta
 import { formatLimitValue, formatLimitWindow } from '@Components/limits/helpers';
 import { getMessageFromQueryError } from '@Helpers/errors';
 
-// A published conflict blocks adding a project budget, a draft one only blocks publishing the draft
 const ConflictAlertTypeEnum = {
   PUBLISHED: 'warning',
   DRAFT: 'info',

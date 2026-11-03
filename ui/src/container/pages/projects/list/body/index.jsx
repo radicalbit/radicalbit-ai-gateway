@@ -39,7 +39,6 @@ function ProjectsList() {
   const [searchParams, setSearchParams] = useSearchParams();
   const searchValue = searchParams.get(SEARCH_PARAMS.projects) || '';
 
-  // The router updates the URL in a transition: an input bound to it drops the keys typed while the table renders
   const [inputValue, setInputValue] = useState(searchValue);
 
   const handleSearchChange = (e) => {
