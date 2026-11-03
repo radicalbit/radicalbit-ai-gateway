@@ -59,6 +59,8 @@ class TestRequestsRoute(unittest.TestCase):
                     created_at=1773144000,
                     total_tokens=12,
                     cost=0.25,
+                    has_guardrail=True,
+                    has_limit=True,
                 )
             ],
             params=Params(page=1, size=50),
@@ -80,6 +82,11 @@ class TestRequestsRoute(unittest.TestCase):
         assert item['createdAt'] == 1773144000
         assert item['totalTokens'] == 12
         assert item['cost'] == 0.25
+        assert item['hasGuardrail'] is True
+        assert item['hasCacheHit'] is False
+        assert item['hasFallback'] is False
+        assert item['hasRouting'] is False
+        assert item['hasLimit'] is True
 
     def test_defaults(self):
         self.requests_service.get_requests.return_value = _empty_page()

@@ -281,3 +281,9 @@ class RequestEventsSummary(BaseModel):
 
     total_tokens: int = 0
     cost: float = 0.0
+    # Which kinds of event fired in the request (the row's five icons).
+    has_guardrail: bool = False
+    has_cache_hit: bool = False
+    has_fallback: bool = False
+    has_routing: bool = False
+    has_limit: bool = False

@@ -1,6 +1,6 @@
 import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
-import { useGetTracesWithRange } from '@Src/store/state/tracing/vertical-hooks';
+import { useGetRequestsWithRange } from '@Src/store/state/tracing/vertical-hooks';
 import {
   Board,
   Button,
@@ -20,7 +20,7 @@ function Tracing() {
 
   const {
     data, isError, isLoading, isFetching, isSuccess, refetch,
-  } = useGetTracesWithRange({ page: currentPage });
+  } = useGetRequestsWithRange({ page: currentPage });
   const items = data?.items || [];
 
   const handleTableChange = (pagination) => {
@@ -30,14 +30,17 @@ function Tracing() {
     });
   };
 
+  // Until the request detail lands (AG-1109), a row opens its trace, if any.
   const handleOnRowClick = (record) => {
-    showModal(modals.TRACE_DETAIL, { traceId: record.traceId });
+    if (record.traceId) {
+      showModal(modals.TRACE_DETAIL, { traceId: record.traceId });
+    }
   };
 
   if (isLoading) {
     return (
       <Board
-        header={<SectionTitle title="Traces" />}
+        header={<SectionTitle title="Requests" />}
         main={<Skeleton active block />}
       />
     );
@@ -54,7 +57,7 @@ function Tracing() {
   if (items.length === 0) {
     return (
       <Board
-        header={<SectionTitle title="Traces" />}
+        header={<SectionTitle title="Requests" />}
         main={(
           <DataTable
             clickable
@@ -77,7 +80,7 @@ function Tracing() {
 
   return (
     <Board
-      header={<SectionTitle title="Traces" />}
+      header={<SectionTitle title="Requests" />}
       main={(
         <DataTable
           clickable
@@ -92,7 +95,7 @@ function Tracing() {
             pageSize: data.size,
             total: data.total,
           }}
-          rowKey="traceId"
+          rowKey="requestUuid"
         />
       )}
     />
@@ -114,7 +117,7 @@ function IsError({ isFetching, refetch }) {
               </>
             )}
             image={<Lucide icon={TriangleAlert} />}
-            title="Unable to load traces"
+            title="Unable to load requests"
           />
         )}
         width="100%"

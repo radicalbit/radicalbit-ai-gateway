@@ -225,6 +225,99 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
         assert row.total_tokens == 0
         assert row.cost == 0.0
 
+    def _icons(self, *event_types, **event_kwargs):
+        """Return the five icon flags of a request holding one event per type."""
+        request_uuid = uuid.uuid4()
+        self.insert([_request(request_uuid)])
+        if event_types:
+            self.insert([_event(request_uuid, t, **event_kwargs) for t in event_types])
+        [row] = self._list().items
+        self.clean()
+        return {
+            'guardrail': row.has_guardrail,
+            'cache_hit': row.has_cache_hit,
+            'fallback': row.has_fallback,
+            'routing': row.has_routing,
+            'limit': row.has_limit,
+        }
+
+    def _only(self, icon):
+        flags = dict.fromkeys(
+            ['guardrail', 'cache_hit', 'fallback', 'routing', 'limit'], False
+        )
+        return {**flags, icon: True}
+
+    def test_a_request_with_no_event_lights_no_icon(self):
+        assert not any(self._icons().values())
+
+    def test_each_kind_of_event_lights_its_own_icon(self):
+        assert self._icons('GUARDRAIL', behavior='BLOCK') == self._only('guardrail')
+        assert self._icons('CACHE_HIT') == self._only('cache_hit')
+        assert self._icons('FALLBACK') == self._only('fallback')
+        assert self._icons('ROUTING') == self._only('routing')
+
+    def test_a_non_blocking_guardrail_lights_guardrail(self):
+        assert self._icons('GUARDRAIL', behavior='WARN') == self._only('guardrail')
+        assert self._icons('GUARDRAIL', behavior='SOFT_BLOCK') == self._only(
+            'guardrail'
+        )
+
+    def test_every_limit_block_lights_limits(self):
+        for limit in [
+            'RATE_LIMIT',
+            'TOKEN_INPUT_LIMIT',
+            'TOKEN_OUTPUT_LIMIT',
+            'AUDIO_DURATION_LIMIT',
+            'BUDGET_LIMIT',
+            'CREDENTIAL_RATE_LIMIT',
+            'CREDENTIAL_TOKEN_INPUT_LIMIT',
+            'CREDENTIAL_TOKEN_OUTPUT_LIMIT',
+            'CREDENTIAL_BUDGET_LIMIT',
+            'PROJECT_BUDGET_LIMIT',
+        ]:
+            assert self._icons(limit) == self._only('limit'), limit
+
+    def test_a_limit_threshold_or_an_mcp_invocation_lights_nothing(self):
+        assert not any(self._icons('LIMIT_THRESHOLD', 'MCP_INVOCATION').values())
+
+    def test_token_and_model_events_light_nothing(self):
+        flags = self._icons(
+            'MODEL_INVOCATION',
+            'INPUT_TOKEN_PROCESSED',
+            'OUTPUT_TOKEN_PROCESSED',
+            'CACHE_INPUT_TOKENS',
+            'CACHE_OUTPUT_TOKENS',
+        )
+        assert not any(flags.values())
+
+    def test_icons_belong_to_their_own_request(self):
+        lit, dark = uuid.uuid4(), uuid.uuid4()
+        self.insert([_request(lit), _request(dark)])
+        self.insert(
+            [
+                _event(lit, 'GUARDRAIL', behavior='WARN'),
+                _event(lit, 'CACHE_HIT'),
+                _event(lit, 'FALLBACK'),
+                _event(lit, 'ROUTING'),
+                _event(lit, 'RATE_LIMIT'),
+                _event(dark, 'INPUT_TOKEN_PROCESSED', value=5),
+            ]
+        )
+
+        rows = {row.request_uuid: row for row in self._list().items}
+
+        assert rows[lit].has_guardrail
+        assert rows[lit].has_cache_hit
+        assert rows[lit].has_fallback
+        assert rows[lit].has_routing
+        assert rows[lit].has_limit
+        assert not rows[dark].has_guardrail
+        assert not rows[dark].has_cache_hit
+        assert not rows[dark].has_fallback
+        assert not rows[dark].has_routing
+        assert not rows[dark].has_limit
+        assert rows[dark].total_tokens == 5
+
     def test_a_page_costs_one_events_query_and_one_trace_query(self):
         # Five requests on five different days.
         seeds = [(uuid.uuid4(), T0 - datetime.timedelta(days=i)) for i in range(5)]

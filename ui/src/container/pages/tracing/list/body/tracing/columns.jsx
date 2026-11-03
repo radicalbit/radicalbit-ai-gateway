@@ -1,3 +1,4 @@
+import EventIcon from '@Components/event-icon';
 import HtmlAnchor from '@Components/html-anchor';
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
@@ -6,6 +7,7 @@ import useModals, { modals } from '@Hooks/use-modals';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import {
   FormatBold,
+  formatCost,
   formatInt,
   formatMs,
   formatText,
@@ -32,8 +34,14 @@ function AssociatedGroup({ groupName, groupUuid }) {
   return '--';
 }
 
+// The trace detail opens only for a traced request; AG-1109 replaces it with
+// the request detail.
 function OpenTrace({ children, traceId }) {
   const { showModal } = useModals();
+
+  if (!traceId) {
+    return children;
+  }
 
   const handleOnClick = () => {
     showModal(modals.TRACE_DETAIL, { traceId });
@@ -42,19 +50,30 @@ function OpenTrace({ children, traceId }) {
   return <TableRowButton onClick={handleOnClick}>{children}</TableRowButton>;
 }
 
+// One column per event icon: lit only when that kind of event fired in the
+// request (AG-1108), whatever the route configures.
+const eventIconColumn = (title, kind, dataIndex) => ({
+  title,
+  dataIndex,
+  key: dataIndex,
+  align: 'center',
+  width: '50px',
+  render: (fired) => <div className="flex justify-center"><EventIcon fired={Boolean(fired)} kind={kind} /></div>,
+});
+
 const columns = [
   {
     title: 'Route',
     dataIndex: 'routeName',
     align: 'left',
-    render: (value, { traceId, traceStatus }) => (
-      <StatusTooltip traceStatus={traceStatus}>
+    render: (value, { traceId, requestStatus }) => (
+      <StatusTooltip requestStatus={requestStatus}>
         <div className="flex items-center gap-2">
           <OpenTrace traceId={traceId}>
             <FormatBold value={value} />
           </OpenTrace>
 
-          <Status traceStatus={traceStatus} />
+          <Status requestStatus={requestStatus} />
         </div>
       </StatusTooltip>
     ),
@@ -90,17 +109,18 @@ const columns = [
     render: formatMs,
   },
   {
-    title: 'Spans',
-    dataIndex: 'totalSpans',
-    align: 'right',
-    render: formatInt,
-  },
-  {
     title: 'Errors',
-    dataIndex: 'errorCount',
-    align: 'right',
-    render: formatInt,
+    dataIndex: 'httpStatusCode',
+    align: 'left',
+    render: (httpStatusCode, { requestStatus, errorType }) => (
+      <RequestError errorType={errorType} httpStatusCode={httpStatusCode} requestStatus={requestStatus} />
+    ),
   },
+  eventIconColumn('Guardrail', 'guardrail', 'hasGuardrail'),
+  eventIconColumn('Cache', 'cache', 'hasCacheHit'),
+  eventIconColumn('Fallback', 'fallback', 'hasFallback'),
+  eventIconColumn('Adv Routing', 'routing', 'hasRouting'),
+  eventIconColumn('Limits', 'limits', 'hasLimit'),
   {
     title: 'Total Tokens',
     dataIndex: 'totalTokens',
@@ -108,51 +128,53 @@ const columns = [
     render: formatInt,
   },
   {
+    title: 'Cost',
+    dataIndex: 'cost',
+    align: 'right',
+    render: formatCost,
+  },
+  {
     title: 'Created At',
     dataIndex: 'createdAt',
     align: 'right',
     render: formatTimestamp,
   },
-  {
-    title: 'Latest Span',
-    dataIndex: 'latestSpanTs',
-    align: 'right',
-    render: formatTimestamp,
-  },
 ];
 
-function StatusTooltip({ traceStatus, children }) {
-  switch (traceStatus) {
-    case 'error': return (
-      <Tooltip title="Status: error">
-        {children}
-      </Tooltip>
-    );
-
-    case 'warning': return (
-      <Tooltip title="Status: warning">
-        {children}
-      </Tooltip>
-    );
-
-    default: return (
-      <Tooltip title="Status: success">
-        {children}
-      </Tooltip>
-    );
+function RequestError({ requestStatus, httpStatusCode, errorType }) {
+  if (!requestStatus || requestStatus === 'success') {
+    return '--';
   }
+
+  return [httpStatusCode, errorType].filter(Boolean).join(' ') || '--';
 }
 
-function Status({ traceStatus }) {
-  switch (traceStatus) {
-    case 'error': return (
-      <IconBadge aria-label="Status: error" className="capitalize" size="small" type="error">
+const STATUS_LABELS = {
+  success: 'success',
+  handled_error: 'handled error',
+  unhandled_error: 'unhandled error',
+};
+
+function StatusTooltip({ requestStatus, children }) {
+  const label = STATUS_LABELS[requestStatus] ?? STATUS_LABELS.success;
+
+  return (
+    <Tooltip title={`Status: ${label}`}>
+      {children}
+    </Tooltip>
+  );
+}
+
+function Status({ requestStatus }) {
+  switch (requestStatus) {
+    case 'unhandled_error': return (
+      <IconBadge aria-label="Status: unhandled error" className="capitalize" size="small" type="error">
         <Lucide icon={TriangleAlert} />
       </IconBadge>
     );
 
-    case 'warning': return (
-      <IconBadge aria-label="Status: warning" className="capitalize" size="small" type="warning-light">
+    case 'handled_error': return (
+      <IconBadge aria-label="Status: handled error" className="capitalize" size="small" type="warning-light">
         <Lucide icon={TriangleAlert} />
       </IconBadge>
     );
