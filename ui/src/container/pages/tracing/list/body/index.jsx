@@ -20,9 +20,9 @@ const TRACING_LIST_TABS = {
     key: 'dashboard',
     label: 'Dashboard',
   },
-  tracing: {
-    key: 'tracing',
-    label: 'Tracing',
+  requests: {
+    key: 'requests',
+    label: 'Requests',
   },
 };
 
@@ -32,8 +32,8 @@ const items = [
     label: TRACING_LIST_TABS.dashboard.label,
   },
   {
-    key: TRACING_LIST_TABS.tracing.key,
-    label: TRACING_LIST_TABS.tracing.label,
+    key: TRACING_LIST_TABS.requests.key,
+    label: TRACING_LIST_TABS.requests.label,
   },
 ];
 
@@ -61,7 +61,7 @@ function NoProjectSelected() {
     <div className="flex justify-center items-center h-full">
       <Void
         actions={<ProjectFilter id={projectId} />}
-        description="Select a project to view tracing data"
+        description="Select a project to view observability data"
         image={<Lucide icon={FolderOpen} />}
         title="No project selected"
       />
@@ -91,7 +91,7 @@ function ProjectSelected() {
 
       {activeKey === 'dashboard' && <Dashboard />}
 
-      {activeKey === 'tracing' && <Tracing />}
+      {activeKey === 'requests' && <Tracing />}
     </>
   );
 }

@@ -19,7 +19,7 @@ const PathsEnum = {
   PROJECTS: 'projects',
   ROUTES: 'routes',
   SECRETS: 'secrets',
-  TRACING: 'tracing',
+  OBSERVABILITY: 'observability',
   USAGE: 'usage',
 };
 
