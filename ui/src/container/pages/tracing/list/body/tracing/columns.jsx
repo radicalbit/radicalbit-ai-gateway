@@ -1,3 +1,4 @@
+import EventIcon from '@Components/event-icon';
 import HtmlAnchor from '@Components/html-anchor';
 import IconBadge from '@Components/icon-badge';
 import Lucide from '@Components/lucide';
@@ -48,6 +49,17 @@ function OpenTrace({ children, traceId }) {
 
   return <TableRowButton onClick={handleOnClick}>{children}</TableRowButton>;
 }
+
+// One column per event icon: lit only when that kind of event fired in the
+// request (AG-1108), whatever the route configures.
+const eventIconColumn = (title, kind, dataIndex) => ({
+  title,
+  dataIndex,
+  key: dataIndex,
+  align: 'center',
+  width: '50px',
+  render: (fired) => <div className="flex justify-center"><EventIcon fired={Boolean(fired)} kind={kind} /></div>,
+});
 
 const columns = [
   {
@@ -104,6 +116,11 @@ const columns = [
       <RequestError errorType={errorType} httpStatusCode={httpStatusCode} requestStatus={requestStatus} />
     ),
   },
+  eventIconColumn('Guardrail', 'guardrail', 'hasGuardrail'),
+  eventIconColumn('Cache', 'cache', 'hasCacheHit'),
+  eventIconColumn('Fallback', 'fallback', 'hasFallback'),
+  eventIconColumn('Adv Routing', 'routing', 'hasRouting'),
+  eventIconColumn('Limits', 'limits', 'hasLimit'),
   {
     title: 'Total Tokens',
     dataIndex: 'totalTokens',
