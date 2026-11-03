@@ -211,3 +211,11 @@ def test_convert_openai_messages_reasoning_content_ignored_for_non_assistant():
     assert not hasattr(result[0], 'additional_kwargs') or 'reasoning_content' not in (
         result[0].additional_kwargs or {}
     )
+
+
+@pytest.mark.parametrize('field', ['reasoning_content', 'reasoning'])
+def test_convert_assistant_reasoning_under_either_name(field):
+    result = convert_openai_messages(
+        [{'role': 'assistant', 'content': 'OK', field: 'Thinking.'}]
+    )
+    assert result[0].additional_kwargs == {'reasoning_content': 'Thinking.'}

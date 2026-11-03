@@ -242,6 +242,34 @@ class AIMessageChunk(AIMessage):
         return self
 
 
+# The model's reasoning rides on its assistant message, in additional_kwargs.
+REASONING_KEY = 'reasoning_content'
+# Marks an assistant message that holds only reasoning: a Responses reasoning
+# item with no message after it. Only guardrails that read reasoning see it.
+REASONING_ONLY_KEY = '__reasoning_only__'
+
+
+def message_reasoning(message: BaseMessage) -> str:
+    """Return the reasoning of an assistant message, or '' if it has none."""
+    if not isinstance(message, AIMessage):
+        return ''
+    reasoning = message.additional_kwargs.get(REASONING_KEY)
+    return reasoning if isinstance(reasoning, str) else ''
+
+
+def with_reasoning(message: BaseMessage, reasoning: str) -> BaseMessage:
+    """Return a copy of ``message`` with its reasoning replaced."""
+    return message.model_copy(
+        update={
+            'additional_kwargs': {**message.additional_kwargs, REASONING_KEY: reasoning}
+        }
+    )
+
+
+def is_reasoning_only(message: BaseMessage) -> bool:
+    return bool(message.additional_kwargs.get(REASONING_ONLY_KEY))
+
+
 def parse_partial_json(s: str) -> Any:
     """Parse JSON that may be truncated mid-stream by closing open scopes.
 

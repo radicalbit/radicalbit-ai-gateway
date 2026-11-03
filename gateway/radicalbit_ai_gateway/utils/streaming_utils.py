@@ -213,10 +213,12 @@ class StreamingUtils:
                 if tc_chunk.get('index') is not None:
                     tool_call.index = tc_chunk['index']
 
-        # DeepSeek (and OpenRouter) stream the model's reasoning beside its content.
+        # The model's reasoning streams beside its content, under both names:
+        # DeepSeek's, and vLLM's, Ollama's and OpenRouter's.
         delta_extra = {}
         if reasoning_content := chunk.additional_kwargs.get('reasoning_content'):
             delta_extra['reasoning_content'] = reasoning_content
+            delta_extra['reasoning'] = reasoning_content
 
         finish_reason = None
         if chunk.response_metadata:

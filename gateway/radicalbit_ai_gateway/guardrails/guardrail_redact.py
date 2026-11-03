@@ -8,7 +8,11 @@ from traceloop.sdk.decorators import task, workflow
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.guardrail_check import _select_messages
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.llm.messages import BaseMessage
+from radicalbit_ai_gateway.llm.messages import (
+    BaseMessage,
+    message_reasoning,
+    with_reasoning,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
 from radicalbit_ai_gateway.models.event_payload import GuardrailEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
@@ -28,7 +32,8 @@ logging_config_dict = app_config.log_config.model_dump()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 GuardrailRedactFunction = Callable[
-    [list[BaseMessage], RedactParameter], Awaitable[tuple[list[BaseMessage], bool]]
+    [list[BaseMessage], RedactParameter, bool],
+    Awaitable[tuple[list[BaseMessage], bool]],
 ]
 
 
@@ -121,14 +126,42 @@ class GuardrailRedact:
 
     @task(name='redact_presidio')
     async def _redact_presidio(
-        self, messages: list[BaseMessage], params: RedactParameter
+        self,
+        messages: list[BaseMessage],
+        params: RedactParameter,
+        include_reasoning: bool = False,
     ) -> tuple[list[BaseMessage], bool]:
         """Redacts a list of messages using Presidio Anonymizer.
         - If content is a str: redacts the entire string.
         - If content is a list (multimodal): redacts only the parts where {"type": "text"}.
         - Other types of parts (file, image, etc.) remain unchanged.
+        - With include_reasoning: an assistant message's reasoning too.
         Returns (new_messages, something_was_redacted).
         """
+        new_messages, any_redacted = await self._redact_presidio_content(
+            messages, params
+        )
+        if not include_reasoning:
+            return new_messages, any_redacted
+        for i, msg in enumerate(new_messages):
+            if reasoning := message_reasoning(msg):
+                red_reasoning, changed = await _anonymize_text_with_presidio(
+                    reasoning,
+                    params.language,
+                    params.entities,
+                    self._presidio_engine,
+                    params.backend,
+                    params.ahds,
+                )
+                if changed:
+                    any_redacted = True
+                    new_messages[i] = with_reasoning(msg, red_reasoning)
+        return new_messages, any_redacted
+
+    async def _redact_presidio_content(
+        self, messages: list[BaseMessage], params: RedactParameter
+    ) -> tuple[list[BaseMessage], bool]:
+        """Redact the content of each message."""
         language = params.language
         entities = params.entities
         backend = params.backend
@@ -243,7 +276,7 @@ class GuardrailRedact:
 
             filtered_only = [m for _, m in filtered_indexed]
             redacted_filtered, was_redacted = await redact_fn(
-                filtered_only, guardrail.parameters
+                filtered_only, guardrail.parameters, guardrail.include_reasoning
             )
 
             # Reintegrate redacted messages into their original positions

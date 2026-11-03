@@ -1,5 +1,6 @@
-from radicalbit_ai_gateway.llm.messages import AIMessage
+from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
+from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
 
 
 def test_to_openai_chat_completion_with_reasoning_content():
@@ -55,3 +56,31 @@ def test_to_openai_chat_completion_reasoning_content_set_on_tool_calls():
     msg = result.choices[0].message
     assert msg.tool_calls is not None
     assert msg.reasoning_content == 'some reasoning'
+
+
+def test_reasoning_goes_out_under_both_names():
+    """DeepSeek's reasoning_content, and vLLM's, Ollama's and OpenRouter's reasoning."""
+    ai_message = AIMessage(
+        content='OK',
+        additional_kwargs={'reasoning_content': 'Thinking.'},
+        response_metadata={'finish_reason': 'stop'},
+    )
+    msg = (
+        ChatUtils.to_openai_chat_completion(
+            ai_message, model_id_invoked='qwen3', request_id='req-1'
+        )
+        .choices[0]
+        .message
+    )
+    assert msg.reasoning_content == 'Thinking.'
+    assert msg.reasoning == 'Thinking.'
+
+
+def test_streamed_reasoning_goes_out_under_both_names():
+    chunk = StreamingUtils.to_openai_chat_completion_chunk(
+        AIMessageChunk(content='', additional_kwargs={'reasoning_content': 'Hm'}),
+        model_id_invoked='qwen3',
+    )
+    delta = chunk.choices[0].delta
+    assert delta.reasoning_content == 'Hm'
+    assert delta.reasoning == 'Hm'

@@ -364,6 +364,15 @@ class Guardrail(BaseModel):
         ),
         examples=[['user'], ['user', 'tool'], ['system'], ['tool']],
     )
+    include_reasoning: bool = Field(
+        default=False,
+        description=(
+            "If True, the guardrail also reads the model's reasoning, when the "
+            'provider returns it. The reasoning belongs to its assistant '
+            'message: it is read whenever that message is, by the same '
+            'where, message_roles and history rules. Redaction rewrites it too.'
+        ),
+    )
     history: GuardrailHistory = Field(
         default=GuardrailHistory.ALL,
         description=(
