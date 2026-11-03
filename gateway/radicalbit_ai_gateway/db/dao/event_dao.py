@@ -1601,3 +1601,62 @@ class EventDAO:
             granularity=granularity,
             timezone_offset_seconds=timezone_offset_seconds,
         )
+
+    def get_request_events(
+        self,
+        project_uuid: UUID,
+        request_uuid: UUID,
+        date_from: date,
+        date_to: date,
+    ) -> list[dict]:
+        """Every event of one request, oldest first.
+
+        Bounded to `[date_from, date_to]` on DATE so ClickHouse prunes
+        partitions. GUARDRAIL_PARAMS is not read, and the `parameters` copy
+        of it is dropped from ATTRIBUTES: guardrail parameters never leave.
+        """
+        T = self.T
+        columns = [
+            'EVENT_TYPE',
+            'TIMESTAMP',
+            'VALUE',
+            'COST',
+            'MODEL_ID',
+            'MODEL_TYPE',
+            'IS_CACHED_TOKENS',
+            'CACHE_TYPE',
+            'TARGET',
+            'FALLBACK',
+            'GUARDRAIL_NAME',
+            'GUARDRAIL_TYPE',
+            'GUARDRAIL_WHERE',
+            'GUARDRAIL_BEHAVIOR',
+            'IS_JUDGE',
+            'IS_ROUTING',
+            'ROUTING_NAME',
+            'ROUTING_SELECTED_MODEL_ID',
+            'MCP_METHOD',
+            'MCP_ALIAS',
+            'MCP_TARGET',
+            'ATTRIBUTES',
+        ]
+        conditions = [
+            T.c['REQUEST_UUID'] == str(request_uuid),
+            T.c['DATE'] >= date_from,
+            T.c['DATE'] <= date_to,
+        ]
+        self._add_project_filter(conditions, project_uuid)
+        stmt = (
+            select(*(T.c[c].label(c.lower()) for c in columns))
+            .select_from(Event)
+            .where(*conditions)
+            .order_by(T.c['TIMESTAMP'])
+        )
+
+        with self.db.begin_session() as session:
+            events = [row._asdict() for row in session.execute(stmt).all()]
+        for event in events:
+            event['attributes'] = {
+                k: v for k, v in event['attributes'].items() if k != 'parameters'
+            }
+        return events

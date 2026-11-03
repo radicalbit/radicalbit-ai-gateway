@@ -7,8 +7,15 @@ from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.models.event import RequestEventsSummary
-from radicalbit_ai_gateway.models.request_dto import RequestDTO
+from radicalbit_ai_gateway.models.event_type import EventType
+from radicalbit_ai_gateway.models.guardrails import GuardrailBehaviorType
+from radicalbit_ai_gateway.models.request_dto import (
+    RequestDetailDTO,
+    RequestDTO,
+    RequestEventDTO,
+)
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
+from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
 
 
 def _enum_or_none(enum_cls, value):
@@ -26,6 +33,26 @@ def _page_date_range(dates: list[date]) -> tuple[date, date]:
     the previous DATE. The lower bound is widened by one day for them.
     """
     return min(dates) - timedelta(days=1), max(dates)
+
+
+def _is_blocking(event_type: str, guardrail_behavior: str) -> bool:
+    """Whether the event is one that stops the request.
+
+    A guardrail blocks only with behavior BLOCK (WARN and SOFT_BLOCK let the
+    request through); every limit event (`*_LIMIT`, route, credential or
+    project) rejects it. LIMIT_THRESHOLD is a warning, not a limit hit.
+    """
+    if event_type == EventType.GUARDRAIL:
+        return guardrail_behavior == GuardrailBehaviorType.BLOCK
+    return event_type.endswith('_LIMIT')
+
+
+def _event_dto(event: dict) -> RequestEventDTO:
+    # Promoted string columns default to '' in ClickHouse: '' means absent.
+    return RequestEventDTO(
+        **{k: (None if v == '' else v) for k, v in event.items()},
+        blocking=_is_blocking(event['event_type'], event['guardrail_behavior']),
+    )
 
 
 class RequestsService:
@@ -104,3 +131,38 @@ class RequestsService:
             for row in rows
         ]
         return Page.create(items, params, total=requests_page.total)
+
+    def get_request(self, project_uuid: UUID, request_uuid: UUID) -> RequestDetailDTO:
+        """One request by its UUID, traced or not."""
+        row = self.request_event_dao.get_request(project_uuid, request_uuid)
+        if row is None:
+            raise GatewayNotFoundError(f"Request '{request_uuid}' not found")
+
+        key = str(row.request_uuid)
+        date_from, date_to = _page_date_range([row.date])
+        trace_ids = self.otel_traces_dao.get_trace_ids_by_request_uuids(
+            project_uuid, [key], date_from, date_to
+        )
+        events = self.event_dao.get_request_events(
+            project_uuid, row.request_uuid, date_from, date_to
+        )
+
+        return RequestDetailDTO(
+            request_uuid=row.request_uuid,
+            trace_id=trace_ids.get(key),
+            route_name=row.route_name,
+            request_type=_enum_or_none(RequestType, row.request_type),
+            tags=row.tags,
+            group_uuid=row.group_uuid,
+            group_name=row.group_name or None,
+            api_key_uuid=row.api_key_uuid,
+            api_key_name=row.api_key_name or None,
+            request_status=_enum_or_none(RequestStatus, row.request_status),
+            http_status_code=row.http_status_code,
+            error_type=row.error_type or None,
+            error_code=row.error_code or None,
+            is_streaming=row.is_streaming,
+            duration_ms=row.duration_ms,
+            created_at=int(row.timestamp.timestamp()),
+            events=[_event_dto(event) for event in events],
+        )

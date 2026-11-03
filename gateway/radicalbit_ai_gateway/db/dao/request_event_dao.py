@@ -416,6 +416,39 @@ class RequestEventDAO:
             res = session.execute(stmt).all()
             return {str(row.request_uuid): row.http_status_code for row in res}
 
+    def get_request(self, project_uuid: UUID, request_uuid: UUID) -> Row | None:
+        """One request of the project by its UUID, or None if there is none."""
+        T = self.T
+        stmt = (
+            select(
+                T.c['REQUEST_UUID'].label('request_uuid'),
+                T.c['TIMESTAMP'].label('timestamp'),
+                T.c['DATE'].label('date'),
+                T.c['ROUTE_NAME'].label('route_name'),
+                T.c['API_KEY_UUID'].label('api_key_uuid'),
+                T.c['API_KEY_NAME'].label('api_key_name'),
+                T.c['GROUP_UUID'].label('group_uuid'),
+                T.c['GROUP_NAME'].label('group_name'),
+                T.c['REQUEST_TYPE'].label('request_type'),
+                T.c['REQUEST_STATUS'].label('request_status'),
+                T.c['HTTP_STATUS_CODE'].label('http_status_code'),
+                T.c['DURATION_MS'].label('duration_ms'),
+                T.c['ERROR_TYPE'].label('error_type'),
+                T.c['ERROR_CODE'].label('error_code'),
+                T.c['IS_STREAMING'].label('is_streaming'),
+                T.c['TAGS'].label('tags'),
+            )
+            .select_from(RequestEvent)
+            .where(
+                T.c['PROJECT_UUID'] == str(project_uuid),
+                T.c['REQUEST_UUID'] == str(request_uuid),
+            )
+            .limit(1)
+        )
+
+        with self.db.begin_session() as session:
+            return session.execute(stmt).first()
+
     def get_distinct_tags(self, project_uuid: UUID) -> list[str]:
         T = self.T
         tag = F.arrayJoin(T.c['TAGS'])

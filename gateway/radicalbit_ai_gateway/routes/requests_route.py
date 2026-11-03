@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from fastapi_pagination import Page, Params
 
-from radicalbit_ai_gateway.models.request_dto import RequestDTO
+from radicalbit_ai_gateway.models.request_dto import RequestDetailDTO, RequestDTO
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.requests_service import RequestsService
@@ -54,6 +54,18 @@ class RequestsRoute:
                 params=Params(page=_page, size=_limit),
                 tags=tags,
                 request_types=request_types,
+            )
+
+        # Same rule: a request with no trace answers `traceId: null`.
+        @router.get(
+            '/projects/{project_uuid}/requests/{request_uuid}',
+            status_code=200,
+            response_model=RequestDetailDTO,
+        )
+        def get_request(project_uuid: UUID, request_uuid: UUID):
+            project_service.validate_exists(project_uuid)
+            return requests_service.get_request(
+                project_uuid=project_uuid, request_uuid=request_uuid
             )
 
         return router
