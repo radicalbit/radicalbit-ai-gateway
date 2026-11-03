@@ -38,8 +38,10 @@ function Credential() {
         disabled={isError}
         id={id}
         onChange={handleOnChange}
+        optionFilterProp="label"
         options={options}
         placeholder="Select a credential"
+        showSearch
         value={credential}
       />
     </FormField>

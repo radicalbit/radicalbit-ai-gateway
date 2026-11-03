@@ -1,7 +1,7 @@
 import { useGetCostsSummaryStreamWithRange } from '@State/usage/vertical-hooks';
 import { SectionTitle } from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
-import costFormatter from '@Helpers/cost-formatter';
+import formatUsd from '@Helpers/format-usd';
 
 function SummaryHeader() {
   const [searchParams] = useSearchParams();
@@ -18,12 +18,12 @@ function SummaryHeader() {
   const transcriptionModels = summary?.transcriptionModels;
   const decisionModels = summary?.decisionModels;
 
-  const totalCosts = costFormatter({ cent: total });
-  const saved = costFormatter({ cent: totals?.saved || 0 });
-  const chatModelsTotal = chatModels ? costFormatter({ cent: chatModels?.total }) : '--';
-  const embeddingModelsTotal = embeddingModels ? costFormatter({ cent: embeddingModels?.total }) : '--';
-  const transcriptionModelsTotal = transcriptionModels ? costFormatter({ cent: transcriptionModels?.total }) : '--';
-  const decisionModelsTotal = decisionModels?.total == null ? '--' : costFormatter({ cent: decisionModels.total });
+  const totalCosts = formatUsd(total);
+  const saved = formatUsd(totals?.saved || 0);
+  const chatModelsTotal = chatModels ? formatUsd(chatModels?.total) : '--';
+  const embeddingModelsTotal = embeddingModels ? formatUsd(embeddingModels?.total) : '--';
+  const transcriptionModelsTotal = transcriptionModels ? formatUsd(transcriptionModels?.total) : '--';
+  const decisionModelsTotal = decisionModels?.total == null ? '--' : formatUsd(decisionModels.total);
 
   return (
     <div className="flex gap-16 items-start pl-4">

@@ -12,6 +12,8 @@ const WINDOW_TYPE_OPTIONS = [WindowTypeEnum.FIXED, WindowTypeEnum.ALIGNED]
 
 const SELECT_PLACEHOLDER = 'Select';
 
+const BUDGET_MIN = 0.000000001;
+
 // The design system forces its own widths on these inputs: they fill flex-1 wrappers instead
 const FULL_WIDTH = { width: '100%' };
 
@@ -41,8 +43,9 @@ function LimitFields({ isCategoryLocked = false, limit, onChange, rowLabel, with
     onChange({ ...limit, value: next });
   };
 
-  const minMax = isBudget ? 0.01 : 1;
-  const precision = isBudget ? 2 : 0;
+  // Budgets are stored in billionths of a dollar: a saved budget must show and keep its exact value
+  const minMax = isBudget ? BUDGET_MIN : 1;
+  const precision = isBudget ? undefined : 0;
   const prefix = isBudget ? '$' : undefined;
   const windowOptions = getWindowOptions(algorithm);
   const getAriaLabel = (label) => (rowLabel ? `${label}, ${rowLabel}` : undefined);
@@ -85,9 +88,11 @@ function LimitFields({ isCategoryLocked = false, limit, onChange, rowLabel, with
           aria-label={getAriaLabel('Window')}
           id={`${id}-window`}
           onChange={handleOnChangeWindow}
+          optionFilterProp="label"
           options={windowOptions}
           placeholder={SELECT_PLACEHOLDER}
           popupMatchSelectWidth={false}
+          showSearch
           style={FULL_WIDTH}
           value={windowSize}
         />

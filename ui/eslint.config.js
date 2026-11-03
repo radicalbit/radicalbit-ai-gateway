@@ -23,7 +23,7 @@ const listOfRules = {
   import: {
     'import-x/extensions': [error],
     'import-x/no-cycle': off,
-    'import-x/no-extraneous-dependencies': [error, { devDependencies: ['vite.config.js', '**/*.config.js'] }],
+    'import-x/no-extraneous-dependencies': [error, { devDependencies: ['vite.config.js', '**/*.config.js', '**/*.test.js'] }],
     'import-x/no-named-as-default': off,
     'import-x/no-rename-default': off,
     'import-x/no-unresolved': [error],

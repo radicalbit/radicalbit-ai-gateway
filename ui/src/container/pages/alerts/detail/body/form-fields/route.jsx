@@ -42,8 +42,10 @@ function Route() {
         disabled={!projectUuid || isError}
         id={id}
         onChange={handleOnChange}
+        optionFilterProp="label"
         options={options}
         placeholder="Select a route"
+        showSearch
         value={route}
       />
     </FormField>

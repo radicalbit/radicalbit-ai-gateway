@@ -1,10 +1,8 @@
+import formatUsd from '@Helpers/format-usd';
 import {
   DUPLICATE_LIMIT_ERROR, DUPLICATE_ROW_ERROR, LIMIT_CATEGORIES, LIMIT_EVENT_CATEGORIES, LIMIT_WINDOWS, LimitCategoryEnum,
   WindowTypeEnum,
 } from './constants';
-
-// Budgets are stored in billionths of a dollar: nine decimals show any saved value
-const CURRENCY_FORMAT = new Intl.NumberFormat('en-US', { currency: 'USD', maximumFractionDigits: 9, style: 'currency' });
 
 const NUMBER_FORMAT = new Intl.NumberFormat('en-US');
 
@@ -28,7 +26,7 @@ export const formatLimitWindow = (windowSize) => getWindow(windowSize)?.label ??
 
 export const formatLimitValue = (category, value) => {
   if (category === LimitCategoryEnum.BUDGET) {
-    return CURRENCY_FORMAT.format(value);
+    return formatUsd(value);
   }
 
   const unit = category === LimitCategoryEnum.REQUEST_RATE ? 'requests' : 'tokens';

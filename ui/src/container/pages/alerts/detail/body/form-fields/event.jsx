@@ -82,8 +82,10 @@ function Event() {
         disabled={isDisabled || isError}
         id={id}
         onChange={handleOnChange}
+        optionFilterProp="label"
         options={options}
         placeholder="Select an event"
+        showSearch
         value={event}
       />
     </FormField>

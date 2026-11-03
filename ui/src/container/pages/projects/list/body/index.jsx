@@ -15,11 +15,12 @@ import {
   Button,
   DataTable,
   Search,
+  Skeleton,
   Spin,
   Void,
 } from '@radicalbit/radicalbit-design-system';
 import { CircleX, Inbox, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
 import getColumns from './columns';
@@ -38,8 +39,12 @@ function ProjectsList() {
   const [searchParams, setSearchParams] = useSearchParams();
   const searchValue = searchParams.get(SEARCH_PARAMS.projects) || '';
 
+  // The router updates the URL in a transition: an input bound to it drops the keys typed while the table renders
+  const [inputValue, setInputValue] = useState(searchValue);
+
   const handleSearchChange = (e) => {
     const { value } = e.target;
+    setInputValue(value);
     setSearchParams((prev) => {
       if (value) {
         prev.set(SEARCH_PARAMS.projects, value);
@@ -59,7 +64,7 @@ function ProjectsList() {
           onChange={handleSearchChange}
           placeholder="Search projects by name"
           style={{ width: '300px' }}
-          value={searchValue}
+          value={inputValue}
         />
 
         <DeployStatusTabs />
@@ -105,7 +110,7 @@ function ProjectsTable({ searchValue }) {
   } = useGetProjectsQuery();
 
   if (isLoading) {
-    return <DataTable loading />;
+    return <Skeleton active block />;
   }
 
   if (isError) {
