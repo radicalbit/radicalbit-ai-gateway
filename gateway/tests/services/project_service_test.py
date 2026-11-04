@@ -551,6 +551,55 @@ class ProjectServiceTest(DatabaseIntegration):
         assert conflicts.draft == ['test-route']
         assert conflicts.budget_routing == []
 
+    def test_budget_limit_conflicts_names_each_draft_slot(self):
+        out, a, b = self._create(name='budget-conflicts-draft-slots')
+        self.svc.update_config(
+            out.uuid,
+            a,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        self.svc.update_config(
+            out.uuid,
+            b,
+            ProjectConfigFileIn(
+                config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING.replace(
+                    'test-route', 'other-route'
+                )
+            ),
+        )
+        conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
+        assert [(c.config_uuid, c.slot, c.routes) for c in conflicts.draft_configs] == [
+            (a, 'A', ['test-route']),
+            (b, 'B', ['other-route']),
+        ]
+        assert sorted(conflicts.draft) == ['other-route', 'test-route']
+
+    def test_budget_limit_conflicts_skips_a_draft_without_route_budgets(self):
+        out, a, b = self._create(name='budget-conflicts-draft-without-budget')
+        self.svc.update_config(
+            out.uuid,
+            a,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        self.svc.update_config(out.uuid, b, ProjectConfigFileIn(config_file=_VALID))
+        conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
+        assert [(c.config_uuid, c.slot) for c in conflicts.draft_configs] == [(a, 'A')]
+
+    def test_budget_limit_conflicts_has_no_draft_configs_when_only_published(self):
+        out, a, _ = self._create(name='budget-conflicts-published-only')
+        self.svc.update_config(
+            out.uuid,
+            a,
+            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
+        )
+        self.svc.approve_config(out.uuid, a)
+        self.svc.serve_config(out.uuid, a)
+        conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
+        assert conflicts.published == ['test-route']
+        assert conflicts.draft_configs == []
+        project = self.svc.get_by_uuid(out.uuid, include_limits=True)
+        assert project.route_budgets.draft_configs == []
+
     def test_budget_limit_conflicts_is_empty_without_route_budgets(self):
         out, _, _ = self._create(name='budget-no-conflicts')
         conflicts = self.svc.get_budget_limit_conflicts(out.uuid)

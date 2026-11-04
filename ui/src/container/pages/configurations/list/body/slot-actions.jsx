@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 
-const MENU_TRIGGER = ['hover', 'click'];
+const MENU_TRIGGER = ['click'];
 
 function SlotActions({ projectUuid, projectName, config }) {
   const buttonRef = useRef(null);

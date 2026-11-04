@@ -29,6 +29,7 @@ const SCREENS = {
 };
 
 const SCREEN_ACTIONS = {
+  [ScreenEnum.LIST]: ListActions,
   [ScreenEnum.ADD]: AddActions,
   [ScreenEnum.DELETE]: DeleteActions,
   [ScreenEnum.EDIT]: EditActions,
@@ -127,6 +128,16 @@ function Footer() {
   }
 
   return <Actions />;
+}
+
+function ListActions() {
+  const { hideModal } = useModals();
+
+  return (
+    <div className="flex gap-2 justify-end">
+      <Button onClick={hideModal} type="primary">Done</Button>
+    </div>
+  );
 }
 
 function AddActions() {

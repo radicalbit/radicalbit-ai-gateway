@@ -10,7 +10,7 @@ import { useRef, useState } from 'react';
 import Keys from './keys';
 import Routes from './routes';
 
-const MENU_TRIGGER = ['hover', 'click'];
+const MENU_TRIGGER = ['click'];
 
 const columns = [
   {
