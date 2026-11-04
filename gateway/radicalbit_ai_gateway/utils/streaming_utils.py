@@ -10,10 +10,10 @@ from openai.types.chat.chat_completion_chunk import (
     ChoiceDeltaToolCall,
     ChoiceDeltaToolCallFunction,
 )
-from openai.types.completion_usage import CompletionUsage
 
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk
 from radicalbit_ai_gateway.utils.ai_gateway_types import ChunkAccumulationResult
+from radicalbit_ai_gateway.utils.chat_utils import completion_usage
 
 
 class StreamingUtils:
@@ -148,37 +148,7 @@ class StreamingUtils:
             created=int(datetime.datetime.now().timestamp()),
             model=model_id_invoked,
             choices=[],
-            usage=CompletionUsage(
-                prompt_tokens=final_usage.get('input_tokens', 0),
-                completion_tokens=final_usage.get('output_tokens', 0),
-                total_tokens=final_usage.get('total_tokens', 0),
-                prompt_tokens_details={
-                    'cached_tokens': final_usage.get('input_token_details', {}).get(
-                        'cache_read', 0
-                    ),
-                    'audio_tokens': final_usage.get('input_token_details', {}).get(
-                        'audio', 0
-                    ),
-                }
-                if final_usage.get('input_token_details')
-                else None,
-                completion_tokens_details={
-                    'reasoning_tokens': final_usage.get('output_token_details', {}).get(
-                        'reasoning', 0
-                    ),
-                    'audio_tokens': final_usage.get('output_token_details', {}).get(
-                        'audio', 0
-                    ),
-                    'accepted_prediction_tokens': final_usage.get(
-                        'output_token_details', {}
-                    ).get('accepted_prediction', 0),
-                    'rejected_prediction_tokens': final_usage.get(
-                        'output_token_details', {}
-                    ).get('rejected_prediction', 0),
-                }
-                if final_usage.get('output_token_details')
-                else None,
-            ),
+            usage=completion_usage(final_usage),
         )
 
     @staticmethod
@@ -244,39 +214,7 @@ class StreamingUtils:
             )
         )
 
-        usage = None
-        if chunk.usage_metadata:
-            usage = CompletionUsage(
-                prompt_tokens=chunk.usage_metadata.get('input_tokens', 0),
-                completion_tokens=chunk.usage_metadata.get('output_tokens', 0),
-                total_tokens=chunk.usage_metadata.get('total_tokens', 0),
-                prompt_tokens_details={
-                    'cached_tokens': chunk.usage_metadata.get(
-                        'input_token_details', {}
-                    ).get('cache_read', 0),
-                    'audio_tokens': chunk.usage_metadata.get(
-                        'input_token_details', {}
-                    ).get('audio', 0),
-                }
-                if chunk.usage_metadata.get('input_token_details')
-                else None,
-                completion_tokens_details={
-                    'reasoning_tokens': chunk.usage_metadata.get(
-                        'output_token_details', {}
-                    ).get('reasoning', 0),
-                    'audio_tokens': chunk.usage_metadata.get(
-                        'output_token_details', {}
-                    ).get('audio', 0),
-                    'accepted_prediction_tokens': chunk.usage_metadata.get(
-                        'output_token_details', {}
-                    ).get('accepted_prediction', 0),
-                    'rejected_prediction_tokens': chunk.usage_metadata.get(
-                        'output_token_details', {}
-                    ).get('rejected_prediction', 0),
-                }
-                if chunk.usage_metadata.get('output_token_details')
-                else None,
-            )
+        usage = completion_usage(chunk.usage_metadata)
 
         return ChatCompletionChunk(
             id=request_id or f'chatcmpl-{uuid.uuid4()}',
