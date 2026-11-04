@@ -1,6 +1,5 @@
 import useModals, { modals } from '@Hooks/use-modals';
 import { formatCount } from '@Components/limits/helpers';
-import { ConfigStatusEnum } from '@Src/constants';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { Alert, Button } from '@radicalbit/radicalbit-design-system';
 import { Fragment } from 'react';
@@ -18,7 +17,7 @@ function Conflicts() {
   }
 
   if (alertType === ConflictAlertTypeEnum.DRAFT) {
-    return <DraftConflict />;
+    return <DraftConflicts />;
   }
 
   return false;
@@ -70,20 +69,32 @@ function PublishedConflict() {
   );
 }
 
-function DraftConflict() {
-  const { modalPayload, showModal } = useModals();
+function DraftConflicts() {
+  const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
   const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
-  const draft = data?.routeBudgets?.draft ?? [];
-  const configs = data?.configs ?? [];
+  const draftConfigs = data?.routeBudgets?.draftConfigs ?? [];
+
+  return (
+    <div className="flex flex-col gap-2">
+      {draftConfigs.map((draftConfig) => <DraftConflict key={draftConfig.configUuid} draftConfig={draftConfig} />)}
+    </div>
+  );
+}
+
+function DraftConflict({ draftConfig }) {
+  const { modalPayload, showModal } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const { configUuid, routes, slot } = draftConfig;
 
   const handleOnOpenConfiguration = () => {
-    const draftConfig = configs.find(({ configStatus }) => configStatus !== ConfigStatusEnum.SERVED);
-    showModal(modals.EDIT_PROJECT_CONFIG, { uuid, activeConfigUuid: draftConfig?.uuid });
+    showModal(modals.EDIT_PROJECT_CONFIG, { uuid, activeConfigUuid: configUuid });
   };
 
-  const verb = draft.length === 1 ? 'declares' : 'declare';
+  const verb = routes.length === 1 ? 'declares' : 'declare';
+  const title = `Slot ${slot} (draft) has routes with their own budget`;
 
   return (
     <Alert
@@ -93,7 +104,7 @@ function DraftConflict() {
             A draft can&apos;t be published while
             {' '}
 
-            <RouteNames routes={draft} />
+            <RouteNames routes={routes} />
 
             {' '}
 
@@ -109,7 +120,7 @@ function DraftConflict() {
         </div>
       )}
       showIcon
-      title="The draft has routes with their own budget"
+      title={title}
       type={ConflictAlertTypeEnum.DRAFT}
     />
   );
