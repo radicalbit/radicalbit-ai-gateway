@@ -1,6 +1,8 @@
 import Lucide from '@Components/lucide';
-import { DUPLICATE_BUDGET_ERROR, WINDOW_TYPE_HELP } from '@Components/limits/constants';
-import { asBudgets, getNewLimitsErrors } from '@Components/limits/helpers';
+import {
+  DUPLICATE_BUDGET_ERROR, DUPLICATE_BUDGET_PREFIX, DUPLICATE_EDIT_LINK, DUPLICATE_SUFFIX, WINDOW_TYPE_HELP,
+} from '@Components/limits/constants';
+import { asBudgets, getDuplicateLimit, getNewLimitsErrors } from '@Components/limits/helpers';
 import focusLimitRow from '@Components/limits/focus-limit-row';
 import LimitFields from '@Components/limits/limit-fields';
 import useModals from '@Hooks/use-modals';
@@ -10,9 +12,13 @@ import { Button, FormField } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
 import Conflicts from './conflicts';
-import { getInitialValues, newRow } from './schema';
+import {
+  ScreenEnum, getEditRow, getInitialValues, newRow,
+} from './schema';
 
 const FLUSH_BUTTON = '!min-w-0 !px-0';
+
+const INLINE_LINK = 'p-0 border-0 bg-transparent text-inherit underline cursor-pointer font-[inherit]';
 
 function AddScreen() {
   const { error, form, initialize, write } = useFormbitContext();
@@ -67,6 +73,7 @@ function Rows() {
     limits: asBudgets(savedLimits),
     rows,
   }), [rows, savedLimits]);
+  const duplicateLimit = useMemo(() => getDuplicateLimit({ limits: asBudgets(savedLimits), rows }), [rows, savedLimits]);
 
   const handleOnChange = useCallback((index, next) => {
     write(`limits[${index}]`, next);
@@ -82,6 +89,7 @@ function Rows() {
   return rows.map((row, index) => (
     <Row
       key={row.rowKey}
+      duplicateLimit={duplicateLimit}
       error={rowErrors[index]}
       index={index}
       isOnlyRow={isOnlyRow}
@@ -93,7 +101,7 @@ function Rows() {
 }
 
 function Row({
-  error, index, isOnlyRow, onChange, onRemove, row,
+  duplicateLimit, error, index, isOnlyRow, onChange, onRemove, row,
 }) {
   const { error: formError } = useFormbitContext();
 
@@ -106,7 +114,8 @@ function Row({
   };
 
   const rowLabel = `budget ${index + 1}`;
-  const message = error ?? formError(`silent.limits.${index}`);
+  const isEditableDuplicate = error === DUPLICATE_BUDGET_ERROR && !!duplicateLimit;
+  const message = isEditableDuplicate ? <DuplicateMessage limit={duplicateLimit} /> : error ?? formError(`silent.limits.${index}`);
   const errorField = message ? <FormField message={message} /> : false;
 
   return (
@@ -123,6 +132,25 @@ function Row({
 
       {errorField}
     </div>
+  );
+}
+
+function DuplicateMessage({ limit }) {
+  const { writeAll } = useFormbitContext();
+
+  const handleOnEdit = () => {
+    writeAll([['limits', [getEditRow(limit)]], ['__metadata.limitUuid', limit.uuid], ['__metadata.screen', ScreenEnum.EDIT]]);
+    focusLimitRow(0);
+  };
+
+  return (
+    <span>
+      {DUPLICATE_BUDGET_PREFIX}
+
+      <button className={INLINE_LINK} onClick={handleOnEdit} type="button">{DUPLICATE_EDIT_LINK}</button>
+
+      {DUPLICATE_SUFFIX}
+    </span>
   );
 }
 

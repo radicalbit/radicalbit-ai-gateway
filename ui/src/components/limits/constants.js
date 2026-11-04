@@ -65,9 +65,17 @@ export const LIMIT_EVENT_CATEGORIES = {
   [LimitCategoryEnum.BUDGET]: 'budget_limit',
 };
 
-export const DUPLICATE_LIMIT_ERROR = 'A limit with the same category, window type and window already exists: edit that one instead.';
+export const DUPLICATE_LIMIT_PREFIX = 'A limit with the same category, window type and window already exists: ';
 
-export const DUPLICATE_BUDGET_ERROR = 'A budget with the same window type and window already exists: edit that one instead.';
+export const DUPLICATE_BUDGET_PREFIX = 'A budget with the same window type and window already exists: ';
+
+export const DUPLICATE_EDIT_LINK = 'edit that one';
+
+export const DUPLICATE_SUFFIX = ' instead.';
+
+export const DUPLICATE_LIMIT_ERROR = `${DUPLICATE_LIMIT_PREFIX}${DUPLICATE_EDIT_LINK}${DUPLICATE_SUFFIX}`;
+
+export const DUPLICATE_BUDGET_ERROR = `${DUPLICATE_BUDGET_PREFIX}${DUPLICATE_EDIT_LINK}${DUPLICATE_SUFFIX}`;
 
 export const DUPLICATE_ROW_ERROR = 'Same limit as a row above.';
 

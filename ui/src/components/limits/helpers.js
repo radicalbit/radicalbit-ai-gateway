@@ -131,4 +131,18 @@ export const getNewLimitsErrors = ({ duplicateError = DUPLICATE_LIMIT_ERROR, lim
   });
 };
 
+const isRowFilled = ({ algorithm, value, windowSize }) => !!algorithm || !!windowSize || value != null;
+
+export const getDuplicateLimit = ({ limits, rows }) => {
+  const filledRows = rows.filter(isRowFilled);
+
+  if (filledRows.length !== 1) {
+    return undefined;
+  }
+
+  const signature = getLimitSignature(filledRows[0]);
+
+  return limits.find((limit) => getLimitSignature(limit) === signature);
+};
+
 export const isLimitComplete = ({ algorithm, category, value, windowSize }) => !!category && !!algorithm && !!windowSize && typeof value === 'number' && value > 0;
