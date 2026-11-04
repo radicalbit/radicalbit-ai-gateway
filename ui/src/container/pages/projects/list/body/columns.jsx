@@ -18,7 +18,7 @@ import {
 import { EllipsisVertical } from 'lucide-react';
 import { useRef, useState } from 'react';
 
-const MENU_TRIGGER = ['hover', 'click'];
+const MENU_TRIGGER = ['click'];
 
 const getColumns = () => [
   {

@@ -31,6 +31,7 @@ const SCREENS = {
 };
 
 const SCREEN_ACTIONS = {
+  [ScreenEnum.LIST]: ListActions,
   [ScreenEnum.ADD]: AddActions,
   [ScreenEnum.DELETE]: DeleteActions,
   [ScreenEnum.EDIT]: EditActions,
@@ -53,7 +54,7 @@ function ManageKeyLimitsInner() {
   return (
     <RbitModal
       actions={<Footer />}
-      aria-label="Limits"
+      aria-label="Manage limits"
       closable
       header={<Header />}
       onCancel={hideModal}
@@ -73,16 +74,16 @@ function Header() {
   const name = data?.name;
 
   if (isLoading) {
-    return <SectionTitle subtitle={<Skeleton.Input active size="small" />} title="Limits" />;
+    return <SectionTitle subtitle={<Skeleton.Input active size="small" />} title="Manage limits" />;
   }
 
   if (!isSuccess) {
-    return <SectionTitle title="Limits" />;
+    return <SectionTitle title="Manage limits" />;
   }
 
   const subtitle = `Every request authenticated by ${name} counts against these limits, whatever route it calls.`;
 
-  return <SectionTitle subtitle={subtitle} title="Limits" />;
+  return <SectionTitle subtitle={subtitle} title="Manage limits" />;
 }
 
 function Body() {
@@ -127,6 +128,16 @@ function Footer() {
   }
 
   return <Actions />;
+}
+
+function ListActions() {
+  const { hideModal } = useModals();
+
+  return (
+    <div className="flex gap-2 justify-end">
+      <Button onClick={hideModal} type="primary">Done</Button>
+    </div>
+  );
 }
 
 function AddActions() {

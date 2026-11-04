@@ -1,6 +1,7 @@
 import { formatCount, formatRouteLimitWarning, isLimitComplete } from '@Components/limits/helpers';
 import RouteLimitWarnings from '@Components/limits/route-limit-warnings';
 import useModals from '@Hooks/use-modals';
+import { PathsEnum } from '@Src/constants';
 import { useApplyGroupLimitsMutation, useGetGroupQuery } from '@State/groups/api';
 import { FCK_APPLY_GROUP_LIMITS } from '@State/groups/fixed-cache-key';
 import { useGetKeysQuery } from '@State/keys/api';
@@ -9,6 +10,7 @@ import {
   Alert, Button, Divider, FormField, RbitModal, SectionTitle, Skeleton, Spinner,
 } from '@radicalbit/radicalbit-design-system';
 import { useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import LimitsToApply from './limits-to-apply';
 import Preview from './preview';
 import { getInitialValues, schema } from './schema';
@@ -187,6 +189,8 @@ function ApplyActions() {
 }
 
 function Result({ result }) {
+  const { hideModal } = useModals();
+
   const outcomes = (result?.members ?? []).flatMap(({ limits }) => limits.map(({ outcome }) => outcome));
   const countOf = (outcome) => outcomes.filter((item) => item === outcome).length;
 
@@ -200,7 +204,13 @@ function Result({ result }) {
 
         <span>{summary}</span>
 
-        <span className="text-xs opacity-70">From now on they belong to each credential: change or delete them from Credentials.</span>
+        <span className="text-xs opacity-70">
+          {'These limits now belong to each credential: change or delete them from '}
+
+          <Link className="c-anchor light" onClick={hideModal} to={`/${PathsEnum.CREDENTIALS}`}><strong>Credentials</strong></Link>
+
+          .
+        </span>
       </div>
 
       <RouteLimitWarnings lines={warningLines} title={ROUTE_WARNINGS_TITLE} />

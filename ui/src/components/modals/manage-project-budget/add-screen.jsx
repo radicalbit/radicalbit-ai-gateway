@@ -35,13 +35,7 @@ function AddScreen() {
       <Conflicts />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-2 items-center">
-          <Button aria-label="Back" className={FLUSH_BUTTON} onClick={handleOnBack} type="text">
-            <Lucide icon={ArrowLeft} />
-          </Button>
-
-          <strong>Budget limits</strong>
-        </div>
+        <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Budget limits</Button>
 
         <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another budget</Button>
       </div>

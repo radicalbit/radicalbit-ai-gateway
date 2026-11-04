@@ -32,13 +32,7 @@ function AddScreen() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <div className="flex gap-2 items-center">
-          <Button aria-label="Back" className={FLUSH_BUTTON} onClick={handleOnBack} type="text">
-            <Lucide icon={ArrowLeft} />
-          </Button>
-
-          <strong>Limits</strong>
-        </div>
+        <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Limits</Button>
 
         <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another limit</Button>
       </div>

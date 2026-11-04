@@ -8,7 +8,7 @@ import { useRef, useState } from 'react';
 import { getBudgetLabel } from './helpers';
 import { ScreenEnum, getEditRow } from './schema';
 
-const MENU_TRIGGER = ['hover', 'click'];
+const MENU_TRIGGER = ['click'];
 
 function BudgetMenu({ limit }) {
   const buttonRef = useRef(null);
