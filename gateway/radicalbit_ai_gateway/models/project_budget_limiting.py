@@ -133,6 +133,14 @@ class ProjectBudgetLimitUpdatedOut(ProjectBudgetLimitOut):
     previous_value: float
 
 
+class ProjectBudgetLimitDraftConflictOut(BaseModel):
+    config_uuid: UUID
+    slot: str
+    routes: list[str]
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+
 class ProjectBudgetLimitConflictsOut(BaseModel):
     """The routes that have a budget of their own, which a project budget excludes."""
 
@@ -145,6 +153,10 @@ class ProjectBudgetLimitConflictsOut(BaseModel):
     )
     budget_routing: list[str] = Field(
         description='Routes of either list that route by budget.'
+    )
+    draft_configs: list[ProjectBudgetLimitDraftConflictOut] = Field(
+        default_factory=list,
+        description='The routes of `draft`, per non-published configuration.',
     )
 
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)

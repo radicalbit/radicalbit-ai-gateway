@@ -12,6 +12,7 @@ from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitConflictsOut,
+    ProjectBudgetLimitDraftConflictOut,
     ProjectBudgetLimitOut,
     ProjectBudgetLimitUpdatedOut,
     ProjectBudgetLimitValueIn,
@@ -466,9 +467,17 @@ class TestProjectRoute(unittest.TestCase):
 
     def test_get_budget_limit_conflicts(self):
         pid = uuid.uuid4()
+        config_uuid = uuid.uuid4()
         self.project_service.get_budget_limit_conflicts = MagicMock(
             return_value=ProjectBudgetLimitConflictsOut(
-                published=['chat'], draft=['chat', 'search'], budget_routing=['chat']
+                published=['chat'],
+                draft=['chat', 'search'],
+                budget_routing=['chat'],
+                draft_configs=[
+                    ProjectBudgetLimitDraftConflictOut(
+                        config_uuid=config_uuid, slot='B', routes=['chat', 'search']
+                    )
+                ],
             )
         )
         res = self.client.get(f'{self.prefix}/projects/{pid}/budget-limits/conflicts')
@@ -477,6 +486,13 @@ class TestProjectRoute(unittest.TestCase):
             'published': ['chat'],
             'draft': ['chat', 'search'],
             'budgetRouting': ['chat'],
+            'draftConfigs': [
+                {
+                    'configUuid': str(config_uuid),
+                    'slot': 'B',
+                    'routes': ['chat', 'search'],
+                }
+            ],
         }
         self.project_service.get_budget_limit_conflicts.assert_called_once_with(pid)
 
