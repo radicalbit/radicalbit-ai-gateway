@@ -4,20 +4,20 @@ import { ConfigStatusEnum } from '@Src/constants';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { Alert, Button } from '@radicalbit/radicalbit-design-system';
 import { Fragment } from 'react';
+import { ConflictAlertTypeEnum, getConflictAlertType } from './helpers';
 
 function Conflicts() {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
 
   const { data } = useGetProjectBudgetQuery(uuid, { skip: !uuid });
-  const published = data?.routeBudgets?.published ?? [];
-  const draft = data?.routeBudgets?.draft ?? [];
+  const alertType = getConflictAlertType(data?.routeBudgets);
 
-  if (published.length) {
+  if (alertType === ConflictAlertTypeEnum.PUBLISHED) {
     return <PublishedConflict />;
   }
 
-  if (draft.length) {
+  if (alertType === ConflictAlertTypeEnum.DRAFT) {
     return <DraftConflict />;
   }
 
@@ -59,13 +59,13 @@ function PublishedConflict() {
           </div>
 
           <div>
-            <Button onClick={handleOnOpenConfiguration} size="small" type="secondary">Open configuration</Button>
+            <Button onClick={handleOnOpenConfiguration} size="small" type="primary">Open configuration</Button>
           </div>
         </div>
       )}
       showIcon
       title={title}
-      type="warning"
+      type={ConflictAlertTypeEnum.PUBLISHED}
     />
   );
 }
@@ -104,13 +104,13 @@ function DraftConflict() {
           </span>
 
           <div>
-            <Button onClick={handleOnOpenConfiguration} size="small" type="secondary">Open configuration</Button>
+            <Button onClick={handleOnOpenConfiguration} size="small" type="primary">Open configuration</Button>
           </div>
         </div>
       )}
       showIcon
       title="The draft has routes with their own budget"
-      type="warning"
+      type={ConflictAlertTypeEnum.DRAFT}
     />
   );
 }

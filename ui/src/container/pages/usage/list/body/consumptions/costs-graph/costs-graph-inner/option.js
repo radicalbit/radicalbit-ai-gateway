@@ -1,6 +1,6 @@
 import chartTsToDate from '@Helpers/chart-ts-to-date';
 import { CHART_COLORS } from '@Src/constants';
-import costFormatter from '@Helpers/cost-formatter';
+import formatUsd from '@Helpers/format-usd';
 import * as echarts from 'echarts/core';
 
 const DRILL_DOWN_ICON_ID = 'drill-down-icon';
@@ -18,7 +18,7 @@ const GRANULARITY_TITLE = {
 };
 
 export default ({ xAxisData, series = [], granularity, total, routeBreakdownCache }) => {
-  const formattedTotal = costFormatter({ cent: total });
+  const formattedTotal = formatUsd(total);
   const granularityLabel = GRANULARITY_TITLE[granularity] || 'Hourly';
 
   return ({
@@ -92,7 +92,7 @@ export default ({ xAxisData, series = [], granularity, total, routeBreakdownCach
         const cacheKey = `${params.seriesName}:${params.name}`;
         const cached = routeBreakdownCache ? routeBreakdownCache.get(cacheKey) : undefined;
 
-        const segmentValue = costFormatter({ cent: params.value });
+        const segmentValue = formatUsd(params.value);
 
         if (cached === 'loading') {
           return `
@@ -127,7 +127,7 @@ export default ({ xAxisData, series = [], granularity, total, routeBreakdownCach
           const rows = cached
             .filter((r) => !!r.cost)
             .map((r) => {
-              const valueStr = costFormatter({ cent: r.cost });
+              const valueStr = formatUsd(r.cost);
 
               return `
             <tr>
@@ -138,7 +138,7 @@ export default ({ xAxisData, series = [], granularity, total, routeBreakdownCach
             }).join('');
 
           const routeTotal = cached.reduce((sum, r) => sum + r.cost, 0);
-          const totalStr = costFormatter({ cent: routeTotal });
+          const totalStr = formatUsd(routeTotal);
 
           return `
           <div>

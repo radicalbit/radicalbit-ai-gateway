@@ -2,6 +2,23 @@ import { LimitCategoryEnum, WINDOW_TYPE_LABELS } from '@Components/limits/consta
 import { formatLimitValue, formatLimitWindow } from '@Components/limits/helpers';
 import { getMessageFromQueryError } from '@Helpers/errors';
 
+const ConflictAlertTypeEnum = {
+  PUBLISHED: 'warning',
+  DRAFT: 'info',
+};
+
+const getConflictAlertType = ({ draft = [], published = [] } = {}) => {
+  if (published.length) {
+    return ConflictAlertTypeEnum.PUBLISHED;
+  }
+
+  if (draft.length) {
+    return ConflictAlertTypeEnum.DRAFT;
+  }
+
+  return undefined;
+};
+
 const getBudgetLabel = ({ algorithm, value, windowSize } = {}) => `${formatLimitValue(LimitCategoryEnum.BUDGET, value)} / ${formatLimitWindow(windowSize)} · ${WINDOW_TYPE_LABELS[algorithm]}`;
 
 const getErrorMessage = (queryError) => {
@@ -14,4 +31,6 @@ const getErrorMessage = (queryError) => {
   return getMessageFromQueryError(queryError);
 };
 
-export { getBudgetLabel, getErrorMessage };
+export {
+  ConflictAlertTypeEnum, getBudgetLabel, getConflictAlertType, getErrorMessage,
+};
