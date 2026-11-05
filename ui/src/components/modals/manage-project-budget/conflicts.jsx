@@ -58,7 +58,7 @@ function PublishedConflict() {
           </div>
 
           <div>
-            <Button onClick={handleOnOpenConfiguration} size="small" type="primary">Open configuration</Button>
+            <Button onClick={handleOnOpenConfiguration} size="small" type="secondary">Open configuration</Button>
           </div>
         </div>
       )}
@@ -115,7 +115,7 @@ function DraftConflict({ draftConfig }) {
           </span>
 
           <div>
-            <Button onClick={handleOnOpenConfiguration} size="small" type="primary">Open configuration</Button>
+            <Button onClick={handleOnOpenConfiguration} size="small" type="secondary">Open configuration</Button>
           </div>
         </div>
       )}
