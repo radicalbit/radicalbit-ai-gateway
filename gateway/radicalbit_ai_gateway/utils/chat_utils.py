@@ -13,6 +13,49 @@ from openai.types.completion_usage import CompletionUsage
 
 from radicalbit_ai_gateway.llm.messages import AIMessage
 
+# OpenAI's priority and flex tiers prefix the detail keys with the tier name.
+_TIERS = ('', 'priority_', 'flex_')
+
+
+def _detail(details: dict, key: str) -> int:
+    """Return a usage detail, summed across its service-tier names."""
+    return sum(details.get(f'{tier}{key}') or 0 for tier in _TIERS)
+
+
+def completion_usage(usage_metadata: dict | None) -> CompletionUsage | None:
+    """Translate the gateway's ``UsageMetadata`` into Chat Completions usage.
+
+    The details (cached and reasoning tokens) appear only when the provider
+    reported them.
+    """
+    if not usage_metadata:
+        return None
+    input_details = usage_metadata.get('input_token_details') or {}
+    output_details = usage_metadata.get('output_token_details') or {}
+    return CompletionUsage(
+        prompt_tokens=usage_metadata.get('input_tokens', 0),
+        completion_tokens=usage_metadata.get('output_tokens', 0),
+        total_tokens=usage_metadata.get('total_tokens', 0),
+        prompt_tokens_details={
+            'cached_tokens': _detail(input_details, 'cache_read'),
+            'audio_tokens': _detail(input_details, 'audio'),
+        }
+        if input_details
+        else None,
+        completion_tokens_details={
+            'reasoning_tokens': _detail(output_details, 'reasoning'),
+            'audio_tokens': _detail(output_details, 'audio'),
+            'accepted_prediction_tokens': _detail(
+                output_details, 'accepted_prediction'
+            ),
+            'rejected_prediction_tokens': _detail(
+                output_details, 'rejected_prediction'
+            ),
+        }
+        if output_details
+        else None,
+    )
+
 
 class ChatUtils:
     @staticmethod
@@ -44,7 +87,9 @@ class ChatUtils:
             )
             reasoning_content = ai_message.additional_kwargs.get('reasoning_content')
             if reasoning_content:
+                # Both names: DeepSeek's, and vLLM's, Ollama's and OpenRouter's.
                 message_to_send.reasoning_content = reasoning_content
+                message_to_send.reasoning = reasoning_content
             finish_reason = 'tool_calls'
         else:
             content = ai_message.content
@@ -57,7 +102,9 @@ class ChatUtils:
             )
             reasoning_content = ai_message.additional_kwargs.get('reasoning_content')
             if reasoning_content:
+                # Both names: DeepSeek's, and vLLM's, Ollama's and OpenRouter's.
                 message_to_send.reasoning_content = reasoning_content
+                message_to_send.reasoning = reasoning_content
             # Normalize finish_reason to lowercase (Gemini returns uppercase like 'STOP')
             finish_reason_raw = response_metadata.get('finish_reason', 'stop')
             finish_reason = (
@@ -79,11 +126,5 @@ class ChatUtils:
                     finish_reason=finish_reason,
                 )
             ],
-            usage=CompletionUsage(
-                prompt_tokens=usage_metadata.get('input_tokens', 0),
-                completion_tokens=usage_metadata.get('output_tokens', 0),
-                total_tokens=usage_metadata.get('total_tokens', 0),
-            )
-            if usage_metadata
-            else None,
+            usage=completion_usage(usage_metadata),
         )

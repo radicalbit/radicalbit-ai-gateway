@@ -8,50 +8,149 @@ response of a reply no model gave (a soft block).
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass, field
 import time
 import uuid
 
-from radicalbit_ai_gateway.llm.messages import AIMessage
+from radicalbit_ai_gateway.llm.messages import (
+    REASONING_KEY,
+    REASONING_ONLY_KEY,
+    AIMessage,
+)
 
 # ── Output text ──────────────────────────────────────────────────────────
 
 
-def _output_text_parts(response: dict) -> list[list[dict]]:
-    """Return the ``output_text`` parts of each message item of the output."""
+def _text_parts(content: object, part_type: str) -> list[dict]:
     return [
-        [
-            part
-            for part in item.get('content') or []
-            if isinstance(part, dict)
-            and part.get('type') == 'output_text'
-            and isinstance(part.get('text'), str)
-        ]
-        for item in response.get('output') or []
-        if isinstance(item, dict) and item.get('type') == 'message'
+        part
+        for part in content or []
+        if isinstance(part, dict)
+        and part.get('type') == part_type
+        and isinstance(part.get('text'), str)
     ]
 
 
+def _reasoning_parts(item: dict) -> list[dict]:
+    """Return the readable texts of a reasoning item: its summary and raw text."""
+    return _text_parts(item.get('summary'), 'summary_text') + _text_parts(
+        item.get('content'), 'reasoning_text'
+    )
+
+
+def _join(parts: list[dict]) -> str:
+    return '\n'.join(part['text'] for part in parts if part['text'])
+
+
+class Reasoning:
+    """The readable reasoning of one or more reasoning items, read as one text.
+
+    Encrypted reasoning is not readable and is never touched. Some providers
+    (Ollama) copy the readable text in ``encrypted_content``: a changed text
+    replaces that copy too, so a redacted text does not come back there.
+    """
+
+    def __init__(self) -> None:
+        self._parts: list[dict] = []
+        # Each item, with the readable text it had when read.
+        self._items: list[tuple[dict, str]] = []
+
+    def add(self, item: dict) -> None:
+        parts = _reasoning_parts(item)
+        self._parts += parts
+        self._items.append((item, _join(parts)))
+
+    def text(self) -> str:
+        return _join(self._parts)
+
+    def __bool__(self) -> bool:
+        """Return True when the items have readable text."""
+        return bool(self.text())
+
+    def write(self, text: str) -> None:
+        """Put ``text`` in the first part and empty the others."""
+        if not self._parts or text == self.text():
+            return
+        for index, part in enumerate(self._parts):
+            part['text'] = text if index == 0 else ''
+        for item, original in self._items:
+            if original and item.get('encrypted_content') == original:
+                item['encrypted_content'] = _join(_reasoning_parts(item))
+
+
+@dataclass
+class _Slot:
+    """One assistant message of the output, and the reasoning before it.
+
+    Reasoning with no message after it (a turn that ends in a tool call) is a
+    slot of its own, with no text parts.
+    """
+
+    parts: list[dict] = field(default_factory=list)
+    reasoning: Reasoning = field(default_factory=Reasoning)
+
+    def message(self) -> AIMessage:
+        additional_kwargs: dict = {}
+        if reasoning := self.reasoning.text():
+            additional_kwargs[REASONING_KEY] = reasoning
+            if not self.parts:
+                additional_kwargs[REASONING_ONLY_KEY] = True
+        return AIMessage(
+            content=''.join(part['text'] for part in self.parts),
+            additional_kwargs=additional_kwargs,
+        )
+
+
+def _slots(response: dict) -> list[_Slot]:
+    slots: list[_Slot] = []
+    reasoning = Reasoning()
+    for item in response.get('output') or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get('type') == 'reasoning':
+            reasoning.add(item)
+        elif item.get('type') == 'message':
+            parts = _text_parts(item.get('content'), 'output_text')
+            if parts:
+                slots.append(_Slot(parts, reasoning))
+                reasoning = Reasoning()
+        elif reasoning:
+            slots.append(_Slot([], reasoning))
+            reasoning = Reasoning()
+    if reasoning:
+        slots.append(_Slot([], reasoning))
+    return [slot for slot in slots if slot.parts or slot.reasoning]
+
+
 class ResponsesOutput:
-    """A copy of a response, with the text of each output message read as a message."""
+    """A copy of a response, with the text of each output message read as a message.
+
+    The reasoning before a message rides on it, for the guardrails that read
+    reasoning.
+    """
 
     def __init__(self, response: dict):
         self.response = copy.deepcopy(response)
-        self._parts = [parts for parts in _output_text_parts(self.response) if parts]
+        self._slots = _slots(self.response)
 
     def messages(self) -> list[AIMessage]:
-        return [
-            AIMessage(content=''.join(part['text'] for part in parts))
-            for parts in self._parts
-        ]
+        return [slot.message() for slot in self._slots]
 
     def write_back(self, messages: list[AIMessage]) -> None:
         """Put the texts of ``messages``, as ``messages()`` returned them, in the response.
 
         A message's text goes in its first part; a guardrail changes a text as
         a whole. A changed part loses its annotations, whose offsets point in
-        the old text, and its logprobs, which spell the old text out.
+        the old text, and its logprobs, which spell the old text out. Changed
+        reasoning goes in the first reasoning part the same way.
         """
-        for parts, message in zip(self._parts, messages, strict=True):
+        for slot, message in zip(self._slots, messages, strict=True):
+            reasoning = message.additional_kwargs.get(REASONING_KEY)
+            if isinstance(reasoning, str):
+                slot.reasoning.write(reasoning)
+            parts = slot.parts
+            if not parts:
+                continue
             text = message.content if isinstance(message.content, str) else ''
             if text == ''.join(part['text'] for part in parts):
                 continue
