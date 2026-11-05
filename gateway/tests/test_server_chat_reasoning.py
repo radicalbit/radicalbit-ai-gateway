@@ -107,7 +107,7 @@ def _history(field: str) -> list[dict]:
     ]
 
 
-class TestChatReasoningHistory(unittest.TestCase):
+class _ChatCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         app.dependency_overrides[get_request_uuid] = _mock_request_uuid
@@ -156,6 +156,8 @@ class TestChatReasoningHistory(unittest.TestCase):
         )
         return mock
 
+
+class TestChatReasoningHistory(_ChatCase):
     def test_deepseek_gets_the_reasoning_back_under_either_name(self):
         for field in ('reasoning_content', 'reasoning'):
             with self.subTest(field=field):
@@ -181,3 +183,39 @@ class TestChatReasoningHistory(unittest.TestCase):
         assert response.status_code == 200, response.text
         # OpenAI never gets reasoning back.
         assert 'reasoning_content' not in _sent(mock)['messages'][1]
+
+
+REDACT_REASONING = {
+    'name': 'redact_email',
+    'type': 'presidio_anonymizer',
+    'where': 'output',
+    'include_reasoning': True,
+    'parameters': {'language': 'en', 'entities': ['EMAIL_ADDRESS']},
+}
+
+
+class TestChatReasoningOutput(_ChatCase):
+    """An output redact guardrail with include_reasoning, on a non-streaming chat."""
+
+    def _mock_reasoning(self, reasoning: str):
+        body = to_mock_openai_chat_completion(content='Done').model_dump()
+        body['choices'][0]['message']['reasoning_content'] = reasoning
+        pook.post(DEEPSEEK_URL).times(1).reply(200).json(body)
+
+    def test_output_reasoning_is_redacted(self):
+        self._mock_reasoning('Mail john@example.com')
+        routes = _build_routes(DEEPSEEK, [REDACT_REASONING])
+        response = self._chat(routes, [{'role': 'user', 'content': 'Hi'}])
+        assert response.status_code == 200, response.text
+        message = response.json()['choices'][0]['message']
+        assert message['content'] == 'Done'
+        assert message['reasoning_content'] == 'Mail <EMAIL_ADDRESS>'
+        assert message['reasoning'] == 'Mail <EMAIL_ADDRESS>'
+
+    def test_output_reasoning_without_pii_is_left_alone(self):
+        self._mock_reasoning('Just thinking')
+        routes = _build_routes(DEEPSEEK, [REDACT_REASONING])
+        response = self._chat(routes, [{'role': 'user', 'content': 'Hi'}])
+        assert response.status_code == 200, response.text
+        message = response.json()['choices'][0]['message']
+        assert message['reasoning_content'] == 'Just thinking'

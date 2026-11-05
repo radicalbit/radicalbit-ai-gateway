@@ -11,6 +11,7 @@ import pytest
 
 from radicalbit_ai_gateway.guardrails.guardrail_check import (
     GuardrailCheck,
+    _judge_texts,
     _select_messages,
 )
 from radicalbit_ai_gateway.guardrails.guardrail_redact import GuardrailRedact
@@ -195,6 +196,12 @@ class TestJudgeContent:
             include_reasoning=True,
         )
         assert BAD in text
+
+    def test_output_window_is_empty_without_an_assistant_message(self):
+        texts = _judge_texts(
+            [USER_1], {'where': GuardrailWhereType.OUTPUT, 'include_reasoning': True}
+        )
+        assert texts == []
 
 
 class TestRedact:

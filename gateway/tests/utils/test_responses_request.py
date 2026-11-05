@@ -449,6 +449,19 @@ class TestReasoningInHistory:
             },
         )
 
+    def test_reasoning_at_the_end_is_its_own_message(self):
+        body = {'input': [_user('Hi'), _reasoning('Thinking')]}
+
+        messages = ResponsesRequest(body).messages()
+
+        assert messages[1] == AIMessage(
+            content='',
+            additional_kwargs={
+                'reasoning_content': 'Thinking',
+                '__reasoning_only__': True,
+            },
+        )
+
     def test_encrypted_reasoning_is_not_read(self):
         body = {'input': [_user('Hi'), _assistant('Hello')]}
         body['input'].insert(

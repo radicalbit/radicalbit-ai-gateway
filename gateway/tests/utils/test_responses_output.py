@@ -150,6 +150,42 @@ class TestResponsesOutput:
 
         assert output.response['output'][0]['summary'][0]['text'] == 'Thinking'
 
+    def test_reasoning_at_the_end_reads_as_its_own_message(self):
+        output = ResponsesOutput(_response([message_item('Hi'), REASONING]))
+
+        assert output.messages()[1] == AIMessage(
+            content='',
+            additional_kwargs={
+                'reasoning_content': 'Thinking',
+                '__reasoning_only__': True,
+            },
+        )
+
+    def test_reasoning_only_message_writes_back(self):
+        output = ResponsesOutput(_response([message_item('Hi'), REASONING]))
+
+        output.write_back(
+            [
+                AIMessage(content='Hi'),
+                AIMessage(content='', additional_kwargs={'reasoning_content': '<X>'}),
+            ]
+        )
+
+        assert output.response['output'][1]['summary'][0]['text'] == '<X>'
+
+    def test_unchanged_messages_leave_the_response_alone(self):
+        response = _response([REASONING, message_item('Hello')])
+        output = ResponsesOutput(response)
+
+        output.write_back(output.messages())
+
+        assert output.response == response
+
+    def test_items_that_are_not_objects_are_skipped(self):
+        output = ResponsesOutput(_response(['junk', message_item('Hello')]))
+
+        assert output.messages() == [AIMessage(content='Hello')]
+
     def test_changed_text_is_written_back(self):
         response = _response([message_item('My card is 4111')])
         output = ResponsesOutput(response)
