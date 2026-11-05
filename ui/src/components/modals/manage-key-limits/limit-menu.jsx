@@ -8,7 +8,7 @@ import { useRef, useState } from 'react';
 import { getLimitLabel } from './helpers';
 import { ScreenEnum } from './schema';
 
-const MENU_TRIGGER = ['hover', 'click'];
+const MENU_TRIGGER = ['click'];
 
 function LimitMenu({ limit }) {
   const buttonRef = useRef(null);

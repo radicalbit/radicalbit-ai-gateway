@@ -21,7 +21,7 @@ import { EllipsisVertical } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useRef, useState } from 'react';
 
-const MENU_TRIGGER = ['hover', 'click'];
+const MENU_TRIGGER = ['click'];
 
 const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
 

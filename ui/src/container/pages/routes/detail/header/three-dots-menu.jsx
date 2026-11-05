@@ -5,7 +5,7 @@ import { EllipsisVertical } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { useRef, useState } from 'react';
 
-const MENU_TRIGGER = ['hover', 'click'];
+const MENU_TRIGGER = ['click'];
 
 function ThreeDotsMenu() {
   const buttonRef = useRef(null);

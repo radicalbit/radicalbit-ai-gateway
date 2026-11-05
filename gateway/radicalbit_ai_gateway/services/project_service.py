@@ -21,6 +21,7 @@ from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitConflictsOut,
+    ProjectBudgetLimitDraftConflictOut,
     ProjectBudgetLimitOut,
     ProjectBudgetLimitsIn,
     ProjectBudgetLimitUpdatedOut,
@@ -65,6 +66,7 @@ def route_budget_conflicts(
     published: list[str] = []
     draft: list[str] = []
     budget_routing: list[str] = []
+    draft_configs: list[ProjectBudgetLimitDraftConflictOut] = []
     for config in configs:
         if not config.config_file:
             continue
@@ -78,11 +80,20 @@ def route_budget_conflicts(
             published += budgets.budget_limiting
         else:
             draft += budgets.budget_limiting
+            if budgets.budget_limiting:
+                draft_configs.append(
+                    ProjectBudgetLimitDraftConflictOut(
+                        config_uuid=config.uuid,
+                        slot=config.slot,
+                        routes=list(dict.fromkeys(budgets.budget_limiting)),
+                    )
+                )
         budget_routing += budgets.budget_routing
     return ProjectBudgetLimitConflictsOut(
         published=list(dict.fromkeys(published)),
         draft=list(dict.fromkeys(draft)),
         budget_routing=list(dict.fromkeys(budget_routing)),
+        draft_configs=sorted(draft_configs, key=lambda c: c.slot),
     )
 
 

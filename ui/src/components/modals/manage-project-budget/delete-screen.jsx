@@ -2,13 +2,17 @@ import Lucide from '@Components/lucide';
 import { RuleScopeEnum, formatCount, getRulesMadeStale } from '@Components/limits/helpers';
 import { getMessageFromQueryError } from '@Helpers/errors';
 import useModals from '@Hooks/use-modals';
+import { PathsEnum } from '@Src/constants';
 import { useGetAlertsQuery } from '@State/alerts/api';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button, FormField, Skeleton, TextWithBold } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { getBudgetLabel } from './helpers';
 import useHandleOnDelete from './useHandleOnDelete';
+
+const STALE_RULES_SUBJECT = 'on this budget';
 
 const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this budget.';
 
@@ -77,17 +81,45 @@ function StaleRules({ limit }) {
     return false;
   }
 
-  const count = getRulesMadeStale({
+  const staleRules = getRulesMadeStale({
     limit, limits, rules: rules ?? [], scope: RuleScopeEnum.PROJECT, targetUuid: uuid,
-  }).length;
+  });
 
-  if (!count) {
+  if (!staleRules.length) {
     return false;
   }
 
-  const text = `${formatCount(count, 'alert rule')} on this budget will become stale.`;
+  return <StaleRulesText rules={staleRules} />;
+}
 
-  return <span className="text-[var(--coo-warning)]">{text}</span>;
+function StaleRulesText({ rules }) {
+  const { hideModal } = useModals();
+
+  if (rules.length === 1) {
+    const [rule] = rules;
+
+    return (
+      <span className="text-[var(--coo-warning)]">
+        {'Alert rule '}
+
+        <Link className="c-anchor light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}><strong>{rule.name}</strong></Link>
+
+        {` ${STALE_RULES_SUBJECT} will become stale.`}
+      </span>
+    );
+  }
+
+  const title = `${formatCount(rules.length, 'alert rule')} ${STALE_RULES_SUBJECT} will become stale:`;
+
+  return (
+    <div className="flex flex-col gap-1 text-[var(--coo-warning)]">
+      <span>{title}</span>
+
+      <ul className="m-0 pl-5 list-disc">
+        {rules.map((rule) => <li key={rule.uuid}><Link className="c-anchor light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}>{rule.name}</Link></li>)}
+      </ul>
+    </div>
+  );
 }
 
 export default DeleteScreen;

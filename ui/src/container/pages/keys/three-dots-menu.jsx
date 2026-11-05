@@ -16,7 +16,7 @@ import { useParams } from 'react-router-dom';
 import { useEndGracePeriodMutation, useGetKeyQuery } from '@State/keys/api';
 import { useRef, useState } from 'react';
 
-const MENU_TRIGGER = ['hover', 'click'];
+const MENU_TRIGGER = ['click'];
 
 function ThreeDotsMenu() {
   const buttonRef = useRef(null);

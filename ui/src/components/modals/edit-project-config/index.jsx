@@ -25,6 +25,8 @@ import useGetActiveConfig from './useGetActiveConfig';
 const ACCEPTED_IMPORT_EXTENSIONS = '.yaml,.yml';
 const PREVENT_AUTO_UPLOAD = Upload.LIST_IGNORE ?? false;
 
+const MENU_TRIGGER = ['click'];
+
 const hasYamlExtension = (name = '') => /\.(yaml|yml)$/i.test(name);
 
 const triggerBrowserDownload = ({ blob, filename }) => {
@@ -231,7 +233,7 @@ function ExportButton() {
   ];
 
   return (
-    <Dropdown menu={{ items }} trigger={['hover']}>
+    <Dropdown menu={{ items }} trigger={MENU_TRIGGER}>
       <Button icon={<Lucide icon={FileUp} />} loading={isExporting} type="primary-outlined">
         Export
       </Button>

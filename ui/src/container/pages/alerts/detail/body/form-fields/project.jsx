@@ -39,8 +39,10 @@ function Project() {
         disabled={isError}
         id={id}
         onChange={handleOnChange}
+        optionFilterProp="label"
         options={options}
         placeholder="Select a project"
+        showSearch
         value={project}
       />
     </FormField>
