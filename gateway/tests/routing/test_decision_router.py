@@ -324,6 +324,44 @@ async def test_an_answer_without_confidence_fails_min_confidence(span):
     assert _attributes(span)['routing.decision.default_reason'] == 'unknown_option'
 
 
+@pytest.mark.parametrize(
+    ('probability', 'expected'),
+    [
+        # Two options: confidence = (p - 1/2) / (1 - 1/2), so 0.8 gives 0.6.
+        pytest.param(0.79, MINI, id='below'),
+        pytest.param(0.8, GPT_5, id='equal passes'),
+    ],
+)
+async def test_without_confidence_it_is_computed_from_the_chosen_probability(
+    probability, expected
+):
+    # vela3 answers with probabilities and no confidence.
+    _mock_typesafe(
+        body=_answer(
+            choice='option_2',
+            probabilities={'option_1': 1 - probability, 'option_2': probability},
+        )
+    )
+
+    model = await _router(min_confidence=0.6).select_model(
+        [HumanMessage(content=USER_TEXT)]
+    )
+
+    assert model is expected
+
+
+async def test_without_confidence_the_computed_confidence_is_recorded(span):
+    _mock_typesafe(
+        body=_answer(
+            choice='option_2', probabilities={'option_1': 0.2, 'option_2': 0.8}
+        )
+    )
+
+    await _router().select_model([HumanMessage(content=USER_TEXT)])
+
+    assert _attributes(span)['routing.decision.confidence'] == pytest.approx(0.6)
+
+
 async def test_low_confidence_is_the_default_reason(span):
     _mock_typesafe({'option_1': 0.3, 'option_2': 0.4})
 

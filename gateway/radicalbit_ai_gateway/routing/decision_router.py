@@ -199,10 +199,20 @@ class DecisionRouter:
         confidence = answer.get('confidence')
         if confidence is not None and not is_number(confidence):
             raise _BadAnswer
+        probabilities = answer.get('probabilities')
+        # Self-hosted System One servers such as vela3-fast send no confidence:
+        # compute it from the chosen option's probability as Typesafe does, so
+        # min_confidence means the same with Jev and with them. 0 when the
+        # probability is spread evenly, 1 when it is all on the chosen option.
+        # Decision routing has at least 2 options: n - 1 is never 0.
+        if confidence is None and isinstance(probabilities, dict):
+            chosen_probability = probabilities.get(key)
+            if is_number(chosen_probability):
+                n = len(self._options)
+                confidence = (chosen_probability * n - 1) / (n - 1)
         # min_confidence has nothing to compare against without a confidence.
         if confidence is None and self._config.min_confidence is not None:
             raise _BadAnswer
-        probabilities = answer.get('probabilities')
         return _Answer(
             key=key,
             confidence=float(confidence) if confidence is not None else None,
