@@ -36,6 +36,7 @@ from radicalbit_ai_gateway.routing import (
     DecisionRouter,
     DeterministicRouter,
     LLMRouter,
+    RoutingInputFilter,
     SemanticRouter,
     TextClassificationRouter,
 )
@@ -168,9 +169,11 @@ def build_gateway_routes_from_config(
             else None
         )
         router = None
+        routing_input_filter = None
         if route_config.routing and gateway_config.routing:
             routing_config = gateway_config.routing_by_name.get(route_config.routing)
             if routing_config:
+                routing_input_filter = RoutingInputFilter.from_config(routing_config)
                 route_models_by_id = {m.model_id: m for m in (chat_models or [])}
                 if isinstance(routing_config, TextClassificationRoutingConfig):
                     router = TextClassificationRouter(
@@ -243,6 +246,7 @@ def build_gateway_routes_from_config(
             budget_limiter=budget_limiter,
             project_uuid=project_uuid,
             duration_limiter=duration_limiter,
+            routing_input_filter=routing_input_filter,
         )
 
     return routes

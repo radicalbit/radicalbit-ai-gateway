@@ -80,6 +80,7 @@ from radicalbit_ai_gateway.routing import (
     DecisionRouter,
     DeterministicRouter,
     LLMRouter,
+    RoutingInputFilter,
     SemanticRouter,
     TextClassificationRouter,
 )
@@ -175,8 +176,11 @@ class GatewayRoute:
         decision_models: list[Model] | None = None,
         project_uuid: str = '',
         project_name: str = '',
+        routing_input_filter: RoutingInputFilter | None = None,
     ):
         self.gateway_route_config = gateway_route_config
+        # Cleans the user messages the router reads; the model gets the originals.
+        self._routing_input_filter = routing_input_filter
         self.project_uuid = project_uuid
         self.project_name = project_name
         self._chat_models = chat_models or []
@@ -2028,6 +2032,8 @@ class GatewayRoute:
                 if identity and self.chat_invoker
                 else None
             )
+            if self._routing_input_filter:
+                messages = self._routing_input_filter.apply(messages)
             try:
                 model_selected = await self.router.select_model(messages)
             finally:

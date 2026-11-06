@@ -1,4 +1,5 @@
 from enum import Enum
+import re
 from typing import Annotated, Literal, Union
 
 from cron_converter import Cron
@@ -49,6 +50,23 @@ class RoutingConfig(BaseModel):
     name: str
     default_model_id: str
     output_mapping: list[OutputMappingEntry]
+    # Regexes applied to user messages, for the router only: the model gets the originals.
+    # A user message that matches a skip pattern is hidden from the router.
+    skip_user_messages_matching: list[str] | None = None
+    # Text that matches a strip pattern is removed from the user messages the router reads.
+    strip_from_routing_text: list[str] | None = None
+
+    @field_validator('skip_user_messages_matching', 'strip_from_routing_text')
+    @classmethod
+    def validate_patterns(cls, v: list[str] | None, info) -> list[str] | None:
+        for pattern in v or []:
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                raise ValueError(
+                    f"{info.field_name}: invalid regex '{pattern}': {e}"
+                ) from e
+        return v
 
     @field_validator('output_mapping')
     @classmethod
