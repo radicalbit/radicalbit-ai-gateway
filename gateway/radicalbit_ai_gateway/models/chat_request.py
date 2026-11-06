@@ -192,7 +192,10 @@ def convert_openai_messages(messages: list) -> list[BaseMessage]:
     for m in messages:
         raw = m.get('content', '')
 
-        if isinstance(raw, Iterable) and not isinstance(raw, str):
+        # content: null (an assistant tool-call turn) is no text, not the text "None".
+        if raw is None:
+            content = ''
+        elif isinstance(raw, Iterable) and not isinstance(raw, str):
             content = list(raw)
         else:
             content = str(raw)

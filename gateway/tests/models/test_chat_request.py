@@ -102,6 +102,48 @@ def test_convert_message_human():
     assert result[0].content == 'Ciao!'
 
 
+@pytest.mark.parametrize(
+    'message',
+    [
+        pytest.param({'content': None}, id='null'),
+        pytest.param({}, id='missing'),
+    ],
+)
+def test_assistant_tool_calls_without_content_have_empty_content(message):
+    # OpenAI clients send content: null on a tool-call turn. It must not become
+    # the text "None": the model then reads an assistant turn that said "None".
+    messages = [
+        {
+            'role': 'assistant',
+            **message,
+            'tool_calls': [
+                {
+                    'id': 'call_123',
+                    'type': 'function',
+                    'function': {'name': 'exec', 'arguments': '{}'},
+                }
+            ],
+        }
+    ]
+
+    (result,) = convert_openai_messages(messages)
+
+    assert isinstance(result, AIMessage)
+    assert result.content == ''
+    assert len(result.tool_calls) == 1
+
+
+@pytest.mark.parametrize('role', ['system', 'user', 'tool'])
+def test_null_content_is_empty_for_every_role(role):
+    message = {'role': role, 'content': None}
+    if role == 'tool':
+        message['tool_call_id'] = 'call_123'
+
+    (result,) = convert_openai_messages([message])
+
+    assert result.content == ''
+
+
 def test_convert_messagges_assistant_tool_calls():
     messages = [
         {
