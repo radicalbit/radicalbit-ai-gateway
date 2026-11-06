@@ -11,6 +11,7 @@ from openai.types.audio.transcription_stream_event import TranscriptionStreamEve
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
 from openai.types.completion_usage import CompletionUsage
 from openai.types.create_embedding_response import CreateEmbeddingResponse
@@ -44,6 +45,7 @@ from radicalbit_ai_gateway.llm.messages import (
     HumanMessage,
     SystemMessage,
     message_reasoning,
+    without_reasoning_only,
 )
 from radicalbit_ai_gateway.metrics.define_metrics import (
     cache_hit_counter,
@@ -101,7 +103,11 @@ from radicalbit_ai_gateway.utils.build_user_content import (
     build_user_content,
     build_user_content_from_texts,
 )
-from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
+from radicalbit_ai_gateway.utils.chat_utils import (
+    ChatUtils,
+    completion_reasoning,
+    reasoning_fields,
+)
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
 from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
@@ -135,6 +141,17 @@ DECISION_SCREENED_FIELDS = ('state', 'questions')
 async def _aiter_list(items: list) -> AsyncIterator:
     for item in items:
         yield item
+
+
+def _reply_message(
+    text: str | None, reasoning: str | None, usage: dict | None = None
+) -> AIMessage:
+    """Return the model's reply as the output guardrails read it."""
+    return AIMessage(
+        content=text or '',
+        usage_metadata=usage,
+        additional_kwargs={REASONING_KEY: reasoning} if reasoning else {},
+    )
 
 
 def _parse_cached_response_object(raw: str | None) -> dict | None:
@@ -485,25 +502,23 @@ class GatewayRoute:
         kwargs['original_stream_options'] = user_stream_options
 
         # Buffer Outcome
-        return [
-            chunk
-            async for chunk in self._handle_buffered_stream(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                messages=prepared.redacted_messages,
-                model_id_invoked=prepared.model_selected.model_id,
-                tools=tools,
-                tool_choice=tool_choice,
-                model_selected=prepared.model_selected,
-                cache_key=prepared.cache_key,
-                embeddings=prepared.embeddings,
-                **kwargs,
-            )
-        ], {
+        chunks, output_redacted = await self._handle_buffered_stream(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+            route_name=route_name,
+            messages=prepared.redacted_messages,
+            model_id_invoked=prepared.model_selected.model_id,
+            tools=tools,
+            tool_choice=tool_choice,
+            model_selected=prepared.model_selected,
+            cache_key=prepared.cache_key,
+            embeddings=prepared.embeddings,
+            **kwargs,
+        )
+        return chunks, {
             **(
                 {
                     'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED': 'true',
@@ -518,6 +533,14 @@ class GatewayRoute:
                     'X-RB-AIGATEWAY-GUARDRAILS-INPUT-WARN': 'true',
                 }
                 if prepared.guardrails_input_triggered
+                else {}
+            ),
+            **(
+                {
+                    'X-RB-AIGATEWAY-GUARDRAILS-WARN': 'true',
+                    'X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN': 'true',
+                }
+                if output_redacted
                 else {}
             ),
         }
@@ -686,14 +709,15 @@ class GatewayRoute:
             group_name=group_name,
             messages=messages,
         )
-        # Route on the redacted messages, as the chat path does.
+        # Route on the redacted messages, as the chat path does. Only the
+        # guardrails read a message that holds only reasoning.
         model_selected = await self._route_chat_request(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
             api_key_name=api_key_name,
             group_name=group_name,
-            messages=redaction.redacted_messages,
+            messages=without_reasoning_only(redaction.redacted_messages),
         )
         if not self.chat_invoker.supports_responses(model_selected.model_id):
             raise GatewayBadRequest(
@@ -761,7 +785,7 @@ class GatewayRoute:
                 group_uuid=group_uuid,
                 group_name=group_name,
                 api_key_name=api_key_name,
-                messages=redacted_messages,
+                messages=without_reasoning_only(redacted_messages),
                 model_selected=model_selected,
             )
         return prepared
@@ -2227,18 +2251,8 @@ class GatewayRoute:
         original_output = response.choices[0].message.content
         redacted_output = original_output
         # The model's reasoning, read by the guardrails that include it.
-        original_reasoning = (
-            getattr(response.choices[0].message, REASONING_KEY, None) or None
-        )
+        original_reasoning = completion_reasoning(response.choices[0].message) or None
         redacted_reasoning = original_reasoning
-
-        def output_message() -> AIMessage:
-            return AIMessage(
-                content=redacted_output or '',
-                additional_kwargs=(
-                    {REASONING_KEY: redacted_reasoning} if redacted_reasoning else {}
-                ),
-            )
 
         guardrails_triggered = False
         guardrails_block_triggered = (
@@ -2261,7 +2275,9 @@ class GatewayRoute:
                             group_uuid=group_uuid,
                             api_key_name=api_key_name,
                             group_name=group_name,
-                            messages=[output_message()],
+                            messages=[
+                                _reply_message(redacted_output, redacted_reasoning)
+                            ],
                             where=GuardrailWhereType.OUTPUT,
                         )
                     )[0]
@@ -2290,7 +2306,7 @@ class GatewayRoute:
                     group_uuid=group_uuid,
                     api_key_name=api_key_name,
                     group_name=group_name,
-                    messages=[output_message()],
+                    messages=[_reply_message(redacted_output, redacted_reasoning)],
                     where=GuardrailWhereType.OUTPUT,
                 )
 
@@ -2313,7 +2329,7 @@ class GatewayRoute:
                 try:
                     if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
                         self.gateway_route_config,
-                        [output_message()],
+                        [_reply_message(redacted_output, redacted_reasoning)],
                         GuardrailWhereType.OUTPUT,
                         request_uuid=request_uuid,
                         api_key_uuid=api_key_uuid,
@@ -2337,8 +2353,7 @@ class GatewayRoute:
         )
         message_update: dict = {'content': normalized_output}
         if redacted_reasoning != original_reasoning:
-            message_update['reasoning_content'] = redacted_reasoning
-            message_update['reasoning'] = redacted_reasoning
+            message_update |= reasoning_fields(redacted_reasoning or '')
 
         return OutputProcessResult(
             response=response.model_copy(
@@ -3324,8 +3339,13 @@ class GatewayRoute:
         embeddings: list[float] | None = None,
         cache_key: str | None = None,
         **kwargs,
-    ):
-        """Handle streaming with buffering for output guardrails."""
+    ) -> tuple[list[ChatCompletionChunk], bool]:
+        """Stream the reply whole, once the output guardrails passed it.
+
+        Returns the chunks to send and whether a redact guardrail changed the
+        reply. A changed reply goes out with its text and reasoning whole, one
+        chunk each (see ``StreamingUtils.with_text``).
+        """
         original_stream_options = kwargs.pop('original_stream_options', None)
         full_content_text = ''
         full_reasoning = ''
@@ -3358,12 +3378,45 @@ class GatewayRoute:
                 if result.usage_metadata:
                     final_usage = result.usage_metadata
 
-        # Validate output guardrails
-        full_ai_message = AIMessage(
-            content=full_content_text,
-            usage_metadata=final_usage,
-            additional_kwargs={REASONING_KEY: full_reasoning} if full_reasoning else {},
-        )
+        # Redact first, as a non-streamed reply: the checks read the redacted one.
+        output_redacted = False
+        if (
+            full_content_text or full_reasoning
+        ) and self.guardrail_engine.has_guardrails_for_route(
+            self.gateway_route_config,
+            GuardrailWhereType.OUTPUT,
+            GuardrailClass.REDACT,
+        ):
+            set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
+            redacted = (
+                await self._apply_redact_guardrails(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    group_uuid=group_uuid,
+                    api_key_name=api_key_name,
+                    group_name=group_name,
+                    messages=[_reply_message(full_content_text, full_reasoning)],
+                    where=GuardrailWhereType.OUTPUT,
+                )
+            )[0]
+            redacted_text = (
+                redacted.content
+                if isinstance(redacted.content, str)
+                else full_content_text
+            )
+            redacted_reasoning = message_reasoning(redacted)
+            if (redacted_text, redacted_reasoning) != (
+                full_content_text,
+                full_reasoning,
+            ):
+                output_redacted = True
+                buffered_chunks = StreamingUtils.with_text(
+                    buffered_chunks, redacted_text, redacted_reasoning
+                )
+                full_content_text = redacted_text
+                full_reasoning = redacted_reasoning
+
+        full_ai_message = _reply_message(full_content_text, full_reasoning, final_usage)
 
         # Check guardrails
         output_soft_block = None
@@ -3431,24 +3484,27 @@ class GatewayRoute:
                 ),
             )
 
-        # If passed, yield the buffered chunks
-        for chunk in buffered_chunks:
-            openai_chunk = StreamingUtils.to_openai_chat_completion_chunk(
+        # If passed, send the buffered chunks
+        chunks = [
+            StreamingUtils.to_openai_chat_completion_chunk(
                 chunk, model_id_invoked=route_name
             )
-            yield openai_chunk
-
+            for chunk in buffered_chunks
+        ]
         if (
             final_usage
             and original_stream_options
             and isinstance(original_stream_options, dict)
             and original_stream_options.get('include_usage')
         ):
-            yield StreamingUtils.build_usage_chunk(
-                final_usage=final_usage,
-                model_id_invoked=route_name,
-                request_id=request_uuid,
+            chunks.append(
+                StreamingUtils.build_usage_chunk(
+                    final_usage=final_usage,
+                    model_id_invoked=route_name,
+                    request_id=request_uuid,
+                )
             )
+        return chunks, output_redacted
 
     @task(name='set_cached_stream_response')
     async def _build_and_cache_stream_response(

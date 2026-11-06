@@ -129,19 +129,19 @@ class GuardrailRedact:
         self,
         messages: list[BaseMessage],
         params: RedactParameter,
-        include_reasoning: bool = False,
+        read_reasoning: bool = False,
     ) -> tuple[list[BaseMessage], bool]:
         """Redacts a list of messages using Presidio Anonymizer.
         - If content is a str: redacts the entire string.
         - If content is a list (multimodal): redacts only the parts where {"type": "text"}.
         - Other types of parts (file, image, etc.) remain unchanged.
-        - With include_reasoning: an assistant message's reasoning too.
+        - With read_reasoning: an assistant message's reasoning too.
         Returns (new_messages, something_was_redacted).
         """
         new_messages, any_redacted = await self._redact_presidio_content(
             messages, params
         )
-        if not include_reasoning:
+        if not read_reasoning:
             return new_messages, any_redacted
         for i, msg in enumerate(new_messages):
             if reasoning := message_reasoning(msg):
@@ -276,7 +276,7 @@ class GuardrailRedact:
 
             filtered_only = [m for _, m in filtered_indexed]
             redacted_filtered, was_redacted = await redact_fn(
-                filtered_only, guardrail.parameters, guardrail.include_reasoning
+                filtered_only, guardrail.parameters, guardrail.read_reasoning
             )
 
             # Reintegrate redacted messages into their original positions

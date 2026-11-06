@@ -2,9 +2,10 @@
 
 A client sends it back on assistant messages, as ``reasoning_content``
 (DeepSeek) or ``reasoning`` (vLLM, Ollama, OpenRouter). The endpoint keeps it:
-DeepSeek gets it back, and an input guardrail with include_reasoning reads it.
+DeepSeek gets it back, and an input guardrail with read_reasoning reads it.
 """
 
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -55,13 +56,13 @@ DEEPSEEK = {
 }
 
 
-def _guardrail(include_reasoning: bool) -> dict:
+def _guardrail(read_reasoning: bool) -> dict:
     return {
         'name': 'no_banana',
         'type': 'contains',
         'where': 'input',
         'behavior': 'block',
-        'include_reasoning': include_reasoning,
+        'read_reasoning': read_reasoning,
         'parameters': {'values': [BAD]},
     }
 
@@ -171,14 +172,14 @@ class TestChatReasoningHistory(_ChatCase):
     def test_input_guardrail_reads_history_reasoning_with_the_flag(self):
         for field in ('reasoning_content', 'reasoning'):
             with self.subTest(field=field):
-                routes = _build_routes(OPENAI, [_guardrail(include_reasoning=True)])
+                routes = _build_routes(OPENAI, [_guardrail(read_reasoning=True)])
                 response = self._chat(routes, _history(field))
                 assert response.status_code == 400, response.text
                 assert response.json()['error']['param']['name'] == 'no_banana'
 
     def test_input_guardrail_ignores_history_reasoning_without_the_flag(self):
         mock = self._mock(OPENAI_URL)
-        routes = _build_routes(OPENAI, [_guardrail(include_reasoning=False)])
+        routes = _build_routes(OPENAI, [_guardrail(read_reasoning=False)])
         response = self._chat(routes, _history('reasoning'))
         assert response.status_code == 200, response.text
         # OpenAI never gets reasoning back.
@@ -189,13 +190,13 @@ REDACT_REASONING = {
     'name': 'redact_email',
     'type': 'presidio_anonymizer',
     'where': 'output',
-    'include_reasoning': True,
+    'read_reasoning': True,
     'parameters': {'language': 'en', 'entities': ['EMAIL_ADDRESS']},
 }
 
 
 class TestChatReasoningOutput(_ChatCase):
-    """An output redact guardrail with include_reasoning, on a non-streaming chat."""
+    """An output redact guardrail with read_reasoning, on a non-streaming chat."""
 
     def _mock_reasoning(self, reasoning: str):
         body = to_mock_openai_chat_completion(content='Done').model_dump()
@@ -219,3 +220,91 @@ class TestChatReasoningOutput(_ChatCase):
         assert response.status_code == 200, response.text
         message = response.json()['choices'][0]['message']
         assert message['reasoning_content'] == 'Just thinking'
+
+
+REDACT_ANSWER = {
+    **REDACT_REASONING,
+    'name': 'redact_answer',
+    'read_reasoning': False,
+}
+
+
+def _sse(deltas: list[dict]) -> str:
+    chunks = [
+        {
+            'id': 'chatcmpl-1',
+            'object': 'chat.completion.chunk',
+            'created': 0,
+            'model': 'deepseek-reasoner',
+            'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}],
+        }
+        for delta in deltas
+    ]
+    chunks.append(
+        {
+            'id': 'chatcmpl-1',
+            'object': 'chat.completion.chunk',
+            'created': 0,
+            'model': 'deepseek-reasoner',
+            'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}],
+            'usage': {'prompt_tokens': 5, 'completion_tokens': 7, 'total_tokens': 12},
+        }
+    )
+    return ''.join(f'data: {json.dumps(c)}\n\n' for c in chunks) + 'data: [DONE]\n\n'
+
+
+class TestStreamedChatRedaction(_ChatCase):
+    """A streamed chat is buffered when the route has output guardrails: the
+    redact ones rewrite it, as on a non-streamed chat. An email split across
+    two chunks is still masked.
+    """
+
+    def _stream(self, routes: dict):
+        pook.post(DEEPSEEK_URL).times(1).reply(200).header(
+            'Content-Type', 'text/event-stream'
+        ).body(
+            _sse(
+                [
+                    {'role': 'assistant', 'reasoning_content': 'Mail john@exa'},
+                    {'reasoning_content': 'mple.com'},
+                    {'content': 'Write to jane@exa'},
+                    {'content': 'mple.com'},
+                ]
+            )
+        )
+        app.state.routes = routes
+        response = self.client.post(
+            '/v1/chat/completions',
+            json={
+                'model': ROUTE_KEY,
+                'messages': [{'role': 'user', 'content': 'Hi'}],
+                'stream': True,
+            },
+            headers=self.headers,
+        )
+        deltas = [
+            json.loads(line[len('data: ') :])['choices']
+            for line in response.text.splitlines()
+            if line.startswith('data: {')
+        ]
+        joined = {
+            name: ''.join(c[0]['delta'].get(name) or '' for c in deltas if c)
+            for name in ('reasoning_content', 'reasoning', 'content')
+        }
+        return response, joined
+
+    def test_reasoning_and_answer_are_redacted_with_the_flag(self):
+        response, joined = self._stream(_build_routes(DEEPSEEK, [REDACT_REASONING]))
+        assert response.status_code == 200, response.text
+        assert joined == {
+            'reasoning_content': 'Mail <EMAIL_ADDRESS>',
+            'reasoning': 'Mail <EMAIL_ADDRESS>',
+            'content': 'Write to <EMAIL_ADDRESS>',
+        }
+        assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] == 'true'
+
+    def test_only_the_answer_is_redacted_without_the_flag(self):
+        response, joined = self._stream(_build_routes(DEEPSEEK, [REDACT_ANSWER]))
+        assert response.status_code == 200, response.text
+        assert joined['reasoning_content'] == 'Mail john@example.com'
+        assert joined['content'] == 'Write to <EMAIL_ADDRESS>'

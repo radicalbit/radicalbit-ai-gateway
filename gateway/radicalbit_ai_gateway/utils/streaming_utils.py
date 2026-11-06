@@ -11,13 +11,55 @@ from openai.types.chat.chat_completion_chunk import (
     ChoiceDeltaToolCallFunction,
 )
 
-from radicalbit_ai_gateway.llm.messages import AIMessageChunk
+from radicalbit_ai_gateway.llm.messages import (
+    REASONING_KEY,
+    AIMessageChunk,
+    message_reasoning,
+)
 from radicalbit_ai_gateway.utils.ai_gateway_types import ChunkAccumulationResult
-from radicalbit_ai_gateway.utils.chat_utils import completion_usage
+from radicalbit_ai_gateway.utils.chat_utils import completion_usage, reasoning_fields
 
 
 class StreamingUtils:
     """Utility class for streaming response operations."""
+
+    @staticmethod
+    def with_text(
+        chunks: list[AIMessageChunk], text: str, reasoning: str
+    ) -> list[AIMessageChunk]:
+        """Return ``chunks`` carrying ``text`` and ``reasoning`` in place of theirs.
+
+        A guardrail rewrites the reply as a whole, and a masked span can cross
+        chunks: the reasoning and the text go out whole, one chunk each, before
+        the chunks that carry the rest (tool calls, finish reason, usage).
+        """
+        head = []
+        if reasoning:
+            head.append(
+                AIMessageChunk(content='', additional_kwargs={REASONING_KEY: reasoning})
+            )
+        if text:
+            head.append(AIMessageChunk(content=text))
+        rest = []
+        for chunk in chunks:
+            stripped = chunk.model_copy(
+                update={
+                    'content': '',
+                    'additional_kwargs': {
+                        k: v
+                        for k, v in chunk.additional_kwargs.items()
+                        if k != REASONING_KEY
+                    },
+                }
+            )
+            if (
+                stripped.tool_call_chunks
+                or stripped.additional_kwargs
+                or stripped.usage_metadata
+                or (stripped.response_metadata or {}).get('finish_reason')
+            ):
+                rest.append(stripped)
+        return head + rest
 
     @staticmethod
     def cached_response_to_chunk(
@@ -183,12 +225,9 @@ class StreamingUtils:
                 if tc_chunk.get('index') is not None:
                     tool_call.index = tc_chunk['index']
 
-        # The model's reasoning streams beside its content, under both names:
-        # DeepSeek's, and vLLM's, Ollama's and OpenRouter's.
-        delta_extra = {}
-        if reasoning_content := chunk.additional_kwargs.get('reasoning_content'):
-            delta_extra['reasoning_content'] = reasoning_content
-            delta_extra['reasoning'] = reasoning_content
+        # The model's reasoning streams beside its content, under each name.
+        reasoning = message_reasoning(chunk)
+        delta_extra = reasoning_fields(reasoning) if reasoning else {}
 
         finish_reason = None
         if chunk.response_metadata:

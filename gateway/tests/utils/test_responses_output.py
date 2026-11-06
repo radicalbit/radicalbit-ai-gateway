@@ -3,7 +3,7 @@ import json
 from openai.types.responses import Response, ResponseStreamEvent
 from pydantic import TypeAdapter
 
-from radicalbit_ai_gateway.llm.messages import AIMessage
+from radicalbit_ai_gateway.llm.messages import AIMessage, ReasoningOnlyMessage
 from radicalbit_ai_gateway.responses.events import response_events
 from radicalbit_ai_gateway.responses.output import (
     ResponsesOutput,
@@ -65,12 +65,8 @@ class TestResponsesOutput:
         output = ResponsesOutput(_response([REASONING, CALL]))
 
         assert output.messages() == [
-            AIMessage(
-                content='',
-                additional_kwargs={
-                    'reasoning_content': 'Thinking',
-                    '__reasoning_only__': True,
-                },
+            ReasoningOnlyMessage(
+                content='', additional_kwargs={'reasoning_content': 'Thinking'}
             )
         ]
 
@@ -153,12 +149,8 @@ class TestResponsesOutput:
     def test_reasoning_at_the_end_reads_as_its_own_message(self):
         output = ResponsesOutput(_response([message_item('Hi'), REASONING]))
 
-        assert output.messages()[1] == AIMessage(
-            content='',
-            additional_kwargs={
-                'reasoning_content': 'Thinking',
-                '__reasoning_only__': True,
-            },
+        assert output.messages()[1] == ReasoningOnlyMessage(
+            content='', additional_kwargs={'reasoning_content': 'Thinking'}
         )
 
     def test_reasoning_only_message_writes_back(self):

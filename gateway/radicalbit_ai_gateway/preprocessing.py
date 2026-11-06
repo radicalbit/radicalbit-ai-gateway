@@ -13,6 +13,8 @@ Contract:
 - Plugins receive only the **client's** chat messages. The route's configured
   system prompt is injected *after* preprocessing runs, so it is never passed to
   a plugin and cannot be modified by one.
+- Plugins never receive a message that holds only reasoning (a Responses
+  reasoning item with no message after it): it keeps its place in the list.
 - Per-route, opt-in: a plugin runs only when its config key is present in the
   route's ``plugins`` and it is enabled there (see
   :meth:`PreprocessingPlugin.is_enabled`). Plugins run in the order their keys
@@ -30,7 +32,7 @@ import logging
 from fastapi import status
 from traceloop.sdk.decorators import task, workflow
 
-from radicalbit_ai_gateway.llm.messages import BaseMessage
+from radicalbit_ai_gateway.llm.messages import BaseMessage, is_reasoning_only
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.config_hooks import (
     PluginConfig,
@@ -256,4 +258,13 @@ async def run_preprocessing(
     chain = _enabled_chain(plugins)
     if not chain:
         return messages
-    return await _run_chain(messages, chain)
+    positions = [i for i, m in enumerate(messages) if not is_reasoning_only(m)]
+    processed = await _run_chain([messages[i] for i in positions], chain)
+    if len(processed) != len(positions):
+        # The plugins changed the number of messages: there is no place to put
+        # the reasoning back.
+        return processed
+    result = list(messages)
+    for i, message in zip(positions, processed, strict=True):
+        result[i] = message
+    return result

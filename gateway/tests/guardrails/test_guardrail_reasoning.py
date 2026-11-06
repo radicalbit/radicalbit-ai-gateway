@@ -1,7 +1,7 @@
-"""Tests for include_reasoning: guardrails that read the model's reasoning.
+"""Tests for read_reasoning: guardrails that read the model's reasoning.
 
 The reasoning belongs to its assistant message. A guardrail with
-include_reasoning reads it whenever it reads that message, by the same where,
+read_reasoning reads it whenever it reads that message, by the same where,
 message_roles and history rules. Without the flag nothing changes.
 """
 
@@ -17,9 +17,9 @@ from radicalbit_ai_gateway.guardrails.guardrail_check import (
 from radicalbit_ai_gateway.guardrails.guardrail_redact import GuardrailRedact
 from radicalbit_ai_gateway.llm.messages import (
     REASONING_KEY,
-    REASONING_ONLY_KEY,
     AIMessage,
     HumanMessage,
+    ReasoningOnlyMessage,
     message_reasoning,
 )
 from radicalbit_ai_gateway.models.guardrails import (
@@ -96,8 +96,8 @@ async def _run(guardrail: Guardrail, messages, where) -> GuardrailBadRequest | N
     return None
 
 
-def test_include_reasoning_defaults_to_false():
-    assert _guardrail().include_reasoning is False
+def test_read_reasoning_defaults_to_false():
+    assert _guardrail().read_reasoning is False
 
 
 class TestOutput:
@@ -108,7 +108,7 @@ class TestOutput:
     @pytest.mark.asyncio
     async def test_reasoning_is_read_with_the_flag(self):
         err = await _run(
-            _guardrail(include_reasoning=True), [AI_1], GuardrailWhereType.OUTPUT
+            _guardrail(read_reasoning=True), [AI_1], GuardrailWhereType.OUTPUT
         )
         assert err is not None
         assert err.reason['message_indices'] == [0]
@@ -117,11 +117,8 @@ class TestOutput:
     @pytest.mark.asyncio
     async def test_reasoning_only_message_is_read_with_the_flag(self):
         """A turn that ends in a tool call: reasoning and no text."""
-        only = AIMessage(
-            content='',
-            additional_kwargs={REASONING_KEY: BAD, REASONING_ONLY_KEY: True},
-        )
-        g = _guardrail(include_reasoning=True)
+        only = ReasoningOnlyMessage(content='', additional_kwargs={REASONING_KEY: BAD})
+        g = _guardrail(read_reasoning=True)
         assert await _run(g, [only], GuardrailWhereType.OUTPUT) is not None
         assert await _run(_guardrail(), [only], GuardrailWhereType.OUTPUT) is None
 
@@ -129,7 +126,7 @@ class TestOutput:
 class TestInput:
     @pytest.mark.asyncio
     async def test_history_reasoning_is_read_like_its_message(self):
-        g = _guardrail(where=GuardrailWhereType.INPUT, include_reasoning=True)
+        g = _guardrail(where=GuardrailWhereType.INPUT, read_reasoning=True)
         err = await _run(g, HISTORY, GuardrailWhereType.INPUT)
         assert err is not None
         assert err.reason['message_indices'] == [1]
@@ -138,7 +135,7 @@ class TestInput:
     async def test_roles_decide_as_for_the_message(self):
         g = _guardrail(
             where=GuardrailWhereType.INPUT,
-            include_reasoning=True,
+            read_reasoning=True,
             message_roles=[GuardrailMessageRole.USER],
         )
         assert await _run(g, HISTORY, GuardrailWhereType.INPUT) is None
@@ -146,15 +143,13 @@ class TestInput:
     @pytest.mark.asyncio
     async def test_history_window_decides_as_for_the_message(self):
         g = _guardrail(
-            where=GuardrailWhereType.INPUT, include_reasoning=True, history='last'
+            where=GuardrailWhereType.INPUT, read_reasoning=True, history='last'
         )
         assert await _run(g, HISTORY, GuardrailWhereType.INPUT) is None
 
 
 class TestSelectMessages:
-    ONLY = AIMessage(
-        content='', additional_kwargs={REASONING_KEY: 'x', REASONING_ONLY_KEY: True}
-    )
+    ONLY = ReasoningOnlyMessage(content='', additional_kwargs={REASONING_KEY: 'x'})
 
     def test_reasoning_only_message_is_dropped_without_the_flag(self):
         messages = [USER_1, self.ONLY, USER_2]
@@ -171,7 +166,7 @@ class TestSelectMessages:
 
     def test_reasoning_only_message_is_kept_with_the_flag(self):
         messages = [USER_1, self.ONLY, USER_2]
-        g = _guardrail(where='input', include_reasoning=True)
+        g = _guardrail(where='input', read_reasoning=True)
         got = _select_messages(messages, g, GuardrailWhereType.INPUT)
         assert got == list(enumerate(messages))
 
@@ -179,7 +174,7 @@ class TestSelectMessages:
 class TestJudgeContent:
     def test_output_reads_reasoning_then_text(self):
         text = extract_content_for_judge(
-            [AI_1], where=GuardrailWhereType.OUTPUT, include_reasoning=True
+            [AI_1], where=GuardrailWhereType.OUTPUT, read_reasoning=True
         )
         assert text == f'A long yellow fruit: {BAD}.\nOK'
 
@@ -193,13 +188,13 @@ class TestJudgeContent:
             HISTORY,
             where=GuardrailWhereType.INPUT,
             message_roles=[GuardrailMessageRole.ASSISTANT],
-            include_reasoning=True,
+            read_reasoning=True,
         )
         assert BAD in text
 
     def test_output_window_is_empty_without_an_assistant_message(self):
         texts = _judge_texts(
-            [USER_1], {'where': GuardrailWhereType.OUTPUT, 'include_reasoning': True}
+            [USER_1], {'where': GuardrailWhereType.OUTPUT, 'read_reasoning': True}
         )
         assert texts == []
 
@@ -236,7 +231,7 @@ class TestRedact:
         g = _guardrail(
             type=GuardrailType.PRESIDIO_ANONYMIZER,
             parameters=RedactParameter(entities=['PERSON']),
-            include_reasoning=True,
+            read_reasoning=True,
         )
         out = await self._redact(g, [AI_1], GuardrailWhereType.OUTPUT)
         assert message_reasoning(out[0]) == 'A long yellow fruit: <FRUIT>.'

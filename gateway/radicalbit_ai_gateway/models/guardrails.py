@@ -364,7 +364,7 @@ class Guardrail(BaseModel):
         ),
         examples=[['user'], ['user', 'tool'], ['system'], ['tool']],
     )
-    include_reasoning: bool = Field(
+    read_reasoning: bool = Field(
         default=False,
         description=(
             "If True, the guardrail also reads the model's reasoning, when the "

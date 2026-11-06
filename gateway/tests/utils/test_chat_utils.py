@@ -1,5 +1,5 @@
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk
-from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
+from radicalbit_ai_gateway.utils.chat_utils import ChatUtils, completion_reasoning
 from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
 
 
@@ -135,3 +135,49 @@ def test_usage_has_no_details_when_the_provider_sent_none():
     assert usage.total_tokens == 18
     assert usage.prompt_tokens_details is None
     assert usage.completion_tokens_details is None
+
+
+def test_usage_reads_the_flex_tier_names():
+    usage = _completion(
+        {
+            'input_tokens': 10,
+            'output_tokens': 5,
+            'total_tokens': 15,
+            'input_token_details': {'flex_cache_read': 4, 'flex': 6},
+            'output_token_details': {'flex_reasoning': 3, 'flex': 2},
+        }
+    ).usage
+    assert usage.completion_tokens_details.reasoning_tokens == 3
+    assert usage.prompt_tokens_details.cached_tokens == 4
+
+
+def test_completion_reasoning_reads_either_name():
+    message = _completion(None).choices[0].message
+    assert completion_reasoning(message) == ''
+    message.reasoning = 'Thinking.'
+    assert completion_reasoning(message) == 'Thinking.'
+
+
+def test_with_text_puts_the_whole_text_first_and_keeps_the_rest():
+    chunks = [
+        AIMessageChunk(content='', additional_kwargs={'reasoning_content': 'a@'}),
+        AIMessageChunk(content='', additional_kwargs={'reasoning_content': 'b.com'}),
+        AIMessageChunk(content='Hi '),
+        AIMessageChunk(
+            content='there',
+            tool_call_chunks=[{'name': 'f', 'args': '{}', 'id': 'c1', 'index': 0}],
+        ),
+        AIMessageChunk(content='', response_metadata={'finish_reason': 'stop'}),
+    ]
+
+    out = StreamingUtils.with_text(chunks, 'Hi <X>', '<EMAIL>')
+
+    assert [c.additional_kwargs.get('reasoning_content') for c in out] == [
+        '<EMAIL>',
+        None,
+        None,
+        None,
+    ]
+    assert [c.content for c in out] == ['', 'Hi <X>', '', '']
+    assert out[2].tool_call_chunks[0]['id'] == 'c1'
+    assert out[3].response_metadata == {'finish_reason': 'stop'}

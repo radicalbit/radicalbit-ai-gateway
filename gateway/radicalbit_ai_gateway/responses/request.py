@@ -17,8 +17,6 @@ import re
 from typing import Any
 
 from radicalbit_ai_gateway.llm.messages import (
-    REASONING_KEY,
-    REASONING_ONLY_KEY,
     AIMessage,
     BaseMessage,
     HumanMessage,
@@ -26,7 +24,7 @@ from radicalbit_ai_gateway.llm.messages import (
     ToolMessage,
 )
 from radicalbit_ai_gateway.models.responses import ResponsesSettings
-from radicalbit_ai_gateway.responses.output import Reasoning
+from radicalbit_ai_gateway.responses.reasoning import Reasoning, assistant_message
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
 from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
@@ -106,13 +104,8 @@ class _Slot:
         )
         if self.message_type is ToolMessage:
             return ToolMessage(content=content, tool_call_id=self.tool_call_id)
-        if reasoning := self.reasoning.text():
-            additional_kwargs: dict = {REASONING_KEY: reasoning}
-            if not self.texts:
-                additional_kwargs[REASONING_ONLY_KEY] = True
-            return self.message_type(
-                content=content, additional_kwargs=additional_kwargs
-            )
+        if self.message_type is AIMessage:
+            return assistant_message(content, self.reasoning, has_text=bool(values))
         return self.message_type(content=content)
 
 
@@ -253,11 +246,7 @@ class ResponsesRequest:
                 'The messages of a Responses request changed in number'
             )
         for slot, message in zip(self._slots, messages, strict=True):
-            # A policy that rebuilt the message without its reasoning leaves
-            # the reasoning as it is.
-            reasoning = message.additional_kwargs.get(REASONING_KEY)
-            if isinstance(reasoning, str):
-                slot.reasoning.write(reasoning)
+            slot.reasoning.write_from(message)
             if not slot.texts:
                 continue
             texts = _message_texts(message.content)

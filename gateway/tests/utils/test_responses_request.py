@@ -7,6 +7,7 @@ from tests.test_responses_native import OPENCODE_TURN
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     HumanMessage,
+    ReasoningOnlyMessage,
     SystemMessage,
     ToolMessage,
 )
@@ -441,12 +442,8 @@ class TestReasoningInHistory:
 
         messages = ResponsesRequest(body).messages()
 
-        assert messages[1] == AIMessage(
-            content='',
-            additional_kwargs={
-                'reasoning_content': 'Thinking',
-                '__reasoning_only__': True,
-            },
+        assert messages[1] == ReasoningOnlyMessage(
+            content='', additional_kwargs={'reasoning_content': 'Thinking'}
         )
 
     def test_reasoning_at_the_end_is_its_own_message(self):
@@ -454,12 +451,8 @@ class TestReasoningInHistory:
 
         messages = ResponsesRequest(body).messages()
 
-        assert messages[1] == AIMessage(
-            content='',
-            additional_kwargs={
-                'reasoning_content': 'Thinking',
-                '__reasoning_only__': True,
-            },
+        assert messages[1] == ReasoningOnlyMessage(
+            content='', additional_kwargs={'reasoning_content': 'Thinking'}
         )
 
     def test_encrypted_reasoning_is_not_read(self):

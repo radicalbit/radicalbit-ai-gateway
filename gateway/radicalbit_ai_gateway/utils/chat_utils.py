@@ -11,15 +11,11 @@ from openai.types.chat.chat_completion_message_tool_call import (
 )
 from openai.types.completion_usage import CompletionUsage
 
-from radicalbit_ai_gateway.llm.messages import AIMessage
-
-# OpenAI's priority and flex tiers prefix the detail keys with the tier name.
-_TIERS = ('', 'priority_', 'flex_')
-
-
-def _detail(details: dict, key: str) -> int:
-    """Return a usage detail, summed across its service-tier names."""
-    return sum(details.get(f'{tier}{key}') or 0 for tier in _TIERS)
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    message_reasoning,
+    usage_detail,
+)
 
 
 def completion_usage(usage_metadata: dict | None) -> CompletionUsage | None:
@@ -37,24 +33,49 @@ def completion_usage(usage_metadata: dict | None) -> CompletionUsage | None:
         completion_tokens=usage_metadata.get('output_tokens', 0),
         total_tokens=usage_metadata.get('total_tokens', 0),
         prompt_tokens_details={
-            'cached_tokens': _detail(input_details, 'cache_read'),
-            'audio_tokens': _detail(input_details, 'audio'),
+            'cached_tokens': usage_detail(input_details, 'cache_read'),
+            'audio_tokens': usage_detail(input_details, 'audio'),
         }
         if input_details
         else None,
         completion_tokens_details={
-            'reasoning_tokens': _detail(output_details, 'reasoning'),
-            'audio_tokens': _detail(output_details, 'audio'),
-            'accepted_prediction_tokens': _detail(
+            'reasoning_tokens': usage_detail(output_details, 'reasoning'),
+            'audio_tokens': usage_detail(output_details, 'audio'),
+            'accepted_prediction_tokens': usage_detail(
                 output_details, 'accepted_prediction'
             ),
-            'rejected_prediction_tokens': _detail(
+            'rejected_prediction_tokens': usage_detail(
                 output_details, 'rejected_prediction'
             ),
         }
         if output_details
         else None,
     )
+
+
+# The names of the model's reasoning in a Chat Completions message or delta:
+# DeepSeek's, and vLLM's, Ollama's and OpenRouter's.
+_REASONING_FIELDS = ('reasoning_content', 'reasoning')
+
+
+def reasoning_fields(reasoning: str) -> dict[str, str]:
+    """Return the model's reasoning under each name it goes by."""
+    return dict.fromkeys(_REASONING_FIELDS, reasoning)
+
+
+def completion_reasoning(message: ChatCompletionMessage) -> str:
+    """Return the model's reasoning in a Chat Completions message, or ''."""
+    for name in _REASONING_FIELDS:
+        if isinstance(value := getattr(message, name, None), str) and value:
+            return value
+    return ''
+
+
+def _set_reasoning(message: ChatCompletionMessage, ai_message: AIMessage) -> None:
+    """Put the model's reasoning on ``message``, under each name it goes by."""
+    if reasoning := message_reasoning(ai_message):
+        for name, value in reasoning_fields(reasoning).items():
+            setattr(message, name, value)
 
 
 class ChatUtils:
@@ -85,11 +106,7 @@ class ChatUtils:
                 content=None,
                 tool_calls=openai_tool_calls,
             )
-            reasoning_content = ai_message.additional_kwargs.get('reasoning_content')
-            if reasoning_content:
-                # Both names: DeepSeek's, and vLLM's, Ollama's and OpenRouter's.
-                message_to_send.reasoning_content = reasoning_content
-                message_to_send.reasoning = reasoning_content
+            _set_reasoning(message_to_send, ai_message)
             finish_reason = 'tool_calls'
         else:
             content = ai_message.content
@@ -100,11 +117,7 @@ class ChatUtils:
                 content=content,
                 tool_calls=None,
             )
-            reasoning_content = ai_message.additional_kwargs.get('reasoning_content')
-            if reasoning_content:
-                # Both names: DeepSeek's, and vLLM's, Ollama's and OpenRouter's.
-                message_to_send.reasoning_content = reasoning_content
-                message_to_send.reasoning = reasoning_content
+            _set_reasoning(message_to_send, ai_message)
             # Normalize finish_reason to lowercase (Gemini returns uppercase like 'STOP')
             finish_reason_raw = response_metadata.get('finish_reason', 'stop')
             finish_reason = (

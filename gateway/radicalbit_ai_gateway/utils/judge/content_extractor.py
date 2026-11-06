@@ -23,7 +23,7 @@ def extract_content_for_judge(messages: list[BaseMessage], **kwargs) -> str:
         messages: List of gateway messages.
         **kwargs: Must include 'where' (GuardrailWhereType) to determine phase.
             Can include 'message_roles' to determine if role filtering is active,
-            and 'include_reasoning' to read each assistant message's reasoning
+            and 'read_reasoning' to read each assistant message's reasoning
             before its text.
 
     Returns:
@@ -36,25 +36,25 @@ def extract_content_for_judge(messages: list[BaseMessage], **kwargs) -> str:
 
     where = kwargs.get('where')
     message_roles = kwargs.get('message_roles')
-    include_reasoning = kwargs.get('include_reasoning', False)
+    read_reasoning = kwargs.get('read_reasoning', False)
     if isinstance(where, GuardrailWhereType):
         where_value = where.value
     else:
         where_value = str(where or '').upper()
 
     if where_value == GuardrailWhereType.OUTPUT.value:
-        return _extract_output_content(messages, include_reasoning)
+        return _extract_output_content(messages, read_reasoning)
 
-    return _extract_input_content(messages, message_roles, include_reasoning)
+    return _extract_input_content(messages, message_roles, read_reasoning)
 
 
 def _extract_output_content(
-    messages: list[BaseMessage], include_reasoning: bool = False
+    messages: list[BaseMessage], read_reasoning: bool = False
 ) -> str:
     """Extract content from the last AI message for OUTPUT phase."""
     for m in reversed(messages):
         if _get_message_type(m) == 'ai':
-            text = _get_message_text(m, include_reasoning)
+            text = _get_message_text(m, read_reasoning)
             if text:
                 return text
     return ''
@@ -63,7 +63,7 @@ def _extract_output_content(
 def _extract_input_content(
     messages: list[BaseMessage],
     message_roles: list | None,
-    include_reasoning: bool = False,
+    read_reasoning: bool = False,
 ) -> str:
     """Extract content from provided messages for INPUT phase.
 
@@ -75,18 +75,18 @@ def _extract_input_content(
     for m in messages:
         if message_roles is None and _get_message_type(m) != 'human':
             continue
-        text = _get_message_text(m, include_reasoning)
+        text = _get_message_text(m, read_reasoning)
         if text:
             parts.append(text)
 
     return '\n'.join(parts) if parts else ''
 
 
-def _get_message_text(msg: BaseMessage, include_reasoning: bool = False) -> str:
+def _get_message_text(msg: BaseMessage, read_reasoning: bool = False) -> str:
     """Extract text content from a message, after its reasoning if asked."""
     content = getattr(msg, 'content', '')
     text = ContentUtils.extract_text_content(content, strip=True)
-    if not include_reasoning:
+    if not read_reasoning:
         return text
     return '\n'.join(t for t in (message_reasoning(msg).strip(), text) if t)
 

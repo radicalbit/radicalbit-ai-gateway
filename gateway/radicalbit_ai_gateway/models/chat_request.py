@@ -6,6 +6,7 @@ import logging.config
 from typing import Any
 
 from radicalbit_ai_gateway.llm.messages import (
+    REASONING_KEY,
     AIMessage,
     BaseMessage,
     FunctionMessage,
@@ -209,7 +210,7 @@ def convert_openai_messages(messages: list) -> list[BaseMessage]:
             and reasoning_content
             and isinstance(message, AIMessage)
         ):
-            message.additional_kwargs['reasoning_content'] = reasoning_content
+            message.additional_kwargs[REASONING_KEY] = reasoning_content
         openai_messages.append(message)
 
     return openai_messages

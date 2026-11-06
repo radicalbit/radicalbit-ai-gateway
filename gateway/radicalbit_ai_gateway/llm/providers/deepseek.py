@@ -12,7 +12,12 @@ from urllib.parse import urlparse
 import openai
 from pydantic import Field, SecretStr, model_validator
 
-from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    message_reasoning,
+)
 from radicalbit_ai_gateway.llm.providers.openai import (
     _BaseChatOpenAI,
     _env,
@@ -147,14 +152,10 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
         if self._is_azure_endpoint and isinstance(payload.get('tool_choice'), dict):
             payload['tool_choice'] = 'required'
         for message_dict, message in zip(payload['messages'], messages, strict=False):
-            if (
-                isinstance(message, AIMessage)
-                and message_dict.get('role') == 'assistant'
-                and message.additional_kwargs.get('reasoning_content')
+            if message_dict.get('role') == 'assistant' and (
+                reasoning := message_reasoning(message)
             ):
-                message_dict['reasoning_content'] = message.additional_kwargs[
-                    'reasoning_content'
-                ]
+                message_dict['reasoning_content'] = reasoning
         return payload
 
     def _chat_result(

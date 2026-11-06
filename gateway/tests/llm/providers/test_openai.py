@@ -25,6 +25,7 @@ from radicalbit_ai_gateway.llm.messages import (
 from radicalbit_ai_gateway.llm.providers._openai_common import (
     OutputParserError,
     StreamChunkTimeoutError,
+    reasoning_of,
     to_openai_function,
     to_response_format,
     tool_choice_kwarg,
@@ -1187,3 +1188,8 @@ async def test_reasoning_is_not_sent_back_to_openai():
         'content': 'Hello.',
         'role': 'assistant',
     }
+
+
+def test_an_empty_reasoning_name_gives_way_to_the_other():
+    assert reasoning_of({'reasoning_content': '', 'reasoning': 'Hmm.'}) == 'Hmm.'
+    assert reasoning_of({'reasoning_content': None}) is None

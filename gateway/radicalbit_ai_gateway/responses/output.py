@@ -12,70 +12,14 @@ from dataclasses import dataclass, field
 import time
 import uuid
 
-from radicalbit_ai_gateway.llm.messages import (
-    REASONING_KEY,
-    REASONING_ONLY_KEY,
-    AIMessage,
+from radicalbit_ai_gateway.llm.messages import AIMessage
+from radicalbit_ai_gateway.responses.reasoning import (
+    Reasoning,
+    assistant_message,
+    text_parts,
 )
 
 # ── Output text ──────────────────────────────────────────────────────────
-
-
-def _text_parts(content: object, part_type: str) -> list[dict]:
-    return [
-        part
-        for part in content or []
-        if isinstance(part, dict)
-        and part.get('type') == part_type
-        and isinstance(part.get('text'), str)
-    ]
-
-
-def _reasoning_parts(item: dict) -> list[dict]:
-    """Return the readable texts of a reasoning item: its summary and raw text."""
-    return _text_parts(item.get('summary'), 'summary_text') + _text_parts(
-        item.get('content'), 'reasoning_text'
-    )
-
-
-def _join(parts: list[dict]) -> str:
-    return '\n'.join(part['text'] for part in parts if part['text'])
-
-
-class Reasoning:
-    """The readable reasoning of one or more reasoning items, read as one text.
-
-    Encrypted reasoning is not readable and is never touched. Some providers
-    (Ollama) copy the readable text in ``encrypted_content``: a changed text
-    replaces that copy too, so a redacted text does not come back there.
-    """
-
-    def __init__(self) -> None:
-        self._parts: list[dict] = []
-        # Each item, with the readable text it had when read.
-        self._items: list[tuple[dict, str]] = []
-
-    def add(self, item: dict) -> None:
-        parts = _reasoning_parts(item)
-        self._parts += parts
-        self._items.append((item, _join(parts)))
-
-    def text(self) -> str:
-        return _join(self._parts)
-
-    def __bool__(self) -> bool:
-        """Return True when the items have readable text."""
-        return bool(self.text())
-
-    def write(self, text: str) -> None:
-        """Put ``text`` in the first part and empty the others."""
-        if not self._parts or text == self.text():
-            return
-        for index, part in enumerate(self._parts):
-            part['text'] = text if index == 0 else ''
-        for item, original in self._items:
-            if original and item.get('encrypted_content') == original:
-                item['encrypted_content'] = _join(_reasoning_parts(item))
 
 
 @dataclass
@@ -90,14 +34,10 @@ class _Slot:
     reasoning: Reasoning = field(default_factory=Reasoning)
 
     def message(self) -> AIMessage:
-        additional_kwargs: dict = {}
-        if reasoning := self.reasoning.text():
-            additional_kwargs[REASONING_KEY] = reasoning
-            if not self.parts:
-                additional_kwargs[REASONING_ONLY_KEY] = True
-        return AIMessage(
-            content=''.join(part['text'] for part in self.parts),
-            additional_kwargs=additional_kwargs,
+        return assistant_message(
+            ''.join(part['text'] for part in self.parts),
+            self.reasoning,
+            has_text=bool(self.parts),
         )
 
 
@@ -110,7 +50,7 @@ def _slots(response: dict) -> list[_Slot]:
         if item.get('type') == 'reasoning':
             reasoning.add(item)
         elif item.get('type') == 'message':
-            parts = _text_parts(item.get('content'), 'output_text')
+            parts = text_parts(item.get('content'), 'output_text')
             if parts:
                 slots.append(_Slot(parts, reasoning))
                 reasoning = Reasoning()
@@ -145,9 +85,7 @@ class ResponsesOutput:
         reasoning goes in the first reasoning part the same way.
         """
         for slot, message in zip(self._slots, messages, strict=True):
-            reasoning = message.additional_kwargs.get(REASONING_KEY)
-            if isinstance(reasoning, str):
-                slot.reasoning.write(reasoning)
+            slot.reasoning.write_from(message)
             parts = slot.parts
             if not parts:
                 continue
