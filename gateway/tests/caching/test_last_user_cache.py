@@ -14,7 +14,7 @@ from tests.common.resolve_route_models import resolve_route_models
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage, SystemMessage
@@ -83,7 +83,7 @@ async def test_exact_cache_hit_with_different_history(
     )
 
     mock_complete.return_value = to_mock_openai_chat_completion(content='Paris')
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -94,7 +94,7 @@ async def test_exact_cache_hit_with_different_history(
         gateway_route_config=resolved_route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(resolved_route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
     )
@@ -186,7 +186,7 @@ async def test_semantic_cache_uses_only_last_user_for_key_and_embedding(
     )
     cost_service: CostService = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -210,7 +210,7 @@ async def test_semantic_cache_uses_only_last_user_for_key_and_embedding(
         gateway_route_config=resolved_route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(resolved_route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
     )

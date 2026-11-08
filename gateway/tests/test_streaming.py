@@ -14,6 +14,7 @@ from tests.common import db_mock
 from tests.common.limits import project_limit
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.guardrails.guardrails import RouteGuardrails
 from radicalbit_ai_gateway.limiting.limits import Demand, RouteLimits
 from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.server import app, group_service, key_service
@@ -72,7 +73,7 @@ class TestStreaming(unittest.TestCase):
         # Mock prepare_stream to return a valid PrepareAndValidateResult
         prepared = self._create_prepared_result()
         self.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        self.mock_gateway.guardrails = RouteGuardrails()
 
         # Mock invoke_stream to yield chunks
         async def mock_invoke_stream(*args, **kwargs):
@@ -148,7 +149,7 @@ class TestStreaming(unittest.TestCase):
             guardrails_block_triggered=True,  # BLOCK/SOFT_BLOCK triggers the header
         )
         self.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        self.mock_gateway.guardrails = RouteGuardrails()
 
         # Mock invoke_stream
         async def mock_invoke_stream(*args, **kwargs):
@@ -192,7 +193,7 @@ class TestStreaming(unittest.TestCase):
 
         prepared = self._create_prepared_result()
         self.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        self.mock_gateway.guardrails = RouteGuardrails()
 
         async def mock_invoke_stream_error(*args, **kwargs):
             raise ModelInvokerInternalError(
@@ -226,7 +227,7 @@ class TestStreaming(unittest.TestCase):
         self.mock_gateway.prepare_stream = AsyncMock(
             return_value=self._create_prepared_result()
         )
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        self.mock_gateway.guardrails = RouteGuardrails()
         seen = {}
 
         async def mock_invoke_stream(*args, limits, **kwargs):

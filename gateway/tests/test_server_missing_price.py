@@ -9,7 +9,7 @@ from starlette.requests import Request
 
 from tests.common import db_mock
 
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.event_payload import InputTokenProcessedPayload
@@ -76,7 +76,7 @@ def _build_routes_without_prices() -> dict:
     )
     # A cost service that knows no model: every lookup misses its price entry.
     cost_service = CostService()
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
         cost_service=cost_service,
@@ -84,7 +84,7 @@ def _build_routes_without_prices() -> dict:
     )
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine,
+        project_guardrails,
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,

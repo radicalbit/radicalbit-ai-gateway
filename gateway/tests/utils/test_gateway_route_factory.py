@@ -28,7 +28,7 @@ from tests.common.mocked_build_openai_chat_completion import (
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute, InvokeResponse
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage
@@ -78,10 +78,10 @@ def test_resolve_and_validate_produces_gateway_config():
 # ---------------------------------------------------------------------------
 
 
-def _make_guardrail_engine() -> GuardrailEngine:
+def _make_guardrails() -> Guardrails:
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager = MagicMock()
-    return GuardrailEngine(
+    return Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -97,7 +97,7 @@ def test_build_gateway_routes_from_config_keys():
 
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine=_make_guardrail_engine(),
+        guardrails=_make_guardrails(),
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
@@ -136,7 +136,7 @@ def _build_limited_routes(project_uuid: str):
     config = GatewayConfig.model_validate(resolved)
     return build_gateway_routes_from_config(
         config,
-        guardrail_engine=_make_guardrail_engine(),
+        guardrails=_make_guardrails(),
         redis_client=None,
         cost_service=MagicMock(spec_set=CostService),
         httpx_client=None,
@@ -204,7 +204,7 @@ def test_build_gateway_routes_from_config_resolves_transcription_models():
 
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine=_make_guardrail_engine(),
+        guardrails=_make_guardrails(),
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
@@ -227,7 +227,7 @@ def test_build_gateway_routes_from_config_wires_transcription_invoker():
 
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine=_make_guardrail_engine(),
+        guardrails=_make_guardrails(),
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
@@ -269,7 +269,7 @@ def test_build_gateway_routes_from_config_transcription_only_route():
 
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine=_make_guardrail_engine(),
+        guardrails=_make_guardrails(),
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
@@ -287,7 +287,7 @@ def test_build_gateway_routes_empty_config():
     config = GatewayConfig.model_validate({'routes': {}, 'chat_models': []})
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine=_make_guardrail_engine(),
+        guardrails=_make_guardrails(),
         redis_client=None,
         cost_service=MagicMock(spec_set=CostService),
         httpx_client=None,
@@ -318,7 +318,7 @@ async def test_project_route_full_pipeline(mock_emit_event, fake_redis_client):
     cost_service = MagicMock(spec_set=CostService)
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine=_make_guardrail_engine(),
+        guardrails=_make_guardrails(),
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,
@@ -363,7 +363,7 @@ async def test_project_route_full_pipeline(mock_emit_event, fake_redis_client):
 
 
 # ---------------------------------------------------------------------------
-# Per-project GuardrailEngine isolation
+# Per-project guardrails isolation
 # ---------------------------------------------------------------------------
 
 _PROJECT_A_YAML = """\
@@ -409,8 +409,8 @@ routes:
 """
 
 
-async def test_per_project_guardrail_engine_isolation():
-    """Each project gets its own GuardrailEngine; same-named guardrails in different
+async def test_per_project_guardrails_isolation():
+    """Each project gets its own guardrails; same-named guardrails in different
     projects must not overwrite each other.
     """
     presidio_engine = PresidioEngine()
@@ -429,13 +429,8 @@ async def test_per_project_guardrail_engine_isolation():
     await registrar('aaaa-aaaa', 'project-a', _PROJECT_A_YAML)
     await registrar('bbbb-bbbb', 'project-b', _PROJECT_B_YAML)
 
-    engine_a = app.state.routes['project-a/route-a'].guardrail_engine
-    engine_b = app.state.routes['project-b/route-b'].guardrail_engine
-
-    assert engine_a is not engine_b
-
-    guardrail_a = engine_a._guardrails_by_name['pii-check']
-    guardrail_b = engine_b._guardrails_by_name['pii-check']
+    [guardrail_a] = app.state.routes['project-a/route-a'].guardrails.input_check
+    [guardrail_b] = app.state.routes['project-b/route-b'].guardrails.input_check
 
     assert guardrail_a.parameters.values == ['bad-word-A']
     assert guardrail_b.parameters.values == ['bad-word-B']
@@ -575,7 +570,7 @@ def _build_routes(yaml_content: str, redis_client) -> dict[str, GatewayRoute]:
     config = GatewayConfig.model_validate(resolve_secrets_from_string(yaml_content))
     return build_gateway_routes_from_config(
         config,
-        guardrail_engine=_make_guardrail_engine(),
+        guardrails=_make_guardrails(),
         redis_client=redis_client,
         cost_service=MagicMock(spec_set=CostService),
         httpx_client=None,

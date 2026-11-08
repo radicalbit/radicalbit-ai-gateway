@@ -6,9 +6,10 @@ import httpx
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.guardrails import apply_check
 from tests.common.mocked_gateway_config_openai import get_default_gateway_openai
 
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage
@@ -20,7 +21,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     GuardrailType,
     GuardrailWhereType,
 )
-from radicalbit_ai_gateway.models.soft_block_info import SoftBlockInfo
+from radicalbit_ai_gateway.models.soft_block_info import SoftBlock
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
@@ -50,7 +51,7 @@ def _make_guardrail(
 def _build_engine(guardrails):
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager = MagicMock(spec_set=PromptManager)
-    return GuardrailEngine(
+    return Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -164,7 +165,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
             'radicalbit_ai_gateway.guardrails.guardrail_check.httpx.AsyncClient',
             return_value=client,
         ):
-            result = await self.engine_block.guardrail_check.apply_guardrails(
+            result = await apply_check(
+                self.engine_block,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -185,7 +187,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
             return_value=client,
         ):
             with pytest.raises(GuardrailBadRequest) as exc_info:
-                await self.engine_block.guardrail_check.apply_guardrails(
+                await apply_check(
+                    self.engine_block,
                     request_uuid=str(REQUEST_UUID),
                     api_key_uuid=str(API_KEY_UUID),
                     group_uuid=str(GROUP_UUID),
@@ -209,7 +212,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
             'radicalbit_ai_gateway.guardrails.guardrail_check.httpx.AsyncClient',
             return_value=client,
         ):
-            result = await self.engine_soft_block.guardrail_check.apply_guardrails(
+            result = await apply_check(
+                self.engine_soft_block,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -219,7 +223,7 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
                 route_config=self.route_config_soft_block,
                 where=GuardrailWhereType.INPUT,
             )
-        assert isinstance(result.soft_block, SoftBlockInfo)
+        assert isinstance(result.soft_block, SoftBlock)
         assert result.soft_block.guardrail.name == 'soft_block_guardrails_ai'
 
     @pytest.mark.asyncio
@@ -230,7 +234,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
             'radicalbit_ai_gateway.guardrails.guardrail_check.httpx.AsyncClient',
             return_value=client,
         ):
-            result = await self.engine_warn.guardrail_check.apply_guardrails(
+            result = await apply_check(
+                self.engine_warn,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -240,7 +245,7 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
                 route_config=self.route_config_warn,
                 where=GuardrailWhereType.INPUT,
             )
-        assert result.soft_block is None  # WARN does not return SoftBlockInfo
+        assert result.soft_block is None  # WARN does not return SoftBlock
         assert result.warned
 
     @pytest.mark.asyncio
@@ -249,7 +254,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
         with patch(
             'radicalbit_ai_gateway.guardrails.guardrail_check.httpx.AsyncClient'
         ):
-            result = await self.engine_block.guardrail_check.apply_guardrails(
+            result = await apply_check(
+                self.engine_block,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -275,7 +281,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
             ),
             pytest.raises(httpx.TimeoutException),
         ):
-            await self.engine_block.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.engine_block,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -306,7 +313,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
             ),
             pytest.raises(httpx.HTTPStatusError),
         ):
-            await self.engine_block.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.engine_block,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -323,7 +331,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
         with patch(
             'radicalbit_ai_gateway.guardrails.guardrail_check.httpx.AsyncClient'
         ) as mock_cls:
-            result = await self.engine_block.guardrail_check.apply_guardrails(
+            result = await apply_check(
+                self.engine_block,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -344,7 +353,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
             'radicalbit_ai_gateway.guardrails.guardrail_check.httpx.AsyncClient',
             return_value=client,
         ):
-            await self.engine_block.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.engine_block,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),

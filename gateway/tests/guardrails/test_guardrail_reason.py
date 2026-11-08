@@ -2,7 +2,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from radicalbit_ai_gateway.guardrails.guardrail_check import GuardrailCheck
+from tests.common.guardrails import apply_check
+
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage
@@ -41,11 +43,11 @@ async def test_reason_logged_for_starts_with():
         behavior=GuardrailBehaviorType.BLOCK,
         parameters=CheckParameter(values=['Hello']),
     )
-    chk = GuardrailCheck(
+    chk = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
-        guardrails_by_name={'gr_sw': gr},
+        guardrails=[gr],
     )
     cfg = _route_config_with_guardrails(['gr_sw'])
 
@@ -56,7 +58,8 @@ async def test_reason_logged_for_starts_with():
         ),
         pytest.raises(GuardrailBadRequest) as exc,
     ):
-        await chk.apply_guardrails(
+        await apply_check(
+            chk,
             request_uuid='r',
             api_key_uuid='k',
             group_uuid='g',
@@ -86,11 +89,11 @@ async def test_reason_logged_for_contains_case_insensitive():
         behavior=GuardrailBehaviorType.BLOCK,
         parameters=CheckParameter(values=['sensitive']),
     )
-    chk = GuardrailCheck(
+    chk = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
-        guardrails_by_name={'gr_contains': gr},
+        guardrails=[gr],
     )
     cfg = _route_config_with_guardrails(['gr_contains'])
 
@@ -101,7 +104,8 @@ async def test_reason_logged_for_contains_case_insensitive():
         ),
         pytest.raises(GuardrailBadRequest) as exc,
     ):
-        await chk.apply_guardrails(
+        await apply_check(
+            chk,
             request_uuid='r',
             api_key_uuid='k',
             group_uuid='g',
@@ -131,11 +135,11 @@ async def test_reason_logged_for_regex():
         behavior=GuardrailBehaviorType.BLOCK,
         parameters=CheckParameter(values=[r'\d+'], ignore_case=True),
     )
-    chk = GuardrailCheck(
+    chk = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
-        guardrails_by_name={'gr_re': gr},
+        guardrails=[gr],
     )
     cfg = _route_config_with_guardrails(['gr_re'])
 
@@ -146,7 +150,8 @@ async def test_reason_logged_for_regex():
         ),
         pytest.raises(GuardrailBadRequest) as exc,
     ):
-        await chk.apply_guardrails(
+        await apply_check(
+            chk,
             request_uuid='r',
             api_key_uuid='k',
             group_uuid='g',
@@ -176,11 +181,11 @@ async def test_reason_includes_context_when_debug_mode_enabled():
         behavior=GuardrailBehaviorType.BLOCK,
         parameters=CheckParameter(values=['sensitive']),
     )
-    chk = GuardrailCheck(
+    chk = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
-        guardrails_by_name={'gr_contains_ctx': gr},
+        guardrails=[gr],
     )
     cfg = _route_config_with_guardrails(['gr_contains_ctx'])
 
@@ -191,7 +196,8 @@ async def test_reason_includes_context_when_debug_mode_enabled():
         ),
         pytest.raises(GuardrailBadRequest) as exc,
     ):
-        await chk.apply_guardrails(
+        await apply_check(
+            chk,
             request_uuid='r',
             api_key_uuid='k',
             group_uuid='g',
@@ -228,11 +234,11 @@ async def test_reason_is_available_for_judge_guardrail():
     )
 
     cost_service: CostService = MagicMock(spec_set=CostService)
-    chk = GuardrailCheck(
+    chk = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=_DummyJudgeEngine(),
         cost_service=cost_service,
-        guardrails_by_name={'gr_judge': gr},
+        guardrails=[gr],
     )
 
     m1 = Model(
@@ -242,7 +248,7 @@ async def test_reason_is_available_for_judge_guardrail():
         params={'latency_ms': 0},
     )
 
-    chk._chat_models_by_id = {'m1': m1}
+    chk._check._chat_models_by_id = {'m1': m1}
 
     cfg = _route_config_with_guardrails(['gr_judge'])
 
@@ -253,7 +259,8 @@ async def test_reason_is_available_for_judge_guardrail():
         ),
         pytest.raises(GuardrailBadRequest) as exc,
     ):
-        await chk.apply_guardrails(
+        await apply_check(
+            chk,
             request_uuid='r',
             api_key_uuid='k',
             group_uuid='g',
@@ -293,11 +300,11 @@ async def test_judge_span_attributes():
     )
 
     cost_service: CostService = MagicMock(spec_set=CostService)
-    chk = GuardrailCheck(
+    chk = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=_DummyJudgeEngine(),
         cost_service=cost_service,
-        guardrails_by_name={'gr_judge': gr},
+        guardrails=[gr],
     )
 
     m1 = Model(
@@ -306,7 +313,7 @@ async def test_judge_span_attributes():
         credentials=None,
         params={'latency_ms': 0},
     )
-    chk._chat_models_by_id = {'m1': m1}
+    chk._check._chat_models_by_id = {'m1': m1}
     cfg = _route_config_with_guardrails(['gr_judge'])
 
     mock_span = MagicMock()
@@ -323,7 +330,8 @@ async def test_judge_span_attributes():
         ),
         pytest.raises(GuardrailBadRequest),
     ):
-        await chk.apply_guardrails(
+        await apply_check(
+            chk,
             request_uuid='r',
             api_key_uuid='k',
             group_uuid='g',

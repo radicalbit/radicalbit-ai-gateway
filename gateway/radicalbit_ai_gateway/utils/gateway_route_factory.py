@@ -11,7 +11,7 @@ from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
     DecisionJudgeEngine,
 )
@@ -104,7 +104,7 @@ def get_proper_cache(
 
 def build_gateway_routes_from_config(
     gateway_config: GatewayConfig,
-    guardrail_engine: GuardrailEngine,
+    guardrails: Guardrails,
     redis_client: redis.asyncio.Redis | None,
     cost_service: CostService,
     httpx_client,
@@ -216,7 +216,7 @@ def build_gateway_routes_from_config(
             embedding_models=embedding_models,
             transcription_models=transcription_models,
             decision_models=decision_models,
-            guardrail_engine=guardrail_engine,
+            guardrails=guardrails.for_route(route_config),
             gateway_cache=gateway_cache,
             cost_service=cost_service,
             httpx_client=httpx_client,
@@ -262,7 +262,7 @@ def build_project_route_registrar(
             transcription_models_by_id=project_gateway_config.transcription_models_by_id,
             decision_models_by_id=project_gateway_config.decision_models_by_id,
         )
-        project_guardrail_engine = GuardrailEngine(
+        project_guardrails = Guardrails(
             presidio_engine=presidio_engine,
             judge_engine=judge_engine,
             guardrails=project_gateway_config.guardrails,
@@ -291,7 +291,7 @@ def build_project_route_registrar(
         uuid_str = str(project_uuid)
         routes = build_gateway_routes_from_config(
             project_gateway_config,
-            project_guardrail_engine,
+            project_guardrails,
             project_redis_client,
             project_cost_service,
             httpx_client,

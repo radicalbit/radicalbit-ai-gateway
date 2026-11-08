@@ -27,7 +27,7 @@ from tests.utils.test_responses_output import events_of
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits
@@ -193,12 +193,12 @@ def build_route(
         gateway_route_config=config,
         chat_models=registry,
         embedding_models=None,
-        guardrail_engine=GuardrailEngine(
+        guardrails=Guardrails(
             presidio_engine=PresidioEngine(),
             judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
             cost_service=MagicMock(spec_set=CostService),
             guardrails=GUARDRAILS,
-        ),
+        ).for_route(config),
         cost_service=MagicMock(spec_set=CostService),
         gateway_cache=GatewayCache(CacheToolsInMemory()) if cache else None,
     )
@@ -696,7 +696,7 @@ def test_output_warn_is_evaluated_once(post, stream):
         {'openai': FakeChatModel(events=upstream_events('The secret is 42'))},
         guardrails=['output_warn'],
     )
-    mapping = route.guardrail_engine.guardrail_check._guardrail_check_mapping
+    mapping = route.guardrails.check._guardrail_check_mapping
     check = AsyncMock(wraps=mapping[GuardrailType.CONTAINS])
     mapping[GuardrailType.CONTAINS] = check
 

@@ -681,7 +681,7 @@ async def chat_completions(
             **extra_params,
         )
 
-        if route.has_output_guardrails():
+        if route.guardrails.has_output:
             # Perform full buffering and checking BEFORE starting the stream response
             chunks, headers = await route.invoke_stream_buffered(
                 limits=request_limits,
@@ -707,13 +707,7 @@ async def chat_completions(
 
         else:
             # Standard streaming (Low Latency)
-            headers = {}
-            if prepared.guardrails_block_triggered:
-                headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
-                headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-TRIGGERED'] = 'true'
-            if prepared.guardrails_input_triggered:
-                headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
-                headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-WARN'] = 'true'
+            headers = prepared.guardrail_flags.headers()
             if prepared.cached_response:
                 headers['X-RB-AIGATEWAY-CACHE-HIT'] = 'true'
 

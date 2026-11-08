@@ -5,6 +5,7 @@ from typing import Any, TypeAlias
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
+from radicalbit_ai_gateway.guardrails.guardrails import GuardrailFlags
 from radicalbit_ai_gateway.limiting.limits import RequestLimits
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
@@ -45,21 +46,12 @@ class PrepareAndValidateResult:
     guardrails_input_triggered: bool
     guardrails_block_triggered: bool
 
-
-@dataclass
-class InputGuardrailsResult:
-    """Result of the input guardrails of a chat request.
-
-    Attributes:
-        redacted_messages: The messages after redaction.
-        input_triggered: Whether a REDACT or WARN guardrail was triggered.
-        soft_block: The soft block response, when a SOFT_BLOCK guardrail triggered.
-
-    """
-
-    redacted_messages: list[BaseMessage]
-    input_triggered: bool
-    soft_block: ChatCompletion | None
+    @property
+    def guardrail_flags(self) -> GuardrailFlags:
+        return GuardrailFlags(
+            input_warned=self.guardrails_input_triggered,
+            input_blocked=self.guardrails_block_triggered,
+        )
 
 
 @dataclass
@@ -133,18 +125,10 @@ class CacheResult:
 
 @dataclass
 class OutputProcessResult:
-    """Result of output processing with guardrails.
-
-    Attributes:
-        response: The processed ChatCompletion (possibly redacted).
-        guardrails_triggered: Whether any guardrail was triggered during processing.
-        guardrails_block_triggered: Whether a BLOCK or SOFT_BLOCK guardrail was triggered.
-
-    """
+    """A chat completion after the output guardrails, and what they did."""
 
     response: ChatCompletion
-    guardrails_triggered: bool
-    guardrails_block_triggered: bool
+    guardrail_flags: GuardrailFlags = field(default_factory=GuardrailFlags)
 
 
 @dataclass

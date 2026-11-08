@@ -5,7 +5,6 @@ from tests.common.mocked_gateway_config_openai import get_gateway_routing_llm
 from tests.common.resolve_route_models import resolve_route_models
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.limiting.limits import RequestLimits, Usage
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.model import Model
@@ -38,7 +37,6 @@ def _build_gateway() -> GatewayRoute:
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=MagicMock(spec_set=CostService),
     )

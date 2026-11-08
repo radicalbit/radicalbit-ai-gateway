@@ -7,9 +7,10 @@ from presidio_analyzer import EntityRecognizer
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.guardrails import apply_check, apply_redact
 from tests.common.mocked_gateway_config_openai import get_default_gateway_openai
 
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage
@@ -22,7 +23,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     GuardrailWhereType,
     RedactParameter,
 )
-from radicalbit_ai_gateway.models.soft_block_info import SoftBlockInfo
+from radicalbit_ai_gateway.models.soft_block_info import SoftBlock
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
@@ -30,10 +31,10 @@ from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
 
 # Arrange
 @pytest.fixture
-def guardrail_engine():
+def project_guardrails():
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager = MagicMock(spec_set=PromptManager)
-    return GuardrailEngine(
+    return Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -116,14 +117,12 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
     def setUpClass(cls):
         cls.cost_service: CostService = MagicMock(spec_set=CostService)
         cls.prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-        cls.guardrail_engine = GuardrailEngine(
+        cls.project_guardrails = Guardrails(
             presidio_engine=PresidioEngine(),
             judge_engine=JudgeEngine(prompt_manager=cls.prompt_manager),
             cost_service=cls.cost_service,
             guardrails=mock_guardrails_check + mock_soft_block_guardrails,
         )
-        cls.guardrail_check = cls.guardrail_engine.guardrail_check
-        cls.guardrail_redact = cls.guardrail_engine.guardrail_redact
         cls.emit_event_patcher = patch(
             'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event',
             autospec=True,
@@ -142,7 +141,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
 
     @pytest.mark.asyncio
     async def test_apply_guardrails_no_trigger(self):
-        await self.guardrail_engine.guardrail_check.apply_guardrails(
+        await apply_check(
+            self.project_guardrails,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -156,7 +156,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
     @pytest.mark.asyncio
     async def test_block_guardrail_triggered(self):
         with pytest.raises(GuardrailBadRequest) as exc_info:
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -176,7 +177,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         assert exc_info.value.guardrail.name == 'block_start_with_hello'
 
         with pytest.raises(GuardrailBadRequest) as exc_info:
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -197,7 +199,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
 
     @pytest.mark.asyncio
     async def test_start_with_hello_not_triggered_if_output(self):
-        await self.guardrail_engine.guardrail_check.apply_guardrails(
+        await apply_check(
+            self.project_guardrails,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -211,7 +214,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
     @pytest.mark.asyncio
     async def test_io_guardrail_evaluated_input(self):
         with pytest.raises(GuardrailBadRequest) as exc_info:
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -235,7 +239,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
     @pytest.mark.asyncio
     async def test_io_guardrail_evaluated_output(self):
         with pytest.raises(GuardrailBadRequest) as err:
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -259,7 +264,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
     @pytest.mark.asyncio
     async def test_block_iban_triggered(self):
         with pytest.raises(GuardrailBadRequest) as exc_info:
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -293,14 +299,15 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         route_config_presidio = copy.deepcopy(gateway_config.routes['rb-gateway'])
         route_config_presidio.guardrails = [presidio_guardrail.name]
 
-        guardrail_engine = GuardrailEngine(
+        project_guardrails = Guardrails(
             presidio_engine=PresidioEngine(),
             judge_engine=JudgeEngine(prompt_manager=self.prompt_manager),
             cost_service=self.cost_service,
             guardrails=[presidio_guardrail],
         )
 
-        redacted_message = await guardrail_engine.guardrail_redact.apply_guardrails(
+        redacted_message = await apply_redact(
+            project_guardrails,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -328,14 +335,15 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         route_config_presidio = copy.deepcopy(gateway_config.routes['rb-gateway'])
         route_config_presidio.guardrails = [presidio_guardrail.name]
 
-        guardrail_engine = GuardrailEngine(
+        project_guardrails = Guardrails(
             presidio_engine=PresidioEngine(),
             judge_engine=JudgeEngine(prompt_manager=self.prompt_manager),
             cost_service=self.cost_service,
             guardrails=[presidio_guardrail],
         )
 
-        redacted_message = await guardrail_engine.guardrail_redact.apply_guardrails(
+        redacted_message = await apply_redact(
+            project_guardrails,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -362,14 +370,15 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         route_config_presidio = copy.deepcopy(gateway_config.routes['rb-gateway'])
         route_config_presidio.guardrails = [presidio_guardrail.name]
 
-        guardrail_engine = GuardrailEngine(
+        project_guardrails = Guardrails(
             presidio_engine=PresidioEngine(),
             judge_engine=JudgeEngine(prompt_manager=self.prompt_manager),
             cost_service=self.cost_service,
             guardrails=[presidio_guardrail],
         )
 
-        redacted_message = await guardrail_engine.guardrail_redact.apply_guardrails(
+        redacted_message = await apply_redact(
+            project_guardrails,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -391,9 +400,10 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
 
     @pytest.mark.asyncio
     async def test_soft_block_input_guardrail_triggered(self):
-        """Test that SOFT_BLOCK guardrail returns SoftBlockInfo for input."""
+        """Test that SOFT_BLOCK guardrail returns SoftBlock for input."""
         self.soft_block_info = (
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -406,7 +416,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         ).soft_block
 
         assert self.soft_block_info is not None
-        assert isinstance(self.soft_block_info, SoftBlockInfo)
+        assert isinstance(self.soft_block_info, SoftBlock)
         assert self.soft_block_info.guardrail.name == 'soft_block_start_with_hello'
         assert self.soft_block_info.where == GuardrailWhereType.INPUT
         assert (
@@ -416,9 +426,10 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
 
     @pytest.mark.asyncio
     async def test_soft_block_output_guardrail_triggered(self):
-        """Test that SOFT_BLOCK guardrail returns SoftBlockInfo for output."""
+        """Test that SOFT_BLOCK guardrail returns SoftBlock for output."""
         self.soft_block_info = (
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -431,7 +442,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         ).soft_block
 
         assert self.soft_block_info is not None
-        assert isinstance(self.soft_block_info, SoftBlockInfo)
+        assert isinstance(self.soft_block_info, SoftBlock)
         assert self.soft_block_info.guardrail.name == 'soft_block_contains_sensitive'
         assert self.soft_block_info.where == GuardrailWhereType.OUTPUT
         assert (
@@ -443,7 +454,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
     async def test_soft_block_io_guardrail_input(self):
         """Test that SOFT_BLOCK IO guardrail works for input."""
         self.soft_block_info = (
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -456,7 +468,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         ).soft_block
 
         assert self.soft_block_info is not None
-        assert isinstance(self.soft_block_info, SoftBlockInfo)
+        assert isinstance(self.soft_block_info, SoftBlock)
         assert self.soft_block_info.guardrail.name == 'soft_block_regex_digits'
         assert self.soft_block_info.where == GuardrailWhereType.INPUT
 
@@ -464,7 +476,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
     async def test_soft_block_io_guardrail_output(self):
         """Test that SOFT_BLOCK IO guardrail works for output."""
         self.soft_block_info = (
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -477,7 +490,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         ).soft_block
 
         assert self.soft_block_info is not None
-        assert isinstance(self.soft_block_info, SoftBlockInfo)
+        assert isinstance(self.soft_block_info, SoftBlock)
         assert self.soft_block_info.guardrail.name == 'soft_block_regex_digits'
         assert self.soft_block_info.where == GuardrailWhereType.OUTPUT
 
@@ -485,7 +498,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
     async def test_soft_block_not_triggered(self):
         """Test that SOFT_BLOCK guardrail returns None when not triggered."""
         self.soft_block_info = (
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -504,7 +518,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         """Test that SOFT_BLOCK guardrail respects where conditions."""
         # INPUT-only guardrail should not trigger on OUTPUT
         self.soft_block_info = (
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -524,7 +539,8 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         logger_name = 'radicalbit-ai-gateway'
         expected_level = 'INFO'
         with self.assertLogs(logger_name, level=expected_level) as cm:
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),
@@ -562,9 +578,10 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
         route_config = copy.deepcopy(gateway_config.routes['rb-gateway'])
         route_config.guardrails = [g.name for g in mixed_guardrails]
 
-        # Should return SoftBlockInfo for the first triggered guardrail (soft block)
+        # Should return SoftBlock for the first triggered guardrail (soft block)
         self.soft_block_info = (
-            await self.guardrail_engine.guardrail_check.apply_guardrails(
+            await apply_check(
+                self.project_guardrails,
                 request_uuid=str(REQUEST_UUID),
                 api_key_uuid=str(API_KEY_UUID),
                 group_uuid=str(GROUP_UUID),

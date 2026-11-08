@@ -19,7 +19,7 @@ from tests.common.mocked_build_openai_chat_completion import (
 from tests.common.resolve_route_models import resolve_route_models
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import RequestLimits, RouteLimits
@@ -122,13 +122,13 @@ def _gateway(where: str, behavior: str = 'block') -> GatewayRoute:
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=GuardrailEngine(
+        guardrails=Guardrails(
             presidio_engine=PresidioEngine(),
             judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
             cost_service=cost_service,
             guardrails=config.guardrails,
             chat_models_by_id=config.chat_models_by_id,
-        ),
+        ).for_route(route_cfg),
         gateway_cache=None,
         cost_service=cost_service,
         project_uuid=PROJECT_UUID,

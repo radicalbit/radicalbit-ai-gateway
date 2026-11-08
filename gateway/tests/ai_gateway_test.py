@@ -32,7 +32,7 @@ from radicalbit_ai_gateway.ai_gateway import GatewayRoute, InvokeResponse
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import (
@@ -72,7 +72,7 @@ async def test_gateway_invocation(mock_model_invoker_emit_event, fake_redis_clie
     cost_service: CostService = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
     redis_cache = RedisCache(fake_redis_client)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -88,7 +88,7 @@ async def test_gateway_invocation(mock_model_invoker_emit_event, fake_redis_clie
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
         project_uuid=str(TEST_PROJECT_UUID),
@@ -130,7 +130,7 @@ async def test_wrong_model_id(mock_model_invoker_emit_event, fake_redis_client):
     gateway_config = get_gateway_openai_with_guardrails()
     cost_service: CostService = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -147,7 +147,7 @@ async def test_wrong_model_id(mock_model_invoker_emit_event, fake_redis_client):
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
         project_uuid=str(TEST_PROJECT_UUID),
@@ -192,7 +192,7 @@ async def test_model_invocation_with_redis_cache(
     gateway_config = get_gateway_openai_cached()
     cost_service: CostService = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -209,7 +209,7 @@ async def test_model_invocation_with_redis_cache(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
         project_uuid=str(TEST_PROJECT_UUID),
@@ -350,7 +350,7 @@ async def test_model_invocation_with_cachetools_cache(
     gateway_config = get_gateway_openai_cached()
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -367,7 +367,7 @@ async def test_model_invocation_with_cachetools_cache(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
         project_uuid=str(TEST_PROJECT_UUID),
@@ -502,7 +502,7 @@ async def test_invoke_embeddings_success(mock_emit_event):
     gateway_config = get_gateway_openai_with_guardrails()
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -517,7 +517,7 @@ async def test_invoke_embeddings_success(mock_emit_event):
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -570,7 +570,7 @@ async def test_invoke_embeddings_wrong_route(
     gateway_config = get_gateway_openai_with_guardrails()
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -585,7 +585,7 @@ async def test_invoke_embeddings_wrong_route(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -618,7 +618,7 @@ async def test_invoke_embeddings_with_multiple_inputs(
     gateway_config = get_gateway_openai_with_guardrails()
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -633,7 +633,7 @@ async def test_invoke_embeddings_with_multiple_inputs(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -685,7 +685,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
     gateway_config = get_gateway_embedded_cached()
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -703,7 +703,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
         project_uuid=str(TEST_PROJECT_UUID),
@@ -788,7 +788,7 @@ async def test_invoke_embeddings_token_limit_exceeded(
     gateway_config = get_gateway_embedded_limiting()
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -803,7 +803,7 @@ async def test_invoke_embeddings_token_limit_exceeded(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=None,
         cost_service=cost_service,
         route_limits=RouteLimits.from_config(route_cfg, str(TEST_PROJECT_UUID)),
@@ -862,7 +862,6 @@ async def test_embedding_budget_limits(route, credential, project, reported):
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
         route_limits=RouteLimits.from_config(route_cfg, str(TEST_PROJECT_UUID)),
@@ -909,7 +908,7 @@ async def test_project_budget_limit_blocks_chat_with_no_other_limiters_configure
     cost_service: CostService = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
     redis_cache = RedisCache(fake_redis_client)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -925,7 +924,7 @@ async def test_project_budget_limit_blocks_chat_with_no_other_limiters_configure
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
         project_uuid=str(TEST_PROJECT_UUID),
@@ -1015,7 +1014,6 @@ def test_transcription_invoker_only_receives_transcription_fallbacks():
         chat_models=[],
         embedding_models=None,
         transcription_models=[gpt4o_model, gpt4o_mini_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1051,7 +1049,6 @@ async def test_invoke_transcription_checks_its_cost_and_audio_seconds():
         chat_models=[],
         embedding_models=None,
         transcription_models=[whisper_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1102,7 +1099,6 @@ async def test_invoke_transcription_duration_limit_exceeded_blocks_before_invoca
         chat_models=[],
         embedding_models=None,
         transcription_models=[whisper_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1140,7 +1136,6 @@ async def test_invoke_transcription_success():
         chat_models=[],
         embedding_models=None,
         transcription_models=[whisper_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1204,7 +1199,6 @@ async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
         chat_models=[],
         embedding_models=None,
         transcription_models=[whisper_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
     )
@@ -1260,7 +1254,6 @@ async def test_invoke_transcription_cache_hit_verbose_json_roundtrips(
         chat_models=[],
         embedding_models=None,
         transcription_models=[whisper_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
     )
@@ -1317,7 +1310,6 @@ async def test_invoke_transcription_cache_miss_when_audio_bytes_differ(
         chat_models=[],
         embedding_models=None,
         transcription_models=[whisper_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
     )
@@ -1360,7 +1352,6 @@ async def test_invoke_transcription_passes_through_requested_response_format():
         chat_models=[],
         embedding_models=None,
         transcription_models=[whisper_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1410,7 +1401,6 @@ async def test_invoke_transcription_counts_budget_duration():
         chat_models=[],
         embedding_models=None,
         transcription_models=[whisper_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1461,7 +1451,6 @@ async def test_invoke_transcription_counts_budget_tokens():
         chat_models=[],
         embedding_models=None,
         transcription_models=[gpt4o_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1504,7 +1493,6 @@ async def test_invoke_transcription_no_models_configured_raises():
         chat_models=[],
         embedding_models=None,
         transcription_models=None,
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1545,7 +1533,6 @@ async def test_invoke_transcription_stream_relays_events_and_counts_usage_once()
         chat_models=[],
         embedding_models=None,
         transcription_models=[gpt4o_model],
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1599,7 +1586,6 @@ async def test_invoke_transcription_stream_no_models_configured_raises():
         chat_models=[],
         embedding_models=None,
         transcription_models=None,
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
     )
@@ -1633,7 +1619,7 @@ async def test_cache_hit_flag_set_on_request_state(
     gateway_config = get_gateway_openai_cached()
     cost_service = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -1650,7 +1636,7 @@ async def test_cache_hit_flag_set_on_request_state(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
         project_uuid=str(TEST_PROJECT_UUID),
@@ -1755,7 +1741,6 @@ async def test_preprocessing_runs_before_prompt_injection():
         gateway_route_config=route_cfg,
         chat_models=[chat_model],
         embedding_models=None,
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         cost_service=MagicMock(spec_set=CostService),
         gateway_cache=None,
     )
@@ -1821,7 +1806,6 @@ async def test_preprocessing_includes_client_sent_system_prompt():
         gateway_route_config=route_cfg,
         chat_models=[chat_model],
         embedding_models=None,
-        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         cost_service=MagicMock(spec_set=CostService),
         gateway_cache=None,
     )

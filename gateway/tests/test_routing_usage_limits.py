@@ -18,7 +18,7 @@ from tests.common.mocked_build_openai_chat_completion import (
 )
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import RequestLimits
@@ -141,7 +141,7 @@ async def _route(config: GatewayConfig) -> GatewayRoute:
     """Build the route as the server does, then compute its centroids."""
     routes = build_gateway_routes_from_config(
         gateway_config=config,
-        guardrail_engine=GuardrailEngine(
+        guardrails=Guardrails(
             presidio_engine=PresidioEngine(),
             judge_engine=JudgeEngine(prompt_manager=MagicMock()),
             cost_service=MagicMock(spec_set=CostService),

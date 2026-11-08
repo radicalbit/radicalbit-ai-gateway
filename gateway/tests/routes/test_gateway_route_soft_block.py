@@ -10,7 +10,7 @@ from tests.common.db_mock import PLAIN_KEY, get_sample_key_with_group
 from tests.common.resolve_route_models import resolve_route_models
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.credentials import Credentials
@@ -84,7 +84,7 @@ class TestGatewayRouteSoftBlockHTTP(unittest.TestCase):
         )
 
         # Setup guardrail engine and gateway route
-        guardrail_engine = GuardrailEngine(
+        project_guardrails = Guardrails(
             presidio_engine=PresidioEngine(),
             judge_engine=JudgeEngine(prompt_manager=cls.prompt_manager),
             cost_service=cls.cost_service,
@@ -94,7 +94,7 @@ class TestGatewayRouteSoftBlockHTTP(unittest.TestCase):
             gateway_route_config=resolved_route_cfg,
             chat_models=chat_models,
             embedding_models=embedding_models,
-            guardrail_engine=guardrail_engine,
+            guardrails=project_guardrails.for_route(resolved_route_cfg),
             gateway_cache=None,
             cost_service=cls.cost_service,
         )
@@ -327,7 +327,7 @@ class TestGatewayRouteSoftBlockHTTP(unittest.TestCase):
             gateway_config, self.route_name
         )
 
-        guardrail_engine = GuardrailEngine(
+        project_guardrails = Guardrails(
             presidio_engine=PresidioEngine(),
             judge_engine=JudgeEngine(prompt_manager=self.prompt_manager),
             cost_service=self.cost_service,
@@ -338,7 +338,7 @@ class TestGatewayRouteSoftBlockHTTP(unittest.TestCase):
             gateway_route_config=resolved_route_cfg,
             chat_models=chat_models,
             embedding_models=embedding_models,
-            guardrail_engine=guardrail_engine,
+            guardrails=project_guardrails.for_route(resolved_route_cfg),
             gateway_cache=None,
             cost_service=self.cost_service,
         )
@@ -419,12 +419,12 @@ class TestGatewayRouteSoftBlockHTTP(unittest.TestCase):
             gateway_route_config=resolved_route_cfg,
             chat_models=chat_models,
             embedding_models=embedding_models,
-            guardrail_engine=GuardrailEngine(
+            guardrails=Guardrails(
                 presidio_engine=PresidioEngine(),
                 judge_engine=JudgeEngine(prompt_manager=self.prompt_manager),
                 cost_service=self.cost_service,
                 guardrails=[input_guardrail],
-            ),
+            ).for_route(resolved_route_cfg),
             gateway_cache=None,
             cost_service=self.cost_service,
         )
@@ -519,12 +519,12 @@ class TestGatewayRouteSoftBlockHTTP(unittest.TestCase):
             gateway_route_config=resolved_route_cfg,
             chat_models=chat_models,
             embedding_models=embedding_models,
-            guardrail_engine=GuardrailEngine(
+            guardrails=Guardrails(
                 presidio_engine=PresidioEngine(),
                 judge_engine=JudgeEngine(prompt_manager=self.prompt_manager),
                 cost_service=self.cost_service,
                 guardrails=[io_guardrail],
-            ),
+            ).for_route(resolved_route_cfg),
             gateway_cache=None,
             cost_service=self.cost_service,
         )

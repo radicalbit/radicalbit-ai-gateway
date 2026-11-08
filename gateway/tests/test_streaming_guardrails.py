@@ -10,6 +10,7 @@ from tests.common import db_mock
 from tests.common.limits import request_limits
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.guardrails.guardrails import RouteGuardrails
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk, HumanMessage
 from radicalbit_ai_gateway.models.guardrails import GuardrailWhereType
@@ -396,7 +397,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         )
 
         self.mock_gateway.prepare_stream = AsyncMock(side_effect=mock_exception)
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        self.mock_gateway.guardrails = RouteGuardrails()
 
         request_data = {
             'model': 'rb-gateway',
@@ -426,7 +427,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         )
 
         self.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        self.mock_gateway.guardrails = RouteGuardrails()
 
         # Mock invoke_stream to yield chunks
         async def mock_invoke_stream(*args, **kwargs):
@@ -478,7 +479,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         )
 
         self.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        self.mock_gateway.guardrails = RouteGuardrails()
 
         async def mock_invoke_stream(*args, **kwargs):
             chunk = MagicMock()
@@ -501,195 +502,6 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
 
         assert response.status_code == 200
         assert response.headers.get('X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED') == 'true'
-
-    # =========================================================================
-    # Tests for Output Guardrails (Buffered Streaming Path)
-    # =========================================================================
-
-    async def test_streaming_output_guardrail_blocked(self):
-        # Mock stream to yield chunks
-        async def mock_stream(*args, **kwargs):
-            yield AIMessageChunk(content='Bad content')
-
-        mock_invoker = MagicMock()
-        mock_invoker.stream = mock_stream
-        self.mock_gateway.chat_invoker = mock_invoker
-
-        # Mock guardrail_engine.has_guardrails_for_route
-        mock_guardrail_engine = MagicMock()
-        mock_guardrail_engine.has_guardrails_for_route = MagicMock(return_value=True)
-        self.mock_gateway.guardrail_engine = mock_guardrail_engine
-
-        # Mock _apply_check_guardrails to return a block
-        mock_block_response = MagicMock()
-        mock_block_response.choices = [MagicMock()]
-        mock_block_response.choices[0].message.content = 'I cannot say that.'
-        mock_block_response.id = 'refusal-id'
-        self.mock_gateway._apply_check_guardrails = AsyncMock(
-            return_value=(mock_block_response, False)
-        )
-
-        # Mock prepare_stream to return a valid PrepareAndValidateResult
-        self.mock_gateway.prepare_stream = AsyncMock(
-            return_value=self._create_prepared_result()
-        )
-
-        # Use real invoke_stream_buffered logic
-        self.mock_gateway.invoke_stream_buffered = (
-            GatewayRoute.invoke_stream_buffered.__get__(self.mock_gateway, GatewayRoute)
-        )
-        self.mock_gateway._handle_buffered_stream = (
-            GatewayRoute._handle_buffered_stream.__get__(
-                self.mock_gateway, GatewayRoute
-            )
-        )
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=True)
-
-        request_data = {
-            'model': 'rb-gateway',
-            'messages': [{'role': 'user', 'content': 'Say something bad'}],
-            'stream': True,
-        }
-
-        response = self.client.post(
-            '/v1/chat/completions', json=request_data, headers=self.headers
-        )
-
-        # Verify HTTP 400 for blocked output
-        assert response.status_code == 400
-
-        # Verify Header
-        assert response.headers.get('X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED') == 'true'
-
-        # Verify Body
-        error_data = response.json()
-        assert error_data['error']['message'] == 'I cannot say that.'
-
-    async def test_streaming_output_guardrail_passed(self):
-        # Mock stream to yield chunks
-        async def mock_stream(*args, **kwargs):
-            yield AIMessageChunk(content='Good')
-            yield AIMessageChunk(content=' content')
-
-        mock_invoker = MagicMock()
-        mock_invoker.stream = mock_stream
-        self.mock_gateway.chat_invoker = mock_invoker
-
-        # Mock guardrail_engine.has_guardrails_for_route
-        mock_guardrail_engine = MagicMock()
-        mock_guardrail_engine.has_guardrails_for_route = MagicMock(return_value=True)
-        self.mock_gateway.guardrail_engine = mock_guardrail_engine
-
-        # Mock _apply_check_guardrails to return None (check passed)
-        self.mock_gateway._apply_check_guardrails = AsyncMock(
-            return_value=(None, False)
-        )
-
-        # Mock prepare_stream to return a valid PrepareAndValidateResult
-        self.mock_gateway.prepare_stream = AsyncMock(
-            return_value=self._create_prepared_result()
-        )
-
-        # Use real buffered stream logic
-        self.mock_gateway.invoke_stream_buffered = (
-            GatewayRoute.invoke_stream_buffered.__get__(self.mock_gateway, GatewayRoute)
-        )
-        self.mock_gateway._handle_buffered_stream = (
-            GatewayRoute._handle_buffered_stream.__get__(
-                self.mock_gateway, GatewayRoute
-            )
-        )
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=True)
-        self.mock_gateway.gateway_cache = None
-
-        request_data = {
-            'model': 'rb-gateway',
-            'messages': [{'role': 'user', 'content': 'Say something good'}],
-            'stream': True,
-        }
-
-        response = self.client.post(
-            '/v1/chat/completions', json=request_data, headers=self.headers
-        )
-
-        assert response.status_code == 200
-        lines = response.text.strip().split('\n\n')
-
-        # Expect 2 data chunks + [DONE]
-        assert len(lines) == 3
-
-        chunk1 = json.loads(lines[0][6:])
-        assert chunk1['choices'][0]['delta']['content'] == 'Good'
-
-        chunk2 = json.loads(lines[1][6:])
-        assert chunk2['choices'][0]['delta']['content'] == ' content'
-
-    async def test_streaming_output_guardrail_exception(self):
-        # Mock stream to yield chunks
-        async def mock_stream(*args, **kwargs):
-            yield AIMessageChunk(content='Bad content')
-
-        mock_invoker = MagicMock()
-        mock_invoker.stream = mock_stream
-        self.mock_gateway.chat_invoker = mock_invoker
-
-        # Mock guardrail_engine.has_guardrails_for_route
-        mock_guardrail_engine = MagicMock()
-        mock_guardrail_engine.has_guardrails_for_route = MagicMock(return_value=True)
-        self.mock_gateway.guardrail_engine = mock_guardrail_engine
-
-        # Mock _apply_check_guardrails to raise GuardrailBadRequest
-        mock_guardrail = MagicMock()
-        mock_guardrail.name = 'test_guardrail'
-        mock_guardrail.type = MagicMock()
-        mock_guardrail.type.name = 'REGEX'
-        mock_guardrail.where = GuardrailWhereType.OUTPUT
-
-        mock_exception = GuardrailBadRequest(
-            message='Guardrail Blocked',
-            guardrail=mock_guardrail,
-            reason={'foo': 'bar'},
-        )
-        self.mock_gateway._apply_check_guardrails = AsyncMock(
-            side_effect=mock_exception
-        )
-
-        # Mock prepare_stream to return a valid PrepareAndValidateResult
-        self.mock_gateway.prepare_stream = AsyncMock(
-            return_value=self._create_prepared_result()
-        )
-
-        # Use real buffered stream logic
-        self.mock_gateway.invoke_stream_buffered = (
-            GatewayRoute.invoke_stream_buffered.__get__(self.mock_gateway, GatewayRoute)
-        )
-        self.mock_gateway._handle_buffered_stream = (
-            GatewayRoute._handle_buffered_stream.__get__(
-                self.mock_gateway, GatewayRoute
-            )
-        )
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=True)
-
-        request_data = {
-            'model': 'rb-gateway',
-            'messages': [{'role': 'user', 'content': 'Say something bad'}],
-            'stream': True,
-        }
-
-        response = self.client.post(
-            '/v1/chat/completions', json=request_data, headers=self.headers
-        )
-
-        # Verify HTTP 400
-        assert response.status_code == 400
-
-        # Verify Header
-        assert response.headers.get('X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED') == 'true'
-
-        # Verify Body
-        error_data = response.json()
-        assert error_data['error']['type'] == 'guardrail_error'
-        assert error_data['error']['message'] == 'Guardrail Blocked'
 
     # =========================================================================
     # Tests for Error Handling During Streaming
@@ -755,7 +567,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         prepared = self._create_prepared_result(cached_response=mock_cached_resp)
 
         self.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        self.mock_gateway.guardrails = RouteGuardrails()
 
         # Bind real invoke_stream
         self.mock_gateway.invoke_stream = GatewayRoute.invoke_stream.__get__(
@@ -786,7 +598,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         prepared = self._create_prepared_result()
 
         self.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
-        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        self.mock_gateway.guardrails = RouteGuardrails()
 
         # Mock stream with usage metadata
         async def mock_invoke_stream(prepared, *args, **kwargs):

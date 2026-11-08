@@ -24,7 +24,7 @@ from tests.common.resolve_route_models import resolve_route_models
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage
@@ -65,7 +65,7 @@ def _build_route(gateway_cache: GatewayCache, project_uuid: str) -> GatewayRoute
     resolved_route_cfg, chat_models, _ = resolve_route_models(
         gateway_config, ROUTE_NAME
     )
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=prompt_manager),
         cost_service=cost_service,
@@ -74,7 +74,7 @@ def _build_route(gateway_cache: GatewayCache, project_uuid: str) -> GatewayRoute
         gateway_route_config=resolved_route_cfg,
         chat_models=chat_models,
         embedding_models=None,
-        guardrail_engine=guardrail_engine,
+        guardrails=project_guardrails.for_route(resolved_route_cfg),
         gateway_cache=gateway_cache,
         cost_service=cost_service,
         project_uuid=project_uuid,

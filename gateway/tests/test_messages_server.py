@@ -20,7 +20,7 @@ from starlette.requests import Request
 from tests.common import db_mock, provider_responses as canned
 
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -127,7 +127,7 @@ def _routes_from(config_data: dict) -> dict:
     """Build the ``assistant`` route of a configuration, as the server holds it."""
     config = GatewayConfig.model_validate(config_data)
     cost_service = CostService()
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
         cost_service=cost_service,
@@ -135,7 +135,7 @@ def _routes_from(config_data: dict) -> dict:
     )
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine,
+        project_guardrails,
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,

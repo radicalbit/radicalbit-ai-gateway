@@ -16,7 +16,7 @@ from tests.common import db_mock
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
@@ -113,7 +113,7 @@ def _build_routes(
         }
     )
     cost_service = CostService(decision_models_by_id=config.decision_models_by_id)
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
         cost_service=cost_service,
@@ -121,7 +121,7 @@ def _build_routes(
     )
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine,
+        project_guardrails,
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,

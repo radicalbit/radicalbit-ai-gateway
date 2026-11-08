@@ -10,11 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from radicalbit_ai_gateway.guardrails.guardrail_check import (
-    GuardrailCheck,
-    _select_messages,
-)
-from radicalbit_ai_gateway.guardrails.guardrail_redact import GuardrailRedact
+from tests.common.guardrails import apply_check, apply_redact
+
+from radicalbit_ai_gateway.guardrails.guardrail_check import _select_messages
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.guardrails import (
     CheckParameter,
@@ -190,7 +189,7 @@ class TestSelectMessages:
 
 
 # ---------------------------------------------------------------------------
-# apply_guardrails: deterministic checks
+# apply_check: deterministic checks
 # ---------------------------------------------------------------------------
 
 
@@ -201,21 +200,22 @@ def _route(name='g'):
     return cfg
 
 
-def _check(guardrail: Guardrail, **engines) -> GuardrailCheck:
-    return GuardrailCheck(
+def _check(guardrail: Guardrail, **engines) -> Guardrails:
+    return Guardrails(
         presidio_engine=engines.get('presidio_engine', MagicMock()),
         judge_engine=engines.get('judge_engine', MagicMock()),
         cost_service=MagicMock(),
-        guardrails_by_name={guardrail.name: guardrail},
+        guardrails=[guardrail],
     )
 
 
-async def _run(check: GuardrailCheck, messages, **extra) -> GuardrailBadRequest | None:
+async def _run(check: Guardrails, messages, **extra) -> GuardrailBadRequest | None:
     with patch(
         'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event', autospec=True
     ):
         try:
-            await check.apply_guardrails(
+            await apply_check(
+                check,
                 route_config=_route(),
                 messages=messages,
                 where=GuardrailWhereType.INPUT,
@@ -396,9 +396,9 @@ def _judge_guardrail(**overrides) -> Guardrail:
     )
 
 
-def _judge_check(g: Guardrail) -> GuardrailCheck:
+def _judge_check(g: Guardrail) -> Guardrails:
     chk = _check(g, judge_engine=_TriggeringJudge())
-    chk._chat_models_by_id = {
+    chk._check._chat_models_by_id = {
         'm1': Model(model_id='m1', model='mock/gateway', credentials=None, params={})
     }
     return chk
@@ -464,8 +464,11 @@ class TestRedactWindow:
             parameters=RedactParameter(entities=['PERSON']),
             history='last',
         )
-        redact = GuardrailRedact(
-            presidio_engine=MagicMock(), guardrails_by_name={'red': g}
+        redact = Guardrails(
+            presidio_engine=MagicMock(),
+            judge_engine=MagicMock(),
+            cost_service=MagicMock(),
+            guardrails=[g],
         )
 
         async def fake_anonymize(text, *args, **kwargs):
@@ -481,7 +484,8 @@ class TestRedactWindow:
                 autospec=True,
             ),
         ):
-            out = await redact.apply_guardrails(
+            out = await apply_redact(
+                redact,
                 route_config=_route('red'),
                 messages=list(HISTORY),
                 where=GuardrailWhereType.INPUT,

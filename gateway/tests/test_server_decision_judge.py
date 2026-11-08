@@ -21,7 +21,7 @@ from tests.common.mocked_build_openai_chat_completion import (
 )
 
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
     DecisionJudgeEngine,
 )
@@ -189,7 +189,7 @@ def _build_routes(
         embedding_models_by_id=config.embedding_models_by_id,
         decision_models_by_id=config.decision_models_by_id,
     )
-    guardrail_engine = GuardrailEngine(
+    project_guardrails = Guardrails(
         presidio_engine=PresidioEngine(),
         judge_engine=JudgeEngine(
             prompt_manager=prompt_manager or MagicMock(spec_set=PromptManager)
@@ -204,7 +204,7 @@ def _build_routes(
     )
     routes = build_gateway_routes_from_config(
         config,
-        guardrail_engine,
+        project_guardrails,
         redis_client=None,
         cost_service=cost_service,
         httpx_client=None,

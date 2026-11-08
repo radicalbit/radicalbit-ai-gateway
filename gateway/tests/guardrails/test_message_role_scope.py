@@ -1,7 +1,7 @@
 """Tests for the guardrail message role scope feature.
 
 Verifies that _filter_messages_by_roles correctly filters messages by LangChain
-type, and that apply_guardrails respects the
+type, and that apply_check respects the
 message_roles configuration field.
 """
 
@@ -9,10 +9,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from radicalbit_ai_gateway.guardrails.guardrail_check import (
-    GuardrailCheck,
-    _filter_messages_by_roles,
-)
+from tests.common.guardrails import apply_check
+
+from radicalbit_ai_gateway.guardrails.guardrail_check import _filter_messages_by_roles
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     HumanMessage,
@@ -102,7 +102,7 @@ class TestFilterMessagesByRoles:
 
 
 # ---------------------------------------------------------------------------
-# apply_guardrails integration tests (using _check_contains internally)
+# apply_check integration tests (using _check_contains internally)
 # ---------------------------------------------------------------------------
 
 
@@ -128,12 +128,12 @@ def _make_route_config(guardrail_name: str = 'test_guardrail'):
     return config
 
 
-def _make_check_engine(guardrail: Guardrail) -> GuardrailCheck:
-    return GuardrailCheck(
+def _make_check_engine(guardrail: Guardrail) -> Guardrails:
+    return Guardrails(
         presidio_engine=MagicMock(),
         judge_engine=MagicMock(),
         cost_service=MagicMock(),
-        guardrails_by_name={'test_guardrail': guardrail},
+        guardrails=[guardrail],
     )
 
 
@@ -149,7 +149,7 @@ COMMON_KWARGS = {
 
 
 class TestApplyGuardrailsRoleFiltering:
-    """apply_guardrails must respect message_roles."""
+    """apply_check must respect message_roles."""
 
     @pytest.mark.asyncio
     async def test_user_role_triggers_on_human_message(self):
@@ -159,7 +159,8 @@ class TestApplyGuardrailsRoleFiltering:
         route = _make_route_config()
         messages = [HumanMessage(content=f'Test {BLOCKED_KEYWORD} optics')]
         with pytest.raises(GuardrailBadRequest):
-            await engine.apply_guardrails(
+            await apply_check(
+                engine,
                 route_config=route,
                 messages=messages,
                 where=GuardrailWhereType.INPUT,
@@ -176,7 +177,8 @@ class TestApplyGuardrailsRoleFiltering:
             HumanMessage(content=SAFE_CONTENT),
             ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
         ]
-        result = await engine.apply_guardrails(
+        result = await apply_check(
+            engine,
             route_config=route,
             messages=messages,
             where=GuardrailWhereType.INPUT,
@@ -195,7 +197,8 @@ class TestApplyGuardrailsRoleFiltering:
             ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
         ]
         with pytest.raises(GuardrailBadRequest):
-            await engine.apply_guardrails(
+            await apply_check(
+                engine,
                 route_config=route,
                 messages=messages,
                 where=GuardrailWhereType.INPUT,
@@ -212,7 +215,8 @@ class TestApplyGuardrailsRoleFiltering:
             HumanMessage(content=f'user says {BLOCKED_KEYWORD}'),
             ToolMessage(content=SAFE_CONTENT, tool_call_id='c1'),
         ]
-        result = await engine.apply_guardrails(
+        result = await apply_check(
+            engine,
             route_config=route,
             messages=messages,
             where=GuardrailWhereType.INPUT,
@@ -231,7 +235,8 @@ class TestApplyGuardrailsRoleFiltering:
             HumanMessage(content=SAFE_CONTENT),
         ]
         with pytest.raises(GuardrailBadRequest):
-            await engine.apply_guardrails(
+            await apply_check(
+                engine,
                 route_config=route,
                 messages=messages,
                 where=GuardrailWhereType.INPUT,
@@ -251,7 +256,8 @@ class TestApplyGuardrailsRoleFiltering:
             ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
         ]
         with pytest.raises(GuardrailBadRequest):
-            await engine.apply_guardrails(
+            await apply_check(
+                engine,
                 route_config=route,
                 messages=messages,
                 where=GuardrailWhereType.INPUT,
@@ -270,7 +276,8 @@ class TestApplyGuardrailsRoleFiltering:
             ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
         ]
         with pytest.raises(GuardrailBadRequest):
-            await engine.apply_guardrails(
+            await apply_check(
+                engine,
                 route_config=route,
                 messages=messages,
                 where=GuardrailWhereType.INPUT,
@@ -285,7 +292,8 @@ class TestApplyGuardrailsRoleFiltering:
         route = _make_route_config()
         messages = [HumanMessage(content=f'user says {BLOCKED_KEYWORD}')]
         with pytest.raises(GuardrailBadRequest):
-            await engine.apply_guardrails(
+            await apply_check(
+                engine,
                 route_config=route,
                 messages=messages,
                 where=GuardrailWhereType.INPUT,
@@ -302,7 +310,8 @@ class TestApplyGuardrailsRoleFiltering:
             HumanMessage(content=SAFE_CONTENT),
             ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
         ]
-        result = await engine.apply_guardrails(
+        result = await apply_check(
+            engine,
             route_config=route,
             messages=messages,
             where=GuardrailWhereType.INPUT,
