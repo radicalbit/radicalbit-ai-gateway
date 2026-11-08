@@ -1,6 +1,6 @@
 from decimal import Decimal
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 from openai import APIConnectionError, APIStatusError
@@ -641,6 +641,40 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         mock_span.set_attribute.assert_any_call(
             'transcription.response.fallback_triggered', True
         )
+
+    async def test_stream_error_after_an_event_does_not_fall_back(self):
+        invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
+        invoker._record_metrics = MagicMock()
+        delta = TranscriptionTextDeltaEvent(type='transcript.text.delta', delta='Ciao')
+
+        async def broken_stream():
+            yield delta
+            raise RuntimeError('connection reset')
+
+        primary_client = MagicMock()
+        primary_client.audio.transcriptions.create = AsyncMock(
+            return_value=broken_stream()
+        )
+        fallback_client = MockTranscriptionClient(stream_events=[delta])
+        invoker.model_map['gpt4o-transcribe'] = (
+            GPT4O_TRANSCRIBE_MODEL,
+            primary_client,
+            [(GPT4O_MINI_TRANSCRIBE_MODEL, fallback_client)],
+        )
+
+        events = []
+        with pytest.raises(RuntimeError, match='connection reset'):
+            async for event in invoker.stream(
+                **_COMMON_TRANSCRIBE_KWARGS,
+                audio_bytes=b'fake-audio',
+                filename='test.wav',
+                content_type='audio/wav',
+                model_id='gpt4o-transcribe',
+            ):
+                events.append(event)  # noqa: PERF401 — keep the events before an error
+
+        assert events == [delta]
+        assert fallback_client.captured_kwargs == {}
 
     async def test_stream_skips_whisper_fallback_and_uses_next_compatible_model(self):
         invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)

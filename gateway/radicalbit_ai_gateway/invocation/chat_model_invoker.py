@@ -436,6 +436,9 @@ class ChatModelInvoker(ModelInvoker):
         }
         fallback_triggered = False
         model_invoked = model
+        # A fallback is tried only while nothing has been yielded: once the
+        # client has part of a reply, an error ends the stream.
+        started = False
 
         try:
             # Primary model stream
@@ -445,9 +448,12 @@ class ChatModelInvoker(ModelInvoker):
                 stats,
                 **self._normalize_kwargs_for_model(model, kwargs),
             ):
+                started = True
                 yield chunk
 
         except Exception as primary_error:
+            if started:
+                raise
             logger.warning(
                 'Primary model %s stream failed: %s', model_id, str(primary_error)
             )
@@ -477,12 +483,15 @@ class ChatModelInvoker(ModelInvoker):
                         stats,
                         **self._normalize_kwargs_for_model(fb_model, kwargs),
                     ):
+                        started = True
                         yield chunk
 
                     fallback_success = True
                     fallback_triggered = True
                     break
                 except Exception as fb_error:
+                    if started:
+                        raise
                     logger.warning(
                         'Fallback %s stream failed: %s',
                         fb_model.model_id,

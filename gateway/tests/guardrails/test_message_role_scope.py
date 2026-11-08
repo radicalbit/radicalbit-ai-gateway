@@ -1,7 +1,7 @@
 """Tests for the guardrail message role scope feature.
 
 Verifies that _filter_messages_by_roles correctly filters messages by LangChain
-type, and that apply_guardrails / evaluate_warn_triggered respect the
+type, and that apply_guardrails respects the
 message_roles configuration field.
 """
 
@@ -182,7 +182,7 @@ class TestApplyGuardrailsRoleFiltering:
             where=GuardrailWhereType.INPUT,
             **COMMON_KWARGS,
         )
-        assert result is None  # not triggered
+        assert result.soft_block is None  # not triggered
 
     @pytest.mark.asyncio
     async def test_tool_role_triggers_on_tool_message(self):
@@ -218,7 +218,7 @@ class TestApplyGuardrailsRoleFiltering:
             where=GuardrailWhereType.INPUT,
             **COMMON_KWARGS,
         )
-        assert result is None
+        assert result.soft_block is None
 
     @pytest.mark.asyncio
     async def test_system_role_triggers_on_system_message(self):
@@ -308,4 +308,4 @@ class TestApplyGuardrailsRoleFiltering:
             where=GuardrailWhereType.INPUT,
             **COMMON_KWARGS,
         )
-        assert result is None
+        assert result.soft_block is None

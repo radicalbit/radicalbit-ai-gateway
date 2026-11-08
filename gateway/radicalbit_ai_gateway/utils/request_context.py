@@ -9,11 +9,13 @@ The client-supplied tags live here too: ``emit_event`` is called from deep
 inside invokers, guardrails and limiters, none of which hold the request.
 """
 
-from collections.abc import Awaitable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable
 from contextvars import ContextVar
 from functools import wraps
 import logging
 from typing import Any, Protocol
+
+from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
@@ -30,19 +32,40 @@ def set_current_route_config(config: Any) -> None:
     current_route_config_ctx.set(config)
 
 
+def _clear_route_context() -> None:
+    current_route_config_ctx.set(None)
+    current_credential_limiter_ctx.set(None)
+    current_project_budget_limiter_ctx.set(None)
+    current_request_identity_ctx.set(None)
+    routing_spend_recorder_ctx.set(None)
+
+
+async def _clear_after(body: AsyncIterable[Any]) -> AsyncIterator[Any]:
+    try:
+        async for chunk in body:
+            yield chunk
+    finally:
+        _clear_route_context()
+
+
 def reset_route_context(func):
-    """Clear the route context when the handler finishes, including on error."""
+    """Clear the route context when the handler finishes, including on error.
+
+    A streaming response's body runs after the handler returns and counts the
+    usage at its end: its context is cleared when the body finishes instead.
+    """
 
     @wraps(func)
     async def wrapper(*args, **kwargs):
+        response = None
         try:
-            return await func(*args, **kwargs)
+            response = await func(*args, **kwargs)
+            return response
         finally:
-            current_route_config_ctx.set(None)
-            current_credential_limiter_ctx.set(None)
-            current_project_budget_limiter_ctx.set(None)
-            current_request_identity_ctx.set(None)
-            routing_spend_recorder_ctx.set(None)
+            if isinstance(response, StreamingResponse):
+                response.body_iterator = _clear_after(response.body_iterator)
+            else:
+                _clear_route_context()
 
     return wrapper
 

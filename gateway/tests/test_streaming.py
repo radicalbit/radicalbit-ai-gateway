@@ -1,6 +1,6 @@
 import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import Request
 from fastapi.testclient import TestClient
@@ -18,6 +18,11 @@ from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.utils.ai_gateway_types import PrepareAndValidateResult
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import ModelInvokerInternalError
+from radicalbit_ai_gateway.utils.request_context import (
+    get_current_credential_limiter,
+    get_current_project_budget_limiter,
+    set_current_credential_limiter,
+)
 
 
 def mock_request_uuid(request: Request):
@@ -215,3 +220,58 @@ class TestStreaming(unittest.TestCase):
         assert response.status_code == 500
         body = response.json()
         assert 'error' in body
+
+    def test_live_stream_body_sees_the_request_limiters(self):
+        """The handler returns before the stream body runs: the body still
+        needs the credential and project limiters to count its usage.
+        """
+        api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
+        key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+        self.mock_gateway.prepare_stream = AsyncMock(
+            return_value=self._create_prepared_result()
+        )
+        self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
+        credential, project = AsyncMock(), AsyncMock()
+        seen = {}
+
+        async def mock_invoke_stream(*args, **kwargs):
+            yield ChatCompletionChunk(
+                id='1',
+                choices=[
+                    Choice(
+                        index=0, delta=ChoiceDelta(content='Hi'), finish_reason='stop'
+                    )
+                ],
+                created=123,
+                model='rb-gateway',
+                object='chat.completion.chunk',
+            )
+            # Where GatewayRoute.invoke_stream counts the usage.
+            seen['credential'] = get_current_credential_limiter()
+            seen['project'] = get_current_project_budget_limiter()
+
+        self.mock_gateway.invoke_stream = mock_invoke_stream
+
+        with (
+            patch(
+                'radicalbit_ai_gateway.auth.request_auth.set_current_credential_limiter',
+                side_effect=lambda _: set_current_credential_limiter(credential),
+            ),
+            patch(
+                'radicalbit_ai_gateway.server.load_project_budget_limiter',
+                return_value=project,
+            ),
+        ):
+            response = self.client.post(
+                '/v1/chat/completions',
+                json={
+                    'model': 'rb-gateway',
+                    'messages': [{'role': 'user', 'content': 'Hi'}],
+                    'stream': True,
+                },
+                headers=self.headers,
+            )
+
+        assert response.status_code == 200
+        assert seen == {'credential': credential, 'project': project}

@@ -13,7 +13,7 @@ from tests.common.mocked_runnables import (
 )
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
-from radicalbit_ai_gateway.llm.messages import HumanMessage
+from radicalbit_ai_gateway.llm.messages import AIMessageChunk, HumanMessage
 from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_config import get_model_from_model_id
 from radicalbit_ai_gateway.services.cost_service import CostService
@@ -70,6 +70,66 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
             route_name=self.route_config.route_name,
             model_id=model_id,
         )
+
+    async def _stream_with_fallback(self, primary_astream, fallback_astream):
+        self.reset_invoker()
+        primary, fallback = MagicMock(), MagicMock()
+        primary.astream = primary_astream
+        fallback.astream = fallback_astream
+        model = self._get_model('openai-o4-mini')
+        self.chat_model_invoker.model_map['openai-o4-mini'] = (
+            model,
+            primary,
+            [(model, fallback)],
+        )
+        chunks = []
+        try:
+            async for chunk in self.chat_model_invoker.stream(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='rb-key',
+                group_name='test-group',
+                route_name='test-route',
+                messages=[HumanMessage(content='Hi')],
+                model_id='openai-o4-mini',
+                tools=None,
+                tool_choice=None,
+            ):
+                chunks.append(chunk.content)  # noqa: PERF401 — keep the chunks before an error
+        except Exception as error:
+            return chunks, error
+        return chunks, None
+
+    @staticmethod
+    async def _fallback_stream(**_):
+        yield AIMessageChunk(content='fallback')
+
+    @pytest.mark.asyncio
+    async def test_stream_error_after_a_chunk_does_not_fall_back(self):
+        async def primary_stream(**_):
+            yield AIMessageChunk(content='partial')
+            raise RuntimeError('connection reset')
+
+        chunks, error = await self._stream_with_fallback(
+            primary_stream, self._fallback_stream
+        )
+
+        assert chunks == ['partial']
+        assert isinstance(error, RuntimeError)
+
+    @pytest.mark.asyncio
+    async def test_stream_error_before_any_chunk_falls_back(self):
+        async def primary_stream(**_):
+            raise RuntimeError('connection refused')
+            yield  # noqa: RUF027 — makes this an async generator
+
+        chunks, error = await self._stream_with_fallback(
+            primary_stream, self._fallback_stream
+        )
+
+        assert chunks == ['fallback']
+        assert error is None
 
     @pytest.mark.asyncio
     async def test_invoker_with_fallbacks(self):

@@ -945,7 +945,7 @@ class GatewayRoute:
         ):
             if not has_redact_output:
                 set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
-            soft_block = await self._apply_check_guardrails(
+            soft_block, warned = await self._apply_check_guardrails(
                 **prepared.identity,
                 messages=messages,
                 where=GuardrailWhereType.OUTPUT,
@@ -953,19 +953,8 @@ class GatewayRoute:
             if soft_block:
                 text = soft_block.choices[0].message.content or ''
                 return {**response, 'output': [message_item(text)]}, True, True
-            try:
-                if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
-                    self.gateway_route_config,
-                    messages,
-                    GuardrailWhereType.OUTPUT,
-                    **prepared.identity,
-                    count_judge_usage=self._judge_usage_counter(
-                        **prepared.identity,
-                    ),
-                ):
-                    guardrails_triggered = True
-            except Exception:
-                pass
+            if warned:
+                guardrails_triggered = True
 
         output.write_back(messages)
         return output.response, guardrails_triggered, False
@@ -1286,23 +1275,17 @@ class GatewayRoute:
         )
 
         if response.usage:
-            identity = self._request_identity(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
+            await self._count_input_usage(
+                prompt_tokens=response.usage.prompt_tokens,
+                model_selected=model_selected,
+                identity=self._request_identity(
+                    request_uuid=request_uuid,
+                    api_key_uuid=api_key_uuid,
+                    api_key_name=api_key_name,
+                    group_uuid=group_uuid,
+                    group_name=group_name,
+                ),
             )
-            if self.token_limiter:
-                await self.token_limiter.count_input(
-                    prompt_tokens=response.usage.prompt_tokens, identity=identity
-                )
-            if self.budget_limiter and model_selected.input_cost_per_token:
-                await self.budget_limiter.count_input(
-                    token_count=response.usage.prompt_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_token,
-                    identity=identity,
-                )
 
         if use_cache and cache_key:
             await self.gateway_cache.set(
@@ -2382,7 +2365,7 @@ class GatewayRoute:
                 if not has_redact_output:
                     set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
 
-                output_soft_block = await self._apply_check_guardrails(
+                output_soft_block, warned = await self._apply_check_guardrails(
                     request_uuid=request_uuid,
                     api_key_uuid=api_key_uuid,
                     group_uuid=group_uuid,
@@ -2407,28 +2390,9 @@ class GatewayRoute:
                         guardrails_triggered=guardrails_triggered,
                         guardrails_block_triggered=guardrails_block_triggered,
                     )
-                # Evaluate WARN-only guardrails on output (does NOT trigger block header)
-                try:
-                    if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
-                        self.gateway_route_config,
-                        [AIMessage(content=redacted_output)],
-                        GuardrailWhereType.OUTPUT,
-                        request_uuid=request_uuid,
-                        api_key_uuid=api_key_uuid,
-                        group_uuid=group_uuid,
-                        api_key_name=api_key_name,
-                        group_name=group_name,
-                        count_judge_usage=self._judge_usage_counter(
-                            request_uuid=request_uuid,
-                            api_key_uuid=api_key_uuid,
-                            api_key_name=api_key_name,
-                            group_uuid=group_uuid,
-                            group_name=group_name,
-                        ),
-                    ):
-                        guardrails_triggered = True
-                except Exception:
-                    pass
+                # A WARN on output does NOT trigger the block header
+                if warned:
+                    guardrails_triggered = True
 
         normalized_output = ContentUtils.normalize_openai_message_content(
             redacted_output
@@ -2759,7 +2723,7 @@ class GatewayRoute:
             return redaction
 
         set_operation_category(OperationCategory.GUARDRAIL_INPUT)
-        input_soft_block = await self._apply_check_guardrails(
+        input_soft_block, warned = await self._apply_check_guardrails(
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -2777,29 +2741,9 @@ class GatewayRoute:
                 soft_block=input_soft_block,
             )
 
-        # Evaluate WARN-only guardrails on input (does NOT trigger block header)
-        try:
-            if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
-                self.gateway_route_config,
-                redacted_messages,
-                GuardrailWhereType.INPUT,
-                skip=skip,
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                count_judge_usage=self._judge_usage_counter(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                ),
-            ):
-                guardrails_input_triggered = True
-        except Exception:
-            pass
+        # A WARN on input does NOT trigger the block header
+        if warned:
+            guardrails_input_triggered = True
 
         return InputGuardrailsResult(
             redacted_messages=redacted_messages,
@@ -2876,10 +2820,12 @@ class GatewayRoute:
         messages: list[BaseMessage],
         where: GuardrailWhereType,
         skip: int = 0,
-    ) -> ChatCompletion | None:
-        """Handle check guardrails. ``skip``: see GuardrailCheck.apply_guardrails."""
+    ) -> tuple[ChatCompletion | None, bool]:
+        """Handle check guardrails. Return the soft block response, if any, and
+        whether a WARN guardrail triggered. ``skip``: see GuardrailCheck.apply_guardrails.
+        """
         try:
-            soft_block = await self.guardrail_engine.guardrail_check.apply_guardrails(
+            result = await self.guardrail_engine.guardrail_check.apply_guardrails(
                 request_uuid=request_uuid,
                 api_key_uuid=api_key_uuid,
                 group_uuid=group_uuid,
@@ -2908,13 +2854,13 @@ class GatewayRoute:
                 f'Error during guardrail application: {e}'
             ) from e
 
-        if soft_block:
+        if result.soft_block:
             # Build soft block response; caller will attach GUARDRAILS header
-            return soft_block.build_soft_block_response(
+            return result.soft_block.build_soft_block_response(
                 self.gateway_route_config.route_name
-            )
+            ), result.warned
 
-        return None
+        return None, result.warned
 
     async def _apply_check_guardrails_for_embeddings(
         self,
@@ -2951,7 +2897,7 @@ class GatewayRoute:
                     # No conversation here: the window does not apply.
                     windowed=False,
                 )
-            )
+            ).soft_block
         except GuardrailBadRequest as e:
             logger.warning('Guardrail BLOCK triggered: %s', e.log_message)
             raise
@@ -3036,7 +2982,7 @@ class GatewayRoute:
                         # A decision model has no conversation: no window.
                         windowed=False,
                     )
-                )
+                ).soft_block
             except (GuardrailBadRequest, JudgeInternalError):
                 # Their error handlers log them.
                 raise
@@ -3291,6 +3237,42 @@ class GatewayRoute:
                     identity=identity,
                 )
 
+    async def _count_input_usage(
+        self,
+        prompt_tokens: int,
+        model_selected: Model,
+        identity: RequestIdentity,
+    ) -> None:
+        """Count input-only usage (embeddings): _count_usage without the output."""
+        if self.token_limiter:
+            await self.token_limiter.count_input(
+                prompt_tokens=prompt_tokens, identity=identity
+            )
+        if self.budget_limiter and model_selected.input_cost_per_token:
+            await self.budget_limiter.count_input(
+                token_count=prompt_tokens,
+                input_cost_per_token=model_selected.input_cost_per_token,
+                identity=identity,
+            )
+
+        credential_limiter = get_current_credential_limiter()
+        if credential_limiter:
+            await credential_limiter.count_input_tokens(prompt_tokens, identity)
+            if model_selected.input_cost_per_token:
+                await credential_limiter.count_budget_input(
+                    token_count=prompt_tokens,
+                    input_cost_per_token=model_selected.input_cost_per_token,
+                    identity=identity,
+                )
+
+        project_budget_limiter = get_current_project_budget_limiter()
+        if project_budget_limiter and model_selected.input_cost_per_token:
+            await project_budget_limiter.count_input(
+                token_count=prompt_tokens,
+                input_cost_per_token=model_selected.input_cost_per_token,
+                identity=identity,
+            )
+
     async def _count_transcription_usage(
         self,
         usage: UsageTokens | UsageDuration | None,
@@ -3462,7 +3444,7 @@ class GatewayRoute:
             GuardrailClass.CHECK,
         ):
             set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
-            output_soft_block = await self._apply_check_guardrails(
+            output_soft_block, _ = await self._apply_check_guardrails(
                 request_uuid=request_uuid,
                 api_key_uuid=api_key_uuid,
                 group_uuid=group_uuid,

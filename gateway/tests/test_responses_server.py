@@ -48,6 +48,11 @@ from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
+from radicalbit_ai_gateway.utils.request_context import (
+    get_current_credential_limiter,
+    get_current_project_budget_limiter,
+    set_current_credential_limiter,
+)
 
 ROUTE = 'agents'
 
@@ -687,21 +692,20 @@ def test_output_warn_is_reported_and_the_reply_kept(post, stream):
     assert 'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED' not in response.headers
 
 
-def test_a_failing_warn_check_does_not_fail_the_request(post):
+@pytest.mark.parametrize('stream', [False, True])
+def test_output_warn_is_evaluated_once(post, stream):
     route = build_route(
         {'openai': FakeChatModel(events=upstream_events('The secret is 42'))},
         guardrails=['output_warn'],
     )
+    mapping = route.guardrail_engine.guardrail_check._guardrail_check_mapping
+    check = AsyncMock(wraps=mapping[GuardrailType.CONTAINS])
+    mapping[GuardrailType.CONTAINS] = check
 
-    with patch.object(
-        route.guardrail_engine.guardrail_check,
-        'evaluate_warn_triggered',
-        AsyncMock(side_effect=RuntimeError('judge down')),
-    ):
-        response = post(route, input='Hi')
+    response = post(route, input='Hi', stream=stream)
 
-    assert response.status_code == 200
-    assert 'X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN' not in response.headers
+    assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] == 'true'
+    assert check.await_count == 1
 
 
 # ── Limits ────────────────────────────────────────────────────────────────
@@ -724,3 +728,31 @@ def test_budget_limit_blocks_before_the_model(post):
     assert response.status_code == 429
     assert model.bodies == []
     assert limiter.check_budget.call_args.kwargs['route_name'] == ROUTE
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_usage_is_counted_with_the_request_limiters(post, stream):
+    route = build_route({'openai': FakeChatModel(events=upstream_events())})
+    credential, project = AsyncMock(), AsyncMock()
+    seen = {}
+
+    async def count_usage(**_):
+        seen['credential'] = get_current_credential_limiter()
+        seen['project'] = get_current_project_budget_limiter()
+
+    route._count_usage = AsyncMock(side_effect=count_usage)
+
+    with (
+        patch(
+            'radicalbit_ai_gateway.auth.request_auth.set_current_credential_limiter',
+            side_effect=lambda _: set_current_credential_limiter(credential),
+        ),
+        patch(
+            'radicalbit_ai_gateway.server.load_project_budget_limiter',
+            return_value=project,
+        ),
+    ):
+        response = post(route, input='Hi', stream=stream)
+
+    assert response.status_code == 200
+    assert seen == {'credential': credential, 'project': project}

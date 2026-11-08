@@ -403,7 +403,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
                 where=GuardrailWhereType.INPUT,
                 group_name='test-group',
             )
-        )
+        ).soft_block
 
         assert self.soft_block_info is not None
         assert isinstance(self.soft_block_info, SoftBlockInfo)
@@ -428,7 +428,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
                 where=GuardrailWhereType.OUTPUT,
                 group_name='test-group',
             )
-        )
+        ).soft_block
 
         assert self.soft_block_info is not None
         assert isinstance(self.soft_block_info, SoftBlockInfo)
@@ -453,7 +453,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
                 where=GuardrailWhereType.INPUT,
                 group_name='test-group',
             )
-        )
+        ).soft_block
 
         assert self.soft_block_info is not None
         assert isinstance(self.soft_block_info, SoftBlockInfo)
@@ -474,7 +474,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
                 where=GuardrailWhereType.OUTPUT,
                 group_name='test-group',
             )
-        )
+        ).soft_block
 
         assert self.soft_block_info is not None
         assert isinstance(self.soft_block_info, SoftBlockInfo)
@@ -495,7 +495,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
                 where=GuardrailWhereType.INPUT,
                 group_name='test-group',
             )
-        )
+        ).soft_block
 
         assert self.soft_block_info is None
 
@@ -514,7 +514,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
                 where=GuardrailWhereType.OUTPUT,
                 group_name='test-group',
             )
-        )
+        ).soft_block
 
         assert self.soft_block_info is None
 
@@ -574,7 +574,7 @@ class TestGuardrail(unittest.IsolatedAsyncioTestCase):
                 where=GuardrailWhereType.INPUT,
                 group_name='test-group',
             )
-        )
+        ).soft_block
 
         assert self.soft_block_info is not None
         assert self.soft_block_info.guardrail.name == 'soft_block_start_with_hello'

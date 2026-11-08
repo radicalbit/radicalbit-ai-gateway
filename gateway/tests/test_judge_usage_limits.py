@@ -35,6 +35,8 @@ ROUTE = 'judged'
 JUDGE_IN, JUDGE_OUT = 40, 6
 JUDGE_INPUT_PRICE = Decimal('0.00001')
 JUDGE_OUTPUT_PRICE = Decimal('0.00002')
+EMBEDDING_TOKENS = 2
+EMBEDDING_PRICE = Decimal('0.000003')
 
 IDENTITY = RequestIdentity(
     request_uuid=str(REQUEST_UUID),
@@ -48,7 +50,7 @@ IDENTITY = RequestIdentity(
 )
 
 
-def _config(where: str, **route) -> GatewayConfig:
+def _config(where: str, behavior: str = 'block', **route) -> GatewayConfig:
     credentials = {'api_key': 'sk-test'}
     return GatewayConfig.model_validate(
         {
@@ -73,6 +75,7 @@ def _config(where: str, **route) -> GatewayConfig:
                     'model_id': 'emb',
                     'model': 'openai/text-embedding-3-small',
                     'credentials': credentials,
+                    'input_cost_per_million_tokens': 3,
                 }
             ],
             'guardrails': [
@@ -80,6 +83,7 @@ def _config(where: str, **route) -> GatewayConfig:
                     'name': 'j',
                     'type': 'judge',
                     'where': where,
+                    'behavior': behavior,
                     'parameters': {'model_id': 'judge', 'prompt': 'Judge this.'},
                 }
             ],
@@ -100,18 +104,18 @@ def _limiter() -> AsyncMock:
     return AsyncMock(input_config=None, output_config=None, config=None)
 
 
-def _judge_llm() -> MagicMock:
-    """Stands in for the judge chat model: answers 'not triggered' with usage."""
+def _judge_llm(triggered: bool = False) -> MagicMock:
+    """Stands in for the judge chat model: answers ``triggered`` with usage."""
     answer = {
         'raw': AIMessage(
-            content='{"triggered": false}',
+            content=f'{{"triggered": {str(triggered).lower()}}}',
             usage_metadata={
                 'input_tokens': JUDGE_IN,
                 'output_tokens': JUDGE_OUT,
                 'total_tokens': JUDGE_IN + JUDGE_OUT,
             },
         ),
-        'parsed': JudgeResult(triggered=False, reasoning=None, violation_type=None),
+        'parsed': JudgeResult(triggered=triggered, reasoning=None, violation_type=None),
         'parsing_error': None,
     }
     llm = MagicMock()
@@ -138,8 +142,10 @@ def limiters():
     set_current_project_budget_limiter(None)
 
 
-def _gateway(where: str, route_tokens, route_budget) -> GatewayRoute:
-    config = _config(where)
+def _gateway(
+    where: str, route_tokens, route_budget, behavior: str = 'block'
+) -> GatewayRoute:
+    config = _config(where, behavior)
     cost_service = MagicMock(spec_set=CostService)
     route_cfg, chat_models, embedding_models = resolve_route_models(config, ROUTE)
     return GatewayRoute(
@@ -228,6 +234,37 @@ async def test_chat_judge_call_consumes_route_credential_and_project_limits(
     _assert_judge_counted(*limiters)
 
 
+@pytest.mark.parametrize('where', ['input', 'output'])
+@pook.activate
+@pytest.mark.asyncio
+async def test_warn_judge_is_called_and_charged_once(where, limiters):
+    pook.post(
+        url='https://api.openai.com/v1/chat/completions',
+        reply=200,
+        response_json=to_mock_openai_chat_completion('Paris').model_dump_json(),
+    )
+    judge = _judge_llm(triggered=True)
+    gateway = _gateway(where, *limiters[:2], behavior='warn')
+
+    with patch(
+        'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
+        return_value=judge,
+    ):
+        result = await gateway.invoke(
+            **_caller(),
+            messages=[HumanMessage(content='What is the capital of France?')],
+            tools=[],
+            tool_choice=None,
+        )
+
+    assert judge.with_structured_output.return_value.ainvoke.await_count == 1
+    # The main reply carries no usage: the one count is the judge's.
+    credential = limiters[2]
+    assert credential.count_input_tokens.await_count == 1
+    assert result.headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] == 'true'
+    assert result.headers[f'X-RB-AIGATEWAY-GUARDRAILS-{where.upper()}-WARN'] == 'true'
+
+
 @pook.activate
 @pytest.mark.asyncio
 async def test_embedding_input_judge_call_consumes_route_credential_and_project_limits(
@@ -248,6 +285,42 @@ async def test_embedding_input_judge_call_consumes_route_credential_and_project_
     await gateway.invoke_embeddings(**_caller(), input_texts=['hello world'])
 
     _assert_judge_counted(*limiters)
+
+
+@pook.activate
+@pytest.mark.asyncio
+async def test_embedding_call_consumes_credential_and_project_limits(limiters):
+    pook.post(
+        url='https://api.openai.com/v1/embeddings',
+        reply=200,
+        response_json={
+            'object': 'list',
+            'data': [{'object': 'embedding', 'embedding': [0.1], 'index': 0}],
+            'model': 'text-embedding-3-small',
+            'usage': {
+                'prompt_tokens': EMBEDDING_TOKENS,
+                'total_tokens': EMBEDDING_TOKENS,
+            },
+        },
+    )
+    _, _, credential, project = limiters
+    gateway = _gateway('input', *limiters[:2])
+
+    await gateway.invoke_embeddings(**_caller(), input_texts=['hello world'])
+
+    credential.count_input_tokens.assert_any_await(EMBEDDING_TOKENS, IDENTITY)
+    credential.count_budget_input.assert_any_await(
+        token_count=EMBEDDING_TOKENS,
+        input_cost_per_token=EMBEDDING_PRICE,
+        identity=IDENTITY,
+    )
+    project.count_input.assert_any_await(
+        token_count=EMBEDDING_TOKENS,
+        input_cost_per_token=EMBEDDING_PRICE,
+        identity=IDENTITY,
+    )
+    # Embeddings have no output: only the judge's output is counted.
+    credential.count_output_tokens.assert_awaited_once_with(JUDGE_OUT, IDENTITY)
 
 
 # The limit check runs before the input judge, so a judge's spend is charged

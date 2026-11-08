@@ -118,6 +118,13 @@ class GuardrailCheckFunction(Protocol):
     ) -> bool: ...
 
 
+class CheckResult(NamedTuple):
+    """What the check guardrails found: a soft block, and whether a WARN fired."""
+
+    soft_block: SoftBlockInfo | None = None
+    warned: bool = False
+
+
 # A check function sets this when it triggers. apply_guardrails reads it.
 _reason_payload_ctx: ContextVar[dict | None] = ContextVar(
     'guardrail_reason_payload', default=None
@@ -736,8 +743,9 @@ class GuardrailCheck:
         count_judge_usage: JudgeUsageCounter | None = None,
         windowed: bool = True,
         skip: int = 0,
-    ) -> SoftBlockInfo | None:
-        """Apply guardrails to messages and return SoftBlockInfo on SOFT_BLOCK.
+    ) -> CheckResult:
+        """Apply guardrails to messages. Return the SOFT_BLOCK that stopped
+        them, if any, and whether a WARN guardrail triggered.
 
         ``windowed`` is False on calls with no conversation (embeddings,
         decision models): every guardrail then reads every message. ``skip``
@@ -766,8 +774,9 @@ class GuardrailCheck:
         )
 
         if not check_guardrails:
-            return None
+            return CheckResult()
 
+        warned = False
         for guardrail in check_guardrails:
             logger.debug(
                 'Evaluating guardrail: %s (type=%s, where=%s, behavior=%s)',
@@ -829,13 +838,14 @@ class GuardrailCheck:
                 reason_payload=reason_payload,
             )
             if soft_block is not None:
-                return soft_block
+                return CheckResult(soft_block=soft_block, warned=warned)
             if should_stop:
-                return None
+                return CheckResult(warned=warned)
             # WARN/INFO: keep evaluating remaining guardrails
-            continue
+            if guardrail.behavior == GuardrailBehaviorType.WARN:
+                warned = True
 
-        return None
+        return CheckResult(warned=warned)
 
     @staticmethod
     def _indices_for_logs(reason_payload: dict) -> str:
@@ -1055,69 +1065,6 @@ class GuardrailCheck:
         else:
             logger.info(log_message)
         return False, None
-
-    async def evaluate_warn_triggered(
-        self,
-        route_config: GatewayRouteConfig,
-        messages: list[BaseMessage],
-        where: GuardrailWhereType,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        count_judge_usage: JudgeUsageCounter | None = None,
-        skip: int = 0,
-    ) -> bool:
-        """Evaluate only WARN-behavior guardrails without emitting events/logs.
-        Used to surface a response header for non-blocking guardrails.
-        ``skip`` works as in apply_guardrails.
-        """
-
-        check_guardrails = self._get_guardrails_for_route(
-            route_config=route_config,
-            where=where,
-            guardrail_class=GuardrailClass.CHECK,
-            only_warn=True,
-        )
-
-        if not check_guardrails:
-            return False
-
-        kwargs = {
-            'request_uuid': request_uuid,
-            'api_key_uuid': api_key_uuid,
-            'group_uuid': group_uuid,
-            'api_key_name': api_key_name,
-            'group_name': group_name,
-            'route_name': route_config.route_name,
-            'where': where,
-            'parent_span': trace.get_current_span(),
-            'count_judge_usage': count_judge_usage,
-        }
-
-        for guardrail in check_guardrails:
-            check_function = self._guardrail_check_mapping.get(guardrail.type)
-            if not check_function:
-                continue
-            selected = _select_messages(messages, guardrail, where, skip=skip)
-            if not selected:
-                continue
-            try:
-                if await check_function(
-                    [m for _, m in selected],
-                    guardrail.parameters,
-                    route_config,
-                    message_roles=guardrail.message_roles,
-                    # Indexes in the client's own list.
-                    message_indices=[i - skip for i, _ in selected],
-                    **kwargs,
-                ):
-                    return True
-            except Exception:
-                # Ignore evaluation failures for WARN header calculation
-                continue
-        return False
 
     def _get_guardrails_for_route(
         self,

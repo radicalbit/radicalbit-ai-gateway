@@ -429,13 +429,17 @@ class TranscriptionModelInvoker(ModelInvoker):
         start_time = time.monotonic()
         model_invoked = model
         fallback_triggered = False
+        # A fallback is tried only while nothing has been yielded: once the
+        # client has part of the transcript, an error ends the stream.
+        started = False
         try:
             async for event in _run_stream(client, model_name):
+                started = True
                 yield event
         except Exception as primary_error:
             # See transcribe()'s equivalent check: a 4xx client-input error
             # propagates immediately, it would fail identically on any fallback.
-            if isinstance(primary_error, ModelInvokerBadRequest):
+            if started or isinstance(primary_error, ModelInvokerBadRequest):
                 raise
             logger.warning(
                 'Primary transcription model %s stream failed: %s. Trying fallbacks...',
@@ -458,13 +462,14 @@ class TranscriptionModelInvoker(ModelInvoker):
                     async for event in _run_stream(
                         fallback_client, fallback_model_name
                     ):
+                        started = True
                         yield event
                     model_invoked = fallback_model
                     fallback_triggered = True
                     fallback_success = True
                     break
                 except Exception as fallback_error:
-                    if isinstance(fallback_error, ModelInvokerBadRequest):
+                    if started or isinstance(fallback_error, ModelInvokerBadRequest):
                         raise
                     logger.warning(
                         'Fallback transcription model %s stream failed: %s',

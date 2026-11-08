@@ -532,7 +532,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         mock_block_response.choices[0].message.content = 'I cannot say that.'
         mock_block_response.id = 'refusal-id'
         self.mock_gateway._apply_check_guardrails = AsyncMock(
-            return_value=mock_block_response
+            return_value=(mock_block_response, False)
         )
 
         # Mock prepare_stream to return a valid PrepareAndValidateResult
@@ -587,7 +587,9 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         self.mock_gateway.guardrail_engine = mock_guardrail_engine
 
         # Mock _apply_check_guardrails to return None (check passed)
-        self.mock_gateway._apply_check_guardrails = AsyncMock(return_value=None)
+        self.mock_gateway._apply_check_guardrails = AsyncMock(
+            return_value=(None, False)
+        )
 
         # Mock prepare_stream to return a valid PrepareAndValidateResult
         self.mock_gateway.prepare_stream = AsyncMock(

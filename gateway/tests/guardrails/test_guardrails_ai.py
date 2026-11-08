@@ -174,7 +174,7 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
                 route_config=self.route_config_block,
                 where=GuardrailWhereType.INPUT,
             )
-        assert result is None
+        assert result.soft_block is None
 
     @pytest.mark.asyncio
     async def test_block_triggered_when_validation_fails(self):
@@ -219,8 +219,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
                 route_config=self.route_config_soft_block,
                 where=GuardrailWhereType.INPUT,
             )
-        assert isinstance(result, SoftBlockInfo)
-        assert result.guardrail.name == 'soft_block_guardrails_ai'
+        assert isinstance(result.soft_block, SoftBlockInfo)
+        assert result.soft_block.guardrail.name == 'soft_block_guardrails_ai'
 
     @pytest.mark.asyncio
     async def test_warn_triggered_when_validation_fails(self):
@@ -240,7 +240,8 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
                 route_config=self.route_config_warn,
                 where=GuardrailWhereType.INPUT,
             )
-        assert result is None  # WARN does not return SoftBlockInfo
+        assert result.soft_block is None  # WARN does not return SoftBlockInfo
+        assert result.warned
 
     @pytest.mark.asyncio
     async def test_empty_messages_not_triggered(self):
@@ -258,7 +259,7 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
                 route_config=self.route_config_block,
                 where=GuardrailWhereType.INPUT,
             )
-        assert result is None
+        assert result.soft_block is None
 
     @pytest.mark.asyncio
     async def test_timeout_propagates(self):
@@ -332,7 +333,7 @@ class TestGuardrailsAICheck(unittest.IsolatedAsyncioTestCase):
                 route_config=self.route_config_block,
                 where=GuardrailWhereType.OUTPUT,
             )
-        assert result is None
+        assert result.soft_block is None
         mock_cls.assert_not_called()
 
     @pytest.mark.asyncio
