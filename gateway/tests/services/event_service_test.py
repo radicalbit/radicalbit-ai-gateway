@@ -1,6 +1,6 @@
 import datetime
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 from uuid import UUID
 
@@ -36,7 +36,10 @@ from radicalbit_ai_gateway.db.models.event import (
     TokenChartDataPoint,
     TokensCounter,
 )
+from radicalbit_ai_gateway.limiter import ScenarioType, WindowConfig
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
+from radicalbit_ai_gateway.limiting.windows import Category, Window
 from radicalbit_ai_gateway.models.auth_dto import KeyOut
 from radicalbit_ai_gateway.models.caching import SemanticCaching
 from radicalbit_ai_gateway.models.credentials import Credentials
@@ -71,6 +74,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     UsageCostsDTO,
     WindowStatus,
 )
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
@@ -2950,11 +2954,20 @@ class TestGetRouteLimitsProgress:
         )
         return m
 
-    def _make_item_mock(self, limit: int, window_seconds: int) -> MagicMock:
-        item = MagicMock()
-        item.limit = limit
-        item.window_seconds = window_seconds
-        return item
+    @pytest.fixture(autouse=True)
+    def _limiters(self):
+        """Give each window the limiter mock made for it."""
+        # Keyed by the route name: each window gets a unique one.
+        self._limiter_by_key = {}
+        with patch.object(
+            Window,
+            'limiter',
+            autospec=True,
+            side_effect=lambda window, storage: self._limiter_by_key[
+                window.config.route_name
+            ],
+        ):
+            yield
 
     def _make_gateway_route(
         self,
@@ -2971,54 +2984,36 @@ class TestGetRouteLimitsProgress:
         duration_remaining: int | None = None,
         window_seconds: int = 3600,
     ) -> MagicMock:
+        windows = []
+        for category, limit, remaining in (
+            (Category.COST, budget_limit, budget_remaining),
+            (Category.INPUT_TOKENS, token_input_limit, token_input_remaining),
+            (Category.OUTPUT_TOKENS, token_output_limit, token_output_remaining),
+            (Category.REQUESTS, rate_limit, rate_remaining),
+            (Category.AUDIO_SECONDS, duration_limit, duration_remaining),
+        ):
+            if limit is None:
+                continue
+            window = Window(
+                scope=LimitScope.ROUTE,
+                category=category,
+                config=WindowConfig.from_parts(
+                    limit=limit,
+                    window=window_seconds,
+                    project_uuid='project',
+                    route_name=uuid.uuid4().hex,
+                    scenario_type=ScenarioType(category.value),
+                ),
+                aligned=False,
+                shown_value=limit,
+                shown_window=window_seconds,
+            )
+            self._limiter_by_key[window.config.route_name] = self._make_limiter_mock(
+                limit, remaining
+            )
+            windows.append(window)
         route = MagicMock()
-
-        bl = MagicMock()
-        if budget_limit is not None:
-            bl.limiter = self._make_limiter_mock(budget_limit, budget_remaining)
-            bl.item = self._make_item_mock(budget_limit, window_seconds)
-        else:
-            bl.limiter = None
-            bl.item = None
-        route.budget_limiter = bl
-
-        tl = MagicMock()
-        if token_input_limit is not None:
-            tl.input_limiter = self._make_limiter_mock(
-                token_input_limit, token_input_remaining
-            )
-            tl.input_item = self._make_item_mock(token_input_limit, window_seconds)
-        else:
-            tl.input_limiter = None
-            tl.input_item = None
-        if token_output_limit is not None:
-            tl.output_limiter = self._make_limiter_mock(
-                token_output_limit, token_output_remaining
-            )
-            tl.output_item = self._make_item_mock(token_output_limit, window_seconds)
-        else:
-            tl.output_limiter = None
-            tl.output_item = None
-        route.token_limiter = tl
-
-        rl = MagicMock()
-        if rate_limit is not None:
-            rl.limiter = self._make_limiter_mock(rate_limit, rate_remaining)
-            rl.item = self._make_item_mock(rate_limit, window_seconds)
-        else:
-            rl.limiter = None
-            rl.item = None
-        route.request_rate_limiter = rl
-
-        dl = MagicMock()
-        if duration_limit is not None:
-            dl.limiter = self._make_limiter_mock(duration_limit, duration_remaining)
-            dl.item = self._make_item_mock(duration_limit, window_seconds)
-        else:
-            dl.limiter = None
-            dl.item = None
-        route.duration_limiter = dl
-
+        route.route_limits = RouteLimits(tuple(windows))
         return route
 
     def _make_service(self):

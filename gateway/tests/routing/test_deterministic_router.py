@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 from freezegun import freeze_time
 import pytest
@@ -10,8 +10,12 @@ from tests.common.mocked_gateway_config_openai import (
     get_gateway_routing_token_length,
 )
 
+from radicalbit_ai_gateway.limiter import ScenarioType, WindowConfig
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiting.windows import Category, Window
 from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.credentials import Credentials
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
     BudgetConditions,
@@ -30,7 +34,7 @@ def keyword_router():
     route = config.routes['support_route']
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=None
+        config=routing_config, models_by_id=models_by_id, budget=None
     )
 
 
@@ -41,7 +45,7 @@ def time_router():
     route = config.routes['time_route']
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=None
+        config=routing_config, models_by_id=models_by_id, budget=None
     )
 
 
@@ -52,7 +56,7 @@ def token_length_router():
     route = config.routes['smart_route']
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=None
+        config=routing_config, models_by_id=models_by_id, budget=None
     )
 
 
@@ -63,7 +67,7 @@ def context_length_router():
     route = config.routes['smart_route']
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=None
+        config=routing_config, models_by_id=models_by_id, budget=None
     )
 
 
@@ -74,9 +78,7 @@ def _count_tokens_patched(token_length_router, token_count):
     )
 
 
-def _make_budget_router(
-    thresholds: dict[str, float], default_model_id: str, budget_limiter
-):
+def _make_budget_router(thresholds: dict[str, float], default_model_id: str, budget):
     """Build a DeterministicRouter with budget rule from a {model_id: threshold} mapping."""
     models_by_id = {
         mid: Model(
@@ -97,16 +99,30 @@ def _make_budget_router(
         output_mapping=output_mapping,
     )
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=budget_limiter
+        config=routing_config, models_by_id=models_by_id, budget=budget
     )
 
 
-def _mock_budget_limiter(remaining: float, limit: float = 0):
-    """Create a mock BudgetLimiter with given remaining budget and limit."""
-    limiter = MagicMock()
-    limiter.get_total_current_usage = AsyncMock(return_value=remaining)
-    limiter.item = MagicMock(limit=limit) if limit else None
-    return limiter
+async def _budget_window(remaining: int, limit: int = 0) -> Window:
+    """Return a route budget window of ``limit`` with ``remaining`` left."""
+    window = Window(
+        scope=LimitScope.ROUTE,
+        category=Category.COST,
+        config=WindowConfig.from_parts(
+            limit=limit,
+            window='1 hour',
+            project_uuid='project',
+            route_name='route',
+            scenario_type=ScenarioType.BUDGET,
+        ),
+        aligned=False,
+        shown_value=limit,
+        shown_window='1 hour',
+    )
+    if limit - remaining:
+        limiter = window.limiter(shared_limits.storage)
+        await limiter.consume(window.config, cost=limit - remaining)
+    return window
 
 
 class TestDeterministicRouting:
@@ -494,7 +510,7 @@ class TestDeterministicRouting:
             ],
         )
         router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
+            config=config, models_by_id=models_by_id, budget=None
         )
         with patch(
             'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
@@ -524,7 +540,7 @@ class TestDeterministicRouting:
             ],
         )
         router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
+            config=config, models_by_id=models_by_id, budget=None
         )
         with patch(
             'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
@@ -556,7 +572,7 @@ class TestDeterministicRouting:
             ],
         )
         router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
+            config=config, models_by_id=models_by_id, budget=None
         )
         with patch(
             'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
@@ -586,7 +602,7 @@ class TestDeterministicRouting:
             ],
         )
         router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
+            config=config, models_by_id=models_by_id, budget=None
         )
         with patch(
             'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
@@ -628,7 +644,7 @@ class TestDeterministicRouting:
             ],
         )
         router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
+            config=config, models_by_id=models_by_id, budget=None
         )
         # token_count=500 → lte:999 matches
         with patch(
@@ -682,7 +698,7 @@ class TestDeterministicRouting:
         route = config.routes['time_route']
         models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
         router = DeterministicRouter(
-            config=routing_config, models_by_id=models_by_id, budget_limiter=None
+            config=routing_config, models_by_id=models_by_id, budget=None
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'night_model'
@@ -693,32 +709,32 @@ class TestDeterministicRouting:
         result = await time_router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'night_model'
 
-    async def test_returns_default_when_no_budget_limiter(self):
+    async def test_returns_default_when_the_route_has_no_budget(self):
         router = _make_budget_router(
             thresholds={'cheap': 0.6, 'cheaper': 0.8},
             default_model_id='default',
-            budget_limiter=None,
+            budget=None,
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'default'
 
     async def test_returns_default_when_max_budget_is_zero(self):
-        limiter = _mock_budget_limiter(remaining=0, limit=0)
+        limiter = await _budget_window(remaining=0, limit=0)
         router = _make_budget_router(
             thresholds={'cheap': 0.6},
             default_model_id='default',
-            budget_limiter=limiter,
+            budget=limiter,
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'default'
 
     async def test_returns_default_when_usage_below_all_thresholds(self):
         # remaining=90, max_budget=100 → usage_ratio = 1 - 90/100 = 0.10
-        limiter = _mock_budget_limiter(remaining=90, limit=100)
+        limiter = await _budget_window(remaining=90, limit=100)
         router = _make_budget_router(
             thresholds={'cheap': 0.6, 'cheaper': 0.8},
             default_model_id='default',
-            budget_limiter=limiter,
+            budget=limiter,
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'default'
@@ -726,11 +742,11 @@ class TestDeterministicRouting:
     async def test_matches_lower_threshold(self):
         # remaining=30, max_budget=100 → usage_ratio = 1 - 30/100 = 0.70
         # 0.70 >= 0.6 (cheap) but < 0.8 (cheaper)
-        limiter = _mock_budget_limiter(remaining=30, limit=100)
+        limiter = await _budget_window(remaining=30, limit=100)
         router = _make_budget_router(
             thresholds={'cheap': 0.6, 'cheaper': 0.8},
             default_model_id='default',
-            budget_limiter=limiter,
+            budget=limiter,
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'cheap'
@@ -738,33 +754,33 @@ class TestDeterministicRouting:
     async def test_matches_higher_threshold(self):
         # remaining=10, max_budget=100 → usage_ratio = 1 - 10/100 = 0.90
         # 0.90 >= 0.8 (cheaper) — highest threshold wins
-        limiter = _mock_budget_limiter(remaining=10, limit=100)
+        limiter = await _budget_window(remaining=10, limit=100)
         router = _make_budget_router(
             thresholds={'cheap': 0.6, 'cheaper': 0.8},
             default_model_id='default',
-            budget_limiter=limiter,
+            budget=limiter,
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'cheaper'
 
     async def test_matches_at_exact_threshold(self):
         # remaining=40, max_budget=100 → usage_ratio = 1 - 40/100 = 0.60
-        limiter = _mock_budget_limiter(remaining=40, limit=100)
+        limiter = await _budget_window(remaining=40, limit=100)
         router = _make_budget_router(
             thresholds={'cheap': 0.6},
             default_model_id='default',
-            budget_limiter=limiter,
+            budget=limiter,
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'cheap'
 
     async def test_uses_combined_input_and_output_limits(self):
         # remaining=20, max_budget=50+50=100 → usage_ratio = 1 - 20/100 = 0.80
-        limiter = _mock_budget_limiter(remaining=20, limit=100)
+        limiter = await _budget_window(remaining=20, limit=100)
         router = _make_budget_router(
             thresholds={'cheap': 0.6, 'cheaper': 0.8},
             default_model_id='default',
-            budget_limiter=limiter,
+            budget=limiter,
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'cheaper'
@@ -772,22 +788,22 @@ class TestDeterministicRouting:
     async def test_highest_threshold_checked_first_regardless_of_config_order(self):
         # remaining=5, max_budget=100 → usage_ratio = 0.95
         # Both thresholds match, but 0.8 is checked first (sorted desc) → cheaper wins
-        limiter = _mock_budget_limiter(remaining=5, limit=100)
+        limiter = await _budget_window(remaining=5, limit=100)
         router = _make_budget_router(
             thresholds={'cheap': 0.6, 'cheaper': 0.8},
             default_model_id='default',
-            budget_limiter=limiter,
+            budget=limiter,
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'cheaper'
 
     async def test_fully_exhausted_budget(self):
         # remaining=0, max_budget=100 → usage_ratio = 1.0
-        limiter = _mock_budget_limiter(remaining=0, limit=100)
+        limiter = await _budget_window(remaining=0, limit=100)
         router = _make_budget_router(
             thresholds={'cheap': 0.6, 'cheaper': 0.8},
             default_model_id='default',
-            budget_limiter=limiter,
+            budget=limiter,
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'cheaper'

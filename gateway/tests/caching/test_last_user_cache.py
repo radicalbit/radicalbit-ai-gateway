@@ -5,6 +5,7 @@ from freezegun import freeze_time
 import pytest
 
 from tests.common.db_mock import GROUP_UUID
+from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
@@ -119,6 +120,7 @@ async def test_exact_cache_hit_with_different_history(
 
         # First invocation => populate cache
         await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid='req-1',
             api_key_uuid='key-1',
             api_key_name='rb-key',
@@ -132,6 +134,7 @@ async def test_exact_cache_hit_with_different_history(
 
         # Second invocation with different history, same last user => should be a cache hit
         invoke_response_cached = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid='req-2',
             api_key_uuid='key-1',
             api_key_name='rb-key',

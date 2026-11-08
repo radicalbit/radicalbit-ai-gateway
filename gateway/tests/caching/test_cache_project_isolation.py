@@ -15,6 +15,7 @@ from tests.common.db_mock import (
     SAMPLE_PROJECT_UUID,
     TEST_PROJECT_UUID,
 )
+from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
@@ -82,6 +83,7 @@ def _build_route(gateway_cache: GatewayCache, project_uuid: str) -> GatewayRoute
 
 async def _invoke(route: GatewayRoute, request_uuid: str):
     return await route.invoke(
+        limits=request_limits(route),
         request_uuid=request_uuid,
         api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',

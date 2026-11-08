@@ -11,18 +11,15 @@ from openai.types.chat.chat_completion_chunk import (
 )
 
 from tests.common import db_mock
+from tests.common.limits import project_limit
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.limiting.limits import Demand, RouteLimits
 from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.utils.ai_gateway_types import PrepareAndValidateResult
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import ModelInvokerInternalError
-from radicalbit_ai_gateway.utils.request_context import (
-    get_current_credential_limiter,
-    get_current_project_budget_limiter,
-    set_current_credential_limiter,
-)
 
 
 def mock_request_uuid(request: Request):
@@ -34,9 +31,7 @@ class TestStreaming(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.mock_gateway = MagicMock(spec=GatewayRoute)
-        mock_rate_limiter = MagicMock()
-        mock_rate_limiter.check_and_count_request = AsyncMock()
-        cls.mock_gateway.request_rate_limiter = mock_rate_limiter
+        cls.mock_gateway.route_limits = RouteLimits()
         cls.mock_gateway.project_uuid = ''
         cls.mock_gateway.project_name = ''
         cls.mock_gateway.gateway_route_config = MagicMock()
@@ -221,9 +216,9 @@ class TestStreaming(unittest.TestCase):
         body = response.json()
         assert 'error' in body
 
-    def test_live_stream_body_sees_the_request_limiters(self):
+    def test_live_stream_body_counts_on_the_request_limits(self):
         """The handler returns before the stream body runs: the body still
-        needs the credential and project limiters to count its usage.
+        counts its usage on the request's limits, the project's included.
         """
         api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
         key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
@@ -232,10 +227,9 @@ class TestStreaming(unittest.TestCase):
             return_value=self._create_prepared_result()
         )
         self.mock_gateway.has_output_guardrails = MagicMock(return_value=False)
-        credential, project = AsyncMock(), AsyncMock()
         seen = {}
 
-        async def mock_invoke_stream(*args, **kwargs):
+        async def mock_invoke_stream(*args, limits, **kwargs):
             yield ChatCompletionChunk(
                 id='1',
                 choices=[
@@ -248,20 +242,13 @@ class TestStreaming(unittest.TestCase):
                 object='chat.completion.chunk',
             )
             # Where GatewayRoute.invoke_stream counts the usage.
-            seen['credential'] = get_current_credential_limiter()
-            seen['project'] = get_current_project_budget_limiter()
+            seen['project limits'] = limits.applies(Demand(cost_room=True))
 
         self.mock_gateway.invoke_stream = mock_invoke_stream
 
-        with (
-            patch(
-                'radicalbit_ai_gateway.auth.request_auth.set_current_credential_limiter',
-                side_effect=lambda _: set_current_credential_limiter(credential),
-            ),
-            patch(
-                'radicalbit_ai_gateway.server.load_project_budget_limiter',
-                return_value=project,
-            ),
+        with patch(
+            'radicalbit_ai_gateway.utils.endpoint_helpers.load_project_limits',
+            return_value=[project_limit(10)],
         ):
             response = self.client.post(
                 '/v1/chat/completions',
@@ -274,4 +261,4 @@ class TestStreaming(unittest.TestCase):
             )
 
         assert response.status_code == 200
-        assert seen == {'credential': credential, 'project': project}
+        assert seen == {'project limits': True}

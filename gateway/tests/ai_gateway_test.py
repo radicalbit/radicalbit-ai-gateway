@@ -1,6 +1,6 @@
 import datetime
 from decimal import Decimal
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 from freezegun import freeze_time
 from openai.types import CreateEmbeddingResponse
@@ -16,6 +16,7 @@ from tests.common.db_mock import (
     REQUEST_UUID,
     TEST_PROJECT_UUID,
 )
+from tests.common.limits import credential_limit, project_limit, request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
@@ -34,14 +35,18 @@ from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
+from radicalbit_ai_gateway.limiting.limits import (
+    Demand,
+    RequestLimits,
+    RouteLimits,
+    Usage,
+)
 from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback, FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.limiting import AudioDurationLimiting, BudgetLimiting
 from radicalbit_ai_gateway.models.model import Model
-from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
     PreprocessingPlugin,
@@ -54,10 +59,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     AudioDurationLimitExceeded,
     BudgetLimitExceededError,
     GatewayBadRequest,
-)
-from radicalbit_ai_gateway.utils.request_context import (
-    set_current_credential_limiter,
-    set_current_project_budget_limiter,
+    InputTokenLimitExceeded,
 )
 
 
@@ -100,6 +102,7 @@ async def test_gateway_invocation(mock_model_invoker_emit_event, fake_redis_clie
         response_json=mocked_response.model_dump_json(),
     )
     invoke_response = await ai_gateway.invoke(
+        limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',
@@ -161,6 +164,7 @@ async def test_wrong_model_id(mock_model_invoker_emit_event, fake_redis_client):
         match=r'openai must be the route name',
     ):
         invoke_response = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -250,6 +254,7 @@ async def test_model_invocation_with_redis_cache(
         assert await gateway_cache.get(cache_key) is None
 
         invoke_response = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -276,6 +281,7 @@ async def test_model_invocation_with_redis_cache(
         frozen_datetime.tick(60)
 
         invoke_response_cached = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -308,6 +314,7 @@ async def test_model_invocation_with_redis_cache(
         # Cache is expired
         assert await gateway_cache.get(cache_key) is None
         invoke_response_new = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -406,6 +413,7 @@ async def test_model_invocation_with_cachetools_cache(
         assert await gateway_cache.get(cache_key) is None
 
         invoke_response = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -430,6 +438,7 @@ async def test_model_invocation_with_cachetools_cache(
         frozen_datetime.tick(60)
 
         invoke_response_cached = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -461,6 +470,7 @@ async def test_model_invocation_with_cachetools_cache(
         assert await gateway_cache.get(cache_key) is None
 
         invoke_response_new = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -532,6 +542,7 @@ async def test_invoke_embeddings_success(mock_emit_event):
     )
 
     response = await ai_gateway.invoke_embeddings(
+        limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',
@@ -584,6 +595,7 @@ async def test_invoke_embeddings_wrong_route(
         match=r'wrong-route must be the route name',
     ):
         await ai_gateway.invoke_embeddings(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -643,6 +655,7 @@ async def test_invoke_embeddings_with_multiple_inputs(
     )
 
     response = await ai_gateway.invoke_embeddings(
+        limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',
@@ -728,6 +741,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
     assert await gateway_cache.get(cache_key) is None
 
     response = await ai_gateway.invoke_embeddings(
+        limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',
@@ -742,6 +756,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
     assert await gateway_cache.get(cache_key) is not None
 
     response_cached = await ai_gateway.invoke_embeddings(
+        limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',
@@ -761,7 +776,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.limiting.token_limiter.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.limiting.limits.emit_event', autospec=True)
 @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
@@ -784,8 +799,6 @@ async def test_invoke_embeddings_token_limit_exceeded(
         gateway_config, 'rb-gateway'
     )
 
-    token_limiter = route_cfg.get_token_limiter('2f1c6d4e-0000-4000-8000-0000000000aa')
-
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
@@ -793,13 +806,14 @@ async def test_invoke_embeddings_token_limit_exceeded(
         guardrail_engine=guardrail_engine,
         gateway_cache=None,
         cost_service=cost_service,
-        token_limiter=token_limiter,
+        route_limits=RouteLimits.from_config(route_cfg, str(TEST_PROJECT_UUID)),
     )
 
     long_text = 'hello world ' * 1000
 
     with pytest.raises(InputTokenLimitExceeded):
         await ai_gateway.invoke_embeddings(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -814,45 +828,59 @@ async def test_invoke_embeddings_token_limit_exceeded(
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
-@pook.activate
+SPENT = 0  # A budget of 0 blocks every request.
+
+
+@pytest.mark.parametrize(
+    ('route', 'credential', 'project', 'reported'),
+    [
+        (SPENT, None, None, '[BUDGET LIMIT]'),
+        # The credential's, then the project's, before the route's.
+        (SPENT, SPENT, None, '[CREDENTIAL BUDGET LIMIT]'),
+        (SPENT, None, SPENT, '[PROJECT BUDGET LIMIT]'),
+        (None, SPENT, SPENT, '[CREDENTIAL BUDGET LIMIT]'),
+        # A project budget blocks with no other limit configured.
+        (None, None, SPENT, '[PROJECT BUDGET LIMIT]'),
+    ],
+)
 @pytest.mark.asyncio
-async def test_invoke_embeddings_budget_limit_exceeded(
-    mock_model_invoker_emit_event,
-):
-    pook.enable_network()
+async def test_embedding_budget_limits(route, credential, project, reported):
     gateway_config = get_gateway_embedded_limiting()
     cost_service = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=gateway_config.guardrails or [],
-    )
-
     route_cfg, chat_models, embedding_models = resolve_route_models(
         gateway_config, 'rb-gateway'
     )
-    budget_limiter = route_cfg.get_budget_limiter(
-        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    route_cfg = route_cfg.model_copy(
+        update={
+            'token_limiting': None,
+            'budget_limiting': None
+            if route is None
+            else BudgetLimiting(max_budget=route, window_size='1 minute'),
+        }
     )
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
         chat_models=chat_models,
         embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
+        guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
-        budget_limiter=budget_limiter,
+        route_limits=RouteLimits.from_config(route_cfg, str(TEST_PROJECT_UUID)),
+        project_uuid=str(TEST_PROJECT_UUID),
     )
-
-    budget_limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Budget limit excedeed')
+    limits = request_limits(
+        ai_gateway,
+        [] if credential is None else [credential_limit('budget', credential)],
+        [] if project is None else [project_limit(project)],
     )
+    ai_gateway.embedding_invoker.embed = AsyncMock()
 
-    with pytest.raises(BudgetLimitExceededError):
+    with (
+        patch('radicalbit_ai_gateway.limiting.limits.emit_event'),
+        pytest.raises(BudgetLimitExceededError) as error,
+    ):
         await ai_gateway.invoke_embeddings(
+            limits=limits,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -862,202 +890,8 @@ async def test_invoke_embeddings_budget_limit_exceeded(
             group_name='test-group',
         )
 
-    assert len(pook.pending_mocks()) == 0
-
-    pook.disable_network()
-
-
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
-@pook.activate
-@pytest.mark.asyncio
-async def test_credential_limit_is_checked_before_route_limit(
-    mock_model_invoker_emit_event,
-):
-    """When both the credential's and the route's limit would block the same
-    request, the credential's is the one reported.
-    """
-    pook.enable_network()
-    gateway_config = get_gateway_embedded_limiting()
-    cost_service = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=gateway_config.guardrails or [],
-    )
-
-    route_cfg, chat_models, embedding_models = resolve_route_models(
-        gateway_config, 'rb-gateway'
-    )
-    budget_limiter = route_cfg.get_budget_limiter(
-        '2f1c6d4e-0000-4000-8000-0000000000aa'
-    )
-    ai_gateway = GatewayRoute(
-        gateway_route_config=route_cfg,
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
-        gateway_cache=None,
-        cost_service=cost_service,
-        budget_limiter=budget_limiter,
-    )
-    budget_limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Route budget limit exceeded')
-    )
-
-    credential_limiter = MagicMock()
-    credential_limiter.check_input_tokens = AsyncMock()
-    credential_limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Credential budget limit exceeded')
-    )
-    set_current_credential_limiter(credential_limiter)
-    try:
-        with pytest.raises(BudgetLimitExceededError, match='Credential budget'):
-            await ai_gateway.invoke_embeddings(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                api_key_name='rb-key',
-                route_name='rb-gateway',
-                input_texts=['hello world'],
-                group_uuid=str(GROUP_UUID),
-                group_name='test-group',
-            )
-    finally:
-        set_current_credential_limiter(None)
-
-    budget_limiter.check_budget.assert_not_awaited()
-    assert len(pook.pending_mocks()) == 0
-
-    pook.disable_network()
-
-
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
-@pook.activate
-@pytest.mark.asyncio
-async def test_project_budget_limit_is_checked_before_route_limit(
-    mock_model_invoker_emit_event,
-):
-    """When both the project's and the route's limit would block the same
-    request, the project's is the one reported.
-    """
-    pook.enable_network()
-    gateway_config = get_gateway_embedded_limiting()
-    cost_service = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=gateway_config.guardrails or [],
-    )
-
-    route_cfg, chat_models, embedding_models = resolve_route_models(
-        gateway_config, 'rb-gateway'
-    )
-    budget_limiter = route_cfg.get_budget_limiter(
-        '2f1c6d4e-0000-4000-8000-0000000000aa'
-    )
-    ai_gateway = GatewayRoute(
-        gateway_route_config=route_cfg,
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
-        gateway_cache=None,
-        cost_service=cost_service,
-        budget_limiter=budget_limiter,
-    )
-    budget_limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Route budget limit exceeded')
-    )
-
-    project_budget_limiter = MagicMock()
-    project_budget_limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
-    )
-    set_current_project_budget_limiter(project_budget_limiter)
-    try:
-        with pytest.raises(BudgetLimitExceededError, match='Project budget'):
-            await ai_gateway.invoke_embeddings(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                api_key_name='rb-key',
-                route_name='rb-gateway',
-                input_texts=['hello world'],
-                group_uuid=str(GROUP_UUID),
-                group_name='test-group',
-            )
-    finally:
-        set_current_project_budget_limiter(None)
-
-    budget_limiter.check_budget.assert_not_awaited()
-    assert len(pook.pending_mocks()) == 0
-
-    pook.disable_network()
-
-
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
-@pook.activate
-@pytest.mark.asyncio
-async def test_credential_limit_is_checked_before_project_limit(
-    mock_model_invoker_emit_event,
-):
-    """When both the credential's and the project's limit would block the
-    same request, the credential's is the one reported.
-    """
-    pook.enable_network()
-    gateway_config = get_gateway_embedded_limiting()
-    cost_service = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=gateway_config.guardrails or [],
-    )
-
-    route_cfg, chat_models, embedding_models = resolve_route_models(
-        gateway_config, 'rb-gateway'
-    )
-    ai_gateway = GatewayRoute(
-        gateway_route_config=route_cfg,
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
-        gateway_cache=None,
-        cost_service=cost_service,
-    )
-
-    credential_limiter = MagicMock()
-    credential_limiter.check_input_tokens = AsyncMock()
-    credential_limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Credential budget limit exceeded')
-    )
-    project_budget_limiter = MagicMock()
-    project_budget_limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
-    )
-    set_current_credential_limiter(credential_limiter)
-    set_current_project_budget_limiter(project_budget_limiter)
-    try:
-        with pytest.raises(BudgetLimitExceededError, match='Credential budget'):
-            await ai_gateway.invoke_embeddings(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                api_key_name='rb-key',
-                route_name='rb-gateway',
-                input_texts=['hello world'],
-                group_uuid=str(GROUP_UUID),
-                group_name='test-group',
-            )
-    finally:
-        set_current_credential_limiter(None)
-        set_current_project_budget_limiter(None)
-
-    project_budget_limiter.check_budget.assert_not_awaited()
-    assert len(pook.pending_mocks()) == 0
-
-    pook.disable_network()
+    assert error.value.log_message.startswith(reported)
+    ai_gateway.embedding_invoker.embed.assert_not_awaited()
 
 
 @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
@@ -1066,9 +900,9 @@ async def test_credential_limit_is_checked_before_project_limit(
 async def test_project_budget_limit_blocks_chat_with_no_other_limiters_configured(
     mock_model_invoker_emit_event, fake_redis_client
 ):
-    """Regression: _prepare_and_validate_request only calls
-    _validate_limiters when a route or credential limiter is configured —
-    a project-only budget limit must still be checked.
+    """Regression: the limits were once checked only when a route or
+    credential limit was configured — a project-only budget limit must still
+    be checked.
     """
     pook.enable_network()
     gateway_config = get_gateway_openai_with_guardrails()
@@ -1096,112 +930,40 @@ async def test_project_budget_limit_blocks_chat_with_no_other_limiters_configure
         cost_service=cost_service,
         project_uuid=str(TEST_PROJECT_UUID),
     )
-    assert ai_gateway.token_limiter is None
-    assert ai_gateway.budget_limiter is None
-    assert ai_gateway.request_rate_limiter is None
+    assert ai_gateway.route_limits == RouteLimits()
 
-    project_budget_limiter = MagicMock()
-    project_budget_limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
-    )
-    set_current_project_budget_limiter(project_budget_limiter)
-    try:
-        with pytest.raises(BudgetLimitExceededError, match='Project budget'):
-            await ai_gateway.invoke(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                api_key_name='rb-key',
-                messages=[HumanMessage(content='What is the capital of France?')],
-                route_name='rb-gateway',
-                tools=[],
-                tool_choice=None,
-                group_uuid=str(GROUP_UUID),
-                group_name='test-group',
-            )
-    finally:
-        set_current_project_budget_limiter(None)
+    with (
+        patch('radicalbit_ai_gateway.limiting.limits.emit_event') as emit_event,
+        pytest.raises(BudgetLimitExceededError, match='PROJECT BUDGET LIMIT'),
+    ):
+        await ai_gateway.invoke(
+            limits=request_limits(ai_gateway, project_limits=[project_limit(0)]),
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            api_key_name='rb-key',
+            messages=[HumanMessage(content='What is the capital of France?')],
+            route_name='rb-gateway',
+            tools=[],
+            tool_choice=None,
+            group_uuid=str(GROUP_UUID),
+            group_name='test-group',
+        )
 
     # The block event names the caller and the route actually called.
-    project_budget_limiter.check_budget.assert_awaited_once_with(
-        request_uuid=str(REQUEST_UUID),
-        api_key_uuid=str(API_KEY_UUID),
-        api_key_name='rb-key',
-        group_uuid=str(GROUP_UUID),
-        group_name='test-group',
-        route_name='rb-gateway',
+    [event] = [call.args[0] for call in emit_event.call_args_list]
+    assert (event.request_uuid, event.api_key_uuid, event.route_name) == (
+        str(REQUEST_UUID),
+        str(API_KEY_UUID),
+        'rb-gateway',
     )
     assert len(pook.pending_mocks()) == 0
 
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
-@pook.activate
-@pytest.mark.asyncio
-async def test_project_budget_limit_blocks_embeddings_with_no_other_limiters_configured(
-    mock_model_invoker_emit_event,
-):
-    """Regression: invoke_embeddings only calls _validate_embedding_limiters
-    when a route or credential limiter is configured — a project-only
-    budget limit must still be checked.
-    """
-    pook.enable_network()
-    gateway_config = get_gateway_openai_with_guardrails()
-    cost_service = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    guardrail_engine = GuardrailEngine(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=gateway_config.guardrails or [],
-    )
-
-    route_cfg, chat_models, embedding_models = resolve_route_models(
-        gateway_config, 'rb-gateway'
-    )
-
-    ai_gateway = GatewayRoute(
-        gateway_route_config=route_cfg,
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        guardrail_engine=guardrail_engine,
-        gateway_cache=None,
-        cost_service=cost_service,
-    )
-    assert ai_gateway.token_limiter is None
-    assert ai_gateway.budget_limiter is None
-
-    project_budget_limiter = MagicMock()
-    project_budget_limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
-    )
-    set_current_project_budget_limiter(project_budget_limiter)
-    try:
-        with pytest.raises(BudgetLimitExceededError, match='Project budget'):
-            await ai_gateway.invoke_embeddings(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                api_key_name='rb-key',
-                route_name='rb-gateway',
-                input_texts=['hello world'],
-                group_uuid=str(GROUP_UUID),
-                group_name='test-group',
-            )
-    finally:
-        set_current_project_budget_limiter(None)
-
-    # The block event names the caller and the route actually called.
-    project_budget_limiter.check_budget.assert_awaited_once_with(
-        request_uuid=str(REQUEST_UUID),
-        api_key_uuid=str(API_KEY_UUID),
-        api_key_name='rb-key',
-        group_uuid=str(GROUP_UUID),
-        group_name='test-group',
-        route_name='rb-gateway',
-    )
-    assert len(pook.pending_mocks()) == 0
-
-    pook.disable_network()
+def _spied_limits() -> RequestLimits:
+    """Return request limits that record what they are asked and let all pass."""
+    return create_autospec(RequestLimits, instance=True)
 
 
 def _make_transcription_route_config(
@@ -1267,7 +1029,7 @@ def test_transcription_invoker_only_receives_transcription_fallbacks():
 
 
 @pytest.mark.asyncio
-async def test_invoke_transcription_calls_duration_limiter():
+async def test_invoke_transcription_checks_its_cost_and_audio_seconds():
     cost_service = MagicMock(spec_set=CostService)
     whisper_model = Model(
         model_id='whisper-1',
@@ -1282,10 +1044,7 @@ async def test_invoke_transcription_calls_duration_limiter():
             max_duration_seconds=300, window_size='1 minute'
         ),
     )
-    duration_limiter = route_cfg.get_duration_limiter(
-        '2f1c6d4e-0000-4000-8000-0000000000aa'
-    )
-    duration_limiter.check_and_count_duration = AsyncMock()
+    limits = _spied_limits()
 
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -1295,13 +1054,13 @@ async def test_invoke_transcription_calls_duration_limiter():
         guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
-        duration_limiter=duration_limiter,
     )
 
     fake_result = MagicMock(usage=MagicMock(type='duration', seconds=3))
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     await ai_gateway.invoke_transcription(
+        limits=limits,
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         group_uuid=str(GROUP_UUID),
@@ -1313,15 +1072,9 @@ async def test_invoke_transcription_calls_duration_limiter():
         content_type='audio/wav',
     )
 
-    duration_limiter.check_and_count_duration.assert_awaited_once_with(
-        request_uuid=str(REQUEST_UUID),
-        api_key_uuid=str(API_KEY_UUID),
-        group_uuid=str(GROUP_UUID),
-        api_key_name='rb-key',
-        group_name='test-group',
-        audio_bytes=b'fake-audio',
-        project_uuid='',
-        project_name='',
+    # Not a WAV file: its length can't be read.
+    limits.check.assert_awaited_once_with(
+        Demand(cost_room=True, audio_seconds='unknown')
     )
 
 
@@ -1341,12 +1094,8 @@ async def test_invoke_transcription_duration_limit_exceeded_blocks_before_invoca
             max_duration_seconds=300, window_size='1 minute'
         ),
     )
-    duration_limiter = route_cfg.get_duration_limiter(
-        '2f1c6d4e-0000-4000-8000-0000000000aa'
-    )
-    duration_limiter.check_and_count_duration = AsyncMock(
-        side_effect=AudioDurationLimitExceeded('limit exceeded')
-    )
+    limits = _spied_limits()
+    limits.check.side_effect = AudioDurationLimitExceeded('limit exceeded')
 
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -1356,12 +1105,12 @@ async def test_invoke_transcription_duration_limit_exceeded_blocks_before_invoca
         guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
-        duration_limiter=duration_limiter,
     )
     ai_gateway.transcription_invoker.transcribe = AsyncMock()
 
     with pytest.raises(AudioDurationLimitExceeded):
         await ai_gateway.invoke_transcription(
+            limits=limits,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -1400,6 +1149,7 @@ async def test_invoke_transcription_success():
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     result = await ai_gateway.invoke_transcription(
+        limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         group_uuid=str(GROUP_UUID),
@@ -1458,9 +1208,7 @@ async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
         gateway_cache=gateway_cache,
         cost_service=cost_service,
     )
-    ai_gateway.budget_limiter = MagicMock(
-        check_budget=AsyncMock(), count_duration=AsyncMock()
-    )
+    limits = _spied_limits()
 
     fake_result = Transcription(
         text='Ciao, questo è un test.', usage={'type': 'duration', 'seconds': 9}
@@ -1468,6 +1216,7 @@ async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     kwargs = {
+        'limits': limits,
         'request_uuid': str(REQUEST_UUID),
         'api_key_uuid': str(API_KEY_UUID),
         'group_uuid': str(GROUP_UUID),
@@ -1482,14 +1231,14 @@ async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
     first_result = await ai_gateway.invoke_transcription(**kwargs)
     assert first_result == fake_result
     ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
-    ai_gateway.budget_limiter.check_budget.assert_awaited_once()
+    limits.check.assert_awaited_once()
 
     second_result = await ai_gateway.invoke_transcription(**kwargs)
     assert second_result == fake_result
     # Still called once each — the second call must be served from cache,
-    # never reaching the invoker or the budget limiter.
+    # never reaching the invoker or the limits.
     ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
-    ai_gateway.budget_limiter.check_budget.assert_awaited_once()
+    limits.check.assert_awaited_once()
 
 
 @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
@@ -1527,6 +1276,7 @@ async def test_invoke_transcription_cache_hit_verbose_json_roundtrips(
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     kwargs = {
+        'limits': request_limits(ai_gateway),
         'request_uuid': str(REQUEST_UUID),
         'api_key_uuid': str(API_KEY_UUID),
         'group_uuid': str(GROUP_UUID),
@@ -1578,6 +1328,7 @@ async def test_invoke_transcription_cache_miss_when_audio_bytes_differ(
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     common_kwargs = {
+        'limits': request_limits(ai_gateway),
         'request_uuid': str(REQUEST_UUID),
         'api_key_uuid': str(API_KEY_UUID),
         'group_uuid': str(GROUP_UUID),
@@ -1618,6 +1369,7 @@ async def test_invoke_transcription_passes_through_requested_response_format():
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     await ai_gateway.invoke_transcription(
+        limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         group_uuid=str(GROUP_UUID),
@@ -1640,10 +1392,8 @@ async def test_invoke_transcription_passes_through_requested_response_format():
 
 @pytest.mark.asyncio
 async def test_invoke_transcription_counts_budget_duration():
-    """usage.type == 'duration' (whisper-1): budget counted via the dedicated
-    count_duration (seconds + per-second price, both floats) — a separate
-    method from count_input/count_output, whose int*Decimal arithmetic stays
-    untouched for chat/embedding/token-based transcription billing.
+    """usage.type == 'duration' (whisper-1): the cost is the seconds at the
+    per-second price, both floats.
     """
     cost_service = MagicMock(spec_set=CostService)
     whisper_model = Model(
@@ -1653,13 +1403,7 @@ async def test_invoke_transcription_counts_budget_duration():
         input_cost_per_second=Decimal('0.0001'),
     )
     route_cfg = _make_transcription_route_config(max_budget=10.0, window_size=3600)
-    budget_limiter = route_cfg.get_budget_limiter(
-        '2f1c6d4e-0000-4000-8000-0000000000aa'
-    )
-    budget_limiter.check_budget = AsyncMock()
-    budget_limiter.count_duration = AsyncMock()
-    budget_limiter.count_input = AsyncMock()
-    budget_limiter.count_output = AsyncMock()
+    limits = _spied_limits()
 
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -1669,13 +1413,13 @@ async def test_invoke_transcription_counts_budget_duration():
         guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
-        budget_limiter=budget_limiter,
     )
 
     fake_result = MagicMock(usage=MagicMock(type='duration', seconds=3))
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     await ai_gateway.invoke_transcription(
+        limits=limits,
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         group_uuid=str(GROUP_UUID),
@@ -1687,29 +1431,16 @@ async def test_invoke_transcription_counts_budget_duration():
         content_type='audio/wav',
     )
 
-    budget_limiter.check_budget.assert_awaited_once()
-    budget_limiter.count_duration.assert_awaited_once_with(
-        seconds=3,
-        cost_per_second=0.0001,
-        identity=RequestIdentity(
-            request_uuid=str(REQUEST_UUID),
-            route_name='rb-gateway',
-            api_key_uuid=str(API_KEY_UUID),
-            api_key_name='rb-key',
-            group_uuid=str(GROUP_UUID),
-            group_name='test-group',
-        ),
-    )
-    budget_limiter.count_input.assert_not_awaited()
-    budget_limiter.count_output.assert_not_awaited()
+    limits.check.assert_awaited_once()
+    # 3 seconds at 0.0001 a second, in billionths of a dollar.
+    limits.count.assert_awaited_once_with(Usage(costs=(300_000,)))
 
 
 @pytest.mark.asyncio
 async def test_invoke_transcription_counts_budget_tokens():
-    """usage.type == 'tokens' (gpt-4o-transcribe family): audio and text
-    tokens both counted via count_input (two separate calls, one per price),
-    output tokens via count_output — mirrors _count_usage's gating on each
-    price being non-zero before counting.
+    """usage.type == 'tokens' (gpt-4o-transcribe family): audio, text and
+    output tokens each costed at their own price, a part counted only when
+    its price is non-zero.
     """
     cost_service = MagicMock(spec_set=CostService)
     gpt4o_model = Model(
@@ -1723,12 +1454,7 @@ async def test_invoke_transcription_counts_budget_tokens():
     route_cfg = _make_transcription_route_config(
         model_id='gpt4o-transcribe', max_budget=10.0, window_size=3600
     )
-    budget_limiter = route_cfg.get_budget_limiter(
-        '2f1c6d4e-0000-4000-8000-0000000000aa'
-    )
-    budget_limiter.check_budget = AsyncMock()
-    budget_limiter.count_input = AsyncMock()
-    budget_limiter.count_output = AsyncMock()
+    limits = _spied_limits()
 
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -1738,7 +1464,6 @@ async def test_invoke_transcription_counts_budget_tokens():
         guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
-        budget_limiter=budget_limiter,
     )
 
     fake_result = MagicMock(
@@ -1752,6 +1477,7 @@ async def test_invoke_transcription_counts_budget_tokens():
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
     await ai_gateway.invoke_transcription(
+        limits=limits,
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         group_uuid=str(GROUP_UUID),
@@ -1763,21 +1489,9 @@ async def test_invoke_transcription_counts_budget_tokens():
         content_type='audio/wav',
     )
 
-    budget_limiter.check_budget.assert_awaited_once()
-    count_input_calls = budget_limiter.count_input.call_args_list
-    assert len(count_input_calls) == 2
-    assert {
-        (c.kwargs['token_count'], c.kwargs['input_cost_per_token'])
-        for c in count_input_calls
-    } == {
-        (82, gpt4o_model.input_cost_per_audio_token),
-        (5, gpt4o_model.input_cost_per_token),
-    }
-    budget_limiter.count_output.assert_awaited_once_with(
-        token_count=38,
-        output_cost_per_token=gpt4o_model.output_cost_per_token,
-        identity=ANY,
-    )
+    limits.check.assert_awaited_once()
+    # Audio, text and output tokens, each at its own price.
+    limits.count.assert_awaited_once_with(Usage(costs=(492_000, 12_500, 380_000)))
 
 
 @pytest.mark.asyncio
@@ -1797,6 +1511,7 @@ async def test_invoke_transcription_no_models_configured_raises():
 
     with pytest.raises(GatewayBadRequest, match='no transcription models defined'):
         await ai_gateway.invoke_transcription(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -1823,12 +1538,7 @@ async def test_invoke_transcription_stream_relays_events_and_counts_usage_once()
     route_cfg = _make_transcription_route_config(
         model_id='gpt4o-transcribe', max_budget=10.0, window_size=3600
     )
-    budget_limiter = route_cfg.get_budget_limiter(
-        '2f1c6d4e-0000-4000-8000-0000000000aa'
-    )
-    budget_limiter.check_budget = AsyncMock()
-    budget_limiter.count_input = AsyncMock()
-    budget_limiter.count_output = AsyncMock()
+    limits = _spied_limits()
 
     ai_gateway = GatewayRoute(
         gateway_route_config=route_cfg,
@@ -1838,7 +1548,6 @@ async def test_invoke_transcription_stream_relays_events_and_counts_usage_once()
         guardrail_engine=MagicMock(spec_set=GuardrailEngine),
         gateway_cache=None,
         cost_service=cost_service,
-        budget_limiter=budget_limiter,
     )
 
     delta_event = MagicMock(usage=None)
@@ -1860,6 +1569,7 @@ async def test_invoke_transcription_stream_relays_events_and_counts_usage_once()
     events = [
         event
         async for event in ai_gateway.invoke_transcription_stream(
+            limits=limits,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -1873,23 +1583,10 @@ async def test_invoke_transcription_stream_relays_events_and_counts_usage_once()
     ]
 
     assert events == [delta_event, done_event]
-    budget_limiter.check_budget.assert_awaited_once()
+    limits.check.assert_awaited_once()
     # Usage is only available on the final event — budget counting must use
     # that one, not the (usage=None) delta in between.
-    count_input_calls = budget_limiter.count_input.call_args_list
-    assert len(count_input_calls) == 2
-    assert {
-        (c.kwargs['token_count'], c.kwargs['input_cost_per_token'])
-        for c in count_input_calls
-    } == {
-        (82, gpt4o_model.input_cost_per_audio_token),
-        (5, gpt4o_model.input_cost_per_token),
-    }
-    budget_limiter.count_output.assert_awaited_once_with(
-        token_count=38,
-        output_cost_per_token=gpt4o_model.output_cost_per_token,
-        identity=ANY,
-    )
+    limits.count.assert_awaited_once_with(Usage(costs=(492_000, 12_500, 380_000)))
 
 
 @pytest.mark.asyncio
@@ -1909,6 +1606,7 @@ async def test_invoke_transcription_stream_no_models_configured_raises():
 
     with pytest.raises(GatewayBadRequest, match='no transcription models defined'):
         async for _ in ai_gateway.invoke_transcription_stream(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -1977,6 +1675,7 @@ async def test_cache_hit_flag_set_on_request_state(
 
         # First invocation - should populate cache
         invoke_response = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -1996,6 +1695,7 @@ async def test_cache_hit_flag_set_on_request_state(
 
         # Second invocation - should hit cache and return header
         invoke_response_cached = await ai_gateway.invoke(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             api_key_name='rb-key',
@@ -2063,6 +1763,7 @@ async def test_preprocessing_runs_before_prompt_injection():
     try:
         register_preprocessing_plugin(Spy(), name='spy')
         result = await ai_gateway._prepare_and_validate_request(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),
@@ -2128,6 +1829,7 @@ async def test_preprocessing_includes_client_sent_system_prompt():
     try:
         register_preprocessing_plugin(Spy(), name='spy')
         result = await ai_gateway._prepare_and_validate_request(
+            limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
             group_uuid=str(GROUP_UUID),

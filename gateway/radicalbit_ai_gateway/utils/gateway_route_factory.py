@@ -19,6 +19,8 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.invocation.chat_model_invoker import build_chat_model
 from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
+from radicalbit_ai_gateway.limiting.windows import Category
 from radicalbit_ai_gateway.llm.embeddings import Embeddings
 from radicalbit_ai_gateway.llm.factory import init_embeddings
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -147,26 +149,7 @@ def build_gateway_routes_from_config(
         )
         cache_client = get_proper_cache(route_config, redis_client)
         gateway_cache = GatewayCache(cache_client) if cache_client is not None else None
-        token_limiter = (
-            route_config.get_token_limiter(project_uuid)
-            if route_config.token_limiting
-            else None
-        )
-        rate_limiter = (
-            route_config.get_rate_limiter(project_uuid)
-            if route_config.rate_limiting
-            else None
-        )
-        budget_limiter = (
-            route_config.get_budget_limiter(project_uuid)
-            if route_config.budget_limiting
-            else None
-        )
-        duration_limiter = (
-            route_config.get_duration_limiter(project_uuid)
-            if route_config.duration_limiting
-            else None
-        )
+        route_limits = RouteLimits.from_config(route_config, project_uuid)
         router = None
         if route_config.routing and gateway_config.routing:
             routing_config = gateway_config.routing_by_name.get(route_config.routing)
@@ -225,7 +208,7 @@ def build_gateway_routes_from_config(
                     router = DeterministicRouter(
                         config=routing_config,
                         models_by_id=route_models_by_id,
-                        budget_limiter=budget_limiter,
+                        budget=route_limits.window(Category.COST),
                     )
         routes[route_name] = GatewayRoute(
             gateway_route_config=route_config,
@@ -238,11 +221,8 @@ def build_gateway_routes_from_config(
             cost_service=cost_service,
             httpx_client=httpx_client,
             router=router,
-            token_limiter=token_limiter,
-            rate_limiter=rate_limiter,
-            budget_limiter=budget_limiter,
             project_uuid=project_uuid,
-            duration_limiter=duration_limiter,
+            route_limits=route_limits,
         )
 
     return routes

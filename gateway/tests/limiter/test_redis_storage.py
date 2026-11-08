@@ -175,3 +175,39 @@ class TestRedisStorage:
     ) -> None:
         await redis_storage.delete('nonexistent-key')  # must not raise
         assert await redis_storage.get('nonexistent-key') is None
+
+
+class TestRedisStorageBatches:
+    @pytest.mark.asyncio
+    async def test_get_many_reads_every_key_in_order(
+        self, redis_storage: RedisStorage
+    ) -> None:
+        window_start = time.time_ns() // 1_000_000_000
+        await redis_storage.increment('batch-get-a', 3, 60, window_start)
+        await redis_storage.increment('batch-get-b', 7, 60, window_start)
+
+        values = await redis_storage.get_many(
+            ['batch-get-b', 'batch-get-missing', 'batch-get-a']
+        )
+
+        assert values == [7, None, 3]
+
+    @pytest.mark.asyncio
+    async def test_increment_many_matches_one_increment_each(
+        self, redis_storage: RedisStorage
+    ) -> None:
+        window_start = time.time_ns() // 1_000_000_000
+        _, window_id = await redis_storage.increment('batch-inc-a', 2, 60, window_start)
+
+        results = await redis_storage.increment_many(
+            [
+                ('batch-inc-a', 5, 60, window_start),
+                ('batch-inc-b', 4, 3600, window_start),
+                ('batch-inc-a', 1, 60, window_start),
+            ]
+        )
+
+        assert [value for value, _ in results] == [7, 4, 8]
+        assert results[0][1] == results[2][1] == window_id
+        ttl = await redis_storage.get_ttl('batch-inc-b')
+        assert ttl > time.time() + 3000

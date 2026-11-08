@@ -7,8 +7,10 @@ import pytest
 from starlette.requests import Request
 
 from tests.common import db_mock
+from tests.common.limits import request_limits
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk, HumanMessage
 from radicalbit_ai_gateway.models.guardrails import GuardrailWhereType
 from radicalbit_ai_gateway.server import app, group_service, key_service
@@ -28,9 +30,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
         cls.mock_gateway = MagicMock(spec=GatewayRoute)
-        mock_rate_limiter = MagicMock()
-        mock_rate_limiter.check_and_count_request = AsyncMock()
-        cls.mock_gateway.request_rate_limiter = mock_rate_limiter
+        cls.mock_gateway.route_limits = RouteLimits()
         cls.mock_gateway.project_uuid = ''
         cls.mock_gateway.project_name = ''
 
@@ -113,6 +113,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         # Verify exception is raised
         with pytest.raises(GuardrailBadRequest) as context:
             await self.mock_gateway.prepare_stream(
+                limits=request_limits(self.mock_gateway),
                 request_uuid=str(db_mock.REQUEST_UUID),
                 api_key_uuid=str(api_key.uuid),
                 group_uuid=str(db_mock.GROUP_UUID),
@@ -143,6 +144,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await self.mock_gateway.prepare_stream(
+            limits=request_limits(self.mock_gateway),
             request_uuid=str(db_mock.REQUEST_UUID),
             api_key_uuid=str(api_key.uuid),
             group_uuid=str(db_mock.GROUP_UUID),
@@ -181,6 +183,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await self.mock_gateway.prepare_stream(
+            limits=request_limits(self.mock_gateway),
             request_uuid=str(db_mock.REQUEST_UUID),
             api_key_uuid=str(api_key.uuid),
             group_uuid=str(db_mock.GROUP_UUID),
@@ -217,12 +220,6 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         mock_invoker.stream = mock_stream
         self.mock_gateway.chat_invoker = mock_invoker
         self.mock_gateway.gateway_cache = None
-        self.mock_gateway.token_limiter = MagicMock()
-        self.mock_gateway.token_limiter.count_input = AsyncMock()
-        self.mock_gateway.token_limiter.count_output = AsyncMock()
-        self.mock_gateway.budget_limiter = MagicMock()
-        self.mock_gateway.budget_limiter.count_input = AsyncMock()
-        self.mock_gateway.budget_limiter.count_output = AsyncMock()
 
         # Bind real method
         self.mock_gateway.invoke_stream = GatewayRoute.invoke_stream.__get__(
@@ -233,6 +230,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         chunks = [
             chunk
             async for chunk in self.mock_gateway.invoke_stream(
+                limits=request_limits(self.mock_gateway),
                 prepared=prepared,
                 request_uuid=str(db_mock.REQUEST_UUID),
                 api_key_uuid=str(api_key.uuid),
@@ -269,6 +267,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         chunks = [
             chunk
             async for chunk in self.mock_gateway.invoke_stream(
+                limits=request_limits(self.mock_gateway),
                 prepared=prepared,
                 request_uuid=str(db_mock.REQUEST_UUID),
                 api_key_uuid=str(api_key.uuid),
@@ -305,6 +304,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         chunks = [
             chunk
             async for chunk in self.mock_gateway.invoke_stream(
+                limits=request_limits(self.mock_gateway),
                 prepared=prepared,
                 request_uuid=str(db_mock.REQUEST_UUID),
                 api_key_uuid=str(api_key.uuid),
@@ -344,13 +344,6 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         mock_invoker.stream = mock_stream
         self.mock_gateway.chat_invoker = mock_invoker
         self.mock_gateway.gateway_cache = None
-        self.mock_gateway.token_limiter = MagicMock()
-        self.mock_gateway.token_limiter.count_input = AsyncMock()
-        self.mock_gateway.token_limiter.count_output = AsyncMock()
-        self.mock_gateway.budget_limiter = MagicMock()
-        self.mock_gateway.budget_limiter.count_input = AsyncMock()
-        self.mock_gateway.budget_limiter.count_output = AsyncMock()
-        self.mock_gateway._count_usage = AsyncMock()
 
         # Bind real method
         self.mock_gateway.invoke_stream = GatewayRoute.invoke_stream.__get__(
@@ -361,6 +354,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         chunks = [
             chunk
             async for chunk in self.mock_gateway.invoke_stream(
+                limits=request_limits(self.mock_gateway),
                 prepared=prepared,
                 request_uuid=str(db_mock.REQUEST_UUID),
                 api_key_uuid=str(api_key.uuid),
@@ -726,6 +720,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
             [
                 chunk
                 async for chunk in self.mock_gateway.invoke_stream(
+                    limits=request_limits(self.mock_gateway),
                     prepared=prepared,
                     request_uuid=str(db_mock.REQUEST_UUID),
                     api_key_uuid=str(api_key.uuid),

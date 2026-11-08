@@ -38,7 +38,6 @@ from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
 )
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.limiter import InMemoryStorage
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
@@ -73,10 +72,6 @@ GATEWAY_EMIT = 'radicalbit_ai_gateway.ai_gateway.emit_event'
 GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
 REQUEST_EVENT_EMIT = (
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
-)
-CREDENTIAL_STORAGE = 'radicalbit_ai_gateway.limiting.credential_limiter.InMemoryStorage'
-PROJECT_STORAGE = (
-    'radicalbit_ai_gateway.limiting.project_budget_limiter.InMemoryStorage'
 )
 
 SYSTEM_PROMPT = 'You are the configured system prompt.'
@@ -214,8 +209,6 @@ class TestDecisionRoutingEndpoint(unittest.TestCase):
             patch(GUARDRAIL_EMIT),
             patch(BACKOFF_SLEEP, new=AsyncMock()),
             patch(ROUTER_SPAN, return_value=self.span),
-            patch(CREDENTIAL_STORAGE, return_value=InMemoryStorage()),
-            patch(PROJECT_STORAGE, return_value=InMemoryStorage()),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)

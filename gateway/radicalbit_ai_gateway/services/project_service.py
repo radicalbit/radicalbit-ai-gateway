@@ -14,11 +14,8 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
-from radicalbit_ai_gateway.limiting.project_budget_limiter import (
-    ProjectBudgetLimiter,
-    clear_project_budget_limit_counter,
-)
-from radicalbit_ai_gateway.limiting.window_progress import shared_limiter_storage
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiting.windows import project_window
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
@@ -439,17 +436,15 @@ class ProjectService:
             limits_by_project.setdefault(row.project_uuid, []).append(
                 ProjectBudgetLimitOut.from_project_budget_limit(row)
             )
-        consumption: dict[str, WindowProgressBarDTO] = {}
-        async with shared_limiter_storage() as storage:
-            for project_uuid, limits in limits_by_project.items():
-                limiter = ProjectBudgetLimiter(
-                    project_uuid=str(project_uuid),
-                    project_name='',
-                    limits=limits,
-                    storage=storage,
+        return await shared_limits.consumption(
+            {
+                str(limit.uuid): project_window(
+                    str(project_uuid), limit.algorithm, limit.window_size, limit.value
                 )
-                consumption.update(await limiter.consumption())
-        return consumption
+                for project_uuid, limits in limits_by_project.items()
+                for limit in limits
+            }
+        )
 
     def update_budget_limit_value(
         self,
@@ -498,10 +493,10 @@ class ProjectService:
         """Best-effort: the DB rows are already gone, that's what matters."""
         for limit in limits:
             try:
-                await clear_project_budget_limit_counter(
-                    project_uuid=str(project_uuid),
-                    algorithm=limit.algorithm,
-                    window_size=limit.window_size,
+                await shared_limits.clear(
+                    project_window(
+                        str(project_uuid), limit.algorithm, limit.window_size
+                    )
                 )
             except Exception:
                 logger.exception(

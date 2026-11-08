@@ -1,5 +1,7 @@
 import pytest
 
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
+from radicalbit_ai_gateway.limiting.windows import Category
 from radicalbit_ai_gateway.models.caching import CacheConfig
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 
@@ -261,10 +263,10 @@ def test_transcription_route_with_duration_limiting_valid_config():
     gateway_config = GatewayConfig.model_validate(raw)
     route = gateway_config.routes['r']
     assert route.duration_limiting.max_duration_seconds == 300
-    duration_limiter = route.get_duration_limiter(
-        '2f1c6d4e-0000-4000-8000-0000000000aa'
+    route_limits = RouteLimits.from_config(
+        route, '2f1c6d4e-0000-4000-8000-0000000000aa'
     )
-    assert duration_limiter.limiter is not None
+    assert route_limits.window(Category.AUDIO_SECONDS).config.limit == 300
 
 
 def test_duration_limiting_rejected_without_transcription_models():

@@ -13,6 +13,8 @@ from tests.common.db_integration import DatabaseIntegration
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiting.windows import project_window
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
@@ -802,8 +804,9 @@ class TestBudgetLimitRedisClear:
         project_budget_limit_dao.get_by_uuid = MagicMock(return_value=limit)
         project_budget_limit_dao.delete_by_uuid = MagicMock(return_value=1)
 
-        with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
+        with patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(),
         ) as mock_clear:
             res = await service.delete_budget_limit_from_project(
@@ -812,9 +815,7 @@ class TestBudgetLimitRedisClear:
 
         project_budget_limit_dao.delete_by_uuid.assert_called_once_with(limit_uuid)
         mock_clear.assert_awaited_once_with(
-            project_uuid=str(project_uuid),
-            algorithm=limit.algorithm,
-            window_size=limit.window_size,
+            project_window(str(project_uuid), limit.algorithm, limit.window_size)
         )
         assert res.uuid == limit_uuid
 
@@ -834,8 +835,9 @@ class TestBudgetLimitRedisClear:
         project_budget_limit_dao.get_by_uuid = MagicMock(return_value=limit)
         project_budget_limit_dao.delete_by_uuid = MagicMock(return_value=1)
 
-        with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
+        with patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(side_effect=ConnectionError('redis unreachable')),
         ):
             res = await service.delete_budget_limit_from_project(
@@ -868,8 +870,9 @@ class TestBudgetLimitRedisClear:
         project_budget_limit_dao.get_by_project_uuid = MagicMock(return_value=limits)
         project_budget_limit_dao.delete_by_project_uuid = MagicMock(return_value=2)
 
-        with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
+        with patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(),
         ) as mock_clear:
             res = await service.delete_project(project_uuid)
@@ -879,14 +882,14 @@ class TestBudgetLimitRedisClear:
         )
         assert mock_clear.await_count == 2
         mock_clear.assert_any_await(
-            project_uuid=str(project_uuid),
-            algorithm=limits[0].algorithm,
-            window_size=limits[0].window_size,
+            project_window(
+                str(project_uuid), limits[0].algorithm, limits[0].window_size
+            )
         )
         mock_clear.assert_any_await(
-            project_uuid=str(project_uuid),
-            algorithm=limits[1].algorithm,
-            window_size=limits[1].window_size,
+            project_window(
+                str(project_uuid), limits[1].algorithm, limits[1].window_size
+            )
         )
         assert res.uuid == project_uuid
 
@@ -904,8 +907,9 @@ class TestBudgetLimitRedisClear:
         project_dao.soft_delete = MagicMock(return_value=1)
         project_budget_limit_dao.get_by_project_uuid = MagicMock(return_value=[])
 
-        with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
+        with patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(),
         ) as mock_clear:
             await service.delete_project(project_uuid)
@@ -933,8 +937,9 @@ class TestBudgetLimitRedisClear:
         project_budget_limit_dao.get_by_project_uuid = MagicMock(return_value=limits)
         project_budget_limit_dao.delete_by_project_uuid = MagicMock(return_value=1)
 
-        with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
+        with patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(side_effect=ConnectionError('redis unreachable')),
         ):
             res = await service.delete_project(project_uuid)

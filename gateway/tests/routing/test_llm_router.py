@@ -15,8 +15,6 @@ from radicalbit_ai_gateway.routing.llm_router import (
     build_system_prompt,
 )
 
-RECORD_ROUTING_SPEND = 'radicalbit_ai_gateway.routing.llm_router.record_routing_spend'
-
 # option_1 is code_model, option_2 general_model, in output_mapping order.
 CODE = 'option_1'
 GENERAL = 'option_2'
@@ -234,8 +232,8 @@ class TestLLMRouter:
 
     async def test_records_router_spend(self):
         router = _build_router(_structured_model({CODE: 0.9, GENERAL: 0.1}))
-        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
-            await router.select_model([HumanMessage(content='fix this bug')])
+        record = AsyncMock()
+        await router.select_model([HumanMessage(content='fix this bug')], record)
         record.assert_awaited_once()
         model, input_tokens, _latency_ms = record.await_args.args
         assert model.model_id == 'router_model'
@@ -248,31 +246,33 @@ class TestLLMRouter:
             _structured_model(side_effect=RuntimeError('boom')),
             fallback=_structured_model({CODE: 0.9, GENERAL: 0.1}),
         )
-        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
-            await router.select_model([HumanMessage(content='fix this bug')])
+        record = AsyncMock()
+        await router.select_model([HumanMessage(content='fix this bug')], record)
         record.assert_awaited_once()
         assert record.await_args.args[0].model_id == 'router_backup'
         assert record.await_args.kwargs['target_model_id'] == 'router_model'
 
     async def test_records_spend_even_below_threshold(self):
         router = _build_router(_structured_model({CODE: 0.1, GENERAL: 0.1}))
-        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
-            result = await router.select_model([HumanMessage(content='cook a pie')])
+        record = AsyncMock()
+        result = await router.select_model([HumanMessage(content='cook a pie')], record)
         assert result.model_id == 'default_model'
         record.assert_awaited_once()
 
     async def test_records_spend_for_an_unparsed_response(self):
         router = _build_router(_structured_model(None))
-        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
-            await router.select_model([HumanMessage(content='fix this bug')])
+        record = AsyncMock()
+        await router.select_model([HumanMessage(content='fix this bug')], record)
         record.assert_awaited_once()
 
     async def test_no_spend_without_token_usage(self):
         structured = _structured_model({CODE: 0.9, GENERAL: 0.1})
         structured.ainvoke.return_value['raw'] = AIMessage(content='')
         router = _build_router(structured)
-        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
-            result = await router.select_model([HumanMessage(content='fix this bug')])
+        record = AsyncMock()
+        result = await router.select_model(
+            [HumanMessage(content='fix this bug')], record
+        )
         assert result.model_id == 'code_model'
         record.assert_not_awaited()
 
@@ -284,8 +284,8 @@ class TestLLMRouter:
 
     async def test_no_spend_when_router_call_fails(self):
         router = _build_router(_structured_model(side_effect=RuntimeError('boom')))
-        with patch(RECORD_ROUTING_SPEND, new_callable=AsyncMock) as record:
-            await router.select_model([HumanMessage(content='fix this bug')])
+        record = AsyncMock()
+        await router.select_model([HumanMessage(content='fix this bug')], record)
         record.assert_not_awaited()
 
     async def test_model_without_structured_output_goes_to_the_fallback(self):

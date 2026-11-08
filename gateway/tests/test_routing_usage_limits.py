@@ -1,12 +1,18 @@
 """A routing call is spend: it is costed and consumes the caller's limits (AG-1092)."""
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pook
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.limits import (
+    consumed,
+    credential_limit,
+    project_limit,
+    request_limits,
+)
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
@@ -15,19 +21,21 @@ from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
+from radicalbit_ai_gateway.limiting.limits import RequestLimits
+from radicalbit_ai_gateway.limiting.windows import (
+    Category,
+    credential_window,
+    project_window,
+)
 from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.event_payload import InputTokenProcessedPayload
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.utils.exceptions import InputTokenLimitExceeded
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_gateway_routes_from_config,
     initialize_async_routers,
-)
-from radicalbit_ai_gateway.utils.request_context import (
-    set_current_credential_limiter,
-    set_current_project_budget_limiter,
 )
 
 PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000bb'
@@ -35,7 +43,7 @@ ROUTE = 'routed'
 EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings'
 CHAT_URL = 'https://api.openai.com/v1/chat/completions'
 MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.model_invoker.emit_event'
-TOKEN_LIMITER_EMIT = 'radicalbit_ai_gateway.limiting.token_limiter.emit_event'
+LIMITS_EMIT = 'radicalbit_ai_gateway.limiting.limits.emit_event'
 
 QUESTION = 'What is the capital of France?'
 # cl100k_base, the text-embedding-3-small tokenizer: one token per word, plus '?'.
@@ -129,17 +137,8 @@ def _mock_providers():
     return embeddings
 
 
-def _limiter() -> AsyncMock:
-    # No *_config: the route checks are skipped, only counting is observed.
-    return AsyncMock(input_config=None, output_config=None, config=None)
-
-
-async def _route(config: GatewayConfig, **limiters) -> GatewayRoute:
-    """Build the route as the server does, then compute its centroids.
-
-    ``limiters`` (``token_limiter``, ``budget_limiter``) replace the route's
-    own, before the centroids are computed.
-    """
+async def _route(config: GatewayConfig) -> GatewayRoute:
+    """Build the route as the server does, then compute its centroids."""
     routes = build_gateway_routes_from_config(
         gateway_config=config,
         guardrail_engine=GuardrailEngine(
@@ -159,14 +158,13 @@ async def _route(config: GatewayConfig, **limiters) -> GatewayRoute:
     route = routes[ROUTE]
     route.project_uuid = PROJECT_UUID
     route.project_name = 'test-project'
-    for name, limiter in limiters.items():
-        setattr(route, name, limiter)
     await initialize_async_routers(routes)
     return route
 
 
-def _request() -> dict:
+def _request(route: GatewayRoute, limits: RequestLimits | None = None) -> dict:
     return {
+        'limits': limits or request_limits(route),
         'request_uuid': str(REQUEST_UUID),
         'api_key_uuid': str(API_KEY_UUID),
         'api_key_name': 'rb-key',
@@ -189,7 +187,7 @@ async def test_semantic_routing_embedding_emits_a_routing_cost_event():
     _mock_providers()
     with patch(MODEL_INVOKER_EMIT) as emit:
         route = await _route(_config())
-        await route.invoke(**_request())
+        await route.invoke(**_request(route))
 
     routing_inputs = [
         e
@@ -213,7 +211,7 @@ async def test_a_streamed_request_is_charged_for_routing_too():
     _mock_providers()
     with patch(MODEL_INVOKER_EMIT) as emit:
         route = await _route(_config())
-        await route.prepare_stream(**_request())
+        await route.prepare_stream(**_request(route))
 
     assert [
         e.value
@@ -222,67 +220,65 @@ async def test_a_streamed_request_is_charged_for_routing_too():
     ] == [QUESTION_TOKENS]
 
 
-@pytest.fixture
-def limiters():
-    route_tokens, route_budget = _limiter(), _limiter()
-    credential, project = _limiter(), _limiter()
-    set_current_credential_limiter(credential)
-    set_current_project_budget_limiter(project)
-    yield route_tokens, route_budget, credential, project
-    set_current_credential_limiter(None)
-    set_current_project_budget_limiter(None)
+# Limits well above what one request uses: they only count here.
+ROUTE_LIMITS = {
+    'token_limiting': {'input': {'window_size': '1 hour', 'max_tokens': 1000}},
+    'budget_limiting': {'window_size': '1 hour', 'max_budget': 10},
+}
+CREDENTIAL_LIMITS = [
+    credential_limit('token_input', 1000, '1 hour'),
+    credential_limit('budget', 10, '1 hour'),
+]
+PROJECT_LIMITS = [project_limit(10, '1 hour')]
+ROUTING_COST = int(QUESTION_TOKENS * EMBEDDING_INPUT_PRICE * 1_000_000_000)
 
 
-async def _limited_route(limiters) -> GatewayRoute:
-    route_tokens, route_budget, _, _ = limiters
-    return await _route(
-        _config(), token_limiter=route_tokens, budget_limiter=route_budget
-    )
+def _limited(route: GatewayRoute) -> RequestLimits:
+    return request_limits(route, CREDENTIAL_LIMITS, PROJECT_LIMITS)
+
+
+async def _consumption(route: GatewayRoute) -> list[int]:
+    """Return the route's, the credential's and the project's counters."""
+    credential = str(API_KEY_UUID)
+    return [
+        await consumed(route.route_limits.window(Category.INPUT_TOKENS)),
+        await consumed(route.route_limits.window(Category.COST)),
+        await consumed(credential_window(credential, 'token_input', *HOUR)),
+        await consumed(credential_window(credential, 'budget', *HOUR)),
+        await consumed(project_window(PROJECT_UUID, *HOUR)),
+    ]
+
+
+HOUR = ('FIXED_WINDOW', '1 hour')
 
 
 @pook.activate
 @pytest.mark.asyncio
-async def test_semantic_routing_embedding_consumes_route_credential_and_project_limits(
-    limiters,
-):
-    route_tokens, route_budget, credential, project = limiters
+async def test_semantic_routing_embedding_consumes_route_credential_and_project_limits():
     _mock_providers()
     with patch(MODEL_INVOKER_EMIT):
-        route = await _limited_route(limiters)
-        await route.invoke(**_request())
+        route = await _route(_config(**ROUTE_LIMITS))
+        await route.invoke(**_request(route, _limited(route)))
 
-    route_tokens.count_input.assert_any_await(
-        prompt_tokens=QUESTION_TOKENS, identity=IDENTITY
-    )
-    route_budget.count_input.assert_any_await(
-        token_count=QUESTION_TOKENS,
-        input_cost_per_token=EMBEDDING_INPUT_PRICE,
-        identity=IDENTITY,
-    )
-    credential.count_input_tokens.assert_any_await(QUESTION_TOKENS, IDENTITY)
-    credential.count_budget_input.assert_any_await(
-        token_count=QUESTION_TOKENS,
-        input_cost_per_token=EMBEDDING_INPUT_PRICE,
-        identity=IDENTITY,
-    )
-    project.count_input.assert_any_await(
-        token_count=QUESTION_TOKENS,
-        input_cost_per_token=EMBEDDING_INPUT_PRICE,
-        identity=IDENTITY,
-    )
+    assert await _consumption(route) == [
+        QUESTION_TOKENS,
+        ROUTING_COST,
+        QUESTION_TOKENS,
+        ROUTING_COST,
+        ROUTING_COST,
+    ]
 
 
 @pook.activate
 @pytest.mark.asyncio
-async def test_centroids_at_startup_emit_no_cost_event_and_count_nothing(limiters):
+async def test_centroids_at_startup_emit_no_cost_event_and_count_nothing():
     mock = _mock_providers()
     with patch(MODEL_INVOKER_EMIT) as emit:
-        await _limited_route(limiters)
+        route = await _route(_config(**ROUTE_LIMITS))
 
     assert mock.calls == 2  # one centroid per output_mapping entry
     emit.assert_not_called()
-    for limiter in limiters:
-        assert not [c for c in limiter.mock_calls if c[0].startswith('count')]
+    assert await _consumption(route) == [0, 0, 0, 0, 0]
 
 
 # The limit check runs before routing, so routing spend is charged to the
@@ -297,24 +293,27 @@ INPUT_LIMIT = {
 @pytest.mark.asyncio
 async def test_semantic_routing_spend_is_charged_to_the_next_request():
     _mock_providers()
-    with patch(MODEL_INVOKER_EMIT), patch(TOKEN_LIMITER_EMIT):
+    with patch(MODEL_INVOKER_EMIT), patch(LIMITS_EMIT):
         route = await _route(_config(token_limiting=INPUT_LIMIT))
 
-        await route.invoke(**_request())
+        await route.invoke(**_request(route))
         with pytest.raises(InputTokenLimitExceeded):
-            await route.invoke(**_request())
+            await route.invoke(**_request(route))
 
 
 @pook.activate
 @pytest.mark.asyncio
-async def test_a_failing_routing_spend_count_does_not_fail_the_request(limiters):
-    _, _, credential, _ = limiters
-    credential.count_input_tokens.side_effect = RuntimeError('limiter is down')
+async def test_a_failing_routing_spend_count_does_not_fail_the_request():
     _mock_providers()
-    with patch(MODEL_INVOKER_EMIT):
-        route = await _limited_route(limiters)
-        response = await route.invoke(**_request())
+    with (
+        patch(MODEL_INVOKER_EMIT),
+        patch.object(
+            RequestLimits, 'count', side_effect=RuntimeError('limits are down')
+        ) as count,
+    ):
+        route = await _route(_config(**ROUTE_LIMITS))
+        response = await route.invoke(**_request(route, _limited(route)))
 
     # Routing never fails a request: it is still served.
-    credential.count_input_tokens.assert_any_await(QUESTION_TOKENS, IDENTITY)
+    count.assert_awaited_once()
     assert response.content.choices[0].message.content == 'Paris'

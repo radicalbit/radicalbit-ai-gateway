@@ -5,9 +5,7 @@ from traceloop.sdk.decorators import workflow
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
-from radicalbit_ai_gateway.limiting.project_budget_limiter import (
-    load_project_budget_limiter,
-)
+from radicalbit_ai_gateway.limiting.limits import ADMISSION
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.models.decision_request import DecisionRequest
 from radicalbit_ai_gateway.services.group_service import GroupService
@@ -17,15 +15,14 @@ from radicalbit_ai_gateway.utils.dependencies import (
 )
 from radicalbit_ai_gateway.utils.endpoint_helpers import (
     otel_metrics_decorator,
+    resolve_request_limits,
     set_api_key_uuid,
     set_early_project_trace_attributes,
 )
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest, InvalidApiKey
 from radicalbit_ai_gateway.utils.request_context import (
-    get_current_credential_limiter,
     get_current_request_tags,
     reset_route_context,
-    set_current_project_budget_limiter,
 )
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
@@ -108,40 +105,17 @@ class DecisionRoute:
 
             ctx.project_uuid = route.project_uuid
             ctx.project_name = route.project_name
-            set_current_project_budget_limiter(
-                load_project_budget_limiter(
-                    route.project_uuid, route.project_name, project_budget_limit_dao
-                )
+            request_limits = await resolve_request_limits(
+                route, key_details, request_uuid, project_budget_limit_dao
             )
-
-            # Credential limit first: decides which error is reported when
-            # both would block.
-            credential_limiter = get_current_credential_limiter()
-            if credential_limiter:
+            # Request limits first, before anything is processed or spent.
+            if request_limits.applies(ADMISSION):
                 set_operation_category(OperationCategory.LIMITING)
-                await credential_limiter.check_and_count_request(
-                    request_uuid=request_uuid,
-                    group_uuid=key_details.group_uuid,
-                    group_name=key_details.group_name,
-                    route_name=route_name,
-                    project_uuid=route.project_uuid,
-                    project_name=route.project_name,
-                )
-
-            if route.request_rate_limiter:
-                set_operation_category(OperationCategory.LIMITING)
-                await route.request_rate_limiter.check_and_count_request(
-                    request_uuid=request_uuid,
-                    api_key_uuid=key_details.api_key_uuid,
-                    group_uuid=key_details.group_uuid,
-                    api_key_name=key_details.api_key_name,
-                    group_name=key_details.group_name,
-                    project_uuid=route.project_uuid,
-                    project_name=route.project_name,
-                )
+                await request_limits.check(ADMISSION)
 
             set_operation_category(OperationCategory.ENDPOINT)
             result = await route.invoke_decision(
+                limits=request_limits,
                 request_uuid=request_uuid,
                 api_key_uuid=key_details.api_key_uuid,
                 api_key_name=key_details.api_key_name,

@@ -10,15 +10,12 @@ from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
-from radicalbit_ai_gateway.limiting.credential_limiter import (
-    CredentialLimiter,
-    clear_limit_counter,
-)
+from radicalbit_ai_gateway.limiting.limits import shared_limits
 from radicalbit_ai_gateway.limiting.route_limit_consistency import (
     LimitMax,
     route_limit_warnings,
 )
-from radicalbit_ai_gateway.limiting.window_progress import shared_limiter_storage
+from radicalbit_ai_gateway.limiting.windows import credential_window
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     KeyCreateIn,
@@ -473,11 +470,13 @@ class KeyService:
         """Best-effort: the DB rows are already gone, that's what matters."""
         for limit in limits:
             try:
-                await clear_limit_counter(
-                    credential_uuid=str(limit.key_uuid),
-                    category=limit.category,
-                    algorithm=limit.algorithm,
-                    window_size=limit.window_size,
+                await shared_limits.clear(
+                    credential_window(
+                        str(limit.key_uuid),
+                        limit.category,
+                        limit.algorithm,
+                        limit.window_size,
+                    )
                 )
             except Exception:
                 logger.exception(
@@ -606,17 +605,19 @@ class KeyService:
             limits_by_key.setdefault(row.key_uuid, []).append(
                 CredentialLimitOut.from_key_limit(row)
             )
-        consumption: dict[str, WindowProgressBarDTO] = {}
-        async with shared_limiter_storage() as storage:
-            for key_uuid, limits in limits_by_key.items():
-                limiter = CredentialLimiter(
-                    credential_uuid=str(key_uuid),
-                    credential_name='',
-                    limits=limits,
-                    storage=storage,
+        return await shared_limits.consumption(
+            {
+                str(limit.uuid): credential_window(
+                    str(key_uuid),
+                    limit.category.value,
+                    limit.algorithm,
+                    limit.window_size,
+                    limit.value,
                 )
-                consumption.update(await limiter.consumption())
-        return consumption
+                for key_uuid, limits in limits_by_key.items()
+                for limit in limits
+            }
+        )
 
     def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:
         key = self.key_dao.get_by_uuid(key_uuid)

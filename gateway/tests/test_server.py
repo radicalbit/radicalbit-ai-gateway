@@ -1,7 +1,7 @@
 import datetime
 import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from fastapi.encoders import jsonable_encoder
 from fastapi.testclient import TestClient
@@ -30,6 +30,7 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.event_dto import WindowStatus
 from radicalbit_ai_gateway.prompt_manager import PromptManager
@@ -72,19 +73,15 @@ class TestServer(unittest.TestCase):
         cls.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
         cls.hashed_api_key = db_mock.HASHED_KEY
         cls.emit_event_patcher = patch(
-            'radicalbit_ai_gateway.limiting.rate_limiter.emit_event', autospec=True
+            'radicalbit_ai_gateway.limiting.limits.emit_event', autospec=True
         )
         cls.emit_event_patcher.start()
 
     @staticmethod
     def _create_mock_gateway():
-        """Create a properly configured mock GatewayRoute with request_rate_limiter."""
+        """Create a properly configured mock GatewayRoute without limits."""
         mock_gateway = MagicMock(spec=GatewayRoute)
-        mock_rate_limiter = MagicMock()
-        mock_rate_limiter.check_request = AsyncMock()
-        mock_rate_limiter.count_request = AsyncMock()
-        mock_rate_limiter.check_and_count_request = AsyncMock()
-        mock_gateway.request_rate_limiter = mock_rate_limiter
+        mock_gateway.route_limits = RouteLimits()
         mock_gateway.gateway_route_config = MagicMock()
         mock_gateway.gateway_route_config.route_name = 'rb-gateway'
         mock_gateway.project_uuid = ''
@@ -425,6 +422,7 @@ class TestServer(unittest.TestCase):
         assert response.status_code == 200
         assert response.json() == jsonable_encoder(mock_embedding, exclude_none=True)
         self.gateways_mock['rb-gateway'].invoke_embeddings.assert_called_once_with(
+            limits=ANY,
             route_name='rb-gateway',
             input_texts=['Hello world'],
             request_uuid=str(db_mock.REQUEST_UUID),
@@ -487,6 +485,7 @@ class TestServer(unittest.TestCase):
         assert response.status_code == 200
         assert response.json() == mock_result.model_dump()
         self.gateways_mock['rb-gateway'].invoke_transcription.assert_awaited_once_with(
+            limits=ANY,
             request_uuid=str(db_mock.REQUEST_UUID),
             api_key_uuid=str(api_key.uuid),
             api_key_name=api_key.name,
@@ -529,6 +528,7 @@ class TestServer(unittest.TestCase):
         assert response.status_code == 200
         assert response.json() == mock_result.model_dump()
         self.gateways_mock['rb-gateway'].invoke_transcription.assert_awaited_once_with(
+            limits=ANY,
             request_uuid=str(db_mock.REQUEST_UUID),
             api_key_uuid=str(api_key.uuid),
             api_key_name=api_key.name,

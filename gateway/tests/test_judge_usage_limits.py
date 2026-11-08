@@ -7,6 +7,12 @@ import pook
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.limits import (
+    consumed,
+    credential_limit,
+    project_limit,
+    request_limits,
+)
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
@@ -16,17 +22,18 @@ from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.limiting.token_limiter import InputTokenLimitExceeded
+from radicalbit_ai_gateway.limiting.limits import RequestLimits, RouteLimits
+from radicalbit_ai_gateway.limiting.windows import (
+    Category,
+    credential_window,
+    project_window,
+)
 from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.judge_result import JudgeResult
-from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.request_context import (
-    set_current_credential_limiter,
-    set_current_project_budget_limiter,
-)
+from radicalbit_ai_gateway.utils.exceptions import InputTokenLimitExceeded
 
 PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
 ROUTE = 'judged'
@@ -37,17 +44,6 @@ JUDGE_INPUT_PRICE = Decimal('0.00001')
 JUDGE_OUTPUT_PRICE = Decimal('0.00002')
 EMBEDDING_TOKENS = 2
 EMBEDDING_PRICE = Decimal('0.000003')
-
-IDENTITY = RequestIdentity(
-    request_uuid=str(REQUEST_UUID),
-    route_name=ROUTE,
-    api_key_uuid=str(API_KEY_UUID),
-    api_key_name='rb-key',
-    group_uuid=str(GROUP_UUID),
-    group_name='test-group',
-    project_uuid=PROJECT_UUID,
-    project_name='test-project',
-)
 
 
 def _config(where: str, behavior: str = 'block', **route) -> GatewayConfig:
@@ -99,11 +95,6 @@ def _config(where: str, behavior: str = 'block', **route) -> GatewayConfig:
     )
 
 
-def _limiter() -> AsyncMock:
-    # No *_config: the route checks are skipped, only counting is observed.
-    return AsyncMock(input_config=None, output_config=None, config=None)
-
-
 def _judge_llm(triggered: bool = False) -> MagicMock:
     """Stands in for the judge chat model: answers ``triggered`` with usage."""
     answer = {
@@ -123,28 +114,7 @@ def _judge_llm(triggered: bool = False) -> MagicMock:
     return llm
 
 
-@pytest.fixture
-def limiters():
-    route_tokens, route_budget = _limiter(), _limiter()
-    credential, project = _limiter(), _limiter()
-    set_current_credential_limiter(credential)
-    set_current_project_budget_limiter(project)
-    with (
-        patch(
-            'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
-            return_value=_judge_llm(),
-        ),
-        patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event'),
-        patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event'),
-    ):
-        yield route_tokens, route_budget, credential, project
-    set_current_credential_limiter(None)
-    set_current_project_budget_limiter(None)
-
-
-def _gateway(
-    where: str, route_tokens, route_budget, behavior: str = 'block'
-) -> GatewayRoute:
+def _gateway(where: str, behavior: str = 'block') -> GatewayRoute:
     config = _config(where, behavior)
     cost_service = MagicMock(spec_set=CostService)
     route_cfg, chat_models, embedding_models = resolve_route_models(config, ROUTE)
@@ -161,8 +131,6 @@ def _gateway(
         ),
         gateway_cache=None,
         cost_service=cost_service,
-        token_limiter=route_tokens,
-        budget_limiter=route_budget,
         project_uuid=PROJECT_UUID,
         project_name='test-project',
     )
@@ -179,42 +147,82 @@ def _caller() -> dict:
     }
 
 
-def _assert_judge_counted(route_tokens, route_budget, credential, project):
-    route_tokens.count_input.assert_any_await(prompt_tokens=JUDGE_IN, identity=IDENTITY)
-    route_tokens.count_output.assert_any_await(token_count=JUDGE_OUT, identity=IDENTITY)
-    route_budget.count_input.assert_any_await(
-        token_count=JUDGE_IN, input_cost_per_token=JUDGE_INPUT_PRICE, identity=IDENTITY
-    )
-    route_budget.count_output.assert_any_await(
-        token_count=JUDGE_OUT,
-        output_cost_per_token=JUDGE_OUTPUT_PRICE,
-        identity=IDENTITY,
-    )
-    credential.count_input_tokens.assert_any_await(JUDGE_IN, IDENTITY)
-    credential.count_output_tokens.assert_any_await(JUDGE_OUT, IDENTITY)
-    credential.count_budget_input.assert_any_await(
-        token_count=JUDGE_IN, input_cost_per_token=JUDGE_INPUT_PRICE, identity=IDENTITY
-    )
-    credential.count_budget_output.assert_any_await(
-        token_count=JUDGE_OUT,
-        output_cost_per_token=JUDGE_OUTPUT_PRICE,
-        identity=IDENTITY,
-    )
-    project.count_input.assert_any_await(
-        token_count=JUDGE_IN, input_cost_per_token=JUDGE_INPUT_PRICE, identity=IDENTITY
-    )
-    project.count_output.assert_any_await(
-        token_count=JUDGE_OUT,
-        output_cost_per_token=JUDGE_OUTPUT_PRICE,
-        identity=IDENTITY,
-    )
+# Limits well above what one request uses: they only count here.
+ROUTE_LIMITS = {
+    'token_limiting': {
+        'input': {'window_size': '1 hour', 'max_tokens': 1000},
+        'output': {'window_size': '1 hour', 'max_tokens': 1000},
+    },
+    'budget_limiting': {'window_size': '1 hour', 'max_budget': 10},
+}
+CREDENTIAL_LIMITS = [
+    credential_limit('token_input', 1000, '1 hour'),
+    credential_limit('token_output', 1000, '1 hour'),
+    credential_limit('budget', 10, '1 hour'),
+]
+PROJECT_LIMITS = [project_limit(10, '1 hour')]
+HOUR = ('FIXED_WINDOW', '1 hour')
+JUDGE_COST = int(JUDGE_IN * JUDGE_INPUT_PRICE * 1_000_000_000) + int(
+    JUDGE_OUT * JUDGE_OUTPUT_PRICE * 1_000_000_000
+)
+
+
+def _limited_gateway(where: str, behavior: str = 'block', **route) -> GatewayRoute:
+    """Return a route with its own limits, as the route factory builds it."""
+    gateway = _gateway(where, behavior)
+    config = _config(where, behavior, **route).routes[ROUTE]
+    gateway.route_limits = RouteLimits.from_config(config, PROJECT_UUID)
+    return gateway
+
+
+def _limits(gateway: GatewayRoute) -> RequestLimits:
+    return request_limits(gateway, CREDENTIAL_LIMITS, PROJECT_LIMITS)
+
+
+async def _consumption(gateway: GatewayRoute) -> dict[str, int]:
+    credential = str(API_KEY_UUID)
+    windows = {
+        'route input': gateway.route_limits.window(Category.INPUT_TOKENS),
+        'route output': gateway.route_limits.window(Category.OUTPUT_TOKENS),
+        'route cost': gateway.route_limits.window(Category.COST),
+        'credential input': credential_window(credential, 'token_input', *HOUR),
+        'credential output': credential_window(credential, 'token_output', *HOUR),
+        'credential cost': credential_window(credential, 'budget', *HOUR),
+        'project cost': project_window(PROJECT_UUID, *HOUR),
+    }
+    return {name: await consumed(window) for name, window in windows.items()}
+
+
+JUDGE_COUNTED = {
+    'route input': JUDGE_IN,
+    'route output': JUDGE_OUT,
+    'route cost': JUDGE_COST,
+    'credential input': JUDGE_IN,
+    'credential output': JUDGE_OUT,
+    'credential cost': JUDGE_COST,
+    'project cost': JUDGE_COST,
+}
+
+
+@pytest.fixture
+def judge():
+    with (
+        patch(
+            'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
+            return_value=_judge_llm(),
+        ),
+        patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event'),
+        patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event'),
+        patch('radicalbit_ai_gateway.limiting.limit_event.emit_event'),
+    ):
+        yield
 
 
 @pytest.mark.parametrize('where', ['input', 'output'])
 @pook.activate
 @pytest.mark.asyncio
 async def test_chat_judge_call_consumes_route_credential_and_project_limits(
-    where, limiters
+    where, judge
 ):
     # The main reply carries no usage, so every count comes from the judge.
     pook.post(
@@ -222,74 +230,55 @@ async def test_chat_judge_call_consumes_route_credential_and_project_limits(
         reply=200,
         response_json=to_mock_openai_chat_completion('Paris').model_dump_json(),
     )
-    gateway = _gateway(where, *limiters[:2])
+    gateway = _limited_gateway(where, **ROUTE_LIMITS)
 
     await gateway.invoke(
         **_caller(),
+        limits=_limits(gateway),
         messages=[HumanMessage(content='What is the capital of France?')],
         tools=[],
         tool_choice=None,
     )
 
-    _assert_judge_counted(*limiters)
+    assert await _consumption(gateway) == JUDGE_COUNTED
 
 
 @pytest.mark.parametrize('where', ['input', 'output'])
 @pook.activate
 @pytest.mark.asyncio
-async def test_warn_judge_is_called_and_charged_once(where, limiters):
+async def test_warn_judge_is_called_and_charged_once(where, judge):
     pook.post(
         url='https://api.openai.com/v1/chat/completions',
         reply=200,
         response_json=to_mock_openai_chat_completion('Paris').model_dump_json(),
     )
-    judge = _judge_llm(triggered=True)
-    gateway = _gateway(where, *limiters[:2], behavior='warn')
+    judge_llm = _judge_llm(triggered=True)
+    gateway = _limited_gateway(where, behavior='warn', **ROUTE_LIMITS)
 
     with patch(
         'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
-        return_value=judge,
+        return_value=judge_llm,
     ):
         result = await gateway.invoke(
             **_caller(),
+            limits=_limits(gateway),
             messages=[HumanMessage(content='What is the capital of France?')],
             tools=[],
             tool_choice=None,
         )
 
-    assert judge.with_structured_output.return_value.ainvoke.await_count == 1
+    assert judge_llm.with_structured_output.return_value.ainvoke.await_count == 1
     # The main reply carries no usage: the one count is the judge's.
-    credential = limiters[2]
-    assert credential.count_input_tokens.await_count == 1
+    assert (await _consumption(gateway))['credential input'] == JUDGE_IN
     assert result.headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] == 'true'
     assert result.headers[f'X-RB-AIGATEWAY-GUARDRAILS-{where.upper()}-WARN'] == 'true'
 
 
 @pook.activate
 @pytest.mark.asyncio
-async def test_embedding_input_judge_call_consumes_route_credential_and_project_limits(
-    limiters,
+async def test_embedding_call_and_its_judge_consume_route_credential_and_project_limits(
+    judge,
 ):
-    pook.post(
-        url='https://api.openai.com/v1/embeddings',
-        reply=200,
-        response_json={
-            'object': 'list',
-            'data': [{'object': 'embedding', 'embedding': [0.1], 'index': 0}],
-            'model': 'text-embedding-3-small',
-            'usage': {'prompt_tokens': 2, 'total_tokens': 2},
-        },
-    )
-    gateway = _gateway('input', *limiters[:2])
-
-    await gateway.invoke_embeddings(**_caller(), input_texts=['hello world'])
-
-    _assert_judge_counted(*limiters)
-
-
-@pook.activate
-@pytest.mark.asyncio
-async def test_embedding_call_consumes_credential_and_project_limits(limiters):
     pook.post(
         url='https://api.openai.com/v1/embeddings',
         reply=200,
@@ -303,24 +292,23 @@ async def test_embedding_call_consumes_credential_and_project_limits(limiters):
             },
         },
     )
-    _, _, credential, project = limiters
-    gateway = _gateway('input', *limiters[:2])
+    gateway = _limited_gateway('input', **ROUTE_LIMITS)
 
-    await gateway.invoke_embeddings(**_caller(), input_texts=['hello world'])
+    await gateway.invoke_embeddings(
+        **_caller(), limits=_limits(gateway), input_texts=['hello world']
+    )
 
-    credential.count_input_tokens.assert_any_await(EMBEDDING_TOKENS, IDENTITY)
-    credential.count_budget_input.assert_any_await(
-        token_count=EMBEDDING_TOKENS,
-        input_cost_per_token=EMBEDDING_PRICE,
-        identity=IDENTITY,
-    )
-    project.count_input.assert_any_await(
-        token_count=EMBEDDING_TOKENS,
-        input_cost_per_token=EMBEDDING_PRICE,
-        identity=IDENTITY,
-    )
+    embedding_cost = int(EMBEDDING_TOKENS * EMBEDDING_PRICE * 1_000_000_000)
     # Embeddings have no output: only the judge's output is counted.
-    credential.count_output_tokens.assert_awaited_once_with(JUDGE_OUT, IDENTITY)
+    assert await _consumption(gateway) == {
+        'route input': JUDGE_IN + EMBEDDING_TOKENS,
+        'route output': JUDGE_OUT,
+        'route cost': JUDGE_COST + embedding_cost,
+        'credential input': JUDGE_IN + EMBEDDING_TOKENS,
+        'credential output': JUDGE_OUT,
+        'credential cost': JUDGE_COST + embedding_cost,
+        'project cost': JUDGE_COST + embedding_cost,
+    }
 
 
 # The limit check runs before the input judge, so a judge's spend is charged
@@ -339,15 +327,9 @@ def judge_calls():
         ),
         patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event'),
         patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event'),
-        patch('radicalbit_ai_gateway.limiting.token_limiter.emit_event'),
+        patch('radicalbit_ai_gateway.limiting.limits.emit_event'),
     ):
         yield llm.with_structured_output.return_value.ainvoke.await_args_list
-
-
-def _gateway_with_input_limit() -> GatewayRoute:
-    config = _config('input', token_limiting=INPUT_LIMIT)
-    route_cfg = config.routes[ROUTE]
-    return _gateway('input', route_cfg.get_token_limiter(PROJECT_UUID), None)
 
 
 @pook.activate
@@ -358,7 +340,7 @@ async def test_chat_judge_spend_is_charged_to_the_next_request(judge_calls):
         reply=200,
         response_json=to_mock_openai_chat_completion('Paris').model_dump_json(),
     )
-    gateway = _gateway_with_input_limit()
+    gateway = _limited_gateway('input', token_limiting=INPUT_LIMIT)
     request = {
         **_caller(),
         'messages': [HumanMessage(content='Capital of France?')],
@@ -366,9 +348,9 @@ async def test_chat_judge_spend_is_charged_to_the_next_request(judge_calls):
         'tool_choice': None,
     }
 
-    await gateway.invoke(**request)
+    await gateway.invoke(**request, limits=request_limits(gateway))
     with pytest.raises(InputTokenLimitExceeded):
-        await gateway.invoke(**request)
+        await gateway.invoke(**request, limits=request_limits(gateway))
 
     assert len(judge_calls) == 1
 
@@ -386,10 +368,11 @@ async def test_embedding_judge_spend_is_charged_to_the_next_request(judge_calls)
             'usage': {'prompt_tokens': 2, 'total_tokens': 2},
         },
     )
-    gateway = _gateway_with_input_limit()
+    gateway = _limited_gateway('input', token_limiting=INPUT_LIMIT)
+    request = {**_caller(), 'input_texts': ['hello world']}
 
-    await gateway.invoke_embeddings(**_caller(), input_texts=['hello world'])
+    await gateway.invoke_embeddings(**request, limits=request_limits(gateway))
     with pytest.raises(InputTokenLimitExceeded):
-        await gateway.invoke_embeddings(**_caller(), input_texts=['hello world'])
+        await gateway.invoke_embeddings(**request, limits=request_limits(gateway))
 
     assert len(judge_calls) == 1

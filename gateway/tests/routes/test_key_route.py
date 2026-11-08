@@ -16,6 +16,7 @@ from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
+from radicalbit_ai_gateway.limiting.limits import shared_limits
 from radicalbit_ai_gateway.models.api_key_dto import ApiKeySec
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -693,8 +694,9 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         )
         self.client = TestClient(app)
 
-        patcher = patch(
-            'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
+        patcher = patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(),
         )
         patcher.start()

@@ -32,6 +32,7 @@ from traceloop.sdk.tracing.tracing import TracerWrapper
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
@@ -162,7 +163,7 @@ def cached_client(client) -> Iterator[TestClient]:
     """
     client.app.state.routes = {
         'proj/my-route': SimpleNamespace(
-            request_rate_limiter=None,
+            route_limits=RouteLimits(),
             gateway_cache=GatewayCache(CacheToolsInMemory()),
             ttl=60,
         )

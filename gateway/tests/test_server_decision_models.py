@@ -19,7 +19,7 @@ from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.limiter import InMemoryStorage
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
@@ -57,12 +57,6 @@ REQUEST_EVENT_EMIT = (
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
 )
 SPAN = 'radicalbit_ai_gateway.invocation.decision_model_invoker.trace.get_current_span'
-# Credential and project limiters are built per request. Redis shares their
-# counters in production: one shared in-memory storage does it here.
-CREDENTIAL_STORAGE = 'radicalbit_ai_gateway.limiting.credential_limiter.InMemoryStorage'
-PROJECT_STORAGE = (
-    'radicalbit_ai_gateway.limiting.project_budget_limiter.InMemoryStorage'
-)
 BACKOFF_SLEEP = 'radicalbit_ai_gateway.invocation.decision_model_invoker.asyncio.sleep'
 
 STATE = {'ticket': 'My card was charged twice', 'customer': {'tier': 'gold'}}
@@ -219,8 +213,6 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             patch(REQUEST_EVENT_EMIT, side_effect=self.request_events.append),
             patch(SPAN, return_value=self.span),
             patch(BACKOFF_SLEEP, new=AsyncMock()),
-            patch(CREDENTIAL_STORAGE, return_value=InMemoryStorage()),
-            patch(PROJECT_STORAGE, return_value=InMemoryStorage()),
             patch(GUARDRAIL_EMIT, side_effect=self.guardrail_events.append),
             patch(REDACT_EMIT, side_effect=self.guardrail_events.append),
             patch(CACHE_EMIT, side_effect=self.cache_events.append),
@@ -630,7 +622,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             }
         )
         route = app.state.routes[ROUTE_KEY]
-        route.token_limiter = config.routes['agent'].get_token_limiter('')
+        route.route_limits = RouteLimits.from_config(config.routes['agent'], '')
         self._limit_credential(CredentialLimitCategory.TOKEN_OUTPUT, 10)
         self._mock_typesafe().times(2)
 

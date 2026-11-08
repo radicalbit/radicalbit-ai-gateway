@@ -3,16 +3,15 @@ from fastapi.responses import JSONResponse
 from traceloop.sdk.decorators import workflow
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.limiting.limits import ADMISSION, shared_limits
 from radicalbit_ai_gateway.mcp_proxy.list_cache import McpListCache
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.utils.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
-from radicalbit_ai_gateway.utils.request_context import (
-    get_current_credential_limiter,
-    reset_route_context,
-)
+from radicalbit_ai_gateway.utils.request_context import reset_route_context
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     ensure_endpoint_category,
@@ -50,38 +49,34 @@ class McpRoute:
             # or an unbound key never consumes budget.
             route = gateway_routes.get(authorized.route_key)
 
-            # Checked before route/project limits: decides which error is
-            # reported when both would block.
-            credential_limiter = get_current_credential_limiter()
-            if route is not None and credential_limiter:
-                set_operation_category(OperationCategory.LIMITING)
-                await credential_limiter.check_and_count_request(
-                    request_uuid=request_uuid,
-                    group_uuid=authorized.key_details.group_uuid,
-                    group_name=authorized.key_details.group_name,
-                    route_name=authorized.route_name,
-                    project_uuid=authorized.project_uuid,
-                    project_name=authorized.project_name,
+            # Request limits first: the credential's before the route's,
+            # which decides the error reported when both would block.
+            #
+            # One inbound JSON-RPC message counts as 1. The check precedes
+            # the body parse, so notifications count too — one HTTP POST is
+            # one request, as on /v1/*. Fan-out is deliberately not counted:
+            # a tools/list opening five upstream sessions is still a single
+            # call against the gateway's contract with its client. Raises
+            # RequestRateLimitExceeded (HTTP 429) past the threshold.
+            if route is not None:
+                key_details = authorized.key_details
+                request_limits = shared_limits.resolve(
+                    RequestIdentity(
+                        request_uuid=request_uuid,
+                        route_name=authorized.route_name,
+                        api_key_uuid=key_details.api_key_uuid,
+                        api_key_name=key_details.api_key_name,
+                        group_uuid=key_details.group_uuid,
+                        group_name=key_details.group_name,
+                        project_uuid=authorized.project_uuid,
+                        project_name=authorized.project_name,
+                    ),
+                    route.route_limits,
+                    key_details.limits,
                 )
-
-            if route is not None and route.request_rate_limiter:
-                set_operation_category(OperationCategory.LIMITING)
-                # One inbound JSON-RPC message counts as 1. The check precedes
-                # the body parse, so notifications count too — one HTTP POST is
-                # one request, as on /v1/*. Fan-out is deliberately not
-                # counted: a tools/list opening five upstream sessions is still
-                # a single call against the gateway's contract with its client.
-                # Raises RequestRateLimitExceeded (HTTP 429) past the
-                # threshold.
-                await route.request_rate_limiter.check_and_count_request(
-                    request_uuid=request_uuid,
-                    api_key_uuid=authorized.key_details.api_key_uuid,
-                    group_uuid=authorized.key_details.group_uuid,
-                    api_key_name=authorized.key_details.api_key_name,
-                    group_name=authorized.key_details.group_name,
-                    project_uuid=authorized.project_uuid,
-                    project_name=authorized.project_name,
-                )
+                if request_limits.applies(ADMISSION):
+                    set_operation_category(OperationCategory.LIMITING)
+                    await request_limits.check(ADMISSION)
 
             list_cache = McpListCache.for_route(
                 gateway_cache=route.gateway_cache if route else None,

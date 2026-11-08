@@ -249,3 +249,21 @@ class TestInMemoryStorage:
         storage = InMemoryStorage()
         await storage.delete('nonexistent')  # must not raise
         assert await storage.get('nonexistent') is None
+
+
+class TestInMemoryStorageBatches:
+    @pytest.mark.asyncio
+    async def test_get_many_reads_every_key_in_order(self) -> None:
+        storage = InMemoryStorage()
+        await storage.increment('a', 3, ttl_seconds=60, window_start=0)
+
+        assert await storage.get_many(['missing', 'a']) == [None, 3]
+
+    @pytest.mark.asyncio
+    async def test_increment_many_matches_one_increment_each(self) -> None:
+        storage = InMemoryStorage()
+
+        results = await storage.increment_many([('a', 2, 60, 0), ('a', 5, 60, 0)])
+
+        assert [value for value, _ in results] == [2, 7]
+        assert results[0][1] == results[1][1]

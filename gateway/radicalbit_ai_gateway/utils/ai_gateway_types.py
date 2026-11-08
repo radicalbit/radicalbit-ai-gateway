@@ -5,6 +5,7 @@ from typing import Any, TypeAlias
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
+from radicalbit_ai_gateway.limiting.limits import RequestLimits
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 
@@ -73,6 +74,7 @@ class ResponsesPrepared:
         identity: Who made the request, as the keyword arguments
             (``request_uuid``, ``api_key_uuid``, ``group_uuid``, ``api_key_name``,
             ``group_name``) the route's policies take.
+        limits: The limits the request is subject to.
         cache_key: The cache key of the request, empty when it is not cached.
         embeddings: Embeddings for semantic cache (if applicable).
         cached_response: The cached response object, on a cache hit.
@@ -85,6 +87,7 @@ class ResponsesPrepared:
     model_selected: Model
     allow_fallback: bool
     identity: dict[str, str]
+    limits: RequestLimits
     cache_key: str = ''
     embeddings: Any = None
     cached_response: dict | None = None

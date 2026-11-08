@@ -9,6 +9,7 @@ import pytest
 import tests.common.pook_httpx2  # noqa: F401
 
 from radicalbit_ai_gateway.events import buffer
+from radicalbit_ai_gateway.limiter.storage import shared as limit_storage
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.secrets import (
     FileSecretProvider,
@@ -66,6 +67,12 @@ app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
 logging.config.dictConfig(logging_config_dict)
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_limit_storage(monkeypatch):
+    """Give each test its own limit counters: the storage is process-wide."""
+    monkeypatch.setattr(limit_storage, '_storage', None)
 
 
 @pytest.fixture(autouse=True)

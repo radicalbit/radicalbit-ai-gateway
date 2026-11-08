@@ -46,9 +46,8 @@ from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
-from radicalbit_ai_gateway.limiting.project_budget_limiter import (
-    load_project_budget_limiter,
-)
+from radicalbit_ai_gateway.limiter.storage.shared import close_limit_storage
+from radicalbit_ai_gateway.limiting.limits import ADMISSION
 from radicalbit_ai_gateway.llm.tracing import TRACELOOP_INSTRUMENTS
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.messages.errors import with_messages_error_shapes
@@ -100,6 +99,7 @@ from radicalbit_ai_gateway.utils.dependencies import (
 )
 from radicalbit_ai_gateway.utils.endpoint_helpers import (
     otel_metrics_decorator,
+    resolve_request_limits,
     set_anthropic_api_key_uuid,
     set_api_key_uuid,
     set_early_project_trace_attributes,
@@ -152,10 +152,8 @@ from radicalbit_ai_gateway.utils.open_ai_types import (
     TranscriptionCreateParamsCustom,
 )
 from radicalbit_ai_gateway.utils.request_context import (
-    get_current_credential_limiter,
     get_current_request_tags,
     reset_route_context,
-    set_current_project_budget_limiter,
     set_current_route_config,
 )
 from radicalbit_ai_gateway.utils.streaming_response import (
@@ -371,6 +369,7 @@ async def lifespan(app: FastAPI):
     database.reset_connection()
     ch_database.reset_connection()
     await httpx_aiohttp_client.aclose()
+    await close_limit_storage()
     server.shutdown()
 
 
@@ -659,41 +658,17 @@ async def chat_completions(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
-    set_current_project_budget_limiter(
-        load_project_budget_limiter(
-            route.project_uuid, route.project_name, project_budget_limit_dao
-        )
+    request_limits = await resolve_request_limits(
+        route, key_details, request_uuid, project_budget_limit_dao
     )
 
-    # Checked before route/project limits: decides which error is reported
-    # when both would block.
-    credential_limiter = get_current_credential_limiter()
-    if credential_limiter:
-        set_operation_category(OperationCategory.LIMITING)
-        await credential_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            route_name=route_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    if route.request_rate_limiter:
-        set_operation_category(OperationCategory.LIMITING)
-        await route.request_rate_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            group_uuid=key_details.group_uuid,
-            api_key_name=key_details.api_key_name,
-            group_name=key_details.group_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
+    # Request limits first, before anything is processed or spent.
+    await request_limits.check(ADMISSION)
 
     chat_messages = convert_openai_messages(messages)
     if completion_create_params.get('stream'):
         prepared = await route.prepare_stream(
+            limits=request_limits,
             request_uuid=request_uuid,
             api_key_uuid=key_details.api_key_uuid,
             api_key_name=key_details.api_key_name,
@@ -709,6 +684,7 @@ async def chat_completions(
         if route.has_output_guardrails():
             # Perform full buffering and checking BEFORE starting the stream response
             chunks, headers = await route.invoke_stream_buffered(
+                limits=request_limits,
                 prepared=prepared,
                 request_uuid=request_uuid,
                 api_key_uuid=key_details.api_key_uuid,
@@ -744,6 +720,7 @@ async def chat_completions(
             async def event_generator():
                 try:
                     async for chunk in route.invoke_stream(
+                        limits=request_limits,
                         prepared=prepared,
                         request_uuid=request_uuid,
                         api_key_uuid=key_details.api_key_uuid,
@@ -794,6 +771,7 @@ async def chat_completions(
         )
 
     invoke_response = await route.invoke(
+        limits=request_limits,
         request_uuid=request_uuid,
         api_key_uuid=key_details.api_key_uuid,
         api_key_name=key_details.api_key_name,
@@ -897,38 +875,16 @@ async def embeddings(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
-    set_current_project_budget_limiter(
-        load_project_budget_limiter(
-            route.project_uuid, route.project_name, project_budget_limit_dao
-        )
+    request_limits = await resolve_request_limits(
+        route, key_details, request_uuid, project_budget_limit_dao
     )
 
-    # Check and count request rate limits BEFORE any processing. Credential
-    # limit first: decides which error is reported when both would block.
-    credential_limiter = get_current_credential_limiter()
-    if credential_limiter:
-        await credential_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            route_name=route_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    if route.request_rate_limiter:
-        await route.request_rate_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            group_uuid=key_details.group_uuid,
-            api_key_name=key_details.api_key_name,
-            group_name=key_details.group_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
+    # Request limits first, before anything is processed or spent.
+    await request_limits.check(ADMISSION)
 
     set_operation_category(OperationCategory.ENDPOINT)
     return await route.invoke_embeddings(
+        limits=request_limits,
         request_uuid=request_uuid,
         api_key_uuid=key_details.api_key_uuid,
         api_key_name=key_details.api_key_name,
@@ -999,36 +955,13 @@ async def audio_transcriptions(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
-    set_current_project_budget_limiter(
-        load_project_budget_limiter(
-            route.project_uuid, route.project_name, project_budget_limit_dao
-        )
+    request_limits = await resolve_request_limits(
+        route, key_details, request_uuid, project_budget_limit_dao
     )
     request.state.otel_route_name = route_name
 
-    # Check and count request rate limits BEFORE any processing. Credential
-    # limit first: decides which error is reported when both would block.
-    credential_limiter = get_current_credential_limiter()
-    if credential_limiter:
-        await credential_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            route_name=route_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    if route.request_rate_limiter:
-        await route.request_rate_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            group_uuid=key_details.group_uuid,
-            api_key_name=key_details.api_key_name,
-            group_name=key_details.group_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
+    # Request limits first, before anything is processed or spent.
+    await request_limits.check(ADMISSION)
 
     file = transcription_params.file
     content = await file.read()
@@ -1040,6 +973,7 @@ async def audio_transcriptions(
         async def event_generator():
             try:
                 async for event in route.invoke_transcription_stream(
+                    limits=request_limits,
                     request_uuid=request_uuid,
                     api_key_uuid=key_details.api_key_uuid,
                     api_key_name=key_details.api_key_name,
@@ -1089,6 +1023,7 @@ async def audio_transcriptions(
         )
 
     result = await route.invoke_transcription(
+        limits=request_limits,
         request_uuid=request_uuid,
         api_key_uuid=key_details.api_key_uuid,
         api_key_name=key_details.api_key_name,
@@ -1182,37 +1117,12 @@ async def responses(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
-    set_current_project_budget_limiter(
-        load_project_budget_limiter(
-            route.project_uuid, route.project_name, project_budget_limit_dao
-        )
+    request_limits = await resolve_request_limits(
+        route, key_details, request_uuid, project_budget_limit_dao
     )
 
-    # Checked before route/project limits: decides which error is reported
-    # when both would block.
-    credential_limiter = get_current_credential_limiter()
-    if credential_limiter:
-        set_operation_category(OperationCategory.LIMITING)
-        await credential_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            route_name=route_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    if route.request_rate_limiter:
-        set_operation_category(OperationCategory.LIMITING)
-        await route.request_rate_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            group_uuid=key_details.group_uuid,
-            api_key_name=key_details.api_key_name,
-            group_name=key_details.group_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
+    # Request limits first, before anything is processed or spent.
+    await request_limits.check(ADMISSION)
 
     identity = {
         'request_uuid': request_uuid,
@@ -1221,7 +1131,9 @@ async def responses(
         'group_uuid': key_details.group_uuid,
         'group_name': key_details.group_name,
     }
-    prepared = await route.prepare_responses(body=body, **identity)
+    prepared = await route.prepare_responses(
+        body=body, limits=request_limits, **identity
+    )
 
     if is_stream:
         frames, headers = await route.open_responses_stream(prepared)
@@ -1316,8 +1228,11 @@ async def messages(
 
     ctx.project_uuid = route.project_uuid
     ctx.project_name = route.project_name
-    # The credential, route and project limits go here, as on the Responses
-    # API: AG-1132.
+    # Routing charges its calls to the request's limits. Checking them goes
+    # here, as on the Responses API: AG-1132.
+    request_limits = await resolve_request_limits(
+        route, key_details, request_uuid, project_budget_limit_dao
+    )
 
     prepared = await route.prepare_messages(
         body=body,
@@ -1327,6 +1242,7 @@ async def messages(
         api_key_name=key_details.api_key_name,
         group_uuid=key_details.group_uuid,
         group_name=key_details.group_name,
+        limits=request_limits,
     )
 
     if is_stream:

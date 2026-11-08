@@ -12,6 +12,8 @@ from tests.common import db_mock
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiting.windows import credential_window
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     GroupOut,
@@ -554,18 +556,18 @@ class TestDeleteLimitFromKey:
         key_limit_dao.get_by_uuid = MagicMock(return_value=limit)
         key_limit_dao.delete_by_uuid = MagicMock(return_value=1)
 
-        with patch(
-            'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
+        with patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(),
         ) as mock_clear:
             res = await service.delete_limit_from_key(key_uuid, limit_uuid)
 
         key_limit_dao.delete_by_uuid.assert_called_once_with(limit_uuid)
         mock_clear.assert_awaited_once_with(
-            credential_uuid=str(key_uuid),
-            category=limit.category,
-            algorithm=limit.algorithm,
-            window_size=limit.window_size,
+            credential_window(
+                str(key_uuid), limit.category, limit.algorithm, limit.window_size
+            )
         )
         assert res == CredentialLimitOut.from_key_limit(limit)
 
@@ -621,8 +623,9 @@ class TestDeleteLimitFromKey:
         key_limit_dao.get_by_uuid = MagicMock(return_value=limit)
         key_limit_dao.delete_by_uuid = MagicMock(return_value=1)
 
-        with patch(
-            'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
+        with patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(side_effect=ConnectionError('redis unreachable')),
         ):
             res = await service.delete_limit_from_key(key_uuid, limit_uuid)
@@ -951,8 +954,9 @@ class TestGroupMembershipLeavesLimitsAlone:
         key_dao.get_by_uuid = MagicMock(return_value=key)
         key_dao.remove_group = MagicMock(return_value=1)
 
-        with patch(
-            'radicalbit_ai_gateway.services.key_service.clear_limit_counter',
+        with patch.object(
+            shared_limits,
+            'clear',
             new=AsyncMock(),
         ) as mock_clear:
             await service.remove_group_from_key(key.uuid, group_uuid)

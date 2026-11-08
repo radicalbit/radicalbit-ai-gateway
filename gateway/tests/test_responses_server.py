@@ -15,6 +15,7 @@ import pytest
 from starlette.requests import Request
 
 from tests.common import db_mock
+from tests.common.limits import project_limit
 from tests.test_responses_native import (
     OPENCODE_TURN,
     FakeChatModel,
@@ -29,6 +30,7 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits
 from radicalbit_ai_gateway.models.caching import CacheType
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback
@@ -47,13 +49,8 @@ from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
-from radicalbit_ai_gateway.utils.request_context import (
-    get_current_credential_limiter,
-    get_current_project_budget_limiter,
-    set_current_credential_limiter,
-)
 
+PROJECT_LIMITS = 'radicalbit_ai_gateway.utils.endpoint_helpers.load_project_limits'
 ROUTE = 'agents'
 
 MESSAGE = {
@@ -212,7 +209,6 @@ def build_route(
             models[model.model_id],
             [(fallback, models[fallback.model_id]) for fallback, _ in fallbacks],
         )
-    route._count_usage = AsyncMock()
     return route
 
 
@@ -274,22 +270,24 @@ def test_request_goes_upstream_as_sent(post):
     model.adapt_responses_input = _openai().adapt_responses_input
     route = build_route({'openai': model})
 
-    response = post(route, **OPENCODE_REQUEST)
+    with patch.object(RequestLimits, 'count', autospec=True) as count:
+        response = post(route, **OPENCODE_REQUEST)
 
     assert response.status_code == 200
     assert model.bodies == [{'model': ROUTE, **OPENCODE_REQUEST}]
     data = response.json()
     assert data['model'] == ROUTE
     assert data['output'] == [MESSAGE]
-    usage = route._count_usage.call_args.kwargs
-    assert (usage['prompt_tokens'], usage['completion_tokens']) == (100, 7)
+    usage = count.call_args.args[1]
+    assert (usage.input_tokens, usage.output_tokens) == (100, 7)
 
 
 def test_stream_is_relayed_as_sent(post):
     events = upstream_events()
     route = build_route({'openai': FakeChatModel(events=events)})
 
-    response = post(route, **OPENCODE_REQUEST, stream=True)
+    with patch.object(RequestLimits, 'count', autospec=True) as count:
+        response = post(route, **OPENCODE_REQUEST, stream=True)
 
     assert response.status_code == 200
     received = stream_events(response)
@@ -297,7 +295,7 @@ def test_stream_is_relayed_as_sent(post):
     assert [e['type'] for e in received] == [e['type'] for e in events]
     assert received[2] == events[2]
     assert received[-1]['response'] == {**events[-1]['response'], 'model': ROUTE}
-    assert route._count_usage.call_args.kwargs['completion_tokens'] == 7
+    assert count.call_args.args[1].output_tokens == 7
 
 
 def test_configured_prompt_goes_first(post):
@@ -714,45 +712,31 @@ def test_output_warn_is_evaluated_once(post, stream):
 def test_budget_limit_blocks_before_the_model(post):
     model = FakeChatModel(events=upstream_events())
     route = build_route({'openai': model})
-    limiter = MagicMock()
-    limiter.check_budget = AsyncMock(
-        side_effect=BudgetLimitExceededError('Project budget limit exceeded')
-    )
 
-    with patch(
-        'radicalbit_ai_gateway.ai_gateway.get_current_project_budget_limiter',
-        return_value=limiter,
+    with (
+        patch(PROJECT_LIMITS, return_value=[project_limit(0)]),
+        patch('radicalbit_ai_gateway.limiting.limits.emit_event') as emit_event,
     ):
         response = post(route, input='Hi')
 
     assert response.status_code == 429
     assert model.bodies == []
-    assert limiter.check_budget.call_args.kwargs['route_name'] == ROUTE
+    assert emit_event.call_args.args[0].route_name == ROUTE
 
 
 @pytest.mark.parametrize('stream', [False, True])
-def test_usage_is_counted_with_the_request_limiters(post, stream):
+def test_usage_is_counted_with_the_request_limits(post, stream):
+    """A streamed reply is counted after the handler returns: still on the
+    request's own limits, the project's included.
+    """
     route = build_route({'openai': FakeChatModel(events=upstream_events())})
-    credential, project = AsyncMock(), AsyncMock()
-    seen = {}
-
-    async def count_usage(**_):
-        seen['credential'] = get_current_credential_limiter()
-        seen['project'] = get_current_project_budget_limiter()
-
-    route._count_usage = AsyncMock(side_effect=count_usage)
 
     with (
-        patch(
-            'radicalbit_ai_gateway.auth.request_auth.set_current_credential_limiter',
-            side_effect=lambda _: set_current_credential_limiter(credential),
-        ),
-        patch(
-            'radicalbit_ai_gateway.server.load_project_budget_limiter',
-            return_value=project,
-        ),
+        patch(PROJECT_LIMITS, return_value=[project_limit(10)]),
+        patch.object(RequestLimits, 'count', autospec=True) as count,
     ):
         response = post(route, input='Hi', stream=stream)
 
     assert response.status_code == 200
-    assert seen == {'credential': credential, 'project': project}
+    request_limits = count.call_args.args[0]
+    assert request_limits.applies(Demand(cost_room=True))

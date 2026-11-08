@@ -27,7 +27,6 @@ from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
 )
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.limiter import InMemoryStorage
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
@@ -74,10 +73,6 @@ GUARDRAIL_SPAN = (
     'radicalbit_ai_gateway.guardrails.guardrail_check.trace.get_current_span'
 )
 BACKOFF_SLEEP = 'radicalbit_ai_gateway.invocation.decision_model_invoker.asyncio.sleep'
-CREDENTIAL_STORAGE = 'radicalbit_ai_gateway.limiting.credential_limiter.InMemoryStorage'
-PROJECT_STORAGE = (
-    'radicalbit_ai_gateway.limiting.project_budget_limiter.InMemoryStorage'
-)
 
 GPT = {
     'model_id': 'gpt',
@@ -256,8 +251,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
             patch(REQUEST_EVENT_EMIT),
             patch(GUARDRAIL_EMIT, side_effect=self.guardrail_events.append),
             patch(BACKOFF_SLEEP, new=AsyncMock()),
-            patch(CREDENTIAL_STORAGE, return_value=InMemoryStorage()),
-            patch(PROJECT_STORAGE, return_value=InMemoryStorage()),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)

@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 import numpy as np
-from openai.types.audio.transcription import Transcription, UsageDuration, UsageTokens
+from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
@@ -19,7 +19,6 @@ from traceloop.sdk.decorators import task, workflow
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.guardrail_engine import GuardrailEngine
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeUsageCounter
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.decision_model_invoker import (
     DecisionModelInvoker,
@@ -32,10 +31,13 @@ from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
 from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
     TranscriptionModelInvoker,
 )
-from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
-from radicalbit_ai_gateway.limiting.duration_limiter import DurationLimiter
-from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
-from radicalbit_ai_gateway.limiting.token_limiter import TokenLimiter
+from radicalbit_ai_gateway.limiting.limits import (
+    Demand,
+    InputEstimate,
+    RequestLimits,
+    RouteLimits,
+    Usage,
+)
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     AIMessageChunk,
@@ -61,7 +63,6 @@ from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import GuardrailClass, GuardrailWhereType
 from radicalbit_ai_gateway.models.model import ENABLE_PROMPT_CACHE_PARAM, Model
-from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
 from radicalbit_ai_gateway.responses.events import response_events
 from radicalbit_ai_gateway.responses.output import (
@@ -85,6 +86,7 @@ from radicalbit_ai_gateway.routing import (
     SemanticRouter,
     TextClassificationRouter,
 )
+from radicalbit_ai_gateway.routing.common import RoutingSpendRecorder
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.ai_gateway_types import (
     CacheResult,
@@ -98,6 +100,7 @@ from radicalbit_ai_gateway.utils.ai_gateway_types import (
     StreamGenerator,
 )
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.audio_duration import estimate_audio_duration_seconds
 from radicalbit_ai_gateway.utils.build_user_content import (
     build_user_content,
     build_user_content_from_texts,
@@ -109,14 +112,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
     GatewayInternalError,
     GuardrailBadRequest,
     JudgeInternalError,
-)
-from radicalbit_ai_gateway.utils.request_context import (
-    RoutingSpendRecorder,
-    get_current_credential_limiter,
-    get_current_project_budget_limiter,
-    get_current_request_identity,
-    set_current_request_identity,
-    set_routing_spend_recorder,
 )
 from radicalbit_ai_gateway.utils.state_leaves import string_leaves, with_string_leaves
 from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
@@ -154,6 +149,42 @@ def _parse_cached_response_object(raw: str | None) -> dict | None:
     return cached
 
 
+def _chat_demand(messages: list[BaseMessage], model: Model) -> Demand:
+    """Return what a chat request demands; ``model`` picks the tokenizer."""
+    return Demand(
+        input=InputEstimate(build_user_content(messages), model.model),
+        output_room=True,
+        cost_room=True,
+    )
+
+
+async def _check_limits(limits: RequestLimits, demand: Demand, check=None) -> None:
+    """Check ``demand`` on the request's limits, if any applies.
+
+    ``check`` runs the check in a trace span of its own.
+    """
+    if limits.applies(demand):
+        await (check or _check)(limits, demand)
+
+
+async def _check(limits: RequestLimits, demand: Demand) -> None:
+    await limits.check(demand)
+
+
+def _transcription_demand(audio_bytes: bytes) -> Demand:
+    """Return what a transcription demands: its cost and its audio seconds,
+    read from the file's header ('unknown' when they can't be).
+    """
+    seconds = estimate_audio_duration_seconds(audio_bytes)
+    return Demand(
+        cost_room=True, audio_seconds='unknown' if seconds is None else seconds
+    )
+
+
+_check_in_chat_span = task(name='check_limiters')(_check)
+_check_in_embedding_span = task(name='check_embedding_limiters')(_check)
+
+
 class GatewayRoute:
     def __init__(
         self,
@@ -170,10 +201,7 @@ class GatewayRoute:
         | DecisionRouter
         | LLMRouter
         | None = None,
-        token_limiter: TokenLimiter | None = None,
-        rate_limiter: RequestRateLimiter | None = None,
-        budget_limiter: BudgetLimiter | None = None,
-        duration_limiter: DurationLimiter | None = None,
+        route_limits: RouteLimits = RouteLimits(),
         transcription_models: list[Model] | None = None,
         decision_models: list[Model] | None = None,
         project_uuid: str = '',
@@ -189,10 +217,7 @@ class GatewayRoute:
         self.router = router
         self.guardrail_engine = guardrail_engine
         self.gateway_cache = gateway_cache
-        self.token_limiter = token_limiter
-        self.budget_limiter = budget_limiter
-        self.request_rate_limiter = rate_limiter
-        self.duration_limiter = duration_limiter
+        self.route_limits = route_limits
         self.cost_service = cost_service
         fallback_models = self.gateway_route_config.fallback
 
@@ -278,12 +303,14 @@ class GatewayRoute:
         route_name: str,
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
+        limits: RequestLimits,
         **kwargs,
     ) -> InvokeResponse:
         if route_name != self.gateway_route_config.route_name:
             raise GatewayBadRequest(f'{route_name} must be the route name')
 
         prepared = await self._prepare_and_validate_request(
+            limits=limits,
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -307,6 +334,7 @@ class GatewayRoute:
             # Cache hit: return content with cache hit header
             if self.has_output_guardrails():
                 output = await self._process_output(
+                    limits=limits,
                     request_uuid=request_uuid,
                     api_key_uuid=api_key_uuid,
                     group_uuid=group_uuid,
@@ -345,6 +373,7 @@ class GatewayRoute:
         # Process the request
         set_operation_category(OperationCategory.INVOCATION)
         response = await self._process_request(
+            limits=limits,
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -361,6 +390,7 @@ class GatewayRoute:
         # Handle output processing
         if self.has_output_guardrails():
             output = await self._process_output(
+                limits=limits,
                 request_uuid=request_uuid,
                 api_key_uuid=api_key_uuid,
                 group_uuid=group_uuid,
@@ -415,9 +445,11 @@ class GatewayRoute:
         route_name: str,
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
+        limits: RequestLimits,
         **kwargs,
     ) -> PrepareAndValidateResult:
         return await self._prepare_and_validate_request(
+            limits=limits,
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -441,6 +473,7 @@ class GatewayRoute:
         route_name: str,
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
+        limits: RequestLimits,
         **kwargs,
     ) -> StreamBufferedResult:
         set_streaming()
@@ -489,6 +522,7 @@ class GatewayRoute:
         return [
             chunk
             async for chunk in self._handle_buffered_stream(
+                limits=limits,
                 request_uuid=request_uuid,
                 api_key_uuid=api_key_uuid,
                 group_uuid=group_uuid,
@@ -534,6 +568,7 @@ class GatewayRoute:
         route_name: str,
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
+        limits: RequestLimits,
         **kwargs,
     ) -> StreamGenerator:
         set_streaming()
@@ -591,17 +626,12 @@ class GatewayRoute:
 
         # After stream ends, handle usage tracking, caching and events
         if final_usage:
-            await self._count_usage(
-                prompt_tokens=final_usage.get('input_tokens', 0),
-                completion_tokens=final_usage.get('output_tokens', 0),
-                model_selected=prepared.model_selected,
-                identity=self._request_identity(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                ),
+            await limits.count(
+                Usage.priced(
+                    prepared.model_selected,
+                    final_usage.get('input_tokens', 0),
+                    final_usage.get('output_tokens', 0),
+                )
             )
 
         # Yield usage chunk ONLY if originally requested by the user
@@ -642,6 +672,7 @@ class GatewayRoute:
         group_uuid: str,
         api_key_name: str,
         group_name: str,
+        limits: RequestLimits,
     ) -> ResponsesPrepared:
         """Apply the route's policies to a Responses API request.
 
@@ -650,13 +681,15 @@ class GatewayRoute:
         that goes upstream.
         """
         route_name = self.gateway_route_config.route_name
-        identity = self._start_native_request(
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            group_uuid=group_uuid,
-            api_key_name=api_key_name,
-            group_name=group_name,
-        )
+        if not self.chat_invoker:
+            raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
+        identity = {
+            'request_uuid': request_uuid,
+            'api_key_uuid': api_key_uuid,
+            'group_uuid': group_uuid,
+            'api_key_name': api_key_name,
+            'group_name': group_name,
+        }
 
         check_supported(body)
         request = ResponsesRequest(body)
@@ -677,6 +710,7 @@ class GatewayRoute:
         )
         # Route on the redacted messages, as the chat path does.
         model_selected = await self._route_chat_request(
+            limits=limits,
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -694,6 +728,7 @@ class GatewayRoute:
             redaction.redacted_messages, model_selected
         )
         input_guardrails = await self._check_input_guardrails(
+            limits=limits,
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -705,6 +740,7 @@ class GatewayRoute:
         if input_guardrails.soft_block:
             return ResponsesPrepared(
                 body=request.body,
+                limits=limits,
                 model_selected=model_selected,
                 allow_fallback=allow_fallback,
                 identity=identity,
@@ -726,6 +762,7 @@ class GatewayRoute:
 
         prepared = ResponsesPrepared(
             body=request.body,
+            limits=limits,
             model_selected=model_selected,
             allow_fallback=allow_fallback,
             identity=identity,
@@ -737,22 +774,9 @@ class GatewayRoute:
             if prepared.cached_response:
                 return prepared
 
-        if (
-            self.token_limiter
-            or self.budget_limiter
-            or get_current_credential_limiter()
-            or get_current_project_budget_limiter()
-        ):
-            set_operation_category(OperationCategory.LIMITING)
-            await self._validate_limiters(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                api_key_name=api_key_name,
-                messages=redacted_messages,
-                model_selected=model_selected,
-            )
+        await _check_limits(
+            limits, _chat_demand(redacted_messages, model_selected), _check_in_chat_span
+        )
         return prepared
 
     async def invoke_responses(
@@ -946,6 +970,7 @@ class GatewayRoute:
             if not has_redact_output:
                 set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
             soft_block, warned = await self._apply_check_guardrails(
+                limits=prepared.limits,
                 **prepared.identity,
                 messages=messages,
                 where=GuardrailWhereType.OUTPUT,
@@ -964,13 +989,8 @@ class GatewayRoute:
     ) -> None:
         """Count a model's response against the limits, and cache it."""
         input_tokens, _, output_tokens = usage_token_counts(response.get('usage'))
-        await self._count_usage(
-            prompt_tokens=input_tokens,
-            completion_tokens=output_tokens,
-            model_selected=prepared.model_selected,
-            identity=self._request_identity(
-                **prepared.identity,
-            ),
+        await prepared.limits.count(
+            Usage.priced(prepared.model_selected, input_tokens, output_tokens)
         )
         if (
             self.gateway_cache
@@ -1059,21 +1079,24 @@ class GatewayRoute:
         group_uuid: str,
         api_key_name: str,
         group_name: str,
+        limits: RequestLimits,
     ) -> MessagesPrepared:
         """Apply the route's policies to an Anthropic Messages API request.
 
         The policies read the request's texts as chat messages (see
         ``MessagesRequest``); what they change is written back into the body
-        that goes upstream.
+        that goes upstream. ``limits`` are charged for the routing calls.
         """
         route_name = self.gateway_route_config.route_name
-        identity = self._start_native_request(
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            group_uuid=group_uuid,
-            api_key_name=api_key_name,
-            group_name=group_name,
-        )
+        if not self.chat_invoker:
+            raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
+        identity = {
+            'request_uuid': request_uuid,
+            'api_key_uuid': api_key_uuid,
+            'group_uuid': group_uuid,
+            'api_key_name': api_key_name,
+            'group_name': group_name,
+        }
 
         request = MessagesRequest(body)
         set_operation_category(OperationCategory.PREPROCESSING)
@@ -1085,6 +1108,7 @@ class GatewayRoute:
         model_selected = await self._route_chat_request(
             **identity,
             messages=messages,
+            limits=limits,
         )
         if not self.chat_invoker.supports_messages(model_selected.model_id):
             raise GatewayBadRequest(
@@ -1150,6 +1174,7 @@ class GatewayRoute:
         group_name: str,
         route_name: str,
         input_texts: list[str],
+        limits: RequestLimits,
     ) -> CreateEmbeddingResponse:
         if route_name != self.gateway_route_config.route_name:
             raise GatewayBadRequest(f'{route_name} must be the route name')
@@ -1165,22 +1190,13 @@ class GatewayRoute:
 
         # Limits come first, before the judges spend: see
         # _prepare_and_validate_request.
-        if (
-            self.token_limiter
-            or self.budget_limiter
-            or get_current_credential_limiter()
-            or get_current_project_budget_limiter()
-        ):
-            set_operation_category(OperationCategory.LIMITING)
-            await self._validate_embedding_limiters(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                input_texts=input_texts,
-                model_selected=model_selected,
-            )
+        demand = Demand(
+            input=InputEstimate(
+                build_user_content_from_texts(input_texts), model_selected.model
+            ),
+            cost_room=True,
+        )
+        await _check_limits(limits, demand, _check_in_embedding_span)
 
         if self.gateway_route_config.guardrails:
             redacted_texts = input_texts
@@ -1209,6 +1225,7 @@ class GatewayRoute:
                     set_operation_category(OperationCategory.GUARDRAIL_INPUT)
 
                 input_soft_block = await self._apply_check_guardrails_for_embeddings(
+                    limits=limits,
                     request_uuid=request_uuid,
                     api_key_uuid=api_key_uuid,
                     group_uuid=group_uuid,
@@ -1275,16 +1292,8 @@ class GatewayRoute:
         )
 
         if response.usage:
-            await self._count_input_usage(
-                prompt_tokens=response.usage.prompt_tokens,
-                model_selected=model_selected,
-                identity=self._request_identity(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                ),
+            await limits.count(
+                Usage.priced(model_selected, response.usage.prompt_tokens)
             )
 
         if use_cache and cache_key:
@@ -1307,6 +1316,7 @@ class GatewayRoute:
         audio_bytes: bytes,
         filename: str,
         content_type: str | None,
+        limits: RequestLimits,
         requested_response_format: str = 'json',
         language: str | None = None,
         prompt: str | None = None,
@@ -1366,55 +1376,7 @@ class GatewayRoute:
 
                 return cached_body
 
-        # Checked first: decides which error is reported when both would block.
-        credential_limiter = get_current_credential_limiter()
-        if credential_limiter:
-            set_operation_category(OperationCategory.LIMITING)
-            await credential_limiter.check_budget(
-                request_uuid=request_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-        project_budget_limiter = get_current_project_budget_limiter()
-        if project_budget_limiter:
-            set_operation_category(OperationCategory.LIMITING)
-            await project_budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-            )
-
-        if self.budget_limiter:
-            set_operation_category(OperationCategory.LIMITING)
-            await self.budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-        if self.duration_limiter:
-            set_operation_category(OperationCategory.LIMITING)
-            await self.duration_limiter.check_and_count_duration(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                audio_bytes=audio_bytes,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
+        await _check_limits(limits, _transcription_demand(audio_bytes))
 
         set_operation_category(OperationCategory.INVOCATION)
         result = await self.transcription_invoker.transcribe(
@@ -1436,17 +1398,7 @@ class GatewayRoute:
             project_name=self.project_name,
         )
 
-        await self._count_transcription_usage(
-            result.usage,
-            model_selected,
-            identity=self._request_identity(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-            ),
-        )
+        await limits.count(Usage.transcription(model_selected, result.usage))
 
         if use_cache and cache_key:
             await self.gateway_cache.set(
@@ -1468,6 +1420,7 @@ class GatewayRoute:
         audio_bytes: bytes,
         filename: str,
         content_type: str | None,
+        limits: RequestLimits,
         language: str | None = None,
         prompt: str | None = None,
         temperature: float | None = None,
@@ -1483,55 +1436,7 @@ class GatewayRoute:
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._select_and_prepare_transcription_model()
 
-        # Checked first: decides which error is reported when both would block.
-        credential_limiter = get_current_credential_limiter()
-        if credential_limiter:
-            set_operation_category(OperationCategory.LIMITING)
-            await credential_limiter.check_budget(
-                request_uuid=request_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-        project_budget_limiter = get_current_project_budget_limiter()
-        if project_budget_limiter:
-            set_operation_category(OperationCategory.LIMITING)
-            await project_budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-            )
-
-        if self.budget_limiter:
-            set_operation_category(OperationCategory.LIMITING)
-            await self.budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-        if self.duration_limiter:
-            set_operation_category(OperationCategory.LIMITING)
-            await self.duration_limiter.check_and_count_duration(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                audio_bytes=audio_bytes,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
+        await _check_limits(limits, _transcription_demand(audio_bytes))
 
         set_operation_category(OperationCategory.INVOCATION)
         final_event: TranscriptionStreamEvent | None = None
@@ -1556,16 +1461,8 @@ class GatewayRoute:
             yield event
 
         if final_event is not None:
-            await self._count_transcription_usage(
-                getattr(final_event, 'usage', None),
-                model_selected,
-                identity=self._request_identity(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                ),
+            await limits.count(
+                Usage.transcription(model_selected, getattr(final_event, 'usage', None))
             )
 
     async def invoke_decision(
@@ -1577,6 +1474,7 @@ class GatewayRoute:
         group_name: str,
         route_name: str,
         body: dict,
+        limits: RequestLimits,
     ) -> DecisionResponse:
         if route_name != self.gateway_route_config.route_name:
             raise GatewayBadRequest(f'{route_name} must be the route name')
@@ -1591,21 +1489,16 @@ class GatewayRoute:
         model_selected = self._decision_models[0]
 
         # Limits come first, before the judges spend: see
-        # _prepare_and_validate_request.
-        await self._check_decision_limits(
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            group_uuid=group_uuid,
-            api_key_name=api_key_name,
-            group_name=group_name,
-            route_name=route_name,
-        )
+        # _prepare_and_validate_request. The input size is known only from
+        # the response, so a limit blocks only when its counter is full.
+        await _check_limits(limits, Demand(input='room', cost_room=True))
 
         screened = {f: body[f] for f in DECISION_SCREENED_FIELDS if f in body}
         if self.gateway_route_config.guardrails and screened:
             body = {
                 **body,
                 **await self._apply_decision_input_guardrails(
+                    limits=limits,
                     request_uuid=request_uuid,
                     api_key_uuid=api_key_uuid,
                     group_uuid=group_uuid,
@@ -1664,17 +1557,11 @@ class GatewayRoute:
             project_name=self.project_name,
         )
         if response.model_invoked is not None:
-            await self._count_decision_usage(
-                response.input_tokens,
-                response.model_invoked,
-                identity=self._request_identity(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                ),
-            )
+            # Typesafe bills input tokens only: output-token counters get nothing.
+            if response.input_tokens > 0:
+                await limits.count(
+                    Usage.priced(response.model_invoked, response.input_tokens)
+                )
             if use_cache and cache_key:
                 await self.gateway_cache.set(
                     cache_key=cache_key,
@@ -1737,162 +1624,8 @@ class GatewayRoute:
             input_tokens, {'route_name': route_name, 'model_name': model_id}
         )
 
-    async def _check_decision_limits(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
-    ) -> None:
-        """Decision input size is known only from the response, so nothing is
-        estimated: a limit blocks only when its counter is already full.
-        """
-        # Credential first: decides which error is reported when both block.
-        credential_limiter = get_current_credential_limiter()
-        project_budget_limiter = get_current_project_budget_limiter()
-        if not (
-            credential_limiter
-            or project_budget_limiter
-            or self.budget_limiter
-            or self.token_limiter
-        ):
-            return
-        set_operation_category(OperationCategory.LIMITING)
-        if credential_limiter:
-            await credential_limiter.check_budget(
-                request_uuid=request_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-        if project_budget_limiter:
-            await project_budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-            )
-        if self.budget_limiter:
-            await self.budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-        if credential_limiter:
-            await credential_limiter.check_input_room(
-                request_uuid=request_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=route_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-        if self.token_limiter:
-            await self.token_limiter.check_input_room(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-    def _start_native_request(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-    ) -> dict[str, str]:
-        """Start a Responses or Messages API request.
-
-        Record who sent it (routing charges its own calls to them) and check
-        the route has chat models. Return who sent it, as the keyword arguments
-        the route's policies take.
-        """
-        set_current_request_identity(
-            self._request_identity(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-            )
-        )
-        if not self.chat_invoker:
-            raise GatewayBadRequest(
-                f'Route {self.gateway_route_config.route_name} '
-                'has no chat models defined'
-            )
-        return {
-            'request_uuid': request_uuid,
-            'api_key_uuid': api_key_uuid,
-            'group_uuid': group_uuid,
-            'api_key_name': api_key_name,
-            'group_name': group_name,
-        }
-
-    def _request_identity(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        api_key_name: str,
-        group_uuid: str,
-        group_name: str,
-    ) -> RequestIdentity:
-        """Identify the request to the limiters counting its usage."""
-        return RequestIdentity(
-            request_uuid=request_uuid,
-            route_name=self.gateway_route_config.route_name,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-            project_uuid=self.project_uuid,
-            project_name=self.project_name,
-        )
-
-    def _judge_usage_counter(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        api_key_name: str,
-        group_uuid: str,
-        group_name: str,
-    ) -> JudgeUsageCounter:
-        """Count a judge call on the request's counters, at the judge model's price."""
-        identity = self._request_identity(
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-        )
-
-        async def count(model: Model, input_tokens: int, output_tokens: int) -> None:
-            await self._count_usage(
-                prompt_tokens=input_tokens,
-                completion_tokens=output_tokens,
-                model_selected=model,
-                identity=identity,
-            )
-
-        return count
-
     def _routing_spend_recorder(
-        self, identity: RequestIdentity, metrics: ModelInvoker
+        self, limits: RequestLimits, metrics: ModelInvoker
     ) -> RoutingSpendRecorder:
         """Charge a routing call to the request, as a judge call is (ADR 0006)."""
 
@@ -1906,7 +1639,7 @@ class GatewayRoute:
             output_tokens: int | None = None,
         ) -> None:
             metrics.record_routing_call(
-                identity=identity,
+                identity=limits.identity,
                 model=model,
                 target_model_id=target_model_id or model.model_id,
                 input_tokens=input_tokens,
@@ -1916,52 +1649,13 @@ class GatewayRoute:
             )
             if output_tokens is None:
                 # Embedding and decision calls bill input tokens only.
-                await self._count_decision_usage(input_tokens, model, identity)
+                if input_tokens > 0:
+                    await limits.count(Usage.priced(model, input_tokens))
             else:
                 # A chat model router also bills the tokens it answers with.
-                await self._count_usage(
-                    prompt_tokens=input_tokens,
-                    completion_tokens=output_tokens,
-                    model_selected=model,
-                    identity=identity,
-                )
+                await limits.charge_call(model, input_tokens, output_tokens)
 
         return record
-
-    async def _count_decision_usage(
-        self, input_tokens: int, model: Model, identity: RequestIdentity
-    ) -> None:
-        """Typesafe bills input tokens only: output-token counters get nothing."""
-        if input_tokens <= 0:
-            return
-        credential_limiter = get_current_credential_limiter()
-        project_budget_limiter = get_current_project_budget_limiter()
-        if self.token_limiter:
-            await self.token_limiter.count_input(
-                prompt_tokens=input_tokens, identity=identity
-            )
-        if credential_limiter:
-            await credential_limiter.count_input_tokens(input_tokens, identity)
-        if not model.input_cost_per_token:
-            return
-        if self.budget_limiter:
-            await self.budget_limiter.count_input(
-                token_count=input_tokens,
-                input_cost_per_token=model.input_cost_per_token,
-                identity=identity,
-            )
-        if credential_limiter:
-            await credential_limiter.count_budget_input(
-                token_count=input_tokens,
-                input_cost_per_token=model.input_cost_per_token,
-                identity=identity,
-            )
-        if project_budget_limiter:
-            await project_budget_limiter.count_input(
-                token_count=input_tokens,
-                input_cost_per_token=model.input_cost_per_token,
-                identity=identity,
-            )
 
     # ============================================================================
     # Pre Process Request
@@ -1977,21 +1671,12 @@ class GatewayRoute:
         messages: list[BaseMessage],
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
+        limits: RequestLimits,
         **kwargs,
     ) -> PrepareAndValidateResult:
         """Prepare a common pre-invocation logic: validation, guardrails, cache, limiters."""
         if route_name != self.gateway_route_config.route_name:
             raise GatewayBadRequest(f'{route_name} must be the route name')
-        # Who sent the request: routing charges its own calls to them.
-        set_current_request_identity(
-            self._request_identity(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-            )
-        )
 
         if not self.chat_invoker:
             raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
@@ -2000,22 +1685,9 @@ class GatewayRoute:
         # semantic cache, the model). A judge's spend then counts toward the
         # next request. Routing has not run yet: the first chat model only
         # picks the tokenizer for the input estimate.
-        if (
-            self.token_limiter
-            or self.budget_limiter
-            or get_current_credential_limiter()
-            or get_current_project_budget_limiter()
-        ):
-            set_operation_category(OperationCategory.LIMITING)
-            await self._validate_limiters(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                api_key_name=api_key_name,
-                messages=messages,
-                model_selected=self._chat_models[0],
-            )
+        await _check_limits(
+            limits, _chat_demand(messages, self._chat_models[0]), _check_in_chat_span
+        )
 
         # Preprocessing plugins: transform the raw client messages first, before
         # routing and before the configured system prompt is injected, so plugins
@@ -2037,6 +1709,7 @@ class GatewayRoute:
         # Route on the redacted messages, so no router (and no service it
         # calls) sees text a redact guardrail masks.
         model_selected = await self._route_chat_request(
+            limits=limits,
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -2054,6 +1727,7 @@ class GatewayRoute:
             self._apply_config_prompt(messages, model_selected)
 
         input_guardrails = await self._check_input_guardrails(
+            limits=limits,
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -2123,20 +1797,18 @@ class GatewayRoute:
         )
 
     @task(name='select_model')
-    async def _select_chat_model(self, messages: list[BaseMessage]) -> Model:
+    async def _select_chat_model(
+        self, messages: list[BaseMessage], limits: RequestLimits
+    ) -> Model:
         """Select the chat model for this request based on the routing config."""
         if self.router:
-            identity = get_current_request_identity()
             # Routing runs on chat routes: the chat invoker emits its cost events.
-            set_routing_spend_recorder(
-                self._routing_spend_recorder(identity, self.chat_invoker)
-                if identity and self.chat_invoker
-                else None
+            model_selected = await self.router.select_model(
+                messages,
+                self._routing_spend_recorder(limits, self.chat_invoker)
+                if self.chat_invoker
+                else None,
             )
-            try:
-                model_selected = await self.router.select_model(messages)
-            finally:
-                set_routing_spend_recorder(None)
         else:
             model_selected = self._chat_models[0]
 
@@ -2152,10 +1824,11 @@ class GatewayRoute:
         api_key_name: str,
         group_name: str,
         messages: list[BaseMessage],
+        limits: RequestLimits,
     ) -> Model:
         """Select the chat model of a request and record the routing decision."""
         set_operation_category(OperationCategory.ROUTING)
-        model_selected = await self._select_chat_model(messages)
+        model_selected = await self._select_chat_model(messages, limits)
 
         if self.router and self.gateway_route_config.routing:
             emit_event(
@@ -2273,6 +1946,7 @@ class GatewayRoute:
         model_selected: Model,
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
+        limits: RequestLimits,
         **kwargs,
     ) -> ChatCompletion:
         """Process the main request."""
@@ -2300,17 +1974,12 @@ class GatewayRoute:
 
         # Handle usage tracking
         if response.usage:
-            await self._count_usage(
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                model_selected=model_selected,
-                identity=self._request_identity(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                ),
+            await limits.count(
+                Usage.priced(
+                    model_selected,
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
+                )
             )
 
         return response
@@ -2324,6 +1993,7 @@ class GatewayRoute:
         api_key_name: str,
         group_name: str,
         response: ChatCompletion,
+        limits: RequestLimits,
     ) -> OutputProcessResult:
         """Process output with guardrails. Returns (response, guardrails_triggered, guardrails_block_triggered)."""
         original_output = response.choices[0].message.content
@@ -2366,6 +2036,7 @@ class GatewayRoute:
                     set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
 
                 output_soft_block, warned = await self._apply_check_guardrails(
+                    limits=limits,
                     request_uuid=request_uuid,
                     api_key_uuid=api_key_uuid,
                     group_uuid=group_uuid,
@@ -2698,6 +2369,7 @@ class GatewayRoute:
 
     async def _check_input_guardrails(
         self,
+        limits: RequestLimits,
         request_uuid: str,
         api_key_uuid: str,
         group_uuid: str,
@@ -2724,6 +2396,7 @@ class GatewayRoute:
 
         set_operation_category(OperationCategory.GUARDRAIL_INPUT)
         input_soft_block, warned = await self._apply_check_guardrails(
+            limits=limits,
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
@@ -2812,6 +2485,7 @@ class GatewayRoute:
 
     async def _apply_check_guardrails(
         self,
+        limits: RequestLimits,
         request_uuid: str,
         api_key_uuid: str,
         group_uuid: str,
@@ -2836,13 +2510,7 @@ class GatewayRoute:
                 where=where,
                 project_uuid=self.project_uuid,
                 project_name=self.project_name,
-                count_judge_usage=self._judge_usage_counter(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                ),
+                count_judge_usage=limits.charge_call,
                 skip=skip,
             )
         except (GuardrailBadRequest, JudgeInternalError):
@@ -2864,6 +2532,7 @@ class GatewayRoute:
 
     async def _apply_check_guardrails_for_embeddings(
         self,
+        limits: RequestLimits,
         request_uuid: str,
         api_key_uuid: str,
         group_uuid: str,
@@ -2887,13 +2556,7 @@ class GatewayRoute:
                     where=where,
                     project_uuid=self.project_uuid,
                     project_name=self.project_name,
-                    count_judge_usage=self._judge_usage_counter(
-                        request_uuid=request_uuid,
-                        api_key_uuid=api_key_uuid,
-                        api_key_name=api_key_name,
-                        group_uuid=group_uuid,
-                        group_name=group_name,
-                    ),
+                    count_judge_usage=limits.charge_call,
                     # No conversation here: the window does not apply.
                     windowed=False,
                 )
@@ -2921,6 +2584,7 @@ class GatewayRoute:
 
     async def _apply_decision_input_guardrails(
         self,
+        limits: RequestLimits,
         request_uuid: str,
         api_key_uuid: str,
         group_uuid: str,
@@ -2972,13 +2636,7 @@ class GatewayRoute:
                         where=GuardrailWhereType.INPUT,
                         project_uuid=self.project_uuid,
                         project_name=self.project_name,
-                        count_judge_usage=self._judge_usage_counter(
-                            request_uuid=request_uuid,
-                            api_key_uuid=api_key_uuid,
-                            api_key_name=api_key_name,
-                            group_uuid=group_uuid,
-                            group_name=group_name,
-                        ),
+                        count_judge_usage=limits.charge_call,
                         # A decision model has no conversation: no window.
                         windowed=False,
                     )
@@ -3012,379 +2670,13 @@ class GatewayRoute:
         )
 
     # ============================================================================
-    # Limiting
-    # ============================================================================
-    @task(name='check_limiters')
-    async def _validate_limiters(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        messages: list[BaseMessage],
-        model_selected: Model,
-    ) -> None:
-        user_content = build_user_content(messages)
-
-        # Checked before route/project limits: decides which error is
-        # reported when both would block.
-        credential_limiter = get_current_credential_limiter()
-        if credential_limiter:
-            await credential_limiter.check_input_tokens(
-                text=user_content,
-                model_string=model_selected.model,
-                request_uuid=request_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-            await credential_limiter.check_output_tokens(
-                request_uuid=request_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-            await credential_limiter.check_budget(
-                request_uuid=request_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-        project_budget_limiter = get_current_project_budget_limiter()
-        if project_budget_limiter:
-            await project_budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-            )
-
-        if self.token_limiter:
-            if self.token_limiter.input_config:
-                await self.token_limiter.check_input(
-                    text=user_content,
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                    api_key_name=api_key_name,
-                    model_string=model_selected.model,
-                    project_uuid=self.project_uuid,
-                    project_name=self.project_name,
-                )
-            if self.token_limiter.output_config:
-                await self.token_limiter.check_output(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                    api_key_name=api_key_name,
-                    project_uuid=self.project_uuid,
-                    project_name=self.project_name,
-                )
-        if self.budget_limiter and self.budget_limiter.config:
-            await self.budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-    @task(name='check_embedding_limiters')
-    async def _validate_embedding_limiters(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        group_name: str,
-        api_key_name: str,
-        input_texts: list[str],
-        model_selected: Model,
-    ) -> None:
-        """Apply token and budget limiting for embedding requests (input only)."""
-
-        user_content = build_user_content_from_texts(input_texts)
-
-        # Checked before route/project limits: decides which error is
-        # reported when both would block.
-        credential_limiter = get_current_credential_limiter()
-        if credential_limiter:
-            await credential_limiter.check_input_tokens(
-                text=user_content,
-                model_string=model_selected.model,
-                request_uuid=request_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-            await credential_limiter.check_budget(
-                request_uuid=request_uuid,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-        project_budget_limiter = get_current_project_budget_limiter()
-        if project_budget_limiter:
-            await project_budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                route_name=self.gateway_route_config.route_name,
-            )
-
-        if self.token_limiter and self.token_limiter.input_config:
-            await self.token_limiter.check_input(
-                text=user_content,
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                model_string=model_selected.model,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-        if self.budget_limiter and self.budget_limiter.config:
-            await self.budget_limiter.check_budget(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-
-    async def _count_usage(
-        self,
-        prompt_tokens: int,
-        completion_tokens: int,
-        model_selected: Model,
-        identity: RequestIdentity,
-    ) -> None:
-        """Count token and budget usage from a response."""
-        if self.token_limiter:
-            await self.token_limiter.count_input(
-                prompt_tokens=prompt_tokens, identity=identity
-            )
-            await self.token_limiter.count_output(
-                token_count=completion_tokens, identity=identity
-            )
-
-        if self.budget_limiter and model_selected.input_cost_per_token:
-            await self.budget_limiter.count_input(
-                token_count=prompt_tokens,
-                input_cost_per_token=model_selected.input_cost_per_token,
-                identity=identity,
-            )
-        if self.budget_limiter and model_selected.output_cost_per_token:
-            await self.budget_limiter.count_output(
-                token_count=completion_tokens,
-                output_cost_per_token=model_selected.output_cost_per_token,
-                identity=identity,
-            )
-
-        credential_limiter = get_current_credential_limiter()
-        if credential_limiter:
-            await credential_limiter.count_input_tokens(prompt_tokens, identity)
-            await credential_limiter.count_output_tokens(completion_tokens, identity)
-            if model_selected.input_cost_per_token:
-                await credential_limiter.count_budget_input(
-                    token_count=prompt_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_token,
-                    identity=identity,
-                )
-            if model_selected.output_cost_per_token:
-                await credential_limiter.count_budget_output(
-                    token_count=completion_tokens,
-                    output_cost_per_token=model_selected.output_cost_per_token,
-                    identity=identity,
-                )
-
-        project_budget_limiter = get_current_project_budget_limiter()
-        if project_budget_limiter:
-            if model_selected.input_cost_per_token:
-                await project_budget_limiter.count_input(
-                    token_count=prompt_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_token,
-                    identity=identity,
-                )
-            if model_selected.output_cost_per_token:
-                await project_budget_limiter.count_output(
-                    token_count=completion_tokens,
-                    output_cost_per_token=model_selected.output_cost_per_token,
-                    identity=identity,
-                )
-
-    async def _count_input_usage(
-        self,
-        prompt_tokens: int,
-        model_selected: Model,
-        identity: RequestIdentity,
-    ) -> None:
-        """Count input-only usage (embeddings): _count_usage without the output."""
-        if self.token_limiter:
-            await self.token_limiter.count_input(
-                prompt_tokens=prompt_tokens, identity=identity
-            )
-        if self.budget_limiter and model_selected.input_cost_per_token:
-            await self.budget_limiter.count_input(
-                token_count=prompt_tokens,
-                input_cost_per_token=model_selected.input_cost_per_token,
-                identity=identity,
-            )
-
-        credential_limiter = get_current_credential_limiter()
-        if credential_limiter:
-            await credential_limiter.count_input_tokens(prompt_tokens, identity)
-            if model_selected.input_cost_per_token:
-                await credential_limiter.count_budget_input(
-                    token_count=prompt_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_token,
-                    identity=identity,
-                )
-
-        project_budget_limiter = get_current_project_budget_limiter()
-        if project_budget_limiter and model_selected.input_cost_per_token:
-            await project_budget_limiter.count_input(
-                token_count=prompt_tokens,
-                input_cost_per_token=model_selected.input_cost_per_token,
-                identity=identity,
-            )
-
-    async def _count_transcription_usage(
-        self,
-        usage: UsageTokens | UsageDuration | None,
-        model_selected: Model,
-        identity: RequestIdentity,
-    ) -> None:
-        """Count budget usage from a transcription response, mirroring _count_usage."""
-        credential_limiter = get_current_credential_limiter()
-        project_budget_limiter = get_current_project_budget_limiter()
-        if (
-            self.budget_limiter is None
-            and credential_limiter is None
-            and project_budget_limiter is None
-        ):
-            return
-        if usage is None:
-            return
-
-        if usage.type == 'duration':
-            if model_selected.input_cost_per_second:
-                cost_per_second = float(model_selected.input_cost_per_second)
-                if self.budget_limiter:
-                    await self.budget_limiter.count_duration(
-                        seconds=usage.seconds,
-                        cost_per_second=cost_per_second,
-                        identity=identity,
-                    )
-                if credential_limiter:
-                    await credential_limiter.count_budget_duration(
-                        seconds=usage.seconds,
-                        cost_per_second=cost_per_second,
-                        identity=identity,
-                    )
-                if project_budget_limiter:
-                    await project_budget_limiter.count_duration(
-                        seconds=usage.seconds,
-                        cost_per_second=cost_per_second,
-                        identity=identity,
-                    )
-            return
-
-        details = getattr(usage, 'input_token_details', None)
-        audio_tokens = getattr(details, 'audio_tokens', None) or 0
-        text_tokens = getattr(details, 'text_tokens', None)
-        if text_tokens is None:
-            text_tokens = usage.input_tokens
-
-        if audio_tokens > 0 and model_selected.input_cost_per_audio_token:
-            if self.budget_limiter:
-                await self.budget_limiter.count_input(
-                    token_count=audio_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_audio_token,
-                    identity=identity,
-                )
-            if credential_limiter:
-                await credential_limiter.count_budget_input(
-                    token_count=audio_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_audio_token,
-                    identity=identity,
-                )
-            if project_budget_limiter:
-                await project_budget_limiter.count_input(
-                    token_count=audio_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_audio_token,
-                    identity=identity,
-                )
-        if text_tokens > 0 and model_selected.input_cost_per_token:
-            if self.budget_limiter:
-                await self.budget_limiter.count_input(
-                    token_count=text_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_token,
-                    identity=identity,
-                )
-            if credential_limiter:
-                await credential_limiter.count_budget_input(
-                    token_count=text_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_token,
-                    identity=identity,
-                )
-            if project_budget_limiter:
-                await project_budget_limiter.count_input(
-                    token_count=text_tokens,
-                    input_cost_per_token=model_selected.input_cost_per_token,
-                    identity=identity,
-                )
-        if usage.output_tokens > 0 and model_selected.output_cost_per_token:
-            if self.budget_limiter:
-                await self.budget_limiter.count_output(
-                    token_count=usage.output_tokens,
-                    output_cost_per_token=model_selected.output_cost_per_token,
-                    identity=identity,
-                )
-            if credential_limiter:
-                await credential_limiter.count_budget_output(
-                    token_count=usage.output_tokens,
-                    output_cost_per_token=model_selected.output_cost_per_token,
-                    identity=identity,
-                )
-            if project_budget_limiter:
-                await project_budget_limiter.count_output(
-                    token_count=usage.output_tokens,
-                    output_cost_per_token=model_selected.output_cost_per_token,
-                    identity=identity,
-                )
-
-    # ============================================================================
     # Streaming
     # ============================================================================
 
     @workflow(name='stream_with_output_guardrails')
     async def _handle_buffered_stream(
         self,
+        limits: RequestLimits,
         request_uuid: str,
         api_key_uuid: str,
         group_uuid: str,
@@ -3445,6 +2737,7 @@ class GatewayRoute:
         ):
             set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
             output_soft_block, _ = await self._apply_check_guardrails(
+                limits=limits,
                 request_uuid=request_uuid,
                 api_key_uuid=api_key_uuid,
                 group_uuid=group_uuid,
@@ -3489,17 +2782,12 @@ class GatewayRoute:
 
         # Count usage for token and budget limiting
         if final_usage:
-            await self._count_usage(
-                prompt_tokens=final_usage.get('input_tokens', 0),
-                completion_tokens=final_usage.get('output_tokens', 0),
-                model_selected=model_selected,
-                identity=self._request_identity(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    api_key_name=api_key_name,
-                    group_uuid=group_uuid,
-                    group_name=group_name,
-                ),
+            await limits.count(
+                Usage.priced(
+                    model_selected,
+                    final_usage.get('input_tokens', 0),
+                    final_usage.get('output_tokens', 0),
+                )
             )
 
         # If passed, yield the buffered chunks

@@ -13,12 +13,12 @@ from starlette.testclient import TestClient
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
-from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
+from radicalbit_ai_gateway.limiting.limits import RequestLimits, RouteLimits
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.models.limiting import RateLimiting
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.routes.mcp_route import McpRoute
 from radicalbit_ai_gateway.services.mcp_service import McpService
@@ -91,7 +91,7 @@ def _make_client(
     *,
     key_bound: bool = True,
     with_project: bool = True,
-    rate_limiter=None,
+    route_limits: RouteLimits = RouteLimits(),
     gateway_cache=None,
     ttl: int | None = None,
     request_uuid: str | None = REQUEST_UUID,
@@ -117,7 +117,7 @@ def _make_client(
     # the route's live feature instances, keyed '{project}/{route}'.
     app.state.routes = {
         'proj/my-route': SimpleNamespace(
-            request_rate_limiter=rate_limiter, gateway_cache=gateway_cache, ttl=ttl
+            route_limits=route_limits, gateway_cache=gateway_cache, ttl=ttl
         )
     }
     app.state.token_validator = SimpleNamespace(
@@ -507,20 +507,21 @@ def test_a_rejected_origin_still_reports_the_route_it_targeted():
 # ---------------------------------------------------------------------------
 
 
-def _rate_limited_client(max_requests: int) -> TestClient:
+def _rate_limited_client(max_requests: int, upstream=None) -> TestClient:
+    config = GatewayRouteConfig.model_validate(
+        {
+            'route_name': 'my-route',
+            'chat_models': ['m'],
+            'rate_limiting': {'max_requests': max_requests, 'window_size': '1 minute'},
+        }
+    )
     client, _ = _make_client(
-        rate_limiter=RequestRateLimiter(
-            project_uuid=str(PROJECT_UUID),
-            route_name='my-route',
-            rate_limiting_config=RateLimiting(
-                max_requests=max_requests, window_size='1 minute'
-            ),
-        )
+        upstream, route_limits=RouteLimits.from_config(config, str(PROJECT_UUID))
     )
     return client
 
 
-@patch('radicalbit_ai_gateway.limiting.rate_limiter.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.limiting.limits.emit_event', autospec=True)
 def test_rate_limit_is_enforced_on_mcp_calls(mock_emit_event):
     client = _rate_limited_client(max_requests=2)
 
@@ -532,7 +533,7 @@ def test_rate_limit_is_enforced_on_mcp_calls(mock_emit_event):
     assert res.json()['error']['type'] == 'rate_limit_error'
 
 
-@patch('radicalbit_ai_gateway.limiting.rate_limiter.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.limiting.limits.emit_event', autospec=True)
 def test_notifications_and_unparseable_bodies_consume_budget(mock_emit_event):
     """The check sits before the body parse, so one POST is one request."""
     client = _rate_limited_client(max_requests=2)
@@ -557,48 +558,45 @@ def test_notifications_and_unparseable_bodies_consume_budget(mock_emit_event):
     assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 429
 
 
-def test_rate_limiter_receives_the_authenticated_identity():
-    limiter = MagicMock()
-    limiter.check_and_count_request = AsyncMock()
-    client, _ = _make_client(rate_limiter=limiter)
+def test_the_limits_receive_the_authenticated_identity():
+    client = _rate_limited_client(max_requests=10)
 
-    res = client.post(PATH, json=_ping(), headers=AUTH)
+    with patch.object(RequestLimits, 'check', autospec=True) as check:
+        res = client.post(PATH, json=_ping(), headers=AUTH)
 
     assert res.status_code == 200
-    kwargs = limiter.check_and_count_request.await_args.kwargs
-    assert kwargs['api_key_uuid'] == KEY_DETAILS.api_key_uuid
-    assert kwargs['api_key_name'] == KEY_DETAILS.api_key_name
-    assert kwargs['group_uuid'] == KEY_DETAILS.group_uuid
-    assert kwargs['group_name'] == KEY_DETAILS.group_name
-    assert kwargs['project_name'] == 'proj'
-    assert kwargs['project_uuid'] == str(client.app.state.project_configs['proj'].uuid)
+    identity = check.await_args.args[0].identity
+    assert identity.api_key_uuid == KEY_DETAILS.api_key_uuid
+    assert identity.api_key_name == KEY_DETAILS.api_key_name
+    assert identity.group_uuid == KEY_DETAILS.group_uuid
+    assert identity.group_name == KEY_DETAILS.group_name
+    assert identity.project_name == 'proj'
+    assert identity.project_uuid == str(client.app.state.project_configs['proj'].uuid)
 
 
 def test_a_fanout_call_counts_once_regardless_of_upstream_sessions():
     upstream = MagicMock(spec_set=McpUpstreamClient)
     upstream.list_tools = AsyncMock(return_value=[])
-    limiter = MagicMock()
-    limiter.check_and_count_request = AsyncMock()
-    client, _ = _make_client(upstream, rate_limiter=limiter)
+    client = _rate_limited_client(max_requests=10, upstream=upstream)
 
-    assert (
-        client.post(
-            PATH,
-            json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
-            headers=AUTH,
-        ).status_code
-        == 200
-    )
-    limiter.check_and_count_request.assert_awaited_once()
+    with patch.object(RequestLimits, 'check', autospec=True) as check:
+        assert (
+            client.post(
+                PATH,
+                json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+                headers=AUTH,
+            ).status_code
+            == 200
+        )
+    check.assert_awaited_once()
 
 
 def test_an_unbound_key_is_rejected_before_the_limit_is_counted():
-    limiter = MagicMock()
-    limiter.check_and_count_request = AsyncMock()
-    client, _ = _make_client(rate_limiter=limiter, key_bound=False)
+    client, _ = _make_client(key_bound=False)
 
-    assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 403
-    limiter.check_and_count_request.assert_not_awaited()
+    with patch.object(RequestLimits, 'check', autospec=True) as check:
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 403
+    check.assert_not_awaited()
 
 
 def test_a_route_without_rate_limiting_is_unaffected():

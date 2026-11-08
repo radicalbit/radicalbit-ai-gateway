@@ -1,11 +1,69 @@
-from typing import Literal
+from collections.abc import Awaitable
+import logging
+from typing import Any, Literal, Protocol
 
 from opentelemetry import trace
 
 from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.guardrails import GuardrailMessageRole
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import stringify_message_content
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
+
+logger = logging.getLogger(get_app_config().log_config.logger_name)
+
+
+class RoutingSpendRecorder(Protocol):
+    """Charge one routing call to the request it routes.
+
+    It emits the cost event (flagged as routing) at the model's input price
+    and counts the input tokens on the route, credential and project limits.
+    ``model_type`` is ``'embeddings'``, ``'decision_model'`` or
+    ``'chat-model'``. Pass ``target_model_id`` when a fallback model answered
+    instead of it, and ``output_tokens`` for a chat model router: its output
+    tokens are then costed and counted too.
+    """
+
+    def __call__(
+        self,
+        model: Any,
+        input_tokens: int,
+        latency_ms: float,
+        *,
+        model_type: str,
+        target_model_id: str | None = None,
+        output_tokens: int | None = None,
+    ) -> Awaitable[None]: ...
+
+
+async def record_routing_spend(
+    record: RoutingSpendRecorder | None,
+    model: Any,
+    input_tokens: int,
+    latency_ms: float,
+    *,
+    model_type: str,
+    target_model_id: str | None = None,
+    output_tokens: int | None = None,
+) -> None:
+    """Charge one routing call with ``record``, if the caller gave one.
+
+    Routing never fails a request: a failure here is logged, not raised.
+    """
+    if record is None:
+        return
+    try:
+        await record(
+            model,
+            input_tokens,
+            latency_ms,
+            model_type=model_type,
+            target_model_id=target_model_id,
+            output_tokens=output_tokens,
+        )
+    except Exception:
+        logger.exception('Routing spend on model %s was not recorded', model.model_id)
+
 
 _MESSAGE_TYPE_BY_ROLE = {
     GuardrailMessageRole.USER: 'human',

@@ -17,6 +17,7 @@ from tests.common.mocked_build_openai_chat_completion import (
 )
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute, InvokeResponse
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 
@@ -30,9 +31,7 @@ class TestClientCompatibility(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
         cls.mock_gateway = MagicMock(spec=GatewayRoute)
-        mock_rate_limiter = MagicMock()
-        mock_rate_limiter.check_and_count_request = AsyncMock()
-        cls.mock_gateway.request_rate_limiter = mock_rate_limiter
+        cls.mock_gateway.route_limits = RouteLimits()
         cls.mock_gateway.project_uuid = ''
         cls.mock_gateway.project_name = ''
         cls.mock_gateway.gateway_route_config = MagicMock()

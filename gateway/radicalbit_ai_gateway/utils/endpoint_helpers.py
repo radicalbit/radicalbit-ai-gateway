@@ -12,11 +12,18 @@ from radicalbit_ai_gateway.auth.request_auth import (
     authenticate_anthropic_request,
     authenticate_bearer_request,
 )
+from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
+from radicalbit_ai_gateway.limiting.limits import (
+    RequestLimits,
+    load_project_limits,
+    shared_limits,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import (
     request_latency_histogram,
     total_requests_counter,
 )
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 from radicalbit_ai_gateway.utils.trace_attributes import set_trace_attributes
@@ -38,6 +45,35 @@ async def set_anthropic_api_key_uuid(
 ) -> KeyDetails:
     """Like ``set_api_key_uuid``, also reading the credential from ``x-api-key``."""
     return await authenticate_anthropic_request(request, project_uuid, project_name)
+
+
+async def resolve_request_limits(
+    route: GatewayRoute,
+    key_details: KeyDetails,
+    request_uuid: str,
+    project_budget_limit_dao: ProjectBudgetLimitDAO,
+) -> RequestLimits:
+    """Return the limits of a request: its route's, its credential's and its
+    project's, read as they are now.
+    """
+    project_limits = await load_project_limits(
+        route.project_uuid, project_budget_limit_dao
+    )
+    return shared_limits.resolve(
+        RequestIdentity(
+            request_uuid=request_uuid,
+            route_name=route.gateway_route_config.route_name,
+            api_key_uuid=key_details.api_key_uuid,
+            api_key_name=key_details.api_key_name,
+            group_uuid=key_details.group_uuid,
+            group_name=key_details.group_name,
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+        ),
+        route.route_limits,
+        key_details.limits,
+        project_limits,
+    )
 
 
 def set_early_project_trace_attributes(

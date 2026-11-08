@@ -12,10 +12,14 @@ from radicalbit_ai_gateway.invocation.decision_model_invoker import (
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import DecisionRoutingConfig
-from radicalbit_ai_gateway.routing.common import routing_text, set_span_attributes
+from radicalbit_ai_gateway.routing.common import (
+    RoutingSpendRecorder,
+    record_routing_spend,
+    routing_text,
+    set_span_attributes,
+)
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import ModelInvokerBadRequest
-from radicalbit_ai_gateway.utils.request_context import record_routing_spend
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
@@ -82,7 +86,11 @@ class DecisionRouter:
             for i, entry in enumerate(config.output_mapping, start=1)
         ]
 
-    async def select_model(self, messages: list[BaseMessage]) -> Model:
+    async def select_model(
+        self,
+        messages: list[BaseMessage],
+        record_spend: RoutingSpendRecorder | None = None,
+    ) -> Model:
         state = self._state(messages)
         _set_attributes(
             instructions=self._config.instructions,
@@ -109,7 +117,7 @@ class DecisionRouter:
             },
         }
         try:
-            answer = await self._ask(body)
+            answer = await self._ask(body, record_spend)
         except _NoAnswer:
             return self._default(REASON_ERROR)
         except _BadAnswer:
@@ -127,12 +135,14 @@ class DecisionRouter:
         _set_attributes(chosen_model_id=chosen.model_id, default_used=False)
         return self._models_by_id[chosen.model_id]
 
-    async def _ask(self, body: dict) -> _Answer:
+    async def _ask(
+        self, body: dict, record_spend: RoutingSpendRecorder | None
+    ) -> _Answer:
         """Ask the decision model, then the fallback if the first gives no answer."""
         model_id = self._config.decision_model_id
         _set_attributes(model_id=model_id, fallback_used=False)
         try:
-            return await self._ask_model(model_id, body)
+            return await self._ask_model(model_id, body, record_spend)
         except _NoAnswer:
             fallback_id = self._config.fallback_model_id
             if not fallback_id:
@@ -143,9 +153,11 @@ class DecisionRouter:
             fallback_id,
         )
         _set_attributes(model_id=fallback_id, fallback_used=True)
-        return await self._ask_model(fallback_id, body)
+        return await self._ask_model(fallback_id, body, record_spend)
 
-    async def _ask_model(self, model_id: str, body: dict) -> _Answer:
+    async def _ask_model(
+        self, model_id: str, body: dict, record_spend: RoutingSpendRecorder | None
+    ) -> _Answer:
         start = time.monotonic()
         try:
             response = await self._invoker.call(model_id, body)
@@ -169,17 +181,22 @@ class DecisionRouter:
         except ValueError:
             payload = None
         # Count before reading the choice. A bad answer still spent tokens.
-        await self._record_spend(model_id, payload, latency_ms)
+        await self._record_spend(record_spend, model_id, payload, latency_ms)
         return self._read_choice(payload)
 
     async def _record_spend(
-        self, model_id: str, payload: object, latency_ms: float
+        self,
+        record_spend: RoutingSpendRecorder | None,
+        model_id: str,
+        payload: object,
+        latency_ms: float,
     ) -> None:
         """Charge the call to the request. No usage, nothing to count."""
         input_tokens = billed_input_tokens(payload)
         if input_tokens == 0:
             return
         await record_routing_spend(
+            record_spend,
             self._invoker.model_map[model_id][0],
             input_tokens,
             latency_ms,

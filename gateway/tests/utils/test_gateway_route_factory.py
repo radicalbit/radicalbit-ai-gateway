@@ -21,6 +21,7 @@ import pook
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
@@ -144,7 +145,7 @@ def _build_limited_routes(project_uuid: str):
 
 
 def test_build_gateway_routes_scopes_every_limiter_by_project():
-    """Step 3: the project reaches all four limiter windows.
+    """Step 3: the project reaches all four limit windows.
 
     Route names are unique only within a project, so an unscoped key makes two
     projects declaring 'my-route' share one window.
@@ -152,13 +153,8 @@ def test_build_gateway_routes_scopes_every_limiter_by_project():
     project_uuid = '2f1c6d4e-0000-4000-8000-00000000000a'
     route = _build_limited_routes(project_uuid)['my-route']
 
-    items = [
-        route.request_rate_limiter.item,
-        route.token_limiter.input_item,
-        route.token_limiter.output_item,
-        route.budget_limiter.item,
-    ]
-    assert all(item is not None for item in items)
+    items = [window.config for window in route.route_limits.windows]
+    assert len(items) == 4
     for item in items:
         assert item.project_uuid == project_uuid
         # The bare route name is what metrics, limit events and logs report.
@@ -171,17 +167,7 @@ def test_build_gateway_routes_gives_each_project_its_own_keys():
     routes_b = _build_limited_routes('2f1c6d4e-0000-4000-8000-00000000000b')
 
     def keys(routes):
-        route = routes['my-route']
-        limiter = route.request_rate_limiter.limiter
-        return {
-            limiter._build_key(item)
-            for item in (
-                route.request_rate_limiter.item,
-                route.token_limiter.input_item,
-                route.token_limiter.output_item,
-                route.budget_limiter.item,
-            )
-        }
+        return {window.key for window in routes['my-route'].route_limits.windows}
 
     keys_a, keys_b = keys(routes_a), keys(routes_b)
     assert len(keys_a) == 4
@@ -357,6 +343,7 @@ async def test_project_route_full_pipeline(mock_emit_event, fake_redis_client):
     )
 
     invoke_response = await app_routes[full_route_name].invoke(
+        limits=request_limits(app_routes[full_route_name]),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',
