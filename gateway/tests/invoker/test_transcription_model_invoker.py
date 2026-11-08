@@ -14,10 +14,12 @@ import pytest
 
 from tests.common.mocked_transcription_client import MockTranscriptionClient
 
+from radicalbit_ai_gateway.invocation.recorder import Call
 from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
     TranscriptionModelInvoker,
 )
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerBadRequest,
@@ -92,11 +94,26 @@ _COMMON_TRANSCRIBE_KWARGS = {
 }
 
 
+# Who a transcription's usage is recorded for.
+USAGE_CALL = Call(
+    identity=RequestIdentity(
+        request_uuid='req',
+        route_name='test-route',
+        api_key_uuid='key',
+        api_key_name='rb-key',
+        group_uuid='grp',
+        group_name='test-group',
+    ),
+    model_type='transcription',
+    target_model_id='target',
+)
+
+
 class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
         cls.emit_event_patcher = patch(
-            'radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True
+            'radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True
         )
         cls.mock_emit_event = cls.emit_event_patcher.start()
 
@@ -375,7 +392,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_transcribe_falls_back_to_secondary_model_on_5xx(self):
         invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
-        invoker._record_metrics = MagicMock()
+        invoker.recorder.record = MagicMock()
         primary_client = MockTranscriptionClient(
             exception=_service_unavailable_exception()
         )
@@ -402,8 +419,8 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         assert result is GPT4O_MINI_JSON_RESPONSE
         assert fallback_client.captured_kwargs['model'] == 'gpt-4o-mini-transcribe'
-        invoker._record_metrics.assert_called_once()
-        call_kwargs = invoker._record_metrics.call_args.kwargs
+        invoker.recorder.record.assert_called_once()
+        call_kwargs = invoker.recorder.record.call_args.kwargs
         assert call_kwargs['target_model_id'] == 'gpt4o-transcribe'
         assert call_kwargs['model'].model_id == 'gpt4o-mini-transcribe'
         assert call_kwargs['fallback_triggered'] is True
@@ -588,7 +605,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_falls_back_to_secondary_model_on_failure(self):
         invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
-        invoker._record_metrics = MagicMock()
+        invoker.recorder.record = MagicMock()
         primary_client = MockTranscriptionClient(
             exception=_service_unavailable_exception()
         )
@@ -630,8 +647,8 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         assert events == [done]
         assert fallback_client.captured_kwargs['model'] == 'gpt-4o-mini-transcribe'
         assert fallback_client.captured_kwargs['stream'] is True
-        invoker._record_metrics.assert_called_once()
-        call_kwargs = invoker._record_metrics.call_args.kwargs
+        invoker.recorder.record.assert_called_once()
+        call_kwargs = invoker.recorder.record.call_args.kwargs
         assert call_kwargs['target_model_id'] == 'gpt4o-transcribe'
         assert call_kwargs['model'].model_id == 'gpt4o-mini-transcribe'
         assert call_kwargs['fallback_triggered'] is True
@@ -644,7 +661,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_error_after_an_event_does_not_fall_back(self):
         invoker = self._build_invoker(GPT4O_TRANSCRIBE_MODEL)
-        invoker._record_metrics = MagicMock()
+        invoker.recorder.record = MagicMock()
         delta = TranscriptionTextDeltaEvent(type='transcript.text.delta', delta='Ciao')
 
         async def broken_stream():
@@ -750,15 +767,8 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
         invoker.cost_service.compute_cost.return_value = Decimal('0.000825')
         usage = MagicMock(type='duration', seconds=8.25)
 
-        total_cost = invoker._record_transcription_usage_cost(
-            request_uuid='req',
-            api_key_uuid='key',
-            api_key_name='rb-key',
-            group_name='test-group',
-            group_uuid='grp',
-            route_name='test-route',
-            model=WHISPER_MODEL,
-            usage=usage,
+        total_cost = invoker.recorder.transcription_usage(
+            USAGE_CALL, WHISPER_MODEL, usage
         )
 
         assert total_cost == Decimal('0.000825')
@@ -788,15 +798,8 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
             input_token_details=MagicMock(audio_tokens=82, text_tokens=5),
         )
 
-        total_cost = invoker._record_transcription_usage_cost(
-            request_uuid='req',
-            api_key_uuid='key',
-            api_key_name='rb-key',
-            group_name='test-group',
-            group_uuid='grp',
-            route_name='test-route',
-            model=GPT4O_TRANSCRIBE_MODEL,
-            usage=usage,
+        total_cost = invoker.recorder.transcription_usage(
+            USAGE_CALL, GPT4O_TRANSCRIBE_MODEL, usage
         )
 
         assert total_cost == (
@@ -823,15 +826,8 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
             input_token_details=None,
         )
 
-        total_cost = invoker._record_transcription_usage_cost(
-            request_uuid='req',
-            api_key_uuid='key',
-            api_key_name='rb-key',
-            group_name='test-group',
-            group_uuid='grp',
-            route_name='test-route',
-            model=GPT4O_TRANSCRIBE_MODEL,
-            usage=usage,
+        total_cost = invoker.recorder.transcription_usage(
+            USAGE_CALL, GPT4O_TRANSCRIBE_MODEL, usage
         )
 
         # No input_token_details: all input treated as text-priced;
@@ -845,15 +841,8 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
     def test_record_transcription_usage_cost_no_usage(self):
         invoker = self._build_invoker(WHISPER_MODEL)
 
-        total_cost = invoker._record_transcription_usage_cost(
-            request_uuid='req',
-            api_key_uuid='key',
-            api_key_name='rb-key',
-            group_name='test-group',
-            group_uuid='grp',
-            route_name='test-route',
-            model=WHISPER_MODEL,
-            usage=None,
+        total_cost = invoker.recorder.transcription_usage(
+            USAGE_CALL, WHISPER_MODEL, None
         )
 
         assert total_cost == Decimal(0)

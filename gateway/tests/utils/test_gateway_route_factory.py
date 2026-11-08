@@ -301,7 +301,7 @@ def test_build_gateway_routes_empty_config():
 # ---------------------------------------------------------------------------
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_project_route_full_pipeline(mock_emit_event, fake_redis_client):

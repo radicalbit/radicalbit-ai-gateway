@@ -63,7 +63,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
 )
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_gateway_invocation(mock_model_invoker_emit_event, fake_redis_client):
@@ -122,7 +122,7 @@ async def test_gateway_invocation(mock_model_invoker_emit_event, fake_redis_clie
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_wrong_model_id(mock_model_invoker_emit_event, fake_redis_client):
@@ -180,7 +180,7 @@ async def test_wrong_model_id(mock_model_invoker_emit_event, fake_redis_client):
 
 
 @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_model_invocation_with_redis_cache(
@@ -339,7 +339,7 @@ async def test_model_invocation_with_redis_cache(
 
 
 @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_model_invocation_with_cachetools_cache(
@@ -494,7 +494,7 @@ async def test_model_invocation_with_cachetools_cache(
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_invoke_embeddings_success(mock_emit_event):
@@ -560,7 +560,7 @@ async def test_invoke_embeddings_success(mock_emit_event):
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_invoke_embeddings_wrong_route(
@@ -608,7 +608,7 @@ async def test_invoke_embeddings_wrong_route(
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_invoke_embeddings_with_multiple_inputs(
@@ -674,7 +674,7 @@ async def test_invoke_embeddings_with_multiple_inputs(
 
 
 @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_invoke_embeddings_with_cachetools_cache(
@@ -777,7 +777,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
 
 
 @patch('radicalbit_ai_gateway.limiting.limits.emit_event', autospec=True)
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_invoke_embeddings_token_limit_exceeded(
@@ -893,7 +893,7 @@ async def test_embedding_budget_limits(route, credential, project, reported):
     ai_gateway.embedding_invoker.embed.assert_not_awaited()
 
 
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_project_budget_limit_blocks_chat_with_no_other_limiters_configured(
@@ -1607,7 +1607,7 @@ async def test_invoke_transcription_stream_no_models_configured_raises():
 
 
 @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
 async def test_cache_hit_flag_set_on_request_state(

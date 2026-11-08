@@ -123,6 +123,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     JudgeInternalError,
     McpTransportError,
     ModelInvokerError,
+    ModelInvokerUpstreamError,
     RequestRateLimitExceeded,
     SecretsBackendError,
     TokenLimitExceeded,
@@ -731,6 +732,9 @@ async def chat_completions(
                         yield f'data: {chunk_json}\n\n'
                     logger.debug('Streaming finished: [DONE]')
                     yield 'data: [DONE]\n\n'
+                except ModelInvokerUpstreamError as exc:
+                    # The provider's refusal, as the provider sent it.
+                    yield json.dumps(exc.body), exc.status_code
                 except AppError as exc:
                     error_body = json.dumps(
                         {

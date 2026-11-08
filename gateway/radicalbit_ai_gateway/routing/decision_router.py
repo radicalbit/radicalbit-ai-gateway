@@ -9,12 +9,14 @@ from radicalbit_ai_gateway.invocation.decision_model_invoker import (
     billed_input_tokens,
     is_number,
 )
+from radicalbit_ai_gateway.invocation.fallback_chain import Candidate, Reply, TryNext
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import DecisionRoutingConfig
 from radicalbit_ai_gateway.routing.common import (
     RoutingSpendRecorder,
     record_routing_spend,
+    routing_chain,
     routing_text,
     set_span_attributes,
 )
@@ -42,7 +44,7 @@ def _set_attributes(**attributes) -> None:
 
 
 class _NoAnswer(Exception):
-    """The decision model gave no usable answer: try the fallback."""
+    """Neither the decision model nor its fallback gave an answer."""
 
 
 class _BadAnswer(Exception):
@@ -140,34 +142,51 @@ class DecisionRouter:
     ) -> _Answer:
         """Ask the decision model, then the fallback if the first gives no answer."""
         model_id = self._config.decision_model_id
+        fallback_id = self._config.fallback_model_id
         _set_attributes(model_id=model_id, fallback_used=False)
-        try:
-            return await self._ask_model(model_id, body, record_spend)
-        except _NoAnswer:
-            fallback_id = self._config.fallback_model_id
-            if not fallback_id:
-                raise
-        logger.warning(
-            'Decision routing falls back from model %s to model %s',
-            model_id,
-            fallback_id,
-        )
-        _set_attributes(model_id=fallback_id, fallback_used=True)
-        return await self._ask_model(fallback_id, body, record_spend)
+
+        async def ask(candidate: Candidate) -> Reply:
+            if candidate.is_fallback:
+                logger.warning(
+                    'Decision routing falls back from model %s to model %s',
+                    model_id,
+                    fallback_id,
+                )
+                _set_attributes(model_id=fallback_id, fallback_used=True)
+            return Reply(
+                await self._ask_model(candidate.model.model_id, body, record_spend)
+            )
+
+        payload = await routing_chain(
+            [self._model(mid) for mid in (model_id, fallback_id) if mid],
+            DECISION_MODEL_TYPE,
+            record_spend,
+            no_answer=_NoAnswer,
+        ).call(ask)
+        return self._read_choice(payload)
+
+    def _model(self, model_id: str) -> Model:
+        """Return the decision model ``model_id``. One the project does not
+        define gives no answer when asked (see ``DecisionModelInvoker.call``).
+        """
+        if model_id in self._invoker.model_map:
+            return self._invoker.model_map[model_id][0]
+        return Model(model_id=model_id, model=f'typesafe/{model_id}')
 
     async def _ask_model(
         self, model_id: str, body: dict, record_spend: RoutingSpendRecorder | None
-    ) -> _Answer:
+    ) -> object:
+        """Return the decision model's answer. Raise TryNext when it gives none."""
         start = time.monotonic()
         try:
             response = await self._invoker.call(model_id, body)
         except ModelInvokerBadRequest as e:
             logger.warning('Decision routing model %s: %s', model_id, e)
-            raise _NoAnswer from e
+            raise TryNext(e) from e
         latency_ms = (time.monotonic() - start) * 1000
         if response is None:
             logger.warning('Decision routing model %s: no answer', model_id)
-            raise _NoAnswer
+            raise TryNext
         # Routing never fails a request: a 4xx also goes on to the fallback.
         if not response.is_success:
             logger.warning(
@@ -175,14 +194,14 @@ class DecisionRouter:
                 model_id,
                 response.status_code,
             )
-            raise _NoAnswer
+            raise TryNext
         try:
             payload = response.json()
         except ValueError:
             payload = None
         # Count before reading the choice. A bad answer still spent tokens.
         await self._record_spend(record_spend, model_id, payload, latency_ms)
-        return self._read_choice(payload)
+        return payload
 
     async def _record_spend(
         self,

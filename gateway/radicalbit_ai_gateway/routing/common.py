@@ -4,8 +4,16 @@ from typing import Any, Literal, Protocol
 
 from opentelemetry import trace
 
+from radicalbit_ai_gateway.invocation.fallback_chain import (
+    CallContext,
+    Candidate,
+    Failure,
+    FallbackChain,
+    candidates,
+)
 from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.guardrails import GuardrailMessageRole
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import stringify_message_content
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
@@ -35,6 +43,13 @@ class RoutingSpendRecorder(Protocol):
         output_tokens: int | None = None,
     ) -> Awaitable[None]: ...
 
+    def failed(
+        self, model: Any, latency_ms: float, *, model_type: str, target_model_id: str
+    ) -> None:
+        """Record a routing call that got no answer from ``model``, the last
+        model tried. ``target_model_id`` is the routing model it stood in for.
+        """
+
 
 async def record_routing_spend(
     record: RoutingSpendRecorder | None,
@@ -63,6 +78,50 @@ async def record_routing_spend(
         )
     except Exception:
         logger.exception('Routing spend on model %s was not recorded', model.model_id)
+
+
+def routing_chain(
+    models: list[Model],
+    model_type: str,
+    record: RoutingSpendRecorder | None,
+    no_answer: type[Exception],
+) -> FallbackChain:
+    """Return the chain of a routing model and its fallback.
+
+    When neither answers, the call is recorded as failed with ``record`` and
+    ``no_answer`` is raised: the router then serves the default model.
+    """
+    target_model_id = models[0].model_id
+
+    def record_failure(candidate: Candidate, latency_ms: float) -> None:
+        failed = getattr(record, 'failed', None)
+        if failed is None:
+            return
+        try:
+            failed(
+                candidate.model,
+                latency_ms,
+                model_type=model_type,
+                target_model_id=target_model_id,
+            )
+        except Exception:
+            logger.exception(
+                'Failed routing call on model %s was not recorded',
+                candidate.model.model_id,
+            )
+
+    def on_exhausted(failures: list[Failure]):
+        raise no_answer
+
+    return FallbackChain(
+        candidates((models[0], None), [(model, None) for model in models[1:]]),
+        CallContext(
+            call=None,
+            recorder=None,
+            record_failure=record_failure,
+            on_exhausted=on_exhausted,
+        ),
+    )
 
 
 _MESSAGE_TYPE_BY_ROLE = {

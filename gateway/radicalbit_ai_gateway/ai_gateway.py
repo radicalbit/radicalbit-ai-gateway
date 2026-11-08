@@ -36,6 +36,7 @@ from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EmbeddingModelInvoker,
 )
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
+from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
     TranscriptionModelInvoker,
 )
@@ -200,6 +201,60 @@ def _transcription_demand(audio_bytes: bytes) -> Demand:
 
 _check_in_chat_span = task(name='check_limiters')(_check)
 _check_in_embedding_span = task(name='check_embedding_limiters')(_check)
+
+
+class _RoutingSpend:
+    """Charges a request for its routing calls: see ``RoutingSpendRecorder``."""
+
+    def __init__(self, limits: RequestLimits, metrics: ModelInvoker):
+        self._limits = limits
+        self._metrics = metrics
+
+    async def __call__(
+        self,
+        model: Model,
+        input_tokens: int,
+        latency_ms: float,
+        *,
+        model_type: str,
+        target_model_id: str | None = None,
+        output_tokens: int | None = None,
+    ) -> None:
+        target_model_id = target_model_id or model.model_id
+        self._metrics.recorder.invocation(
+            Call(
+                identity=self._limits.identity,
+                model_type=model_type,
+                target_model_id=target_model_id,
+                is_routing=True,
+            ),
+            model,
+            latency_ms,
+            tokens=Tokens(input=input_tokens, output=output_tokens),
+            fallback_triggered=target_model_id != model.model_id,
+        )
+        if output_tokens is None:
+            # Embedding and decision calls bill input tokens only.
+            if input_tokens > 0:
+                await self._limits.count(Usage.priced(model, input_tokens))
+        else:
+            # A chat model router also bills the tokens it answers with.
+            await self._limits.charge_call(model, input_tokens, output_tokens)
+
+    def failed(
+        self, model: Model, latency_ms: float, *, model_type: str, target_model_id: str
+    ) -> None:
+        self._metrics.recorder.failure(
+            Call(
+                identity=self._limits.identity,
+                model_type=model_type,
+                target_model_id=target_model_id,
+                is_routing=True,
+            ),
+            model,
+            latency_ms,
+            fallback_triggered=model.model_id != target_model_id,
+        )
 
 
 class GatewayRoute:
@@ -1511,34 +1566,7 @@ class GatewayRoute:
         self, limits: RequestLimits, metrics: ModelInvoker
     ) -> RoutingSpendRecorder:
         """Charge a routing call to the request, as a judge call is (ADR 0006)."""
-
-        async def record(
-            model: Model,
-            input_tokens: int,
-            latency_ms: float,
-            *,
-            model_type: str,
-            target_model_id: str | None = None,
-            output_tokens: int | None = None,
-        ) -> None:
-            metrics.record_routing_call(
-                identity=limits.identity,
-                model=model,
-                target_model_id=target_model_id or model.model_id,
-                input_tokens=input_tokens,
-                latency_ms=latency_ms,
-                model_type=model_type,
-                output_tokens=output_tokens,
-            )
-            if output_tokens is None:
-                # Embedding and decision calls bill input tokens only.
-                if input_tokens > 0:
-                    await limits.count(Usage.priced(model, input_tokens))
-            else:
-                # A chat model router also bills the tokens it answers with.
-                await limits.charge_call(model, input_tokens, output_tokens)
-
-        return record
+        return _RoutingSpend(limits, metrics)
 
     # ============================================================================
     # Pre Process Request

@@ -52,7 +52,7 @@ ROUTE_KEY = 'proj/agent'
 TYPESAFE_KEY = 'ts-upstream-secret'
 TYPESAFE_URL = 'https://api.typesafe.ai/v1/systemone'
 
-MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.model_invoker.emit_event'
+MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
 REQUEST_EVENT_EMIT = (
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
 )

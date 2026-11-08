@@ -50,21 +50,22 @@ def _limits() -> RequestLimits:
 
 async def test_chat_router_spend_counts_input_and_output():
     gateway, limits = _build_gateway(), _limits()
-    gateway.chat_invoker.record_routing_call = MagicMock()
+    gateway.chat_invoker.recorder.record = MagicMock()
     record = gateway._routing_spend_recorder(limits, gateway.chat_invoker)
 
     await record(ROUTER_MODEL, 120, 12.0, model_type='chat-model', output_tokens=15)
 
-    call = gateway.chat_invoker.record_routing_call.call_args.kwargs
-    assert call['identity'] == IDENTITY
-    assert call['input_tokens'] == 120
-    assert call['output_tokens'] == 15
+    call = gateway.chat_invoker.recorder.record.call_args.kwargs
+    assert call['request_uuid'] == IDENTITY.request_uuid
+    assert call['is_routing'] is True
+    assert call['token_input_count'] == 120
+    assert call['token_output_count'] == 15
     limits.charge_call.assert_awaited_once_with(ROUTER_MODEL, 120, 15)
 
 
 async def test_input_only_router_spend_counts_no_output():
     gateway, limits = _build_gateway(), _limits()
-    gateway.chat_invoker.record_routing_call = MagicMock()
+    gateway.chat_invoker.recorder.record = MagicMock()
     record = gateway._routing_spend_recorder(limits, gateway.chat_invoker)
 
     await record(ROUTER_MODEL, 120, 12.0, model_type='embeddings')
@@ -73,22 +74,14 @@ async def test_input_only_router_spend_counts_no_output():
     limits.charge_call.assert_not_awaited()
 
 
-def test_chat_router_call_emits_output_tokens_flagged_as_routing():
+async def test_chat_router_call_emits_output_tokens_flagged_as_routing():
     gateway = _build_gateway()
-    gateway.chat_invoker.cost_service = MagicMock(spec_set=CostService)
-    gateway.chat_invoker.cost_service.compute_cost.return_value = Decimal('0.1')
-    with patch(
-        'radicalbit_ai_gateway.invocation.model_invoker.emit_event'
-    ) as emit_event:
-        gateway.chat_invoker.record_routing_call(
-            identity=IDENTITY,
-            model=ROUTER_MODEL,
-            target_model_id=ROUTER_MODEL.model_id,
-            input_tokens=120,
-            latency_ms=12.0,
-            model_type='chat-model',
-            output_tokens=15,
-        )
+    gateway.chat_invoker.recorder.cost_service.compute_cost.return_value = Decimal(
+        '0.1'
+    )
+    record = gateway._routing_spend_recorder(_limits(), gateway.chat_invoker)
+    with patch('radicalbit_ai_gateway.invocation.recorder.emit_event') as emit_event:
+        await record(ROUTER_MODEL, 120, 12.0, model_type='chat-model', output_tokens=15)
     events = [call.args[0] for call in emit_event.call_args_list]
 
     assert [e.event_type for e in events] == [

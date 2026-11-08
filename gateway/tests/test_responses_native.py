@@ -16,6 +16,7 @@ import pytest
 from tests.common.provider_recorder import CannedResponse, ProviderRecorder
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
+from radicalbit_ai_gateway.invocation.recorder import Recorder
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.factory import init_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk
@@ -275,7 +276,8 @@ def _invoker(primary, *fallbacks) -> ChatModelInvoker:
     invoker.model_map = {
         'm0': (models[0], primary, list(zip(models[1:], fallbacks, strict=True)))
     }
-    invoker._record_metrics = MagicMock()
+    invoker.recorder = Recorder(MagicMock())
+    invoker.recorder.record = MagicMock()
     return invoker
 
 
@@ -307,7 +309,7 @@ class TestStreamResponses:
         events = await _stream(invoker, {'input': OPENCODE_TURN})
 
         assert [event.event for event in events] == [e['type'] for e in UPSTREAM_EVENTS]
-        metrics = invoker._record_metrics.call_args.kwargs
+        metrics = invoker.recorder.record.call_args.kwargs
         assert metrics['token_input_count'] == 60
         assert metrics['cached_token_count'] == 40
         assert metrics['token_output_count'] == 7
@@ -326,7 +328,7 @@ class TestStreamResponses:
         assert primary.bodies[0] == {**body, 'input': [*OPENCODE_TURN, 'for primary']}
         assert fallback.bodies[0]['input'] == [*OPENCODE_TURN, 'for fallback']
         assert body['input'] == OPENCODE_TURN
-        assert invoker._record_metrics.call_args.kwargs['fallback_triggered'] is True
+        assert invoker.recorder.record.call_args.kwargs['fallback_triggered'] is True
 
     async def test_primary_attempt_is_adapted_too(self):
         primary = FakeChatModel(events=UPSTREAM_EVENTS)
@@ -404,7 +406,7 @@ class TestCompleteResponses:
 
         assert result == UPSTREAM_EVENTS[2]['response']
         assert model.model_id == 'm0'
-        assert invoker._record_metrics.call_args.kwargs['token_input_count'] == 60
+        assert invoker.recorder.record.call_args.kwargs['token_input_count'] == 60
 
     async def test_fallback_answers_with_the_input_adapted_for_it(self):
         primary = FakeChatModel(error=RuntimeError('503'))
@@ -420,7 +422,7 @@ class TestCompleteResponses:
         assert primary.bodies[0]['input'] == [*OPENCODE_TURN, 'for primary']
         # The fake keeps the base behaviour: it reads no reasoning.
         assert 'reasoning' not in [item['type'] for item in fallback.bodies[0]['input']]
-        assert invoker._record_metrics.call_args.kwargs['fallback_triggered'] is True
+        assert invoker.recorder.record.call_args.kwargs['fallback_triggered'] is True
 
     async def test_no_fallback_for_stored_state(self):
         primary = FakeChatModel(error=RuntimeError('503'))

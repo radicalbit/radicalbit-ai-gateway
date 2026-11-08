@@ -44,7 +44,7 @@ EVENT_EMITS = (
     'radicalbit_ai_gateway.guardrails.guardrail_redact.emit_event',
 )
 QUIET_EMITS = (
-    'radicalbit_ai_gateway.invocation.model_invoker.emit_event',
+    'radicalbit_ai_gateway.invocation.recorder.emit_event',
     'radicalbit_ai_gateway.ai_gateway.emit_event',
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event',
 )

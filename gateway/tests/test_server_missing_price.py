@@ -25,7 +25,7 @@ from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_gateway_routes_from_config,
 )
 
-MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.model_invoker.emit_event'
+MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
 
 CHAT_RESPONSE = {
     'id': 'chatcmpl-mock',

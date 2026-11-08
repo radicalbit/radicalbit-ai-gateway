@@ -52,7 +52,7 @@ class TestEmbeddingModelInvoker(unittest.IsolatedAsyncioTestCase):
             cost_service=cost_service,
         )
         cls.emit_event_patcher = patch(
-            'radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True
+            'radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True
         )
         cls.emit_event_patcher.start()
 

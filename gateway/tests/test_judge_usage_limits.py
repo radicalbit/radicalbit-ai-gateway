@@ -212,7 +212,7 @@ def judge():
             return_value=_judge_llm(),
         ),
         patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event'),
-        patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event'),
+        patch('radicalbit_ai_gateway.invocation.recorder.emit_event'),
         patch('radicalbit_ai_gateway.limiting.limit_event.emit_event'),
     ):
         yield
@@ -326,7 +326,7 @@ def judge_calls():
             return_value=llm,
         ),
         patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event'),
-        patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event'),
+        patch('radicalbit_ai_gateway.invocation.recorder.emit_event'),
         patch('radicalbit_ai_gateway.limiting.limits.emit_event'),
     ):
         yield llm.with_structured_output.return_value.ainvoke.await_args_list

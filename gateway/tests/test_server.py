@@ -715,7 +715,7 @@ class TestServer(unittest.TestCase):
         assert 'whisper-1 does not support streaming' in body['error']['message']
 
     @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
-    @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pook.activate
     def test_cache_hit_header_in_http_response(
         self,

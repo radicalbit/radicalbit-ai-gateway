@@ -98,7 +98,7 @@ async def _invoke(route: GatewayRoute, request_uuid: str):
 
 @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.ChatModelInvoker.complete')
 @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
-@patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pytest.mark.asyncio
 async def test_exact_cache_does_not_leak_across_projects(
     mock_model_invoker_emit_event,

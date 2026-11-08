@@ -42,7 +42,7 @@ PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000bb'
 ROUTE = 'routed'
 EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings'
 CHAT_URL = 'https://api.openai.com/v1/chat/completions'
-MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.model_invoker.emit_event'
+MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
 LIMITS_EMIT = 'radicalbit_ai_gateway.limiting.limits.emit_event'
 
 QUESTION = 'What is the capital of France?'

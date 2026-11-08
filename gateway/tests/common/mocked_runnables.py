@@ -49,14 +49,14 @@ class RateLimitedChatModel(_MockChatModel):
                 ],
             },
         )
-        _ = httpx.Response(
+        rate_limited = httpx.Response(
             status_code=429,
             request=request,
             json=error_body,
         )
         raise RateLimitError(
             'You exceeded your current quota, please check your plan and billing details.',
-            response=response,
+            response=rate_limited,
             body=error_body,
         )
 

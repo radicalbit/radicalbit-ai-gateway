@@ -17,7 +17,7 @@ from radicalbit_ai_gateway.llm.messages import AIMessageChunk, HumanMessage
 from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_config import get_model_from_model_id
 from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.exceptions import ModelInvokerInternalError
+from radicalbit_ai_gateway.utils.exceptions import ModelInvokerUpstreamError
 
 
 class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
@@ -49,7 +49,7 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
             cost_service=cls.cost_service,
         )
         cls.emit_event_patcher = patch(
-            'radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True
+            'radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True
         )
         cls.emit_event_patcher.start()
 
@@ -208,12 +208,10 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
         )
 
         m = HumanMessage(content='What is the capital of France?')
+        # The provider's 4xx reaches the client as the provider sent it.
         with (
             self.assertLogs('radicalbit-ai-gateway', level='ERROR'),
-            pytest.raises(
-                ModelInvokerInternalError,
-                match=r'All chat models failed for model test-route: You exceeded your current quota, please check your plan and billing details.',
-            ),
+            pytest.raises(ModelInvokerUpstreamError) as raised,
         ):
             await self.chat_model_invoker.complete(
                 request_uuid=str(REQUEST_UUID),
@@ -227,6 +225,14 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
                 tools=[],
                 tool_choice='auto',
             )
+        assert raised.value.status_code == 429
+        assert raised.value.body == {
+            'error': {
+                'message': 'You exceeded your current quota, please check your plan and billing details.',
+                'type': 'insufficient_quota',
+                'code': 'rate_limit_exceeded',
+            }
+        }
 
     @pytest.mark.asyncio
     async def test_invoker_with_fallbacks_unauthorized(self):

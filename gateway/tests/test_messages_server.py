@@ -43,7 +43,7 @@ ROUTE_NAME = 'assistant'
 ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 CONFIGURED_KEY = 'sk-ant-configured'
 
-MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.model_invoker.emit_event'
+MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
 GATEWAY_EMIT = 'radicalbit_ai_gateway.ai_gateway.emit_event'
 REQUEST_EVENT_EMIT = (
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'

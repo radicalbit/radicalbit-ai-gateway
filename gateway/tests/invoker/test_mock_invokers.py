@@ -18,7 +18,7 @@ class TestMockInvokers(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
         cls.emit_event_patcher = patch(
-            'radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True
+            'radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True
         )
         cls.emit_event_patcher.start()
         cls.cost_service: CostService = MagicMock(spec_set=CostService)

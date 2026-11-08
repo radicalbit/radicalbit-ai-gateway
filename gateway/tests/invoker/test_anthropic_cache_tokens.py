@@ -69,7 +69,7 @@ def _make_invoker(mock_chat_model) -> tuple[ChatModelInvoker, MagicMock]:
 class TestAnthropicCacheTokensNonStreaming:
     """Verify cache_creation and cache_read token extraction in complete()."""
 
-    @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pytest.mark.asyncio
     async def test_both_cache_types_extracted(self, mock_emit):
         """cache_creation + cache_read tokens are extracted and input tokens reduced."""
@@ -109,7 +109,7 @@ class TestAnthropicCacheTokensNonStreaming:
         )
         assert creation_call.kwargs['token_processed'] == 300
 
-    @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pytest.mark.asyncio
     async def test_cache_read_only(self, mock_emit):
         """Only cache_read present (no creation) — no cached_creation event emitted."""
@@ -136,7 +136,7 @@ class TestAnthropicCacheTokensNonStreaming:
         input_call = next(c for c in compute_calls if c.kwargs['where'] == 'input')
         assert input_call.kwargs['token_processed'] == 400  # 500 - 100
 
-    @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pytest.mark.asyncio
     async def test_openai_legacy_format_still_works(self, mock_emit):
         """OpenAI legacy response_metadata format is handled as a fallback."""
@@ -167,7 +167,7 @@ class TestAnthropicCacheTokensNonStreaming:
         input_call = next(c for c in compute_calls if c.kwargs['where'] == 'input')
         assert input_call.kwargs['token_processed'] == 250  # 300 - 50
 
-    @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pytest.mark.asyncio
     async def test_1h_and_5m_cache_creation_extracted_separately(self, mock_emit):
         """ephemeral_5m and ephemeral_1h tokens are split into separate cost buckets."""
@@ -210,7 +210,7 @@ class TestAnthropicCacheTokensNonStreaming:
         )
         assert creation_1h_call.kwargs['token_processed'] == 200
 
-    @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pytest.mark.asyncio
     async def test_cache_type_set_correctly_on_events(self, mock_emit):
         """InputTokenProcessedPayload carries cache_type='read' or 'creation'."""
@@ -279,7 +279,7 @@ def _make_usage_chunk(
 class TestAnthropicCacheTokensStreaming:
     """Verify cache_creation and cache_read extraction in the streaming path."""
 
-    @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pytest.mark.asyncio
     async def test_streaming_both_cache_types(self, mock_emit):
         """Streaming with cache_creation + cache_read tokens are correctly tracked."""
@@ -324,7 +324,7 @@ class TestAnthropicCacheTokensStreaming:
         )
         assert creation_call.kwargs['token_processed'] == 300
 
-    @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pytest.mark.asyncio
     async def test_streaming_1h_and_5m_cache_creation(self, mock_emit):
         """Streaming with ephemeral_5m and ephemeral_1h tokens tracked separately."""
@@ -372,7 +372,7 @@ class TestAnthropicCacheTokensStreaming:
         )
         assert creation_1h_call.kwargs['token_processed'] == 200
 
-    @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pytest.mark.asyncio
     async def test_streaming_legacy_openai_format(self, mock_emit):
         """Legacy OpenAI response_metadata format is handled as fallback in streaming."""
