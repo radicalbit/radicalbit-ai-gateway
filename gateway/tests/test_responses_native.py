@@ -19,7 +19,7 @@ from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.factory import init_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk
-from radicalbit_ai_gateway.llm.providers._openai_responses import iter_sse_events
+from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.responses.events import NativeResponsesEvent
 from radicalbit_ai_gateway.utils.exceptions import (

@@ -93,6 +93,26 @@ class ResponsesPrepared:
 
 
 @dataclass
+class MessagesPrepared:
+    """A Messages API request after the gateway's policies, before the model call.
+
+    Attributes:
+        body: The request body to forward upstream.
+        headers: The client's ``anthropic-*`` headers to forward upstream.
+        model_selected: The model routing selected.
+        identity: Who made the request, as the keyword arguments
+            (``request_uuid``, ``api_key_uuid``, ``group_uuid``, ``api_key_name``,
+            ``group_name``) the route's policies take.
+
+    """
+
+    body: dict
+    headers: dict[str, str]
+    model_selected: Model
+    identity: dict[str, str]
+
+
+@dataclass
 class CacheResult:
     """Result of cache lookup operation.
 

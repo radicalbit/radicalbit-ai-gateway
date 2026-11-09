@@ -484,7 +484,7 @@ class ModelInvokerBadGateway(ModelInvokerError):
 
 
 class ModelInvokerUpstreamError(ModelInvokerError):
-    """The upstream refused a native Responses call; its status and body are relayed as is."""
+    """The upstream refused a native Responses or Messages call; its status and body are relayed as is."""
 
     def __init__(self, message: str, status_code: int, body: Any):
         super().__init__(message, status_code, code='model_invoker_upstream_error')
@@ -953,6 +953,14 @@ def secrets_backend_exception_handler(request: Request, err: SecretsBackendError
 def budget_limiter_exception_handler(request: Request, err: BudgetLimitExceeded):
     set_request_error_info(request, err)
     return _log_and_json_response(err, 'budget_limit_error')
+
+
+def validation_error_param(error: dict) -> str:
+    """Return the body field a request validation error points at, as ``a.b.0``.
+
+    The ``body`` part of the error's location is left out.
+    """
+    return '.'.join(str(part) for part in (error.get('loc') or ())[1:])
 
 
 async def unhandled_exception_handler(request: Request, err: Exception):

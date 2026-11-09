@@ -36,10 +36,13 @@ from radicalbit_ai_gateway.llm.messages import (
     tool_call,
     tool_call_chunk,
 )
+from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = 'https://api.anthropic.com'
+# Sent on a native Messages request whose client set no anthropic-version.
+_DEFAULT_ANTHROPIC_VERSION = '2023-06-01'
 _FALLBACK_MAX_OUTPUT_TOKENS = 4096
 
 # Model name -> (default max_tokens, accepts the adaptive+summarized thinking
@@ -480,6 +483,52 @@ class ChatAnthropic(ChatModel):
                     'environment variable or configure an api_key credential.'
                 ) from e
             raise
+
+    # ── native Messages API ─────────────────────────────────────────────────
+    # The client's body goes upstream as sent, with only ``model`` swapped, and
+    # the reply comes back unparsed, so fields the SDK does not know survive.
+    # The configured ``params`` belong to the translated chat path: they are
+    # not merged in. The gateway's retries and fallback are the only retry
+    # layer, so the SDK does not retry.
+
+    def supports_native_messages(self) -> bool:
+        return True
+
+    def _native_messages_call(self, body: dict, headers: dict[str, str]) -> dict:
+        """Return the SDK call's arguments for a client's Messages body."""
+        forwarded = {
+            'anthropic-version': headers.get('anthropic-version')
+            or _DEFAULT_ANTHROPIC_VERSION
+        }
+        if beta := headers.get('anthropic-beta'):
+            forwarded['anthropic-beta'] = beta
+        return {
+            # Required by the SDK's signature; the raw body below wins.
+            'model': self.model,
+            'max_tokens': body.get('max_tokens'),
+            'messages': body.get('messages'),
+            'extra_body': {**body, 'model': self.model},
+            'extra_headers': forwarded,
+        }
+
+    async def _ainvoke_native_messages(
+        self, body: dict, headers: dict[str, str]
+    ) -> dict:
+        client = self.client.with_options(max_retries=0)
+        response = await client.messages.with_raw_response.create(
+            **self._native_messages_call(body, headers)
+        )
+        return response.http_response.json()
+
+    async def _astream_native_messages(
+        self, body: dict, headers: dict[str, str]
+    ) -> AsyncIterator[tuple[str, str]]:
+        client = self.client.with_options(max_retries=0)
+        async with client.messages.with_streaming_response.create(
+            stream=True, **self._native_messages_call(body, headers)
+        ) as response:
+            async for event in iter_sse_events(response.iter_lines()):
+                yield event
 
     # ── request payload ─────────────────────────────────────────────────────
 

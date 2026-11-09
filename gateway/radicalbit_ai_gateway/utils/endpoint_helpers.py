@@ -8,7 +8,10 @@ from fastapi import Request
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
-from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
+from radicalbit_ai_gateway.auth.request_auth import (
+    authenticate_anthropic_request,
+    authenticate_bearer_request,
+)
 from radicalbit_ai_gateway.metrics.define_metrics import (
     request_latency_histogram,
     total_requests_counter,
@@ -27,6 +30,14 @@ async def set_api_key_uuid(
     request: Request, project_uuid: str, project_name: str
 ) -> KeyDetails:
     return await authenticate_bearer_request(request, project_uuid, project_name)
+
+
+@task(name='auth_api_key')
+async def set_anthropic_api_key_uuid(
+    request: Request, project_uuid: str, project_name: str
+) -> KeyDetails:
+    """Like ``set_api_key_uuid``, also reading the credential from ``x-api-key``."""
+    return await authenticate_anthropic_request(request, project_uuid, project_name)
 
 
 def set_early_project_trace_attributes(

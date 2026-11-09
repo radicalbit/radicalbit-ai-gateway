@@ -41,6 +41,7 @@ from radicalbit_ai_gateway.llm.providers._openai_common import (
     usage_metadata,
     with_chunk_timeout,
 )
+from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
 
 _DEFAULT_STREAM_CHUNK_TIMEOUT = 120.0
 
@@ -676,7 +677,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
             extra_body=self._native_responses_payload(body),
         ) as response:
             async for event in with_chunk_timeout(
-                responses_api.iter_sse_events(response.iter_lines()),
+                iter_sse_events(response.iter_lines()),
                 self.stream_chunk_timeout,
                 self.model_name,
             ):
