@@ -11,6 +11,7 @@ from tests.common.mocked_runnables import (
     UnauthorizedChatModel,
     WorkingChatModel,
 )
+from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk, HumanMessage
@@ -85,16 +86,18 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
         chunks = []
         try:
             async for chunk in self.chat_model_invoker.stream(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='rb-key',
-                group_name='test-group',
-                route_name='test-route',
-                messages=[HumanMessage(content='Hi')],
-                model_id='openai-o4-mini',
-                tools=None,
-                tool_choice=None,
+                **with_identity(
+                    request_uuid=str(REQUEST_UUID),
+                    api_key_uuid=str(API_KEY_UUID),
+                    group_uuid=str(GROUP_UUID),
+                    api_key_name='rb-key',
+                    group_name='test-group',
+                    route_name='test-route',
+                    messages=[HumanMessage(content='Hi')],
+                    model_id='openai-o4-mini',
+                    tools=None,
+                    tool_choice=None,
+                )
             ):
                 chunks.append(chunk.content)  # noqa: PERF401 — keep the chunks before an error
         except Exception as error:
@@ -147,16 +150,18 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         m = HumanMessage(content='What is the capital of France?')
         res = await self.chat_model_invoker.complete(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='test-route',
-            messages=[m],
-            model_id='openai-o4-mini',
-            tools=[],
-            tool_choice='auto',
+            **with_identity(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='rb-key',
+                group_name='test-group',
+                route_name='test-route',
+                messages=[m],
+                model_id='openai-o4-mini',
+                tools=[],
+                tool_choice='auto',
+            )
         )
         assert (
             res.choices[0].message.content
@@ -178,16 +183,18 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
         )
         m = HumanMessage(content='What is the capital of France?')
         res = await self.chat_model_invoker.complete(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='test-route',
-            messages=[m],
-            model_id='openai-o4-mini',
-            tools=[],
-            tool_choice='auto',
+            **with_identity(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='rb-key',
+                group_name='test-group',
+                route_name='test-route',
+                messages=[m],
+                model_id='openai-o4-mini',
+                tools=[],
+                tool_choice='auto',
+            )
         )
         assert (
             res.choices[0].message.content
@@ -214,16 +221,18 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
             pytest.raises(ModelInvokerUpstreamError) as raised,
         ):
             await self.chat_model_invoker.complete(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='rb-key',
-                group_name='test-group',
-                route_name='test-route',
-                messages=[m],
-                model_id='openai-o4-mini',
-                tools=[],
-                tool_choice='auto',
+                **with_identity(
+                    request_uuid=str(REQUEST_UUID),
+                    api_key_uuid=str(API_KEY_UUID),
+                    group_uuid=str(GROUP_UUID),
+                    api_key_name='rb-key',
+                    group_name='test-group',
+                    route_name='test-route',
+                    messages=[m],
+                    model_id='openai-o4-mini',
+                    tools=[],
+                    tool_choice='auto',
+                )
             )
         assert raised.value.status_code == 429
         assert raised.value.body == {
@@ -250,16 +259,18 @@ class TestChatModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         m = HumanMessage(content='What is the capital of France?')
         res = await self.chat_model_invoker.complete(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='test-route',
-            messages=[m],
-            model_id='openai-o4-mini',
-            tools=[],
-            tool_choice='auto',
+            **with_identity(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='rb-key',
+                group_name='test-group',
+                route_name='test-route',
+                messages=[m],
+                model_id='openai-o4-mini',
+                tools=[],
+                tool_choice='auto',
+            )
         )
         assert (
             res.choices[0].message.content

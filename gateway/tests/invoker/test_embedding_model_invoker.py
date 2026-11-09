@@ -9,6 +9,7 @@ from tests.common.mocked_embeddings import (
     MockWorkingEmbeddingModel,
 )
 from tests.common.mocked_gateway_config_openai import get_default_gateway_openai
+from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EmbeddingModelInvoker,
@@ -88,14 +89,16 @@ class TestEmbeddingModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         input_texts = ['hello', 'world']
         res = await self.embedding_model_invoker.embed(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='test-route',
-            input_texts=input_texts,
-            model_id='text-embedding-3-small',
+            **with_identity(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='rb-key',
+                group_name='test-group',
+                route_name='test-route',
+                input_texts=input_texts,
+                model_id='text-embedding-3-small',
+            )
         )
         assert res.object == 'list'
         assert len(res.data) == len(input_texts)
@@ -119,14 +122,16 @@ class TestEmbeddingModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         input_texts = ['fallback test']
         res = await self.embedding_model_invoker.embed(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='test-route',
-            input_texts=input_texts,
-            model_id='text-embedding-3-small',
+            **with_identity(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='rb-key',
+                group_name='test-group',
+                route_name='test-route',
+                input_texts=input_texts,
+                model_id='text-embedding-3-small',
+            )
         )
         assert len(res.data) == 1
         assert res.data[0].embedding == [0.0, 1.0, 2.0, 3.0, 4.0]
@@ -147,14 +152,16 @@ class TestEmbeddingModelInvoker(unittest.IsolatedAsyncioTestCase):
             pytest.raises(ModelInvokerInternalError, match='Embedding model failure'),
         ):
             await self.embedding_model_invoker.embed(
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='rb-key',
-                group_name='test-group',
-                route_name='test-route',
-                input_texts=['text'],
-                model_id='text-embedding-3-small',
+                **with_identity(
+                    request_uuid=str(REQUEST_UUID),
+                    api_key_uuid=str(API_KEY_UUID),
+                    group_uuid=str(GROUP_UUID),
+                    api_key_name='rb-key',
+                    group_name='test-group',
+                    route_name='test-route',
+                    input_texts=['text'],
+                    model_id='text-embedding-3-small',
+                )
             )
 
     def test_model_map_initialization(self):

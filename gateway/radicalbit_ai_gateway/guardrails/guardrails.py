@@ -336,9 +336,9 @@ class RequestGuardrails:
         set_operation_category(OperationCategory.GUARDRAIL_INPUT)
         result = await self._check(self._route.input_check, payload, INPUT)
         if result.soft_block:
-            return Screened(
-                payload, flags | GuardrailFlags(input_blocked=True), result.soft_block
-            )
+            # A WARN that fired before the soft block is told too.
+            blocked = GuardrailFlags(input_warned=result.warned, input_blocked=True)
+            return Screened(payload, flags | blocked, result.soft_block)
         return Screened(payload, flags | GuardrailFlags(input_warned=result.warned))
 
     async def screen_input(self, payload: P) -> Screened[P]:

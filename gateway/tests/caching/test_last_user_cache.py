@@ -12,6 +12,7 @@ from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
+from tests.common.pipeline import invoke
 from tests.common.resolve_route_models import resolve_route_models
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
@@ -45,7 +46,7 @@ class FakeSemanticGatewayCache(GatewayCache):
 
 
 @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.ChatModelInvoker.complete')
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
 @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pytest.mark.asyncio
 async def test_exact_cache_hit_with_different_history(
@@ -123,7 +124,8 @@ async def test_exact_cache_hit_with_different_history(
         ]
 
         # First invocation => populate cache
-        await ai_gateway.invoke(
+        await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid='req-1',
             api_key_uuid='key-1',
@@ -137,7 +139,8 @@ async def test_exact_cache_hit_with_different_history(
         )
 
         # Second invocation with different history, same last user => should be a cache hit
-        invoke_response_cached = await ai_gateway.invoke(
+        invoke_response_cached = await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid='req-2',
             api_key_uuid='key-1',
@@ -248,7 +251,8 @@ async def test_semantic_cache_uses_only_last_user_for_key_and_embedding(
         'radicalbit_ai_gateway.invocation.chat_model_invoker.ChatModelInvoker.complete',
         AsyncMock(return_value=to_mock_openai_chat_completion(content='Paris')),
     ):
-        await ai_gateway.invoke(
+        await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid='req-1',
             api_key_uuid='key-1',

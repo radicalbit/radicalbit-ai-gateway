@@ -14,6 +14,7 @@ import openai
 import pytest
 
 from tests.common.provider_recorder import CannedResponse, ProviderRecorder
+from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.recorder import Recorder
@@ -281,15 +282,15 @@ def _invoker(primary, *fallbacks) -> ChatModelInvoker:
     return invoker
 
 
-CALL = {
-    'request_uuid': 'r',
-    'api_key_uuid': 'k',
-    'group_uuid': 'g',
-    'api_key_name': 'k',
-    'group_name': 'g',
-    'route_name': 'route',
-    'model_id': 'm0',
-}
+CALL = with_identity(
+    request_uuid='r',
+    api_key_uuid='k',
+    group_uuid='g',
+    api_key_name='k',
+    group_name='g',
+    route_name='route',
+    model_id='m0',
+)
 
 
 async def _stream(invoker, body, **kwargs):

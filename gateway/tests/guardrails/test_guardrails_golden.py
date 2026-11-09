@@ -45,7 +45,7 @@ EVENT_EMITS = (
 )
 QUIET_EMITS = (
     'radicalbit_ai_gateway.invocation.recorder.emit_event',
-    'radicalbit_ai_gateway.ai_gateway.emit_event',
+    'radicalbit_ai_gateway.pipeline.conversation.emit_event',
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event',
 )
 LOGGER = get_app_config().log_config.logger_name
@@ -735,7 +735,10 @@ def test_chat_buffered_stream_output_soft_block_is_a_400(gateway):
     assert response.status_code == 400
     assert response.json() == _buffered_soft_block_error('soft_out', 'OUTPUT')
     assert _guardrail_headers(response) == {
-        'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED': 'true'
+        'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED': 'true',
+        'X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-TRIGGERED': 'true',
+        'X-RB-AIGATEWAY-GUARDRAILS-WARN': 'true',
+        'X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN': 'true',
     }
 
 

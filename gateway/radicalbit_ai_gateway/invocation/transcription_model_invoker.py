@@ -198,13 +198,13 @@ class TranscriptionModelInvoker(ModelInvoker):
                 f'Transcription upstream call failed: {e}'
             ) from e
 
-    def _chain(self, model_id: str, route_name: str, surface: Surface, **request):
+    def _chain(self, model_id: str, identity: RequestIdentity, surface: Surface):
         """Return the chain of ``model_id``: a 4xx is final, it would fail
         identically on any fallback.
         """
         model, client, fallbacks = self.model_map[model_id]
         call = Call(
-            identity=RequestIdentity(route_name=route_name, **request),
+            identity=identity,
             model_type=TRANSCRIPTION_MODEL_TYPE,
             target_model_id=model_id,
         )
@@ -227,7 +227,7 @@ class TranscriptionModelInvoker(ModelInvoker):
                 recorder=self.recorder,
                 record=record,
                 final=lambda error: isinstance(error, ModelInvokerBadRequest),
-                on_exhausted=raising(surface, route_name),
+                on_exhausted=raising(surface, identity.route_name),
                 **_failure_logs(model_id, surface),
             ),
         )
@@ -235,12 +235,7 @@ class TranscriptionModelInvoker(ModelInvoker):
     @task(name='llm_transcribe')
     async def transcribe(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         audio_bytes: bytes,
         filename: str,
         content_type: str | None,
@@ -249,8 +244,6 @@ class TranscriptionModelInvoker(ModelInvoker):
         language: str | None = None,
         prompt: str | None = None,
         temperature: float | None = None,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> Transcription | TranscriptionVerbose:
         model, client, is_whisper, model_name, fallbacks = self._resolve_model(model_id)
         if requested_response_format not in SUPPORTED_RESPONSE_FORMATS:
@@ -270,18 +263,7 @@ class TranscriptionModelInvoker(ModelInvoker):
             model_id=model_id,
         )
 
-        chain = self._chain(
-            model_id,
-            route_name,
-            Surface.TRANSCRIPTION,
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-            project_uuid=project_uuid,
-            project_name=project_name,
-        )
+        chain = self._chain(model_id, identity, Surface.TRANSCRIPTION)
 
         async def transcribe(candidate: Candidate) -> Reply:
             _, name = parse_provider_and_model(candidate.model.model)
@@ -321,12 +303,7 @@ class TranscriptionModelInvoker(ModelInvoker):
     @task(name='llm_transcribe_stream')
     async def stream(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         audio_bytes: bytes,
         filename: str,
         content_type: str | None,
@@ -334,8 +311,6 @@ class TranscriptionModelInvoker(ModelInvoker):
         language: str | None = None,
         prompt: str | None = None,
         temperature: float | None = None,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> AsyncIterator[TranscriptionStreamEvent]:
         model, client, is_whisper, model_name, fallbacks = self._resolve_model(model_id)
         if is_whisper:
@@ -351,18 +326,7 @@ class TranscriptionModelInvoker(ModelInvoker):
             model_id=model_id,
         )
 
-        chain = self._chain(
-            model_id,
-            route_name,
-            Surface.TRANSCRIPTION_STREAM,
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-            project_uuid=project_uuid,
-            project_name=project_name,
-        )
+        chain = self._chain(model_id, identity, Surface.TRANSCRIPTION_STREAM)
         answered: list[tuple[Candidate, list[str]]] = []
 
         async def stream(attempt: Attempt) -> AsyncIterator[TranscriptionStreamEvent]:

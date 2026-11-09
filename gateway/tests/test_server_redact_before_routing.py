@@ -35,7 +35,7 @@ OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
 CLASSIFIER_URL = 'http://text-classifier:8888'
 
 MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
-GATEWAY_EMIT = 'radicalbit_ai_gateway.ai_gateway.emit_event'
+GATEWAY_EMIT = 'radicalbit_ai_gateway.pipeline.conversation.emit_event'
 GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
 REDACT_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_redact.emit_event'
 REQUEST_EVENT_EMIT = (

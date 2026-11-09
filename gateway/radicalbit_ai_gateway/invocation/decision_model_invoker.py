@@ -187,16 +187,9 @@ class DecisionModelInvoker(ModelInvoker):
     @task(name='decide')
     async def decide(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         model_id: str,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> DecisionResponse:
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Decision model {model_id} not defined')
@@ -205,16 +198,7 @@ class DecisionModelInvoker(ModelInvoker):
 
         chain_candidates = candidates((model, upstream), fallbacks)
         call = Call(
-            identity=RequestIdentity(
-                request_uuid=request_uuid,
-                route_name=route_name,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                project_uuid=project_uuid,
-                project_name=project_name,
-            ),
+            identity=identity,
             model_type=DECISION_MODEL_TYPE,
             target_model_id=model_id,
         )
@@ -265,7 +249,7 @@ class DecisionModelInvoker(ModelInvoker):
             last_resorts = [f.last_resort for f in failures if f.last_resort]
             if not last_resorts:
                 _set_decision_fallback_attributes(model.model_id, fallback_tried)
-                raise exhausted(Surface.DECISION, route_name, [])
+                raise exhausted(Surface.DECISION, identity.route_name, [])
             response, candidate = last_resorts[-1].value
             _set_decision_fallback_attributes(candidate.model.model_id, fallback_tried)
             return _relayed(response)

@@ -12,13 +12,11 @@ from openai.types.chat.chat_completion_chunk import (
 
 from tests.common import db_mock
 from tests.common.limits import project_limit
+from tests.common.routes import Prepared, answered_by_mocks, mock_route
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
-from radicalbit_ai_gateway.guardrails.guardrails import RouteGuardrails
+from radicalbit_ai_gateway.guardrails.guardrails import GuardrailFlags, RouteGuardrails
 from radicalbit_ai_gateway.limiting.limits import Demand, RouteLimits
-from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.server import app, group_service, key_service
-from radicalbit_ai_gateway.utils.ai_gateway_types import PrepareAndValidateResult
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import ModelInvokerInternalError
 
@@ -31,7 +29,9 @@ def mock_request_uuid(request: Request):
 class TestStreaming(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.mock_gateway = MagicMock(spec=GatewayRoute)
+        cls._answered = answered_by_mocks()
+        cls._answered.__enter__()
+        cls.mock_gateway = mock_route()
         cls.mock_gateway.route_limits = RouteLimits()
         cls.mock_gateway.project_uuid = ''
         cls.mock_gateway.project_name = ''
@@ -45,22 +45,12 @@ class TestStreaming(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls._answered.__exit__(None, None, None)
         app.dependency_overrides = {}
 
     @staticmethod
-    def _create_prepared_result() -> PrepareAndValidateResult:
-        mock_model = MagicMock()
-        mock_model.model_id = 'test-model'
-        mock_model.input_cost_per_token = None
-        mock_model.output_cost_per_token = None
-
-        return PrepareAndValidateResult(
-            model_selected=mock_model,
-            redacted_messages=[HumanMessage(content='Hi')],
-            input_soft_block=None,
-            guardrails_input_triggered=False,
-            guardrails_block_triggered=False,
-        )
+    def _create_prepared_result() -> Prepared:
+        return Prepared()
 
     def test_chat_completions_streaming(self):
         api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
@@ -134,13 +124,8 @@ class TestStreaming(unittest.TestCase):
 
         # Mock prepare_stream with guardrails_block_triggered=True
         # (BLOCK/SOFT_BLOCK triggers header, not REDACT or WARN)
-        prepared = self._create_prepared_result()
-        prepared = PrepareAndValidateResult(
-            model_selected=prepared.model_selected,
-            redacted_messages=prepared.redacted_messages,
-            input_soft_block=None,
-            guardrails_input_triggered=True,
-            guardrails_block_triggered=True,  # BLOCK/SOFT_BLOCK triggers the header
+        prepared = Prepared(
+            GuardrailFlags(input_warned=True, input_blocked=True).headers()
         )
         self.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
         self.mock_gateway.guardrails = RouteGuardrails()
@@ -242,7 +227,7 @@ class TestStreaming(unittest.TestCase):
         self.mock_gateway.invoke_stream = mock_invoke_stream
 
         with patch(
-            'radicalbit_ai_gateway.utils.endpoint_helpers.load_project_limits',
+            'radicalbit_ai_gateway.pipeline.admission.load_project_limits',
             return_value=[project_limit(10)],
         ):
             response = self.client.post(

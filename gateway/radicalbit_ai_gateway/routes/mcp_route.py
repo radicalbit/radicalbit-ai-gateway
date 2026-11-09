@@ -12,11 +12,7 @@ from radicalbit_ai_gateway.utils.dependencies import (
     get_request_uuid,
 )
 from radicalbit_ai_gateway.utils.request_context import reset_route_context
-from radicalbit_ai_gateway.utils.trace_attributes import (
-    OperationCategory,
-    ensure_endpoint_category,
-    set_operation_category,
-)
+from radicalbit_ai_gateway.utils.trace_attributes import ensure_endpoint_category
 
 
 class McpRoute:
@@ -74,9 +70,7 @@ class McpRoute:
                     route.route_limits,
                     key_details.limits,
                 )
-                if request_limits.applies(ADMISSION):
-                    set_operation_category(OperationCategory.LIMITING)
-                    await request_limits.check(ADMISSION)
+                await request_limits.check(ADMISSION)
 
             list_cache = McpListCache.for_route(
                 gateway_cache=route.gateway_cache if route else None,

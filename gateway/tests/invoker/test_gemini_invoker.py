@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.common.request_identity import with_identity
+
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EmbeddingModelInvoker,
@@ -159,17 +161,19 @@ class TestGeminiRuntimeParamNormalization:
         )
 
         await invoker.complete(
-            request_uuid='uuid',
-            api_key_uuid='ak-uuid',
-            group_uuid='g-uuid',
-            api_key_name='key',
-            group_name='group',
-            route_name='route',
-            messages=[],
-            model_id='gemini-test',
-            tools=None,
-            tool_choice=None,
-            max_completion_tokens=512,
+            **with_identity(
+                request_uuid='uuid',
+                api_key_uuid='ak-uuid',
+                group_uuid='g-uuid',
+                api_key_name='key',
+                group_name='group',
+                route_name='route',
+                messages=[],
+                model_id='gemini-test',
+                tools=None,
+                tool_choice=None,
+                max_completion_tokens=512,
+            )
         )
 
         call_kwargs = mock_chat_model.ainvoke.call_args[1]

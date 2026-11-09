@@ -206,11 +206,10 @@ class ChatModelInvoker(ModelInvoker):
             cache_creation_1h_token_count,
         )
 
-    def _call(self, model_id: str, route_name: str, **request: str) -> Call:
+    @staticmethod
+    def _call(model_id: str, identity: RequestIdentity) -> Call:
         return Call(
-            identity=RequestIdentity(route_name=route_name, **request),
-            model_type=CHAT_MODEL_TYPE,
-            target_model_id=model_id,
+            identity=identity, model_type=CHAT_MODEL_TYPE, target_model_id=model_id
         )
 
     def _chain(
@@ -264,31 +263,14 @@ class ChatModelInvoker(ModelInvoker):
     @task(name='llm_complete')
     async def complete(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         messages: list[BaseMessage],
         model_id: str,
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
-        project_uuid: str = '',
-        project_name: str = '',
         **kwargs,
     ) -> ChatCompletion:
-        call = self._call(
-            model_id,
-            route_name,
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-            project_uuid=project_uuid,
-            project_name=project_name,
-        )
+        call = self._call(model_id, identity)
 
         def log_failure(candidate: Candidate, error: BaseException) -> None:
             if candidate.is_fallback:
@@ -310,7 +292,7 @@ class ChatModelInvoker(ModelInvoker):
             tool_choice,
             call,
             on_failure=log_failure,
-            on_exhausted=raising(Surface.CHAT, route_name),
+            on_exhausted=raising(Surface.CHAT, identity.route_name),
         )
         logger.debug('Invoking model %s with messages: %s', model_id, messages)
 
@@ -331,7 +313,7 @@ class ChatModelInvoker(ModelInvoker):
         return ChatUtils.to_openai_chat_completion(
             result,
             model_id_invoked=model_invoked.model_id,
-            request_id=request_uuid,
+            request_id=identity.request_uuid,
         )
 
     async def _stream_with_metrics(
@@ -379,31 +361,14 @@ class ChatModelInvoker(ModelInvoker):
     @task(name='llm_stream')
     async def stream(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         messages: list[BaseMessage],
         model_id: str,
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
-        project_uuid: str = '',
-        project_name: str = '',
         **kwargs,
     ) -> AsyncIterator[AIMessageChunk]:
-        call = self._call(
-            model_id,
-            route_name,
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-            project_uuid=project_uuid,
-            project_name=project_name,
-        )
+        call = self._call(model_id, identity)
 
         def log_failure(candidate: Candidate, error: BaseException) -> None:
             if candidate.is_fallback:
@@ -433,7 +398,7 @@ class ChatModelInvoker(ModelInvoker):
             call,
             record=record,
             on_failure=log_failure,
-            on_exhausted=raising(Surface.CHAT_STREAM, route_name),
+            on_exhausted=raising(Surface.CHAT_STREAM, identity.route_name),
         )
 
         async def stream(attempt: Attempt) -> AsyncIterator[AIMessageChunk]:
@@ -469,7 +434,6 @@ class ChatModelInvoker(ModelInvoker):
         allow_fallback: bool,
         body: dict,
         call: Call,
-        route_name: str,
     ) -> FallbackChain:
         """Return the chain of the model, then its fallbacks that serve the
         Responses API. Each candidate's client is the model and the body to
@@ -503,7 +467,7 @@ class ChatModelInvoker(ModelInvoker):
                 recorder=self.recorder,
                 record=record,
                 on_failure=_log_responses_failure,
-                on_exhausted=raising(Surface.RESPONSES, route_name),
+                on_exhausted=raising(Surface.RESPONSES, call.identity.route_name),
             ),
         )
 
@@ -534,35 +498,18 @@ class ChatModelInvoker(ModelInvoker):
     @task(name='llm_stream_responses')
     async def stream_responses(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         model_id: str,
         allow_fallback: bool = True,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> AsyncIterator[NativeResponsesEvent]:
         """Stream a Responses API request and yield the upstream's events.
 
         A fallback is tried only while nothing has been yielded: once the
         client has part of a reply, an error ends the stream.
         """
-        call = self._call(
-            model_id,
-            route_name,
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-            project_uuid=project_uuid,
-            project_name=project_name,
-        )
-        chain = self._responses_chain(model_id, allow_fallback, body, call, route_name)
+        call = self._call(model_id, identity)
+        chain = self._responses_chain(model_id, allow_fallback, body, call)
 
         async def stream(attempt: Attempt) -> AsyncIterator[NativeResponsesEvent]:
             chat_model, candidate_body = attempt.candidate.client
@@ -580,33 +527,16 @@ class ChatModelInvoker(ModelInvoker):
     @task(name='llm_complete_responses')
     async def complete_responses(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         model_id: str,
         allow_fallback: bool = True,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> tuple[dict, Model]:
         """Answer a Responses API request; return the upstream's response
         object and the model that answered.
         """
-        call = self._call(
-            model_id,
-            route_name,
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-            project_uuid=project_uuid,
-            project_name=project_name,
-        )
-        chain = self._responses_chain(model_id, allow_fallback, body, call, route_name)
+        call = self._call(model_id, identity)
+        chain = self._responses_chain(model_id, allow_fallback, body, call)
 
         async def ask(candidate: Candidate) -> Reply:
             chat_model, candidate_body = candidate.client
@@ -625,9 +555,7 @@ class ChatModelInvoker(ModelInvoker):
         _, chat_model, _ = self.model_map[model_id]
         return chat_model.supports_native_messages()
 
-    def _messages_chain(
-        self, model_id: str, call: Call, route_name: str
-    ) -> FallbackChain:
+    def _messages_chain(self, model_id: str, call: Call) -> FallbackChain:
         """Return the chain of the model, then its fallbacks in order.
 
         A fallback that does not serve the Messages API ends the chain: the
@@ -637,6 +565,7 @@ class ChatModelInvoker(ModelInvoker):
             raise ModelInvokerBadRequest(
                 f'Chat model {model_id} does not serve the Messages API'
             )
+        route_name = call.identity.route_name
         model, chat_model, fallbacks = self.model_map[model_id]
         served: list[tuple[Model, ChatModel]] = []
         unserved: Model | None = None
@@ -734,33 +663,16 @@ class ChatModelInvoker(ModelInvoker):
     @task(name='llm_complete_messages')
     async def complete_messages(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         headers: dict[str, str],
         model_id: str,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> tuple[dict, Model]:
         """Answer a Messages API request; return the upstream's message object
         and the model that answered.
         """
-        call = self._call(
-            model_id,
-            route_name,
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-            project_uuid=project_uuid,
-            project_name=project_name,
-        )
-        chain = self._messages_chain(model_id, call, route_name)
+        call = self._call(model_id, identity)
+        chain = self._messages_chain(model_id, call)
 
         async def ask(candidate: Candidate) -> Reply:
             try:
@@ -777,35 +689,18 @@ class ChatModelInvoker(ModelInvoker):
     @task(name='llm_stream_messages')
     async def stream_messages(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         headers: dict[str, str],
         model_id: str,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> AsyncIterator[tuple[str, str]]:
         """Stream a Messages API request and yield the upstream's ``(event, data)``.
 
         A fallback is tried only while nothing has been yielded: once the
         client has part of a reply, an error ends the stream.
         """
-        call = self._call(
-            model_id,
-            route_name,
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            api_key_name=api_key_name,
-            group_uuid=group_uuid,
-            group_name=group_name,
-            project_uuid=project_uuid,
-            project_name=project_name,
-        )
-        chain = self._messages_chain(model_id, call, route_name)
+        call = self._call(model_id, identity)
+        chain = self._messages_chain(model_id, call)
 
         async def stream(attempt: Attempt) -> AsyncIterator[tuple[str, str]]:
             attempt.usage = {}

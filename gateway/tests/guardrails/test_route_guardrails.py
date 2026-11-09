@@ -175,14 +175,14 @@ class TestRequestGuardrails:
         assert screened.soft_block.guardrail is SOFT_IN
         assert screened.flags == GuardrailFlags(input_warned=True, input_blocked=True)
 
-    async def test_a_warn_before_a_soft_block_is_not_flagged(self):
+    async def test_a_warn_before_a_soft_block_is_flagged(self):
         guardrails = _request(_route('warn_in', 'soft_in'))
 
         screened = await guardrails.check_input(
             Conversation([HumanMessage(content='warnme softme')])
         )
 
-        assert screened.flags == GuardrailFlags(input_blocked=True)
+        assert screened.flags == GuardrailFlags(input_warned=True, input_blocked=True)
 
     async def test_check_skips_the_gateways_system_prompt(self):
         guardrails = _request(_route('soft_in'))

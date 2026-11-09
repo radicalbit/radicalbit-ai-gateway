@@ -3,20 +3,17 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
-import pytest
 from starlette.requests import Request
 
 from tests.common import db_mock
-from tests.common.limits import request_limits
+from tests.common.routes import Prepared, answered_by_mocks, mock_route
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.route_cache import RouteCache
-from radicalbit_ai_gateway.guardrails.guardrails import RouteGuardrails
+from radicalbit_ai_gateway.guardrails.guardrails import GuardrailFlags, RouteGuardrails
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
-from radicalbit_ai_gateway.llm.messages import AIMessageChunk, HumanMessage
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.guardrails import GuardrailWhereType
 from radicalbit_ai_gateway.server import app, group_service, key_service
-from radicalbit_ai_gateway.utils.ai_gateway_types import PrepareAndValidateResult
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
 
@@ -31,17 +28,13 @@ def mock_request_uuid(request: Request):
 class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.mock_gateway = MagicMock(spec=GatewayRoute)
+        cls._answered = answered_by_mocks()
+        cls._answered.__enter__()
+        cls.mock_gateway = mock_route()
         cls.mock_gateway.route_limits = RouteLimits()
         cls.mock_gateway.project_uuid = ''
         cls.mock_gateway.project_name = ''
         cls.mock_gateway.cache = RouteCache()
-        for method in ('_request_cache', '_identity'):
-            setattr(
-                cls.mock_gateway,
-                method,
-                getattr(GatewayRoute, method).__get__(cls.mock_gateway, GatewayRoute),
-            )
 
         # Enable output guardrails in config
         mock_config = MagicMock()
@@ -56,6 +49,7 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls._answered.__exit__(None, None, None)
         app.dependency_overrides = {}
 
     @staticmethod
@@ -67,283 +61,16 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def _create_prepared_result(
-        model_id: str = 'gpt-4',
-        messages: list = None,
-        input_soft_block=None,
+        messages: list | None = None,
         guardrails_input_triggered: bool = False,
         guardrails_block_triggered: bool = False,
-    ) -> PrepareAndValidateResult:
-        mock_model = MagicMock()
-        mock_model.model_id = model_id
-        mock_model.input_cost_per_token = None
-        mock_model.output_cost_per_token = None
-
-        return PrepareAndValidateResult(
-            model_selected=mock_model,
-            redacted_messages=messages or [HumanMessage(content='Test message')],
-            input_soft_block=input_soft_block,
-            guardrails_input_triggered=guardrails_input_triggered,
-            guardrails_block_triggered=guardrails_block_triggered,
+    ) -> Prepared:
+        return Prepared(
+            GuardrailFlags(
+                input_warned=guardrails_input_triggered,
+                input_blocked=guardrails_block_triggered,
+            ).headers()
         )
-
-    # =========================================================================
-    # Tests for prepare_stream (Input Guardrail Validation)
-    # =========================================================================
-
-    async def test_prepare_stream_raises_guardrail_bad_request_on_block(self):
-        api_key = self._setup_mock_key_and_group()
-
-        # Mock _prepare_and_validate_request to raise GuardrailBadRequest
-        mock_guardrail = MagicMock()
-        mock_guardrail.name = 'input_blocker'
-        mock_guardrail.type = MagicMock()
-        mock_guardrail.type.name = 'JUDGE'
-        mock_guardrail.where = GuardrailWhereType.INPUT
-
-        mock_exception = GuardrailBadRequest(
-            message='Input blocked by guardrail',
-            guardrail=mock_guardrail,
-            reason={'kind': 'judge', 'context': 'forbidden content'},
-        )
-
-        self.mock_gateway._prepare_and_validate_request = AsyncMock(
-            side_effect=mock_exception
-        )
-
-        # Bind the real prepare_stream method
-        self.mock_gateway.prepare_stream = GatewayRoute.prepare_stream.__get__(
-            self.mock_gateway, GatewayRoute
-        )
-
-        # Verify exception is raised
-        with pytest.raises(GuardrailBadRequest) as context:
-            await self.mock_gateway.prepare_stream(
-                limits=request_limits(self.mock_gateway),
-                request_uuid=str(db_mock.REQUEST_UUID),
-                api_key_uuid=str(api_key.uuid),
-                group_uuid=str(db_mock.GROUP_UUID),
-                api_key_name=api_key.name,
-                group_name=GROUP_NAME,
-                messages=[HumanMessage(content='Forbidden input')],
-                route_name='rb-gateway',
-                tools=None,
-                tool_choice=None,
-                hashed_api_key=db_mock.HASHED_KEY,
-            )
-
-        assert context.value.client_message == 'Input blocked by guardrail'
-
-    async def test_prepare_stream_returns_prepared_result_on_success(self):
-        api_key = self._setup_mock_key_and_group()
-
-        expected_result = self._create_prepared_result(
-            messages=[HumanMessage(content='Valid input')]
-        )
-
-        self.mock_gateway._prepare_and_validate_request = AsyncMock(
-            return_value=expected_result
-        )
-
-        self.mock_gateway.prepare_stream = GatewayRoute.prepare_stream.__get__(
-            self.mock_gateway, GatewayRoute
-        )
-
-        result = await self.mock_gateway.prepare_stream(
-            limits=request_limits(self.mock_gateway),
-            request_uuid=str(db_mock.REQUEST_UUID),
-            api_key_uuid=str(api_key.uuid),
-            group_uuid=str(db_mock.GROUP_UUID),
-            api_key_name=api_key.name,
-            group_name=GROUP_NAME,
-            messages=[HumanMessage(content='Valid input')],
-            route_name='rb-gateway',
-            tools=None,
-            tool_choice=None,
-            hashed_api_key=db_mock.HASHED_KEY,
-        )
-
-        assert result == expected_result
-        assert isinstance(result, PrepareAndValidateResult)
-
-    async def test_prepare_stream_returns_soft_block_info(self):
-        api_key = self._setup_mock_key_and_group()
-
-        # Create a soft block response
-        mock_soft_block = MagicMock()
-        mock_soft_block.choices = [MagicMock()]
-        mock_soft_block.choices[0].message.content = 'Soft blocked content'
-        mock_soft_block.id = 'soft-block-id'
-
-        expected_result = self._create_prepared_result(
-            input_soft_block=mock_soft_block,
-            guardrails_input_triggered=True,
-        )
-
-        self.mock_gateway._prepare_and_validate_request = AsyncMock(
-            return_value=expected_result
-        )
-
-        self.mock_gateway.prepare_stream = GatewayRoute.prepare_stream.__get__(
-            self.mock_gateway, GatewayRoute
-        )
-
-        result = await self.mock_gateway.prepare_stream(
-            limits=request_limits(self.mock_gateway),
-            request_uuid=str(db_mock.REQUEST_UUID),
-            api_key_uuid=str(api_key.uuid),
-            group_uuid=str(db_mock.GROUP_UUID),
-            api_key_name=api_key.name,
-            group_name=GROUP_NAME,
-            messages=[HumanMessage(content='Some input')],
-            route_name='rb-gateway',
-            tools=None,
-            tool_choice=None,
-            hashed_api_key=db_mock.HASHED_KEY,
-        )
-
-        assert result.input_soft_block is not None
-        assert result.guardrails_input_triggered
-
-    # =========================================================================
-    # Tests for invoke_stream (Streaming Logic)
-    # =========================================================================
-
-    async def test_invoke_stream_yields_chunks_correctly(self):
-        api_key = self._setup_mock_key_and_group()
-
-        # Create prepared result
-        prepared = self._create_prepared_result(
-            messages=[HumanMessage(content='Hello')]
-        )
-
-        # Mock chat invoker stream
-        async def mock_stream(*args, **kwargs):
-            yield AIMessageChunk(content='Hello')
-            yield AIMessageChunk(content=' World')
-
-        mock_invoker = MagicMock()
-        mock_invoker.stream = mock_stream
-        self.mock_gateway.chat_invoker = mock_invoker
-        self.mock_gateway.gateway_cache = None
-
-        # Bind real method
-        self.mock_gateway.invoke_stream = GatewayRoute.invoke_stream.__get__(
-            self.mock_gateway, GatewayRoute
-        )
-
-        # Collect chunks
-        chunks = [
-            chunk
-            async for chunk in self.mock_gateway.invoke_stream(
-                limits=request_limits(self.mock_gateway),
-                prepared=prepared,
-                request_uuid=str(db_mock.REQUEST_UUID),
-                api_key_uuid=str(api_key.uuid),
-                group_uuid=str(db_mock.GROUP_UUID),
-                api_key_name=api_key.name,
-                group_name=GROUP_NAME,
-                route_name='rb-gateway',
-                tools=None,
-                tool_choice=None,
-                hashed_api_key=db_mock.HASHED_KEY,
-            )
-        ]
-
-        assert len(chunks) == 2
-        assert chunks[0].choices[0].delta.content == 'Hello'
-        assert chunks[1].choices[0].delta.content == ' World'
-
-    async def test_invoke_stream_yields_soft_block_chunk(self):
-        api_key = self._setup_mock_key_and_group()
-
-        mock_soft_block = MagicMock()
-        mock_soft_block.choices = [MagicMock()]
-        mock_soft_block.choices[0].message.content = 'Request blocked'
-        mock_soft_block.id = 'soft-block-id'
-
-        prepared = self._create_prepared_result(input_soft_block=mock_soft_block)
-
-        # Bind real method
-        self.mock_gateway.invoke_stream = GatewayRoute.invoke_stream.__get__(
-            self.mock_gateway, GatewayRoute
-        )
-
-        # Collect chunks
-        chunks = [
-            chunk
-            async for chunk in self.mock_gateway.invoke_stream(
-                limits=request_limits(self.mock_gateway),
-                prepared=prepared,
-                request_uuid=str(db_mock.REQUEST_UUID),
-                api_key_uuid=str(api_key.uuid),
-                group_uuid=str(db_mock.GROUP_UUID),
-                api_key_name=api_key.name,
-                group_name=GROUP_NAME,
-                route_name='rb-gateway',
-                tools=None,
-                tool_choice=None,
-                hashed_api_key=db_mock.HASHED_KEY,
-            )
-        ]
-
-        # Should have exactly one soft block chunk
-        assert len(chunks) == 1
-        assert chunks[0].choices[0].delta.content == 'Request blocked'
-
-    async def test_stream_from_prepared_includes_usage_when_requested(self):
-        api_key = self._setup_mock_key_and_group()
-
-        prepared = self._create_prepared_result(
-            messages=[HumanMessage(content='Hello')]
-        )
-
-        # Mock chat invoker stream with usage metadata
-        async def mock_stream(*args, **kwargs):
-            yield AIMessageChunk(
-                content='Test',
-                usage_metadata={
-                    'input_tokens': 10,
-                    'output_tokens': 5,
-                    'total_tokens': 15,
-                },
-            )
-
-        mock_invoker = MagicMock()
-        mock_invoker.stream = mock_stream
-        self.mock_gateway.chat_invoker = mock_invoker
-        self.mock_gateway.gateway_cache = None
-
-        # Bind real method
-        self.mock_gateway.invoke_stream = GatewayRoute.invoke_stream.__get__(
-            self.mock_gateway, GatewayRoute
-        )
-
-        # Collect chunks with include_usage=True
-        chunks = [
-            chunk
-            async for chunk in self.mock_gateway.invoke_stream(
-                limits=request_limits(self.mock_gateway),
-                prepared=prepared,
-                request_uuid=str(db_mock.REQUEST_UUID),
-                api_key_uuid=str(api_key.uuid),
-                group_uuid=str(db_mock.GROUP_UUID),
-                api_key_name=api_key.name,
-                group_name=GROUP_NAME,
-                route_name='rb-gateway',
-                tools=None,
-                tool_choice=None,
-                hashed_api_key=db_mock.HASHED_KEY,
-                stream_options={'include_usage': True},
-            )
-        ]
-
-        # Should have content chunk + usage chunk
-        assert len(chunks) == 2
-
-        # Second chunk should be usage
-        usage_chunk = chunks[1]
-        assert len(usage_chunk.choices) == 0
-        assert usage_chunk.usage.total_tokens == 15
 
     # =========================================================================
     # Integration Tests (Full Flow via HTTP endpoint)
@@ -469,51 +196,6 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
 
         assert response.status_code == 200
         assert response.headers.get('X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED') == 'true'
-
-    # =========================================================================
-    # Tests for Error Handling During Streaming
-    # =========================================================================
-
-    async def test_streaming_error_propagation(self):
-        api_key = self._setup_mock_key_and_group()
-
-        prepared = self._create_prepared_result()
-
-        # Mock chat invoker to raise an error
-        async def mock_stream_error(*args, **kwargs):
-            yield AIMessageChunk(content='Start')
-            raise RuntimeError('Connection lost')
-
-        mock_invoker = MagicMock()
-        mock_invoker.stream = mock_stream_error
-        self.mock_gateway.chat_invoker = mock_invoker
-        self.mock_gateway.gateway_cache = None
-
-        # Bind real method
-        self.mock_gateway.invoke_stream = GatewayRoute.invoke_stream.__get__(
-            self.mock_gateway, GatewayRoute
-        )
-
-        # Should raise RuntimeError
-        with pytest.raises(RuntimeError) as context:
-            [
-                chunk
-                async for chunk in self.mock_gateway.invoke_stream(
-                    limits=request_limits(self.mock_gateway),
-                    prepared=prepared,
-                    request_uuid=str(db_mock.REQUEST_UUID),
-                    api_key_uuid=str(api_key.uuid),
-                    group_uuid=str(db_mock.GROUP_UUID),
-                    api_key_name=api_key.name,
-                    group_name=GROUP_NAME,
-                    route_name='rb-gateway',
-                    tools=None,
-                    tool_choice=None,
-                    hashed_api_key=db_mock.HASHED_KEY,
-                )
-            ]
-
-        assert str(context.value) == 'Connection lost'
 
     # =========================================================================
     # Tests for Cache Integration

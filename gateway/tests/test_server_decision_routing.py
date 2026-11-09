@@ -68,7 +68,7 @@ CHAT_ROUTE_KEY = 'proj/chat'
 OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
 MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
-GATEWAY_EMIT = 'radicalbit_ai_gateway.ai_gateway.emit_event'
+GATEWAY_EMIT = 'radicalbit_ai_gateway.pipeline.conversation.emit_event'
 GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
 REQUEST_EVENT_EMIT = (
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'

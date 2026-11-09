@@ -16,6 +16,7 @@ from tests.common.limits import (
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
+from tests.common.pipeline import invoke, stream
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
@@ -187,7 +188,7 @@ async def test_semantic_routing_embedding_emits_a_routing_cost_event():
     _mock_providers()
     with patch(MODEL_INVOKER_EMIT) as emit:
         route = await _route(_config())
-        await route.invoke(**_request(route))
+        await invoke(route, **_request(route))
 
     routing_inputs = [
         e
@@ -205,13 +206,19 @@ async def test_semantic_routing_embedding_emits_a_routing_cost_event():
     assert event.project_uuid == PROJECT_UUID
 
 
+async def _no_chunks(**_):
+    return
+    yield
+
+
 @pook.activate
 @pytest.mark.asyncio
 async def test_a_streamed_request_is_charged_for_routing_too():
     _mock_providers()
     with patch(MODEL_INVOKER_EMIT) as emit:
         route = await _route(_config())
-        await route.prepare_stream(**_request(route))
+        route.chat_invoker.stream = _no_chunks
+        await stream(route, **_request(route))
 
     assert [
         e.value
@@ -258,7 +265,7 @@ async def test_semantic_routing_embedding_consumes_route_credential_and_project_
     _mock_providers()
     with patch(MODEL_INVOKER_EMIT):
         route = await _route(_config(**ROUTE_LIMITS))
-        await route.invoke(**_request(route, _limited(route)))
+        await invoke(route, **_request(route, _limited(route)))
 
     assert await _consumption(route) == [
         QUESTION_TOKENS,
@@ -296,9 +303,9 @@ async def test_semantic_routing_spend_is_charged_to_the_next_request():
     with patch(MODEL_INVOKER_EMIT), patch(LIMITS_EMIT):
         route = await _route(_config(token_limiting=INPUT_LIMIT))
 
-        await route.invoke(**_request(route))
+        await invoke(route, **_request(route))
         with pytest.raises(InputTokenLimitExceeded):
-            await route.invoke(**_request(route))
+            await invoke(route, **_request(route))
 
 
 @pook.activate
@@ -312,7 +319,7 @@ async def test_a_failing_routing_spend_count_does_not_fail_the_request():
         ) as count,
     ):
         route = await _route(_config(**ROUTE_LIMITS))
-        response = await route.invoke(**_request(route, _limited(route)))
+        response = await invoke(route, **_request(route, _limited(route)))
 
     # Routing never fails a request: it is still served.
     count.assert_awaited_once()

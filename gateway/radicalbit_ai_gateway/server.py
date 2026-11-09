@@ -1,6 +1,5 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
-import json
 import logging.config
 import os
 from typing import Annotated
@@ -22,7 +21,6 @@ from prometheus_client import start_http_server
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
 from traceloop.sdk import Traceloop
-from traceloop.sdk.decorators import workflow
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
@@ -47,7 +45,6 @@ from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
 from radicalbit_ai_gateway.limiter.storage.shared import close_limit_storage
-from radicalbit_ai_gateway.limiting.limits import ADMISSION
 from radicalbit_ai_gateway.llm.tracing import TRACELOOP_INSTRUMENTS
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.messages.errors import with_messages_error_shapes
@@ -60,8 +57,18 @@ from radicalbit_ai_gateway.middleware.request_event_context import RequestEventC
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
-from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
+from radicalbit_ai_gateway.pipeline import (
+    chat as chat_pipeline,
+    embeddings as embeddings_pipeline,
+    messages as messages_pipeline,
+    responses as responses_pipeline,
+    transcription as transcription_pipeline,
+)
+from radicalbit_ai_gateway.pipeline.admission import Admission
+from radicalbit_ai_gateway.pipeline.chat import ChatRequest
+from radicalbit_ai_gateway.pipeline.http import endpoint, sse_response
+from radicalbit_ai_gateway.pipeline.transcription import Audio
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.responses.serving import serve_stream
@@ -98,10 +105,8 @@ from radicalbit_ai_gateway.utils.dependencies import (
     get_request_uuid,
 )
 from radicalbit_ai_gateway.utils.endpoint_helpers import (
-    otel_metrics_decorator,
     resolve_request_limits,
     set_anthropic_api_key_uuid,
-    set_api_key_uuid,
     set_early_project_trace_attributes,
 )
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -111,7 +116,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleNotFoundError,
     AlertRuleUnsupportedTimeAggregationError,
     ApiKeyError,
-    AppError,
     AudioDurationLimitExceeded,
     AuthRegistryError,
     BudgetLimitExceeded,
@@ -123,7 +127,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
     JudgeInternalError,
     McpTransportError,
     ModelInvokerError,
-    ModelInvokerUpstreamError,
     RequestRateLimitExceeded,
     SecretsBackendError,
     TokenLimitExceeded,
@@ -154,7 +157,6 @@ from radicalbit_ai_gateway.utils.open_ai_types import (
 )
 from radicalbit_ai_gateway.utils.request_context import (
     get_current_request_tags,
-    reset_route_context,
     set_current_route_config,
 )
 from radicalbit_ai_gateway.utils.streaming_response import (
@@ -163,7 +165,6 @@ from radicalbit_ai_gateway.utils.streaming_response import (
 from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
-    ensure_endpoint_category,
     in_request_trace,
     set_operation_category,
     set_trace_attributes,
@@ -173,6 +174,8 @@ app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
 logging.config.dictConfig(logging_config_dict)
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+CHAT_FIELDS = {'model', 'messages', 'tools', 'tool_choice'}
 
 # Async httpx client with httpx-aiohttp
 httpx_aiohttp_client = HttpxAiohttpClient()
@@ -270,6 +273,7 @@ alert_dispatcher = AlertDispatcher(
     store=build_alert_store(app_config.redis_config.redis_url),
 )
 set_alert_dispatcher(alert_dispatcher)
+admission = Admission(group_service, project_budget_limit_dao)
 
 
 @asynccontextmanager
@@ -497,9 +501,7 @@ app.include_router(
 # Root-level like /v1/... (NOT under /public/api/v1): inbound MCP proxy.
 app.include_router(McpRoute.get_mcp_router(mcp_service))
 # Root-level like /v1/...: Typesafe's decision endpoint, passed through.
-app.include_router(
-    DecisionRoute.get_decision_router(group_service, project_budget_limit_dao)
-)
+app.include_router(DecisionRoute.get_decision_router(admission))
 app.include_router(
     GroupRoute.get_group_router(group_service, project_service),
     prefix=prefix,
@@ -569,65 +571,10 @@ async def health_check():
     }
 
 
-# This endpoint must follow the openai standard
-# https://platform.openai.com/docs/api-reference/chat/create
-@app.post(
-    '/v1/chat/completions',
-)
-@otel_metrics_decorator
-@workflow(name='chat_completions')
-@ensure_endpoint_category
-@reset_route_context
-async def chat_completions(
-    request: Request,
-    completion_create_params: CompletionCreateParams,
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    route_key = completion_create_params.get('model', 'unknown')
-    route = gateway_routes.get(route_key)
-
-    set_early_project_trace_attributes(request, route_key, route)
-
-    if route is None:
-        raise GatewayBadRequest(
-            f'The route name [{route_key}] was not found in the config'
-        )
-    route_name = route.gateway_route_config.route_name
-    # Publish the route config for per-route log filtering (cleared by the decorator).
-    set_current_route_config(route.gateway_route_config)
-    # Mark the root workflow span with ENDPOINT category
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    # Set early trace attributes
-    set_trace_attributes(
-        request_uuid=request_uuid,
-        route_name=route_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    ctx = RequestEventContext.get_or_create(request)
-    ctx.route_name = route_name
-    ctx.is_streaming = bool(completion_create_params.get('stream'))
-    set_operation_category(OperationCategory.AUTH)
-    key_details = await set_api_key_uuid(
-        request, route.project_uuid, route.project_name
-    )
-
-    # Set auth-related trace attributes
-    set_trace_attributes(
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        project_uuid=route.project_uuid,
-        project_name=route.project_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    logger.debug('Chat completion request: %s', completion_create_params)
-    request.state.otel_route_name = route_name
-
+def _log_chat_request(
+    request: Request, params: CompletionCreateParams, route_name: str
+) -> None:
+    logger.debug('Chat completion request: %s', params)
     client_host = request.client.host if request.client else 'unknown'
     logger.debug(
         'Received request: method=%s path=%s client=%s',
@@ -635,174 +582,53 @@ async def chat_completions(
         request.url.path,
         client_host,
     )
-    logger.debug('Received completion_create_params: %s', completion_create_params)
-    messages = list(completion_create_params.get('messages'))
-    logger.debug('Messages: %s', messages)
-
-    tools = list(completion_create_params.get('tools') or [])
-    logger.debug('Tools: %s', tools)
-
-    tool_choice = completion_create_params.get('tool_choice', 'auto')
-    known_keys = {'model', 'messages', 'tools', 'tool_choice'}
-    extra_params = {
-        key: value
-        for key, value in completion_create_params.items()
-        if key not in known_keys
-    }
-    logger.debug('Received params: %s', extra_params)
-
+    logger.debug('Received completion_create_params: %s', params)
+    logger.debug('Messages: %s', list(params.get('messages')))
+    logger.debug('Tools: %s', list(params.get('tools') or []))
+    logger.debug(
+        'Received params: %s',
+        {k: v for k, v in params.items() if k not in CHAT_FIELDS},
+    )
     logger.info('Invoked route name: %s', route_name)
-    if not group_service.check_key_uuid_for_route(
-        route_key, UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey(f'API Key not associated with route {route_name}')
 
-    ctx.project_uuid = route.project_uuid
-    ctx.project_name = route.project_name
-    request_limits = await resolve_request_limits(
-        route, key_details, request_uuid, project_budget_limit_dao
+
+# This endpoint must follow the openai standard
+# https://platform.openai.com/docs/api-reference/chat/create
+@app.post('/v1/chat/completions')
+@endpoint('chat_completions')
+async def chat_completions(
+    request: Request,
+    completion_create_params: CompletionCreateParams,
+    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
+    request_uuid: str = Depends(get_request_uuid),
+):
+    scope = await admission.admit(
+        request,
+        gateway_routes,
+        completion_create_params.get('model', 'unknown'),
+        request_uuid,
+        streaming=bool(completion_create_params.get('stream')),
+        announce=lambda route_name: _log_chat_request(
+            request, completion_create_params, route_name
+        ),
     )
-
-    # Request limits first, before anything is processed or spent.
-    await request_limits.check(ADMISSION)
-
-    chat_messages = convert_openai_messages(messages)
-    if completion_create_params.get('stream'):
-        prepared = await route.prepare_stream(
-            limits=request_limits,
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            api_key_name=key_details.api_key_name,
-            messages=chat_messages,
-            route_name=route_name,
-            tools=tools,
-            tool_choice=tool_choice,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            **extra_params,
+    chat = ChatRequest.of(completion_create_params)
+    if chat.stream:
+        items = await chat_pipeline.stream(scope, chat)
+        buffered = scope.route.guardrails.has_output
+        return sse_response(
+            items,
+            scope.headers(),
+            done_log='Streaming finished (Buffered): [DONE]'
+            if buffered
+            else 'Streaming finished: [DONE]',
         )
 
-        if route.guardrails.has_output:
-            # Perform full buffering and checking BEFORE starting the stream response
-            chunks, headers = await route.invoke_stream_buffered(
-                limits=request_limits,
-                prepared=prepared,
-                request_uuid=request_uuid,
-                api_key_uuid=key_details.api_key_uuid,
-                api_key_name=key_details.api_key_name,
-                route_name=route_name,
-                tools=tools,
-                tool_choice=tool_choice,
-                group_uuid=key_details.group_uuid,
-                group_name=key_details.group_name,
-                **extra_params,
-            )
-
-            async def event_generator():
-                for chunk in chunks:
-                    chunk_json = chunk.model_dump_json(exclude_none=True)
-                    logger.debug('Streaming chunk: %s', chunk_json)
-                    yield f'data: {chunk_json}\n\n'
-                logger.debug('Streaming finished (Buffered): [DONE]')
-                yield 'data: [DONE]\n\n'
-
-        else:
-            # Standard streaming (Low Latency)
-            headers = {
-                **prepared.cached.headers(),
-                **prepared.guardrail_flags.headers(),
-            }
-
-            async def event_generator():
-                try:
-                    async for chunk in route.invoke_stream(
-                        limits=request_limits,
-                        prepared=prepared,
-                        request_uuid=request_uuid,
-                        api_key_uuid=key_details.api_key_uuid,
-                        api_key_name=key_details.api_key_name,
-                        route_name=route_name,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        group_uuid=key_details.group_uuid,
-                        group_name=key_details.group_name,
-                        **extra_params,
-                    ):
-                        chunk_json = chunk.model_dump_json(exclude_none=True)
-                        logger.debug('Streaming chunk: %s', chunk_json)
-                        yield f'data: {chunk_json}\n\n'
-                    logger.debug('Streaming finished: [DONE]')
-                    yield 'data: [DONE]\n\n'
-                except ModelInvokerUpstreamError as exc:
-                    # The provider's refusal, as the provider sent it.
-                    yield json.dumps(exc.body), exc.status_code
-                except AppError as exc:
-                    error_body = json.dumps(
-                        {
-                            'error': {
-                                'message': exc.client_message,
-                                'type': 'model_invoker_error',
-                                'param': None,
-                                'code': exc.status_code,
-                            }
-                        }
-                    )
-                    yield error_body, exc.status_code
-                except Exception:
-                    logger.exception('Unhandled error during streaming')
-                    error_body = json.dumps(
-                        {
-                            'error': {
-                                'message': 'Unhandled error during streaming',
-                                'type': 'internal_error',
-                                'param': None,
-                                'code': 500,
-                            }
-                        }
-                    )
-                    yield error_body, 500
-
-        set_operation_category(OperationCategory.ENDPOINT)
-        return StreamingResponseWithStatusCode(
-            in_request_trace(event_generator()),
-            media_type='text/event-stream',
-            headers=headers,
-        )
-
-    invoke_response = await route.invoke(
-        limits=request_limits,
-        request_uuid=request_uuid,
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        messages=chat_messages,
-        route_name=route_name,
-        tools=tools,
-        tool_choice=tool_choice,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        **extra_params,
-    )
-    # Log the response we are about to send
-    logger.info('Invoke response: %s', invoke_response.content)
-
-    # Extract model name from response for metrics
-    model_name = None
-    try:
-        if hasattr(invoke_response.content, 'model'):
-            model_name = invoke_response.content.model
-        elif isinstance(invoke_response.content, dict):
-            model_name = invoke_response.content.get('model')
-    except Exception:
-        model_name = None
-
-    # Set model name in request state for the decorator
-    request.state.otel_model_name = model_name
-
+    completion = await chat_pipeline.complete(scope, chat)
+    logger.info('Invoke response: %s', completion)
+    request.state.otel_model_name = completion.model
     set_operation_category(OperationCategory.ENDPOINT)
-    return JSONResponse(
-        content=jsonable_encoder(invoke_response.content),
-        headers=invoke_response.headers,
-    )
+    return JSONResponse(content=jsonable_encoder(completion), headers=scope.headers())
 
 
 # This endpoint must follow the openai standard
@@ -811,233 +637,57 @@ async def chat_completions(
     response_model=CreateEmbeddingResponse,
     response_model_exclude_none=True,
 )
-@otel_metrics_decorator
-@workflow(name='embeddings')
-@ensure_endpoint_category
+@endpoint('embeddings')
 async def embeddings(
     request: Request,
     embedding_create_params: EmbeddingCreateParams,
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
     request_uuid: str = Depends(get_request_uuid),
 ):
-    route_key = embedding_create_params.get('model')
-    route = gateway_routes.get(route_key)
-
-    set_early_project_trace_attributes(request, route_key, route)
-
-    if route is None:
-        raise GatewayBadRequest(
-            f'The route name [{route_key}] was not found in the config'
-        )
-    route_name = route.gateway_route_config.route_name
+    scope = await admission.admit(
+        request, gateway_routes, embedding_create_params.get('model'), request_uuid
+    )
     input_texts = embedding_create_params.get('input')
-
-    # Mark the root workflow span with ENDPOINT category
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    # Set early trace attributes
-    set_trace_attributes(
-        request_uuid=request_uuid,
-        route_name=route_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    # Populate request event context first (before auth, so route_name is always captured)
-    ctx = RequestEventContext.get_or_create(request)
-    ctx.route_name = route_name
-    ctx.is_streaming = False
-
-    # Validate API key after context is populated
-    set_operation_category(OperationCategory.AUTH)
-    key_details = await set_api_key_uuid(
-        request, route.project_uuid, route.project_name
-    )
-
-    # Set auth-related trace attributes
-    set_trace_attributes(
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        project_uuid=route.project_uuid,
-        project_name=route.project_name,
-        tags=list(get_current_request_tags()),
-    )
-
     if isinstance(input_texts, str):
         input_texts = [input_texts]
 
-    if not group_service.check_key_uuid_for_route(
-        route_key, UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey('Incorrect API key provided.')
-
-    ctx.project_uuid = route.project_uuid
-    ctx.project_name = route.project_name
-    request_limits = await resolve_request_limits(
-        route, key_details, request_uuid, project_budget_limit_dao
-    )
-
-    # Request limits first, before anything is processed or spent.
-    await request_limits.check(ADMISSION)
-
     set_operation_category(OperationCategory.ENDPOINT)
-    return await route.invoke_embeddings(
-        limits=request_limits,
-        request_uuid=request_uuid,
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        route_name=route_name,
-        input_texts=input_texts,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-    )
+    return await embeddings_pipeline.embed(scope, input_texts)
 
 
 @app.post('/v1/audio/transcriptions')
-@otel_metrics_decorator
-@workflow(name='audio_transcriptions')
-@ensure_endpoint_category
+@endpoint('audio_transcriptions')
 async def audio_transcriptions(
     request: Request,
     transcription_params: Annotated[TranscriptionCreateParamsCustom, Form()],
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
     request_uuid: str = Depends(get_request_uuid),
 ):
-    route_key = transcription_params.model
-    route = gateway_routes.get(route_key)
-
-    set_early_project_trace_attributes(request, route_key, route)
-
-    if route is None:
-        raise GatewayBadRequest(
-            f'The route name [{route_key}] was not found in the config'
-        )
-    route_name = route.gateway_route_config.route_name
-
-    # Mark the root workflow span with ENDPOINT category
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    # Set early trace attributes
-    set_trace_attributes(
-        request_uuid=request_uuid,
-        route_name=route_name,
-        tags=list(get_current_request_tags()),
+    scope = await admission.admit(
+        request,
+        gateway_routes,
+        transcription_params.model,
+        request_uuid,
+        streaming=transcription_params.stream,
     )
-
-    # Populate request event context first (before auth, so route_name is always captured)
-    ctx = RequestEventContext.get_or_create(request)
-    ctx.route_name = route_name
-    ctx.is_streaming = transcription_params.stream
-
-    # Validate API key after context is populated
-    set_operation_category(OperationCategory.AUTH)
-    key_details = await set_api_key_uuid(
-        request, route.project_uuid, route.project_name
-    )
-
-    # Set auth-related trace attributes
-    set_trace_attributes(
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        project_uuid=route.project_uuid,
-        project_name=route.project_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    if not group_service.check_key_uuid_for_route(
-        route_key, UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey('Incorrect API key provided.')
-
-    ctx.project_uuid = route.project_uuid
-    ctx.project_name = route.project_name
-    request_limits = await resolve_request_limits(
-        route, key_details, request_uuid, project_budget_limit_dao
-    )
-    request.state.otel_route_name = route_name
-
-    # Request limits first, before anything is processed or spent.
-    await request_limits.check(ADMISSION)
-
     file = transcription_params.file
-    content = await file.read()
-
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    if transcription_params.stream:
-
-        async def event_generator():
-            try:
-                async for event in route.invoke_transcription_stream(
-                    limits=request_limits,
-                    request_uuid=request_uuid,
-                    api_key_uuid=key_details.api_key_uuid,
-                    api_key_name=key_details.api_key_name,
-                    group_uuid=key_details.group_uuid,
-                    group_name=key_details.group_name,
-                    route_name=route_name,
-                    audio_bytes=content,
-                    filename=file.filename or 'audio',
-                    content_type=file.content_type,
-                    language=transcription_params.language,
-                    prompt=transcription_params.prompt,
-                    temperature=transcription_params.temperature,
-                ):
-                    event_json = event.model_dump_json(exclude_none=True)
-                    logger.debug('Streaming transcription event: %s', event_json)
-                    yield f'data: {event_json}\n\n'
-                logger.debug('Streaming finished: [DONE]')
-                yield 'data: [DONE]\n\n'
-            except AppError as exc:
-                error_body = json.dumps(
-                    {
-                        'error': {
-                            'message': exc.client_message,
-                            'type': 'model_invoker_error',
-                            'param': None,
-                            'code': exc.status_code,
-                        }
-                    }
-                )
-                yield error_body, exc.status_code
-            except Exception:
-                logger.exception('Unhandled error during transcription streaming')
-                error_body = json.dumps(
-                    {
-                        'error': {
-                            'message': 'Unhandled error during streaming',
-                            'type': 'internal_error',
-                            'param': None,
-                            'code': 500,
-                        }
-                    }
-                )
-                yield error_body, 500
-
-        return StreamingResponseWithStatusCode(
-            in_request_trace(event_generator()), media_type='text/event-stream'
-        )
-
-    result = await route.invoke_transcription(
-        limits=request_limits,
-        request_uuid=request_uuid,
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        route_name=route_name,
-        audio_bytes=content,
+    audio = Audio(
+        content=await file.read(),
         filename=file.filename or 'audio',
         content_type=file.content_type,
-        requested_response_format=transcription_params.response_format,
         language=transcription_params.language,
         prompt=transcription_params.prompt,
         temperature=transcription_params.temperature,
+        response_format=transcription_params.response_format,
     )
-
+    set_operation_category(OperationCategory.ENDPOINT)
+    if transcription_params.stream:
+        return sse_response(
+            await transcription_pipeline.stream(scope, audio),
+            item_log='Streaming transcription event: %s',
+            error_log='Unhandled error during transcription streaming',
+        )
+    result = await transcription_pipeline.transcribe(scope, audio)
     return JSONResponse(content=jsonable_encoder(result))
 
 
@@ -1046,106 +696,42 @@ async def audio_transcriptions(
 # A request is served by a model that serves the Responses API, as the client
 # sent it once the route's policies applied.
 @app.post('/v1/responses')
-@otel_metrics_decorator
-@workflow(name='responses')
-@ensure_endpoint_category
-@reset_route_context
+@endpoint('responses')
 async def responses(
     request: Request,
     response_create_params: ResponseCreateParamsCustom,
     gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
     request_uuid: str = Depends(get_request_uuid),
 ):
-    # Mark the root workflow span with ENDPOINT category
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    route_key = response_create_params.get('model', 'unknown')
-    route = gateway_routes.get(route_key)
-
-    set_early_project_trace_attributes(request, route_key, route)
-
-    if route is None:
-        raise GatewayBadRequest(
-            f'The route name [{route_key}] was not found in the config'
-        )
-    route_name = route.gateway_route_config.route_name
-    # Publish the route config for per-route log filtering (cleared by the decorator).
-    # Logged after resolution so the request dump is subject to that filtering.
-    set_current_route_config(route.gateway_route_config)
-    logger.debug('Responses API request: %s', response_create_params)
-    request.state.otel_route_name = route_name
-
-    # Set early trace attributes
-    set_trace_attributes(
-        request_uuid=request_uuid,
-        route_name=route_name,
-        tags=list(get_current_request_tags()),
-    )
+    def announce(route_name: str) -> None:
+        logger.debug('Responses API request: %s', response_create_params)
+        logger.info('Invoked route name (responses): %s', route_name)
 
     is_stream = bool(response_create_params.get('stream'))
-    ctx = RequestEventContext.get_or_create(request)
-    ctx.route_name = route_name
-    ctx.is_streaming = is_stream
-
-    set_operation_category(OperationCategory.AUTH)
-    key_details = await set_api_key_uuid(
-        request, route.project_uuid, route.project_name
+    scope = await admission.admit(
+        request,
+        gateway_routes,
+        response_create_params.get('model', 'unknown'),
+        request_uuid,
+        streaming=is_stream,
+        announce=announce,
     )
-
-    # Set auth-related trace attributes
-    set_trace_attributes(
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        project_uuid=route.project_uuid,
-        project_name=route.project_name,
-        tags=list(get_current_request_tags()),
-    )
-
     # The request as the client sent it: the gateway's policies apply to it,
     # then it goes upstream.
     body = await request.json()
 
-    logger.info('Invoked route name (responses): %s', route_name)
-
-    if not group_service.check_key_uuid_for_route(
-        route_key, UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey(f'API Key not associated with route {route_name}')
-
-    ctx.project_uuid = route.project_uuid
-    ctx.project_name = route.project_name
-    request_limits = await resolve_request_limits(
-        route, key_details, request_uuid, project_budget_limit_dao
-    )
-
-    # Request limits first, before anything is processed or spent.
-    await request_limits.check(ADMISSION)
-
-    identity = {
-        'request_uuid': request_uuid,
-        'api_key_uuid': key_details.api_key_uuid,
-        'api_key_name': key_details.api_key_name,
-        'group_uuid': key_details.group_uuid,
-        'group_name': key_details.group_name,
-    }
-    prepared = await route.prepare_responses(
-        body=body, limits=request_limits, **identity
-    )
-
     if is_stream:
-        frames, headers = await route.open_responses_stream(prepared)
+        frames = await responses_pipeline.stream(scope, body)
         set_operation_category(OperationCategory.ENDPOINT)
         return StreamingResponseWithStatusCode(
             in_request_trace(serve_stream(frames)),
             media_type='text/event-stream',
-            headers=headers,
+            headers=scope.headers(),
         )
 
-    response_obj, headers = await route.invoke_responses(prepared)
+    response = await responses_pipeline.respond(scope, body)
     set_operation_category(OperationCategory.ENDPOINT)
-    return JSONResponse(content=response_obj, headers=headers)
+    return JSONResponse(content=response, headers=scope.headers())
 
 
 # The Responses API endpoints the gateway does not serve yet: those on stored
@@ -1162,10 +748,7 @@ async def responses_unsupported(request: Request, path: str):
 # A request is served by a model that serves the Messages API, as the client
 # sent it with only `model` swapped. It is never translated.
 @app.post('/v1/messages')
-@otel_metrics_decorator
-@workflow(name='messages')
-@ensure_endpoint_category
-@reset_route_context
+@endpoint('messages')
 async def messages(
     request: Request,
     message_create_params: MessageCreateParams,
@@ -1233,25 +816,21 @@ async def messages(
         route, key_details, request_uuid, project_budget_limit_dao
     )
 
-    prepared = await route.prepare_messages(
-        body=body,
-        headers=anthropic_headers(request.headers),
-        request_uuid=request_uuid,
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        limits=request_limits,
+    scope = route.for_request(request_limits.identity, request_limits)
+    prepared = await messages_pipeline.prepare(
+        scope, body, anthropic_headers(request.headers)
     )
 
     if is_stream:
         set_operation_category(OperationCategory.ENDPOINT)
         return StreamingResponseWithStatusCode(
-            in_request_trace(serve_messages_stream(route.stream_messages(prepared))),
+            in_request_trace(
+                serve_messages_stream(messages_pipeline.stream(scope, prepared))
+            ),
             media_type='text/event-stream',
         )
 
-    message = await route.invoke_messages(prepared)
+    message = await messages_pipeline.respond(scope, prepared)
     set_operation_category(OperationCategory.ENDPOINT)
     return JSONResponse(content=message)
 

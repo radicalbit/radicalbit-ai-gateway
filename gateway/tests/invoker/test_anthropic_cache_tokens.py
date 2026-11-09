@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk
@@ -18,18 +19,18 @@ from radicalbit_ai_gateway.services.cost_service import CostService
 # Helpers
 # ---------------------------------------------------------------------------
 
-_COMMON_INVOKE_KWARGS = {
-    'request_uuid': str(REQUEST_UUID),
-    'api_key_uuid': str(API_KEY_UUID),
-    'group_uuid': str(GROUP_UUID),
-    'api_key_name': 'rb-key',
-    'group_name': 'test-group',
-    'route_name': 'test-route',
-    'messages': [],
-    'model_id': 'claude-sonnet',
-    'tools': None,
-    'tool_choice': None,
-}
+_COMMON_INVOKE_KWARGS = with_identity(
+    request_uuid=str(REQUEST_UUID),
+    api_key_uuid=str(API_KEY_UUID),
+    group_uuid=str(GROUP_UUID),
+    api_key_name='rb-key',
+    group_name='test-group',
+    route_name='test-route',
+    messages=[],
+    model_id='claude-sonnet',
+    tools=None,
+    tool_choice=None,
+)
 
 
 def _make_model() -> Model:

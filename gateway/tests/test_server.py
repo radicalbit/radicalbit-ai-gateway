@@ -22,9 +22,11 @@ from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
 from tests.common.mocked_gateway_config_openai import get_gateway_openai_cached
+from tests.common.pipeline import InvokeResponse
 from tests.common.resolve_route_models import resolve_route_models
+from tests.common.routes import answered_by_mocks, mock_route
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute, InvokeResponse
+from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
@@ -64,6 +66,8 @@ def mock_request_uuid(request: Request):
 class TestServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._answered = answered_by_mocks()
+        cls._answered.__enter__()
         cls.gateways_mock = {'rb-gateway': cls._create_mock_gateway()}
         cls.cost_service: CostService = MagicMock(spec_set=CostService)
         cls.prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
@@ -80,7 +84,7 @@ class TestServer(unittest.TestCase):
     @staticmethod
     def _create_mock_gateway():
         """Create a properly configured mock GatewayRoute without limits."""
-        mock_gateway = MagicMock(spec=GatewayRoute)
+        mock_gateway = mock_route()
         mock_gateway.route_limits = RouteLimits()
         mock_gateway.gateway_route_config = MagicMock()
         mock_gateway.gateway_route_config.route_name = 'rb-gateway'
@@ -94,6 +98,7 @@ class TestServer(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls._answered.__exit__(None, None, None)
         app.dependency_overrides = {}
         cls.emit_event_patcher.stop()
 
@@ -714,7 +719,7 @@ class TestServer(unittest.TestCase):
         assert 'error' in body
         assert 'whisper-1 does not support streaming' in body['error']['message']
 
-    @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+    @patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
     @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
     @pook.activate
     def test_cache_hit_header_in_http_response(

@@ -9,6 +9,7 @@ from radicalbit_ai_gateway.limiting.limits import RequestLimits, Usage
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
+from radicalbit_ai_gateway.pipeline.conversation import RoutingSpend
 from radicalbit_ai_gateway.services.cost_service import CostService
 
 IDENTITY = RequestIdentity(
@@ -51,7 +52,7 @@ def _limits() -> RequestLimits:
 async def test_chat_router_spend_counts_input_and_output():
     gateway, limits = _build_gateway(), _limits()
     gateway.chat_invoker.recorder.record = MagicMock()
-    record = gateway._routing_spend_recorder(limits, gateway.chat_invoker)
+    record = RoutingSpend(limits, gateway.chat_invoker)
 
     await record(ROUTER_MODEL, 120, 12.0, model_type='chat-model', output_tokens=15)
 
@@ -66,7 +67,7 @@ async def test_chat_router_spend_counts_input_and_output():
 async def test_input_only_router_spend_counts_no_output():
     gateway, limits = _build_gateway(), _limits()
     gateway.chat_invoker.recorder.record = MagicMock()
-    record = gateway._routing_spend_recorder(limits, gateway.chat_invoker)
+    record = RoutingSpend(limits, gateway.chat_invoker)
 
     await record(ROUTER_MODEL, 120, 12.0, model_type='embeddings')
 
@@ -79,7 +80,7 @@ async def test_chat_router_call_emits_output_tokens_flagged_as_routing():
     gateway.chat_invoker.recorder.cost_service.compute_cost.return_value = Decimal(
         '0.1'
     )
-    record = gateway._routing_spend_recorder(_limits(), gateway.chat_invoker)
+    record = RoutingSpend(_limits(), gateway.chat_invoker)
     with patch('radicalbit_ai_gateway.invocation.recorder.emit_event') as emit_event:
         await record(ROUTER_MODEL, 120, 12.0, model_type='chat-model', output_tokens=15)
     events = [call.args[0] for call in emit_event.call_args_list]

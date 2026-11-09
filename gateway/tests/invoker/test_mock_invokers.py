@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
+from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
@@ -41,16 +42,18 @@ class TestMockInvokers(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await invoker.complete(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='mock-testing',
-            messages=[HumanMessage(content='Ciao')],
-            model_id='mock-chat',
-            tools=None,
-            tool_choice=None,
+            **with_identity(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='rb-key',
+                group_name='test-group',
+                route_name='mock-testing',
+                messages=[HumanMessage(content='Ciao')],
+                model_id='mock-chat',
+                tools=None,
+                tool_choice=None,
+            )
         )
 
         assert result.choices[0].message.content == 'risposta dal mock'
@@ -69,14 +72,16 @@ class TestMockInvokers(unittest.IsolatedAsyncioTestCase):
         )
 
         resp = await invoker.embed(
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='mock-testing',
-            input_texts=['Hello world'],
-            model_id='mock-embed',
+            **with_identity(
+                request_uuid=str(REQUEST_UUID),
+                api_key_uuid=str(API_KEY_UUID),
+                group_uuid=str(GROUP_UUID),
+                api_key_name='rb-key',
+                group_name='test-group',
+                route_name='mock-testing',
+                input_texts=['Hello world'],
+                model_id='mock-embed',
+            )
         )
 
         assert len(resp.data) == 1

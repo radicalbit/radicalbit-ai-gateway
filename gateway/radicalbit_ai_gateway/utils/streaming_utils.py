@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import datetime
 from time import time
 import uuid
@@ -13,7 +14,14 @@ from openai.types.chat.chat_completion_chunk import (
 from openai.types.completion_usage import CompletionUsage
 
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk
-from radicalbit_ai_gateway.utils.ai_gateway_types import ChunkAccumulationResult
+
+
+@dataclass
+class ChunkAccumulationResult:
+    """A stream's text so far, and the usage the last chunk reported."""
+
+    text: str
+    usage_metadata: dict | None
 
 
 class StreamingUtils:

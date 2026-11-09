@@ -13,6 +13,7 @@ from openai.types.audio.transcription_verbose import TranscriptionVerbose
 import pytest
 
 from tests.common.mocked_transcription_client import MockTranscriptionClient
+from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.invocation.recorder import Call
 from radicalbit_ai_gateway.invocation.transcription_model_invoker import (
@@ -84,14 +85,14 @@ def _invalid_file_exception() -> APIStatusError:
     return APIStatusError('Invalid file', response=response, body=None)
 
 
-_COMMON_TRANSCRIBE_KWARGS = {
-    'request_uuid': 'req',
-    'api_key_uuid': 'key',
-    'group_uuid': 'grp',
-    'api_key_name': 'rb-key',
-    'group_name': 'test-group',
-    'route_name': 'test-route',
-}
+_COMMON_TRANSCRIBE_KWARGS = with_identity(
+    request_uuid='req',
+    api_key_uuid='key',
+    group_uuid='grp',
+    api_key_name='rb-key',
+    group_name='test-group',
+    route_name='test-route',
+)
 
 
 # Who a transcription's usage is recorded for.

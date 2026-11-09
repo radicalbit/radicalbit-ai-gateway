@@ -586,21 +586,13 @@ class RequestCache:
         )
 
     async def _call_embedder(self, text: str) -> np.ndarray | None:
-        identity = self._identity
         model = self._route.embedding_model
         try:
             response, answered = await self._route.embedder.embed_answered(
-                request_uuid=identity.request_uuid,
-                api_key_uuid=identity.api_key_uuid,
-                group_uuid=identity.group_uuid,
-                api_key_name=identity.api_key_name,
-                group_name=identity.group_name,
-                route_name=identity.route_name,
+                identity=self._identity,
                 input_texts=[text],
                 model_id=model.model_id,
                 is_semantic_search=True,
-                project_uuid=identity.project_uuid,
-                project_name=identity.project_name,
             )
         except Exception as e:
             logger.error(

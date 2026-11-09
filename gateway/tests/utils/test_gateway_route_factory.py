@@ -25,8 +25,9 @@ from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
+from tests.common.pipeline import InvokeResponse, invoke
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute, InvokeResponse
+from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
@@ -212,7 +213,7 @@ def test_build_gateway_routes_from_config_resolves_transcription_models():
     )
 
     route = routes['my-route']
-    assert [m.model_id for m in route._transcription_models] == ['openai-whisper']
+    assert [m.model_id for m in route.transcription_models] == ['openai-whisper']
     # chat_invoker is unaffected by the new wiring
     assert route.chat_invoker is not None
 
@@ -342,7 +343,8 @@ async def test_project_route_full_pipeline(mock_emit_event, fake_redis_client):
         response_json=mocked_response.model_dump_json(),
     )
 
-    invoke_response = await app_routes[full_route_name].invoke(
+    invoke_response = await invoke(
+        app_routes[full_route_name],
         limits=request_limits(app_routes[full_route_name]),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),

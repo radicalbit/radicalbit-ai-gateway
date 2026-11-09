@@ -16,6 +16,7 @@ from tests.common.limits import (
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
+from tests.common.pipeline import invoke, invoke_embeddings
 from tests.common.resolve_route_models import resolve_route_models
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
@@ -232,7 +233,8 @@ async def test_chat_judge_call_consumes_route_credential_and_project_limits(
     )
     gateway = _limited_gateway(where, **ROUTE_LIMITS)
 
-    await gateway.invoke(
+    await invoke(
+        gateway,
         **_caller(),
         limits=_limits(gateway),
         messages=[HumanMessage(content='What is the capital of France?')],
@@ -259,7 +261,8 @@ async def test_warn_judge_is_called_and_charged_once(where, judge):
         'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
         return_value=judge_llm,
     ):
-        result = await gateway.invoke(
+        result = await invoke(
+            gateway,
             **_caller(),
             limits=_limits(gateway),
             messages=[HumanMessage(content='What is the capital of France?')],
@@ -294,8 +297,8 @@ async def test_embedding_call_and_its_judge_consume_route_credential_and_project
     )
     gateway = _limited_gateway('input', **ROUTE_LIMITS)
 
-    await gateway.invoke_embeddings(
-        **_caller(), limits=_limits(gateway), input_texts=['hello world']
+    await invoke_embeddings(
+        gateway, **_caller(), limits=_limits(gateway), input_texts=['hello world']
     )
 
     embedding_cost = int(EMBEDDING_TOKENS * EMBEDDING_PRICE * 1_000_000_000)
@@ -348,9 +351,9 @@ async def test_chat_judge_spend_is_charged_to_the_next_request(judge_calls):
         'tool_choice': None,
     }
 
-    await gateway.invoke(**request, limits=request_limits(gateway))
+    await invoke(gateway, **request, limits=request_limits(gateway))
     with pytest.raises(InputTokenLimitExceeded):
-        await gateway.invoke(**request, limits=request_limits(gateway))
+        await invoke(gateway, **request, limits=request_limits(gateway))
 
     assert len(judge_calls) == 1
 
@@ -371,8 +374,8 @@ async def test_embedding_judge_spend_is_charged_to_the_next_request(judge_calls)
     gateway = _limited_gateway('input', token_limiting=INPUT_LIMIT)
     request = {**_caller(), 'input_texts': ['hello world']}
 
-    await gateway.invoke_embeddings(**request, limits=request_limits(gateway))
+    await invoke_embeddings(gateway, **request, limits=request_limits(gateway))
     with pytest.raises(InputTokenLimitExceeded):
-        await gateway.invoke_embeddings(**request, limits=request_limits(gateway))
+        await invoke_embeddings(gateway, **request, limits=request_limits(gateway))
 
     assert len(judge_calls) == 1

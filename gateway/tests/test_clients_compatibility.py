@@ -15,9 +15,9 @@ from tests.common import db_mock
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
+from tests.common.pipeline import InvokeResponse
+from tests.common.routes import Prepared, answered_by_mocks, mock_route
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute, InvokeResponse
-from radicalbit_ai_gateway.caching.route_cache import Cached
 from radicalbit_ai_gateway.guardrails.guardrails import RouteGuardrails
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.server import app, group_service, key_service
@@ -32,17 +32,15 @@ def mock_request_uuid(request: Request):
 class TestClientCompatibility(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.mock_gateway = MagicMock(spec=GatewayRoute)
+        cls._answered = answered_by_mocks()
+        cls._answered.__enter__()
+        cls.mock_gateway = mock_route()
         cls.mock_gateway.route_limits = RouteLimits()
         cls.mock_gateway.project_uuid = ''
         cls.mock_gateway.project_name = ''
         cls.mock_gateway.gateway_route_config = MagicMock()
         cls.mock_gateway.gateway_route_config.route_name = 'rb-gateway'
-        prepared = MagicMock(
-            guardrails_block_triggered=False,
-            guardrails_input_triggered=False,
-            cached=Cached(),
-        )
+        prepared = Prepared()
         cls.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
         cls.mock_gateway.guardrails = RouteGuardrails()
 
@@ -55,6 +53,7 @@ class TestClientCompatibility(unittest.IsolatedAsyncioTestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls._answered.__exit__(None, None, None)
         app.dependency_overrides = {}
 
     async def test_openai_sdk_streaming(self):

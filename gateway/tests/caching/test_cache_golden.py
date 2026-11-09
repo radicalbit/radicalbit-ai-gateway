@@ -1551,7 +1551,14 @@ def test_a_soft_blocked_buffered_stream_hit_answers_400_as_a_miss_does(gateway):
 
     assert miss.status_code == hit.status_code == 400
     assert hit.json() == miss.json()
-    assert _cache_headers(hit) == _cache_headers(miss)
+    soft_block = {
+        'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED': 'true',
+        'X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-TRIGGERED': 'true',
+        'X-RB-AIGATEWAY-GUARDRAILS-WARN': 'true',
+        'X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN': 'true',
+    }
+    assert _cache_headers(miss) == soft_block
+    assert _cache_headers(hit) == {**soft_block, 'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
 
 
 @pytest.mark.parametrize('send', ['chat', 'responses'])

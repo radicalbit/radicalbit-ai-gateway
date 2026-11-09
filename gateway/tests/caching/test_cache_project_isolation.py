@@ -20,6 +20,7 @@ from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
+from tests.common.pipeline import invoke
 from tests.common.resolve_route_models import resolve_route_models
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
@@ -83,7 +84,8 @@ def _build_route(gateway_cache: GatewayCache, project_uuid: str) -> GatewayRoute
 
 
 async def _invoke(route: GatewayRoute, request_uuid: str):
-    return await route.invoke(
+    return await invoke(
+        route,
         limits=request_limits(route),
         request_uuid=request_uuid,
         api_key_uuid=str(API_KEY_UUID),
@@ -98,7 +100,7 @@ async def _invoke(route: GatewayRoute, request_uuid: str):
 
 
 @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.ChatModelInvoker.complete')
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
 @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pytest.mark.asyncio
 async def test_exact_cache_does_not_leak_across_projects(

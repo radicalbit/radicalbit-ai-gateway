@@ -27,9 +27,17 @@ from tests.common.mocked_gateway_config_openai import (
     get_gateway_openai_cached,
     get_gateway_openai_with_guardrails,
 )
+from tests.common.pipeline import (
+    InvokeResponse,
+    invoke,
+    invoke_embeddings,
+    invoke_transcription,
+    invoke_transcription_stream,
+)
+from tests.common.request_identity import with_identity
 from tests.common.resolve_route_models import resolve_route_models
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute, InvokeResponse
+from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
@@ -102,7 +110,8 @@ async def test_gateway_invocation(mock_model_invoker_emit_event, fake_redis_clie
         reply=200,
         response_json=mocked_response.model_dump_json(),
     )
-    invoke_response = await ai_gateway.invoke(
+    invoke_response = await invoke(
+        ai_gateway,
         limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -123,64 +132,7 @@ async def test_gateway_invocation(mock_model_invoker_emit_event, fake_redis_clie
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
-@pook.activate
-@pytest.mark.asyncio
-async def test_wrong_model_id(mock_model_invoker_emit_event, fake_redis_client):
-    pook.enable_network()
-    gateway_config = get_gateway_openai_with_guardrails()
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    project_guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=gateway_config.guardrails or [],
-    )
-    redis_cache = RedisCache(fake_redis_client)
-    gateway_cache = GatewayCache(redis_cache)
-
-    route_cfg, chat_models, embedding_models = resolve_route_models(
-        gateway_config, 'rb-gateway'
-    )
-
-    ai_gateway = GatewayRoute(
-        gateway_route_config=route_cfg,
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        guardrails=project_guardrails.for_route(route_cfg),
-        gateway_cache=gateway_cache,
-        cost_service=cost_service,
-        project_uuid=str(TEST_PROJECT_UUID),
-    )
-    mocked_response = to_mock_openai_chat_completion(content='Paris')
-
-    pook.post(
-        url='https://api.openai.com/v1/chat/completions',
-        reply=200,
-        response_json=mocked_response.model_dump_json(),
-    )
-    with pytest.raises(
-        GatewayBadRequest,
-        match=r'openai must be the route name',
-    ):
-        invoke_response = await ai_gateway.invoke(
-            limits=request_limits(ai_gateway),
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            api_key_name='rb-key',
-            messages=[HumanMessage(content='What is the capital of France?')],
-            route_name='openai',
-            tools=[],
-            tool_choice=None,
-            group_uuid=str(GROUP_UUID),
-            group_name='test-group',
-        )
-        _ = invoke_response.content
-    pook.disable_network()
-
-
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
 @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
@@ -254,7 +206,8 @@ async def test_model_invocation_with_redis_cache(
         )
         assert await gateway_cache.get(cache_key) is None
 
-        invoke_response = await ai_gateway.invoke(
+        invoke_response = await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -281,7 +234,8 @@ async def test_model_invocation_with_redis_cache(
 
         frozen_datetime.tick(60)
 
-        invoke_response_cached = await ai_gateway.invoke(
+        invoke_response_cached = await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -314,7 +268,8 @@ async def test_model_invocation_with_redis_cache(
 
         # Cache is expired
         assert await gateway_cache.get(cache_key) is None
-        invoke_response_new = await ai_gateway.invoke(
+        invoke_response_new = await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -339,7 +294,7 @@ async def test_model_invocation_with_redis_cache(
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
 @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
@@ -413,7 +368,8 @@ async def test_model_invocation_with_cachetools_cache(
         )
         assert await gateway_cache.get(cache_key) is None
 
-        invoke_response = await ai_gateway.invoke(
+        invoke_response = await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -438,7 +394,8 @@ async def test_model_invocation_with_cachetools_cache(
 
         frozen_datetime.tick(60)
 
-        invoke_response_cached = await ai_gateway.invoke(
+        invoke_response_cached = await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -470,7 +427,8 @@ async def test_model_invocation_with_cachetools_cache(
         # Cache is expired
         assert await gateway_cache.get(cache_key) is None
 
-        invoke_response_new = await ai_gateway.invoke(
+        invoke_response_new = await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -542,7 +500,8 @@ async def test_invoke_embeddings_success(mock_emit_event):
         response_json=mocked_embedding_response,
     )
 
-    response = await ai_gateway.invoke_embeddings(
+    response = await invoke_embeddings(
+        ai_gateway,
         limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -557,54 +516,6 @@ async def test_invoke_embeddings_success(mock_emit_event):
     assert response.data[0].embedding == [0.1, 0.2, 0.3]
     assert response.usage.total_tokens == 2
     assert response.model == 'text-embedding-3-small'
-
-    pook.disable_network()
-
-
-@patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
-@pook.activate
-@pytest.mark.asyncio
-async def test_invoke_embeddings_wrong_route(
-    mock_emit_event,
-):
-    pook.enable_network()
-    gateway_config = get_gateway_openai_with_guardrails()
-    cost_service = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    project_guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=gateway_config.guardrails or [],
-    )
-
-    route_cfg, chat_models, embedding_models = resolve_route_models(
-        gateway_config, 'rb-gateway'
-    )
-
-    ai_gateway = GatewayRoute(
-        gateway_route_config=route_cfg,
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        guardrails=project_guardrails.for_route(route_cfg),
-        gateway_cache=None,
-        cost_service=cost_service,
-    )
-
-    with pytest.raises(
-        GatewayBadRequest,
-        match=r'wrong-route must be the route name',
-    ):
-        await ai_gateway.invoke_embeddings(
-            limits=request_limits(ai_gateway),
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            api_key_name='rb-key',
-            route_name='wrong-route',
-            input_texts=['hello'],
-            group_uuid=str(GROUP_UUID),
-            group_name='test-group',
-        )
 
     pook.disable_network()
 
@@ -655,7 +566,8 @@ async def test_invoke_embeddings_with_multiple_inputs(
         response_json=mocked_embedding_response,
     )
 
-    response = await ai_gateway.invoke_embeddings(
+    response = await invoke_embeddings(
+        ai_gateway,
         limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -674,7 +586,7 @@ async def test_invoke_embeddings_with_multiple_inputs(
     pook.disable_network()
 
 
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
 @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
@@ -741,7 +653,8 @@ async def test_invoke_embeddings_with_cachetools_cache(
 
     assert await gateway_cache.get(cache_key) is None
 
-    response = await ai_gateway.invoke_embeddings(
+    response = await invoke_embeddings(
+        ai_gateway,
         limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -756,7 +669,8 @@ async def test_invoke_embeddings_with_cachetools_cache(
     assert response.data[0].embedding == [0.1, 0.2, 0.3]
     assert await gateway_cache.get(cache_key) is not None
 
-    response_cached = await ai_gateway.invoke_embeddings(
+    response_cached = await invoke_embeddings(
+        ai_gateway,
         limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -813,7 +727,8 @@ async def test_invoke_embeddings_token_limit_exceeded(
     long_text = 'hello world ' * 1000
 
     with pytest.raises(InputTokenLimitExceeded):
-        await ai_gateway.invoke_embeddings(
+        await invoke_embeddings(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -879,7 +794,8 @@ async def test_embedding_budget_limits(route, credential, project, reported):
         patch('radicalbit_ai_gateway.limiting.limits.emit_event'),
         pytest.raises(BudgetLimitExceededError) as error,
     ):
-        await ai_gateway.invoke_embeddings(
+        await invoke_embeddings(
+            ai_gateway,
             limits=limits,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -936,7 +852,8 @@ async def test_project_budget_limit_blocks_chat_with_no_other_limiters_configure
         patch('radicalbit_ai_gateway.limiting.limits.emit_event') as emit_event,
         pytest.raises(BudgetLimitExceededError, match='PROJECT BUDGET LIMIT'),
     ):
-        await ai_gateway.invoke(
+        await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway, project_limits=[project_limit(0)]),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -1057,7 +974,8 @@ async def test_invoke_transcription_checks_its_cost_and_audio_seconds():
     fake_result = MagicMock(usage=MagicMock(type='duration', seconds=3))
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
-    await ai_gateway.invoke_transcription(
+    await invoke_transcription(
+        ai_gateway,
         limits=limits,
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -1107,7 +1025,8 @@ async def test_invoke_transcription_duration_limit_exceeded_blocks_before_invoca
     ai_gateway.transcription_invoker.transcribe = AsyncMock()
 
     with pytest.raises(AudioDurationLimitExceeded):
-        await ai_gateway.invoke_transcription(
+        await invoke_transcription(
+            ai_gateway,
             limits=limits,
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -1145,7 +1064,8 @@ async def test_invoke_transcription_success():
     fake_result = MagicMock(usage=MagicMock(type='duration', seconds=9))
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
-    result = await ai_gateway.invoke_transcription(
+    result = await invoke_transcription(
+        ai_gateway,
         limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -1163,26 +1083,26 @@ async def test_invoke_transcription_success():
     # ChatModelInvoker.complete()/EmbeddingModelInvoker.embed()), so
     # ai_gateway just has to wire the identity/project params through.
     ai_gateway.transcription_invoker.transcribe.assert_awaited_once_with(
-        request_uuid=str(REQUEST_UUID),
-        api_key_uuid=str(API_KEY_UUID),
-        group_uuid=str(GROUP_UUID),
-        api_key_name='rb-key',
-        group_name='test-group',
-        route_name='rb-gateway',
-        audio_bytes=b'fake-audio',
-        filename='test.wav',
-        content_type='audio/wav',
-        model_id='whisper-1',
-        requested_response_format='json',
-        language=None,
-        prompt=None,
-        temperature=None,
-        project_uuid='',
-        project_name='',
+        **with_identity(
+            request_uuid=str(REQUEST_UUID),
+            api_key_uuid=str(API_KEY_UUID),
+            group_uuid=str(GROUP_UUID),
+            api_key_name='rb-key',
+            group_name='test-group',
+            route_name='rb-gateway',
+            audio_bytes=b'fake-audio',
+            filename='test.wav',
+            content_type='audio/wav',
+            model_id='whisper-1',
+            requested_response_format='json',
+            language=None,
+            prompt=None,
+            temperature=None,
+        )
     )
 
 
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
 @pytest.mark.asyncio
 async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
     mock_emit_event,
@@ -1224,12 +1144,12 @@ async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
         'content_type': 'audio/wav',
     }
 
-    first_result = await ai_gateway.invoke_transcription(**kwargs)
+    first_result = await invoke_transcription(ai_gateway, **kwargs)
     assert first_result == fake_result
     ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
     limits.check.assert_awaited_once()
 
-    second_result = await ai_gateway.invoke_transcription(**kwargs)
+    second_result = await invoke_transcription(ai_gateway, **kwargs)
     assert second_result == fake_result
     # The second call is served from cache, never reaching the invoker; the
     # limits are checked first, as on every request (D10).
@@ -1237,7 +1157,7 @@ async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
     assert limits.check.await_count == 2
 
 
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
 @pytest.mark.asyncio
 async def test_invoke_transcription_cache_hit_verbose_json_roundtrips(
     mock_emit_event,
@@ -1284,8 +1204,8 @@ async def test_invoke_transcription_cache_hit_verbose_json_roundtrips(
         'requested_response_format': 'verbose_json',
     }
 
-    await ai_gateway.invoke_transcription(**kwargs)
-    second_result = await ai_gateway.invoke_transcription(**kwargs)
+    await invoke_transcription(ai_gateway, **kwargs)
+    second_result = await invoke_transcription(ai_gateway, **kwargs)
 
     ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
     assert isinstance(second_result, TranscriptionVerbose)
@@ -1293,7 +1213,7 @@ async def test_invoke_transcription_cache_hit_verbose_json_roundtrips(
     assert second_result.segments == []
 
 
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
 @pytest.mark.asyncio
 async def test_invoke_transcription_cache_miss_when_audio_bytes_differ(
     mock_emit_event,
@@ -1333,8 +1253,8 @@ async def test_invoke_transcription_cache_miss_when_audio_bytes_differ(
         'content_type': 'audio/wav',
     }
 
-    await ai_gateway.invoke_transcription(audio_bytes=b'audio-one', **common_kwargs)
-    await ai_gateway.invoke_transcription(audio_bytes=b'audio-two', **common_kwargs)
+    await invoke_transcription(ai_gateway, audio_bytes=b'audio-one', **common_kwargs)
+    await invoke_transcription(ai_gateway, audio_bytes=b'audio-two', **common_kwargs)
 
     assert ai_gateway.transcription_invoker.transcribe.await_count == 2
 
@@ -1361,7 +1281,8 @@ async def test_invoke_transcription_passes_through_requested_response_format():
     fake_result = MagicMock(usage=MagicMock(type='duration', seconds=9))
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
-    await ai_gateway.invoke_transcription(
+    await invoke_transcription(
+        ai_gateway,
         limits=request_limits(ai_gateway),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -1410,7 +1331,8 @@ async def test_invoke_transcription_counts_budget_duration():
     fake_result = MagicMock(usage=MagicMock(type='duration', seconds=3))
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
-    await ai_gateway.invoke_transcription(
+    await invoke_transcription(
+        ai_gateway,
         limits=limits,
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -1467,7 +1389,8 @@ async def test_invoke_transcription_counts_budget_tokens():
     )
     ai_gateway.transcription_invoker.transcribe = AsyncMock(return_value=fake_result)
 
-    await ai_gateway.invoke_transcription(
+    await invoke_transcription(
+        ai_gateway,
         limits=limits,
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
@@ -1500,7 +1423,8 @@ async def test_invoke_transcription_no_models_configured_raises():
     )
 
     with pytest.raises(GatewayBadRequest, match='no transcription models defined'):
-        await ai_gateway.invoke_transcription(
+        await invoke_transcription(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -1555,21 +1479,19 @@ async def test_invoke_transcription_stream_relays_events_and_counts_usage_once()
 
     ai_gateway.transcription_invoker.stream = fake_stream
 
-    events = [
-        event
-        async for event in ai_gateway.invoke_transcription_stream(
-            limits=limits,
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='rb-key',
-            group_name='test-group',
-            route_name='rb-gateway',
-            audio_bytes=b'fake-audio',
-            filename='test.wav',
-            content_type='audio/wav',
-        )
-    ]
+    events = await invoke_transcription_stream(
+        ai_gateway,
+        limits=limits,
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        group_uuid=str(GROUP_UUID),
+        api_key_name='rb-key',
+        group_name='test-group',
+        route_name='rb-gateway',
+        audio_bytes=b'fake-audio',
+        filename='test.wav',
+        content_type='audio/wav',
+    )
 
     assert events == [delta_event, done_event]
     limits.check.assert_awaited_once()
@@ -1593,7 +1515,8 @@ async def test_invoke_transcription_stream_no_models_configured_raises():
     )
 
     with pytest.raises(GatewayBadRequest, match='no transcription models defined'):
-        async for _ in ai_gateway.invoke_transcription_stream(
+        await invoke_transcription_stream(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -1604,11 +1527,10 @@ async def test_invoke_transcription_stream_no_models_configured_raises():
             audio_bytes=b'fake-audio',
             filename='test.wav',
             content_type='audio/wav',
-        ):
-            pass
+        )
 
 
-@patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
+@patch('radicalbit_ai_gateway.pipeline.conversation.emit_event', autospec=True)
 @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pook.activate
 @pytest.mark.asyncio
@@ -1662,7 +1584,8 @@ async def test_cache_hit_flag_set_on_request_state(
         kwargs = {}
 
         # First invocation - should populate cache
-        invoke_response = await ai_gateway.invoke(
+        invoke_response = await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -1682,7 +1605,8 @@ async def test_cache_hit_flag_set_on_request_state(
         assert invoke_response.headers == {}
 
         # Second invocation - should hit cache and return header
-        invoke_response_cached = await ai_gateway.invoke(
+        invoke_response_cached = await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -1749,7 +1673,11 @@ async def test_preprocessing_runs_before_prompt_injection():
 
     try:
         register_preprocessing_plugin(Spy(), name='spy')
-        result = await ai_gateway._prepare_and_validate_request(
+        ai_gateway.chat_invoker.complete = AsyncMock(
+            return_value=to_mock_openai_chat_completion(content='hi')
+        )
+        await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -1771,7 +1699,7 @@ async def test_preprocessing_runs_before_prompt_injection():
 
     # The final messages start with the untouched system prompt, followed by the
     # client message the plugin transformed.
-    messages = result.redacted_messages
+    messages = ai_gateway.chat_invoker.complete.call_args.kwargs['messages']
     assert isinstance(messages[0], SystemMessage)
     assert messages[0].content == 'You are a helpful assistant.'
     assert messages[1].content == 'HELLO'
@@ -1814,7 +1742,11 @@ async def test_preprocessing_includes_client_sent_system_prompt():
 
     try:
         register_preprocessing_plugin(Spy(), name='spy')
-        result = await ai_gateway._prepare_and_validate_request(
+        ai_gateway.chat_invoker.complete = AsyncMock(
+            return_value=to_mock_openai_chat_completion(content='hi')
+        )
+        await invoke(
+            ai_gateway,
             limits=request_limits(ai_gateway),
             request_uuid=str(REQUEST_UUID),
             api_key_uuid=str(API_KEY_UUID),
@@ -1843,7 +1775,7 @@ async def test_preprocessing_includes_client_sent_system_prompt():
 
     # Final order: route prompt prepended (untouched), then the client's
     # system + human messages, both transformed by the plugin.
-    messages = result.redacted_messages
+    messages = ai_gateway.chat_invoker.complete.call_args.kwargs['messages']
     assert [(type(m).__name__, m.content) for m in messages] == [
         ('SystemMessage', 'Route prompt.'),
         ('SystemMessage', 'CLIENT SYSTEM'),

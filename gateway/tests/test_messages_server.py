@@ -25,6 +25,7 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
@@ -44,7 +45,7 @@ ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 CONFIGURED_KEY = 'sk-ant-configured'
 
 MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
-GATEWAY_EMIT = 'radicalbit_ai_gateway.ai_gateway.emit_event'
+GATEWAY_EMIT = 'radicalbit_ai_gateway.pipeline.conversation.emit_event'
 REQUEST_EVENT_EMIT = (
     'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
 )
@@ -1066,12 +1067,14 @@ class TestMessagesInvokerGuards(unittest.TestCase):
         with pytest.raises(ModelInvokerBadRequest) as refused:
             asyncio.run(
                 invoker.complete_messages(
-                    request_uuid='r',
-                    api_key_uuid='k',
-                    group_uuid='g',
-                    api_key_name='key',
-                    group_name='group',
-                    route_name=ROUTE_NAME,
+                    identity=RequestIdentity(
+                        request_uuid='r',
+                        api_key_uuid='k',
+                        group_uuid='g',
+                        api_key_name='key',
+                        group_name='group',
+                        route_name=ROUTE_NAME,
+                    ),
                     body=BODY,
                     headers={},
                     model_id='mistral',

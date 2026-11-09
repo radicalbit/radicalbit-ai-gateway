@@ -89,18 +89,10 @@ class EmbeddingModelInvoker(ModelInvoker):
     @task(name='llm_embed')
     async def embed_answered(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         input_texts: list[str],
         model_id: str,
         is_semantic_search: bool = False,
-        project_uuid: str = '',
-        project_name: str = '',
-        **kwargs,
     ) -> tuple[CreateEmbeddingResponse, Model]:
         """Embed ``input_texts``; return the response and the model that
         answered it, the target or a fallback.
@@ -116,17 +108,9 @@ class EmbeddingModelInvoker(ModelInvoker):
             input_texts,
         )
 
+        route_name = identity.route_name
         call = Call(
-            identity=RequestIdentity(
-                request_uuid=request_uuid,
-                route_name=route_name,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                project_uuid=project_uuid,
-                project_name=project_name,
-            ),
+            identity=identity,
             model_type=EMBEDDINGS_MODEL_TYPE,
             target_model_id=model_id,
             is_semantic_search=is_semantic_search,

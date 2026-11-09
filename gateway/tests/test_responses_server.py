@@ -16,7 +16,8 @@ import pytest
 from starlette.requests import Request
 
 from tests.common import db_mock
-from tests.common.limits import project_limit, request_limits
+from tests.common.limits import project_limit
+from tests.common.pipeline import scope_of
 from tests.test_responses_native import (
     OPENCODE_TURN,
     FakeChatModel,
@@ -53,7 +54,7 @@ from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 
-PROJECT_LIMITS = 'radicalbit_ai_gateway.utils.endpoint_helpers.load_project_limits'
+PROJECT_LIMITS = 'radicalbit_ai_gateway.pipeline.admission.load_project_limits'
 ROUTE = 'agents'
 
 MESSAGE = {
@@ -241,7 +242,7 @@ def post():
 
     with (
         patch('radicalbit_ai_gateway.events.buffer.celery_app.send_task'),
-        patch('radicalbit_ai_gateway.ai_gateway.emit_event'),
+        patch('radicalbit_ai_gateway.pipeline.conversation.emit_event'),
     ):
         yield _post
     app.state.routes = previous_routes
@@ -577,9 +578,9 @@ async def test_chat_endpoint_ignores_a_responses_cache_entry():
     entry = json.dumps(upstream_events()[-1]['response'])
 
     with patch.object(route.gateway_cache, 'get', AsyncMock(return_value=entry)):
-        cached = await route._request_cache(
-            request_limits(route), 'r', 'k', 'g', 'k', 'g'
-        ).lookup(ChatEntry([HumanMessage(content='Hi')]))
+        cached = await scope_of(route).cache.lookup(
+            ChatEntry([HumanMessage(content='Hi')])
+        )
 
     assert not cached.hit
 
