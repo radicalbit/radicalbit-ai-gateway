@@ -140,6 +140,34 @@ class GatewayConfig(BaseModel):
             for g in self.guardrails
         )
 
+    def route_decision_model_ids(self, route_config: GatewayRouteConfig) -> list[str]:
+        """Every decision model a route calls, in order, without repeats.
+
+        A route calls a decision model in three ways: it serves it (its own
+        decision_models), a decision_judge guardrail asks it, or a decision
+        routing asks it. Fallback models count too: they answer when the first
+        one fails.
+        """
+        ids: list[str | None] = list(route_config.decision_models or [])
+        guardrails_by_name = {g.name: g for g in self.guardrails or []}
+        for name in route_config.guardrails or []:
+            guardrail = guardrails_by_name.get(name)
+            if guardrail is not None and isinstance(
+                guardrail.parameters, DecisionJudgeParameter
+            ):
+                ids += [
+                    guardrail.parameters.model_id,
+                    guardrail.parameters.fallback_model_id,
+                ]
+        routing = (
+            self.routing_by_name.get(route_config.routing)
+            if route_config.routing
+            else None
+        )
+        if isinstance(routing, DecisionRoutingConfig):
+            ids += [routing.decision_model_id, routing.fallback_model_id]
+        return list(dict.fromkeys(i for i in ids if i is not None))
+
     def get_route_feature_flags(
         self, route_config: GatewayRouteConfig
     ) -> tuple[bool, bool, bool, bool, bool, bool]:
@@ -158,7 +186,8 @@ class GatewayConfig(BaseModel):
         )
         has_semantic_cache = isinstance(route_config.caching, SemanticCaching)
         has_transcription_models = bool(route_config.transcription_models)
-        has_decision_models = bool(route_config.decision_models)
+        # Judges and routing bill decision cost too, not only served models.
+        has_decision_models = bool(self.route_decision_model_ids(route_config))
         return (
             has_chat_models,
             has_judges,

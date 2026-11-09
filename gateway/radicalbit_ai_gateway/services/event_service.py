@@ -606,6 +606,12 @@ class EventService:
                 resolved_decision.append(decision_model.model_dump())
             route_dict['decision_models'] = resolved_decision
 
+        route_dict['all_decision_models'] = [
+            decision_by_id[mid].model_dump()
+            for mid in config.route_decision_model_ids(route_config)
+            if mid in decision_by_id
+        ]
+
         routing_name: str | None = route_dict.get('routing')
         if routing_name:
             routing_config = config.routing_by_name.get(routing_name)

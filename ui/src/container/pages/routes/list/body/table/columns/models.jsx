@@ -6,7 +6,7 @@ const MODEL_GROUPS = [
   { key: 'chatModels', title: 'Chat models' },
   { key: 'embeddingModels', title: 'Embedding models' },
   { key: 'transcriptionModels', title: 'Transcription models' },
-  { key: 'decisionModels', title: 'Decision models' },
+  { key: 'allDecisionModels', title: 'Decision models' },
 ];
 
 function Models({ configuration }) {

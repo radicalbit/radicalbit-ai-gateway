@@ -275,6 +275,9 @@ class GatewayRouteConfigOut(GatewayRouteConfig):
     embedding_models: list[ModelOut] | None
     transcription_models: list[ModelOut] | None
     decision_models: list[ModelOut] | None
+    # Every decision model the route calls: served, decision judges, decision
+    # routing. decision_models stays the served ones only (decision cURL).
+    all_decision_models: list[ModelOut] | None = None
     rate_limiting: RateLimitingOut | None
     token_limiting: TokenLimitingOut | None
     duration_limiting: DurationLimitingOut | None
