@@ -2,19 +2,15 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 import logging.config
 import os
-from typing import Annotated
 from urllib.parse import urlparse
-from uuid import UUID
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from httpx_aiohttp import HttpxAiohttpClient
-from openai.types import CreateEmbeddingResponse
-from openai.types.embedding_create_params import EmbeddingCreateParams
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_client import start_http_server
@@ -22,7 +18,6 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
 from traceloop.sdk import Traceloop
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
 from radicalbit_ai_gateway.alerting.alert_store import build_alert_store
 from radicalbit_ai_gateway.alerting.alert_window_scheduler import (
@@ -48,37 +43,29 @@ from radicalbit_ai_gateway.limiter.storage.shared import close_limit_storage
 from radicalbit_ai_gateway.llm.tracing import TRACELOOP_INSTRUMENTS
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.messages.errors import with_messages_error_shapes
-from radicalbit_ai_gateway.messages.request import MessageCreateParams
-from radicalbit_ai_gateway.messages.serving import (
-    anthropic_headers,
-    serve_messages_stream,
-)
-from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
-from radicalbit_ai_gateway.pipeline import (
-    chat as chat_pipeline,
-    embeddings as embeddings_pipeline,
-    messages as messages_pipeline,
-    responses as responses_pipeline,
-    transcription as transcription_pipeline,
-)
 from radicalbit_ai_gateway.pipeline.admission import Admission
-from radicalbit_ai_gateway.pipeline.chat import ChatRequest
-from radicalbit_ai_gateway.pipeline.http import endpoint, sse_response
-from radicalbit_ai_gateway.pipeline.transcription import Audio
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.responses.serving import serve_stream
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
-from radicalbit_ai_gateway.routes.decision_route import DecisionRoute
+from radicalbit_ai_gateway.routes.gateway.chat_completions_route import (
+    ChatCompletionsRoute,
+)
+from radicalbit_ai_gateway.routes.gateway.decision_route import DecisionRoute
+from radicalbit_ai_gateway.routes.gateway.embeddings_route import EmbeddingsRoute
+from radicalbit_ai_gateway.routes.gateway.mcp_route import McpRoute
+from radicalbit_ai_gateway.routes.gateway.messages_route import MessagesRoute
+from radicalbit_ai_gateway.routes.gateway.responses_route import ResponsesRoute
+from radicalbit_ai_gateway.routes.gateway.transcriptions_route import (
+    TranscriptionsRoute,
+)
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
-from radicalbit_ai_gateway.routes.mcp_route import McpRoute
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
 from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.routes.tag_route import TagRoute
@@ -100,15 +87,6 @@ from radicalbit_ai_gateway.services.request_event_service import RequestEventSer
 from radicalbit_ai_gateway.services.secret_service import SecretService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import (
-    get_gateway_routes,
-    get_request_uuid,
-)
-from radicalbit_ai_gateway.utils.endpoint_helpers import (
-    resolve_request_limits,
-    set_anthropic_api_key_uuid,
-    set_early_project_trace_attributes,
-)
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
     AlertRuleInvalidEventError,
@@ -119,11 +97,8 @@ from radicalbit_ai_gateway.utils.exceptions import (
     AudioDurationLimitExceeded,
     AuthRegistryError,
     BudgetLimitExceeded,
-    GatewayBadRequest,
     GatewayError,
-    GatewayNotFoundError,
     GuardrailError,
-    InvalidApiKey,
     JudgeInternalError,
     McpTransportError,
     ModelInvokerError,
@@ -150,32 +125,12 @@ from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_project_route_registrar,
 )
 from radicalbit_ai_gateway.utils.logging_hooks import apply_log_filters
-from radicalbit_ai_gateway.utils.open_ai_types import (
-    CompletionCreateParams,
-    ResponseCreateParamsCustom,
-    TranscriptionCreateParamsCustom,
-)
-from radicalbit_ai_gateway.utils.request_context import (
-    get_current_request_tags,
-    set_current_route_config,
-)
-from radicalbit_ai_gateway.utils.streaming_response import (
-    StreamingResponseWithStatusCode,
-)
 from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers
-from radicalbit_ai_gateway.utils.trace_attributes import (
-    OperationCategory,
-    in_request_trace,
-    set_operation_category,
-    set_trace_attributes,
-)
 
 app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
 logging.config.dictConfig(logging_config_dict)
 logger = logging.getLogger(app_config.log_config.logger_name)
-
-CHAT_FIELDS = {'model', 'messages', 'tools', 'tool_choice'}
 
 # Async httpx client with httpx-aiohttp
 httpx_aiohttp_client = HttpxAiohttpClient()
@@ -557,10 +512,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
-async def get_ai_gateway_dependency(request: Request):
-    return await get_gateway_routes(request)
-
-
 @app.get('/health')
 async def health_check():
     return {
@@ -571,279 +522,16 @@ async def health_check():
     }
 
 
-def _log_chat_request(
-    request: Request, params: CompletionCreateParams, route_name: str
-) -> None:
-    logger.debug('Chat completion request: %s', params)
-    client_host = request.client.host if request.client else 'unknown'
-    logger.debug(
-        'Received request: method=%s path=%s client=%s',
-        request.method,
-        request.url.path,
-        client_host,
-    )
-    logger.debug('Received completion_create_params: %s', params)
-    logger.debug('Messages: %s', list(params.get('messages')))
-    logger.debug('Tools: %s', list(params.get('tools') or []))
-    logger.debug(
-        'Received params: %s',
-        {k: v for k, v in params.items() if k not in CHAT_FIELDS},
-    )
-    logger.info('Invoked route name: %s', route_name)
-
-
-# This endpoint must follow the openai standard
-# https://platform.openai.com/docs/api-reference/chat/create
-@app.post('/v1/chat/completions')
-@endpoint('chat_completions')
-async def chat_completions(
-    request: Request,
-    completion_create_params: CompletionCreateParams,
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    scope = await admission.admit(
-        request,
-        gateway_routes,
-        completion_create_params.get('model', 'unknown'),
-        request_uuid,
-        streaming=bool(completion_create_params.get('stream')),
-        announce=lambda route_name: _log_chat_request(
-            request, completion_create_params, route_name
-        ),
-    )
-    chat = ChatRequest.of(completion_create_params)
-    if chat.stream:
-        items = await chat_pipeline.stream(scope, chat)
-        buffered = scope.route.guardrails.has_output
-        return sse_response(
-            items,
-            scope.headers(),
-            done_log='Streaming finished (Buffered): [DONE]'
-            if buffered
-            else 'Streaming finished: [DONE]',
-        )
-
-    completion = await chat_pipeline.complete(scope, chat)
-    logger.info('Invoke response: %s', completion)
-    request.state.otel_model_name = completion.model
-    set_operation_category(OperationCategory.ENDPOINT)
-    return JSONResponse(content=jsonable_encoder(completion), headers=scope.headers())
-
-
-# This endpoint must follow the openai standard
-@app.post(
-    '/v1/embeddings',
-    response_model=CreateEmbeddingResponse,
-    response_model_exclude_none=True,
+# Root-level like /v1/...: the OpenAI-compatible proxy endpoints. Included
+# after /health and before the static catch-all, and the responses router last
+# so its /v1/responses/{path:path} catch-all shadows none of the others.
+app.include_router(ChatCompletionsRoute.get_chat_completions_router(admission))
+app.include_router(EmbeddingsRoute.get_embeddings_router(admission))
+app.include_router(TranscriptionsRoute.get_transcriptions_router(admission))
+app.include_router(ResponsesRoute.get_responses_router(admission))
+app.include_router(
+    MessagesRoute.get_messages_router(group_service, project_budget_limit_dao)
 )
-@endpoint('embeddings')
-async def embeddings(
-    request: Request,
-    embedding_create_params: EmbeddingCreateParams,
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    scope = await admission.admit(
-        request, gateway_routes, embedding_create_params.get('model'), request_uuid
-    )
-    input_texts = embedding_create_params.get('input')
-    if isinstance(input_texts, str):
-        input_texts = [input_texts]
-
-    set_operation_category(OperationCategory.ENDPOINT)
-    return await embeddings_pipeline.embed(scope, input_texts)
-
-
-@app.post('/v1/audio/transcriptions')
-@endpoint('audio_transcriptions')
-async def audio_transcriptions(
-    request: Request,
-    transcription_params: Annotated[TranscriptionCreateParamsCustom, Form()],
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    scope = await admission.admit(
-        request,
-        gateway_routes,
-        transcription_params.model,
-        request_uuid,
-        streaming=transcription_params.stream,
-    )
-    file = transcription_params.file
-    audio = Audio(
-        content=await file.read(),
-        filename=file.filename or 'audio',
-        content_type=file.content_type,
-        language=transcription_params.language,
-        prompt=transcription_params.prompt,
-        temperature=transcription_params.temperature,
-        response_format=transcription_params.response_format,
-    )
-    set_operation_category(OperationCategory.ENDPOINT)
-    if transcription_params.stream:
-        return sse_response(
-            await transcription_pipeline.stream(scope, audio),
-            item_log='Streaming transcription event: %s',
-            error_log='Unhandled error during transcription streaming',
-        )
-    result = await transcription_pipeline.transcribe(scope, audio)
-    return JSONResponse(content=jsonable_encoder(result))
-
-
-# This endpoint follows the OpenAI Responses API standard:
-# https://platform.openai.com/docs/api-reference/responses
-# A request is served by a model that serves the Responses API, as the client
-# sent it once the route's policies applied.
-@app.post('/v1/responses')
-@endpoint('responses')
-async def responses(
-    request: Request,
-    response_create_params: ResponseCreateParamsCustom,
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    def announce(route_name: str) -> None:
-        logger.debug('Responses API request: %s', response_create_params)
-        logger.info('Invoked route name (responses): %s', route_name)
-
-    is_stream = bool(response_create_params.get('stream'))
-    scope = await admission.admit(
-        request,
-        gateway_routes,
-        response_create_params.get('model', 'unknown'),
-        request_uuid,
-        streaming=is_stream,
-        announce=announce,
-    )
-    # The request as the client sent it: the gateway's policies apply to it,
-    # then it goes upstream.
-    body = await request.json()
-
-    if is_stream:
-        frames = await responses_pipeline.stream(scope, body)
-        set_operation_category(OperationCategory.ENDPOINT)
-        return StreamingResponseWithStatusCode(
-            in_request_trace(serve_stream(frames)),
-            media_type='text/event-stream',
-            headers=scope.headers(),
-        )
-
-    response = await responses_pipeline.respond(scope, body)
-    set_operation_category(OperationCategory.ENDPOINT)
-    return JSONResponse(content=response, headers=scope.headers())
-
-
-# The Responses API endpoints the gateway does not serve yet: those on stored
-# responses (retrieve, delete, cancel, input_items), compact and input_tokens.
-@app.api_route('/v1/responses/{path:path}', methods=['GET', 'POST', 'DELETE'])
-async def responses_unsupported(request: Request, path: str):
-    raise GatewayNotFoundError(
-        f'{request.method} /v1/responses/{path} is not supported by the gateway yet'
-    )
-
-
-# This endpoint follows the Anthropic Messages API:
-# https://docs.claude.com/en/api/messages
-# A request is served by a model that serves the Messages API, as the client
-# sent it with only `model` swapped. It is never translated.
-@app.post('/v1/messages')
-@endpoint('messages')
-async def messages(
-    request: Request,
-    message_create_params: MessageCreateParams,
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    # Mark the root workflow span with ENDPOINT category
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    route_key = message_create_params['model']
-    route = gateway_routes.get(route_key)
-
-    set_early_project_trace_attributes(request, route_key, route)
-
-    if route is None:
-        raise GatewayBadRequest(
-            f'The route name [{route_key}] was not found in the config'
-        )
-    route_name = route.gateway_route_config.route_name
-    # Publish the route config for per-route log filtering (cleared by the decorator).
-    set_current_route_config(route.gateway_route_config)
-    request.state.otel_route_name = route_name
-
-    set_trace_attributes(
-        request_uuid=request_uuid,
-        route_name=route_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    is_stream = bool(message_create_params.get('stream'))
-    ctx = RequestEventContext.get_or_create(request)
-    ctx.route_name = route_name
-    ctx.is_streaming = is_stream
-
-    set_operation_category(OperationCategory.AUTH)
-    key_details = await set_anthropic_api_key_uuid(
-        request, route.project_uuid, route.project_name
-    )
-
-    set_trace_attributes(
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        project_uuid=route.project_uuid,
-        project_name=route.project_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    # The request as the client sent it, unknown fields included.
-    body = await request.json()
-
-    logger.info('Invoked route name (messages): %s', route_name)
-
-    if not group_service.check_key_uuid_for_route(
-        route_key, UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey(f'API Key not associated with route {route_name}')
-
-    ctx.project_uuid = route.project_uuid
-    ctx.project_name = route.project_name
-    # Routing charges its calls to the request's limits. Checking them goes
-    # here, as on the Responses API: AG-1132.
-    request_limits = await resolve_request_limits(
-        route, key_details, request_uuid, project_budget_limit_dao
-    )
-
-    scope = route.for_request(request_limits.identity, request_limits)
-    prepared = await messages_pipeline.prepare(
-        scope, body, anthropic_headers(request.headers)
-    )
-
-    if is_stream:
-        set_operation_category(OperationCategory.ENDPOINT)
-        return StreamingResponseWithStatusCode(
-            in_request_trace(
-                serve_messages_stream(messages_pipeline.stream(scope, prepared))
-            ),
-            media_type='text/event-stream',
-        )
-
-    message = await messages_pipeline.respond(scope, prepared)
-    set_operation_category(OperationCategory.ENDPOINT)
-    return JSONResponse(content=message)
-
-
-# The Messages API endpoints the gateway does not serve: count_tokens, batches.
-@app.api_route(
-    '/v1/messages/{path:path}',
-    methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
-)
-async def messages_unsupported(request: Request, path: str):
-    raise GatewayNotFoundError(
-        f'{request.method} /v1/messages/{path} is not supported by the gateway'
-    )
 
 
 # mount static files application (https://fastapi.tiangolo.com/tutorial/static-files/)

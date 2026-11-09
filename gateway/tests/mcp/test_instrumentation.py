@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
-from radicalbit_ai_gateway.routes.mcp_route import McpRoute
+from radicalbit_ai_gateway.routes.gateway.mcp_route import McpRoute
 from radicalbit_ai_gateway.services.mcp_service import McpService
 
 # Every dispatch branch in McpService._dispatch that has its own handler

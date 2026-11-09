@@ -758,3 +758,11 @@ def test_usage_is_counted_with_the_request_limits(post, stream):
     assert response.status_code == 200
     request_limits = count.call_args.args[0]
     assert request_limits.applies(Demand(cost_room=True))
+
+
+def test_the_unsupported_responses_paths_stay_out_of_the_openapi_schema():
+    """They only answer 404; their operationId would change between
+    processes, which a generated client cannot use.
+    """
+    assert '/v1/responses/{path}' not in app.openapi()['paths']
+    assert '/v1/responses' in app.openapi()['paths']

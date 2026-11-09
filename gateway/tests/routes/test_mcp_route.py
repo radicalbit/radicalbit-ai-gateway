@@ -20,7 +20,7 @@ from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
-from radicalbit_ai_gateway.routes.mcp_route import McpRoute
+from radicalbit_ai_gateway.routes.gateway.mcp_route import McpRoute
 from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,

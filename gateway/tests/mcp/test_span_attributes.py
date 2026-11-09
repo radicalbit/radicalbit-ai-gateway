@@ -42,7 +42,7 @@ from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
-from radicalbit_ai_gateway.routes.mcp_route import McpRoute
+from radicalbit_ai_gateway.routes.gateway.mcp_route import McpRoute
 from radicalbit_ai_gateway.services.mcp_service import McpService, encode_resource_uri
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,

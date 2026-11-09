@@ -40,7 +40,7 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
-_FIELDS = {'model', 'messages', 'tools', 'tool_choice'}
+CHAT_FIELDS = {'model', 'messages', 'tools', 'tool_choice'}
 
 
 @dataclass
@@ -60,7 +60,7 @@ class ChatRequest:
             messages=convert_openai_messages(list(params.get('messages'))),
             tools=list(params.get('tools') or []),
             tool_choice=params.get('tool_choice', 'auto'),
-            params={k: v for k, v in params.items() if k not in _FIELDS},
+            params={k: v for k, v in params.items() if k not in CHAT_FIELDS},
         )
 
     @property
