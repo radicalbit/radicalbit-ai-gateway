@@ -57,9 +57,6 @@ class TestStreaming(unittest.TestCase):
         return PrepareAndValidateResult(
             model_selected=mock_model,
             redacted_messages=[HumanMessage(content='Hi')],
-            cache_key='',
-            embeddings=None,
-            cached_response=None,
             input_soft_block=None,
             guardrails_input_triggered=False,
             guardrails_block_triggered=False,
@@ -141,9 +138,6 @@ class TestStreaming(unittest.TestCase):
         prepared = PrepareAndValidateResult(
             model_selected=prepared.model_selected,
             redacted_messages=prepared.redacted_messages,
-            cache_key='',
-            embeddings=None,
-            cached_response=None,
             input_soft_block=None,
             guardrails_input_triggered=True,
             guardrails_block_triggered=True,  # BLOCK/SOFT_BLOCK triggers the header

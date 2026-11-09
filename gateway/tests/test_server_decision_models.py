@@ -1,5 +1,6 @@
 """POST /v1/systemone: Jev proxied through the gateway, Typesafe mocked with pook."""
 
+from dataclasses import replace
 import json
 from types import SimpleNamespace
 import unittest
@@ -149,7 +150,7 @@ JEV_EU = {
 JEV_TO_JEV_EU = [{'target': 'jev', 'fallbacks': ['jev-eu'], 'type': 'decision'}]
 
 
-CACHE_EMIT = 'radicalbit_ai_gateway.ai_gateway.emit_event'
+CACHE_EMIT = 'radicalbit_ai_gateway.caching.route_cache.emit_event'
 # No Redis client in these tests: an exact cache falls back to in-memory.
 EXACT_CACHE = {
     'caching': {'type': 'exact'},
@@ -930,7 +931,9 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             },
         )
         semantic_cache = MagicMock(spec=SemanticCache)
-        app.state.routes[ROUTE_KEY].gateway_cache = GatewayCache(semantic_cache)
+        route = app.state.routes[ROUTE_KEY]
+        route.gateway_cache = GatewayCache(semantic_cache)
+        route.cache = replace(route.cache, backend=route.gateway_cache)
         typesafe = self._spy_on_typesafe().times(2)
 
         self._post()

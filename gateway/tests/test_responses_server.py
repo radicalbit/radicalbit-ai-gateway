@@ -9,13 +9,14 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
-import numpy as np
+from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
+from openai.types.embedding import Embedding
 from openai.types.responses import Response
 import pytest
 from starlette.requests import Request
 
 from tests.common import db_mock
-from tests.common.limits import project_limit
+from tests.common.limits import project_limit, request_limits
 from tests.test_responses_native import (
     OPENCODE_TURN,
     FakeChatModel,
@@ -27,10 +28,12 @@ from tests.utils.test_responses_output import events_of
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
+from radicalbit_ai_gateway.caching.route_cache import ChatEntry, RouteCache
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.caching import CacheType
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback
@@ -574,11 +577,11 @@ async def test_chat_endpoint_ignores_a_responses_cache_entry():
     entry = json.dumps(upstream_events()[-1]['response'])
 
     with patch.object(route.gateway_cache, 'get', AsyncMock(return_value=entry)):
-        cached = await route._get_from_cache(
-            'r', 'k', 'g', 'k', 'g', ROUTE, 'key', 'Hi', None
-        )
+        cached = await route._request_cache(
+            request_limits(route), 'r', 'k', 'g', 'k', 'g'
+        ).lookup(ChatEntry([HumanMessage(content='Hi')]))
 
-    assert cached is None
+    assert not cached.hit
 
 
 @pytest.mark.parametrize(
@@ -623,9 +626,23 @@ class SemanticInMemoryCache(GatewayCache):
 def semantic_route(model: FakeChatModel, embedding_model: Model | None):
     route = build_route({'openai': model})
     route.gateway_cache = SemanticInMemoryCache()
-    route._get_first_embedding_model = MagicMock(return_value=embedding_model)
-    route._generate_embedding_for_semantic_cache = AsyncMock(
-        return_value=np.array([0.1, 0.2])
+    embedder = MagicMock()
+    embedder.embed_answered = AsyncMock(
+        return_value=(
+            CreateEmbeddingResponse(
+                object='list',
+                data=[Embedding(index=0, embedding=[0.1, 0.2], object='embedding')],
+                model='text-embedding-3-small',
+                usage=Usage(prompt_tokens=1, total_tokens=1),
+            ),
+            embedding_model,
+        )
+    )
+    route.cache = RouteCache(
+        backend=route.gateway_cache,
+        cost_service=route.cost_service,
+        embedder=embedder,
+        embedding_model=embedding_model,
     )
     return route
 
@@ -650,12 +667,12 @@ def test_semantic_cache_embeds_the_last_user_text(post):
     assert first.status_code == second.status_code == 200
     assert len(model.bodies) == 1
     assert second.headers['X-RB-AIGATEWAY-CACHE-HIT'] == 'true'
-    embedded = route._generate_embedding_for_semantic_cache.call_args.kwargs
-    assert embedded['text'] == 'Hi'
-    assert embedded['model_id_selected'] == 'embed'
+    embedded = route.cache.embedder.embed_answered.call_args.kwargs
+    assert embedded['input_texts'] == ['Hi']
+    assert embedded['model_id'] == 'embed'
     assert [name for name, _ in route.gateway_cache.calls] == ['get', 'set', 'get']
     for _, kwargs in route.gateway_cache.calls:
-        assert kwargs['embeddings'].tolist() == [0.1, 0.2]
+        assert kwargs['embeddings'].tolist() == pytest.approx([0.1, 0.2])
 
 
 def test_semantic_cache_without_embeddings_is_skipped(post):

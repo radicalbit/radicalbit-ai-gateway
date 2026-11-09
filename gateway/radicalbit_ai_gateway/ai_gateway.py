@@ -1,22 +1,28 @@
 from collections.abc import AsyncIterator
-import datetime
-import json
 import logging
-import time
 from typing import Any
 
-import numpy as np
 from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
-from openai.types.completion_usage import CompletionUsage
 from openai.types.create_embedding_response import CreateEmbeddingResponse
 from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
+from radicalbit_ai_gateway.caching.route_cache import (
+    Cached,
+    ChatEntry,
+    DecisionEntry,
+    EmbeddingEntry,
+    RequestCache,
+    ResponsesEntry,
+    RouteCache,
+    StreamedReply,
+    TranscriptionEntry,
+)
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.guardrails import (
     Conversation,
@@ -48,25 +54,14 @@ from radicalbit_ai_gateway.limiting.limits import (
     Usage,
 )
 from radicalbit_ai_gateway.llm.messages import (
-    AIMessage,
     AIMessageChunk,
     BaseMessage,
-    HumanMessage,
     SystemMessage,
 )
 from radicalbit_ai_gateway.messages.events import relay_frame
 from radicalbit_ai_gateway.messages.request import MessagesRequest
-from radicalbit_ai_gateway.metrics.define_metrics import (
-    cache_hit_counter,
-    cache_input_tokens,
-    cache_output_tokens,
-)
-from radicalbit_ai_gateway.models.caching import CacheType
 from radicalbit_ai_gateway.models.chat_request import select_message_by_role
-from radicalbit_ai_gateway.models.event_payload import (
-    CacheEventPayload,
-    RoutingEventPayload,
-)
+from radicalbit_ai_gateway.models.event_payload import RoutingEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.fallback import FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
@@ -82,9 +77,7 @@ from radicalbit_ai_gateway.responses.output import (
 from radicalbit_ai_gateway.responses.request import (
     ResponsesRequest,
     apply_governance,
-    cache_signature,
     check_supported,
-    last_user_text,
     references_stored_state,
 )
 from radicalbit_ai_gateway.routing import (
@@ -97,7 +90,6 @@ from radicalbit_ai_gateway.routing import (
 from radicalbit_ai_gateway.routing.common import RoutingSpendRecorder
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.ai_gateway_types import (
-    CacheResult,
     InvokeResponse,
     MessagesPrepared,
     OutputProcessResult,
@@ -112,7 +104,6 @@ from radicalbit_ai_gateway.utils.build_user_content import (
     build_user_content,
     build_user_content_from_texts,
 )
-from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
 from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
@@ -151,20 +142,15 @@ def _with_text(chunks: list[AIMessageChunk], text: str) -> list[AIMessageChunk]:
     return rebuilt
 
 
-def _parse_cached_response_object(raw: str | None) -> dict | None:
-    """Return a cached Responses API response object; a chat completion is a miss.
-
-    A semantic cache shares a route's entries between endpoints.
-    """
-    if not raw:
-        return None
-    try:
-        cached = json.loads(raw)
-    except ValueError:
-        return None
-    if not isinstance(cached, dict) or cached.get('object') != 'response':
-        return None
-    return cached
+def _with_content(completion: ChatCompletion, text: str | None) -> ChatCompletion:
+    """Return a completion with its first choice's text replaced."""
+    if text == completion.choices[0].message.content:
+        return completion
+    choice = completion.choices[0]
+    message = choice.message.model_copy(update={'content': text})
+    return completion.model_copy(
+        update={'choices': [choice.model_copy(update={'message': message})]}
+    )
 
 
 def _chat_demand(messages: list[BaseMessage], model: Model) -> Demand:
@@ -359,6 +345,13 @@ class GatewayRoute:
             if self.gateway_route_config.caching
             else None
         )
+        self.cache = RouteCache.from_config(
+            gateway_route_config,
+            gateway_cache,
+            cost_service,
+            self.embedding_invoker,
+            self._embedding_models,
+        )
 
     # ============================================================================
     # Chat Invocation Entrypoints
@@ -401,51 +394,28 @@ class GatewayRoute:
                 headers=prepared.guardrail_flags.headers(),
             )
 
-        if prepared.cached_response:
-            # Cache hit: return content with cache hit header
-            if self.guardrails.has_output:
-                output = await self._process_output(
-                    limits=limits,
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    api_key_name=api_key_name,
-                    group_name=group_name,
-                    response=prepared.cached_response,
-                )
-                content = output.response.model_copy(update={'model': route_name})
-                flags = prepared.guardrail_flags | output.guardrail_flags
-                return InvokeResponse(
-                    content=content,
-                    headers={'X-RB-AIGATEWAY-CACHE-HIT': 'true', **flags.headers()},
-                )
-            content = prepared.cached_response.model_copy(update={'model': route_name})
-            return InvokeResponse(
-                content=content,
-                headers={
-                    'X-RB-AIGATEWAY-CACHE-HIT': 'true',
-                    **prepared.guardrail_flags.headers(),
-                },
+        cached = prepared.cached
+        if cached.hit:
+            response = cached.value
+        else:
+            set_operation_category(OperationCategory.INVOCATION)
+            response = await self._process_request(
+                limits=limits,
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                route_name=route_name,
+                redacted_messages=prepared.redacted_messages,
+                model_selected=prepared.model_selected,
+                tools=tools,
+                tool_choice=tool_choice,
+                **kwargs,
             )
 
-        # Process the request
-        set_operation_category(OperationCategory.INVOCATION)
-        response = await self._process_request(
-            limits=limits,
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            group_uuid=group_uuid,
-            api_key_name=api_key_name,
-            group_name=group_name,
-            route_name=route_name,
-            redacted_messages=prepared.redacted_messages,
-            model_selected=prepared.model_selected,
-            tools=tools,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
-
-        # Handle output processing
+        # A hit is screened as a model's reply is; only screened replies are
+        # stored.
         if self.guardrails.has_output:
             output = await self._process_output(
                 limits=limits,
@@ -459,19 +429,13 @@ class GatewayRoute:
         else:
             output = OutputProcessResult(response=response)
 
-        # Cache the response
-        if self.gateway_cache and prepared.cache_key:
-            set_operation_category(OperationCategory.CACHE)
-            await self._cache_response(
-                output.response,
-                prepared.cache_key,
-                route_name,
-                api_key_uuid,
-                prepared.embeddings,
-            )
+        await cached.store(output.response)
         return InvokeResponse(
             content=output.response.model_copy(update={'model': route_name}),
-            headers=(prepared.guardrail_flags | output.guardrail_flags).headers(),
+            headers={
+                **cached.headers(),
+                **(prepared.guardrail_flags | output.guardrail_flags).headers(),
+            },
         )
 
     async def prepare_stream(
@@ -524,9 +488,19 @@ class GatewayRoute:
             )
             return [chunk], prepared.guardrail_flags.headers()
 
-        cached_response = prepared.cached_response
-        if cached_response:
-            # Cache hit: return as a list containing a single chunk
+        if prepared.cached.hit:
+            # Cache hit: screened as a model's reply is, then sent as one chunk.
+            cached_response = prepared.cached.value
+            text, output_flags = await self._screen_streamed_reply(
+                limits,
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                text=cached_response.choices[0].message.content,
+            )
+            cached_response = _with_content(cached_response, text)
             chunk = StreamingUtils.cached_response_to_chunk(cached_response, route_name)
             chunks = [chunk]
 
@@ -550,8 +524,8 @@ class GatewayRoute:
                 )
 
             headers = {
-                'X-RB-AIGATEWAY-CACHE-HIT': 'true',
-                **prepared.guardrail_flags.headers(),
+                **prepared.cached.headers(),
+                **(prepared.guardrail_flags | output_flags).headers(),
             }
             return chunks, headers
 
@@ -573,8 +547,7 @@ class GatewayRoute:
             tools=tools,
             tool_choice=tool_choice,
             model_selected=prepared.model_selected,
-            cache_key=prepared.cache_key,
-            embeddings=prepared.embeddings,
+            cached=prepared.cached,
             **kwargs,
         )
         return chunks, (prepared.guardrail_flags | output_flags).headers()
@@ -604,10 +577,21 @@ class GatewayRoute:
         # Prepare stream options (forces include_usage=True upstream)
         user_stream_options = StreamingUtils.prepare_stream_options(kwargs)
 
-        if prepared.cached_response:
-            # Cache hit: yield as a chunk
+        if prepared.cached.hit:
+            # Cache hit: screened as a model's reply is, then sent as one
+            # chunk. A live stream's route has no output guardrails: the
+            # screening changes nothing there.
+            text, _ = await self._screen_streamed_reply(
+                limits,
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                text=prepared.cached.value.choices[0].message.content,
+            )
             yield StreamingUtils.cached_response_to_chunk(
-                prepared.cached_response, route_name
+                _with_content(prepared.cached.value, text), route_name
             )
             return
 
@@ -669,17 +653,13 @@ class GatewayRoute:
                 request_id=request_uuid,
             )
 
-        # Cache the full response if enabled
-        if self.gateway_cache and prepared.cache_key and full_content_text:
-            set_operation_category(OperationCategory.CACHE)
-            await self._build_and_cache_stream_response(
-                full_content_text=full_content_text,
-                final_usage=final_usage,
-                model_id_invoked=prepared.model_selected.model_id,
-                cache_key=prepared.cache_key,
-                route_name=route_name,
-                key_uuid=api_key_uuid,
-                embeddings=prepared.embeddings,
+        # A live stream's route has no output guardrails: its text is the
+        # screened text. A reply with no text (a tool call) is not stored.
+        if full_content_text:
+            await prepared.cached.store(
+                StreamedReply(
+                    full_content_text, final_usage, prepared.model_selected.model_id
+                )
             )
 
     # ============================================================================
@@ -775,14 +755,13 @@ class GatewayRoute:
             identity=identity,
             guardrails_input_triggered=input_guardrails.flags.input_warned,
         )
-        if self.gateway_cache:
-            set_operation_category(OperationCategory.CACHE)
-            await self._lookup_responses_cache(prepared)
-            if prepared.cached_response:
-                return prepared
-
+        # Limits before the cache, as on chat: a caller over its limit is
+        # not served, and the semantic cache's embedding call is not made.
         await _check_limits(
             limits, _chat_demand(redacted_messages, model_selected), _check_in_chat_span
+        )
+        prepared.cached = await self._request_cache(limits, **identity).lookup(
+            ResponsesEntry(request.body)
         )
         return prepared
 
@@ -798,9 +777,8 @@ class GatewayRoute:
                 prepared, input_blocked=True
             )
 
-        cache_hit = prepared.cached_response is not None
-        if cache_hit:
-            response = prepared.cached_response
+        if prepared.cached.hit:
+            response = prepared.cached.value
         else:
             set_operation_category(OperationCategory.INVOCATION)
             response, _ = await self.chat_invoker.complete_responses(
@@ -812,13 +790,12 @@ class GatewayRoute:
             output_triggered,
             output_blocked,
         ) = await self._process_responses_output(prepared, response)
-        if not cache_hit:
+        if not prepared.cached.hit:
             await self._account_responses(prepared, response)
         return {**response, 'model': route_name}, self._responses_headers(
             prepared,
             output_triggered=output_triggered,
             output_blocked=output_blocked,
-            cache_hit=cache_hit,
         )
 
     async def open_responses_stream(
@@ -831,11 +808,7 @@ class GatewayRoute:
         must be known first: a soft block, a cache hit, or a reply the output
         guardrails must pass.
         """
-        if (
-            prepared.soft_block
-            or prepared.cached_response
-            or self.guardrails.has_output
-        ):
+        if prepared.soft_block or prepared.cached.hit or self.guardrails.has_output:
             frames, headers = await self._buffered_responses_frames(prepared)
             return _aiter_list(frames), headers
         return self._live_responses_frames(prepared), self._responses_headers(prepared)
@@ -879,7 +852,7 @@ class GatewayRoute:
         each text in one delta; an unchanged one as the upstream sent it.
         """
         set_streaming()
-        if prepared.soft_block or prepared.cached_response:
+        if prepared.soft_block or prepared.cached.hit:
             response, headers = await self.invoke_responses(prepared)
             return response_events(response), headers
 
@@ -914,7 +887,6 @@ class GatewayRoute:
         input_blocked: bool = False,
         output_triggered: bool = False,
         output_blocked: bool = False,
-        cache_hit: bool = False,
     ) -> dict[str, str]:
         flags = GuardrailFlags(
             input_warned=prepared.guardrails_input_triggered,
@@ -922,8 +894,7 @@ class GatewayRoute:
             output_warned=output_triggered,
             output_blocked=output_blocked,
         )
-        cache = {'X-RB-AIGATEWAY-CACHE-HIT': 'true'} if cache_hit else {}
-        return {**cache, **flags.headers()}
+        return {**prepared.cached.headers(), **flags.headers()}
 
     @workflow(name='apply_responses_output_guardrails')
     async def _process_responses_output(
@@ -951,79 +922,10 @@ class GatewayRoute:
         await prepared.limits.count(
             Usage.priced(prepared.model_selected, input_tokens, output_tokens)
         )
-        if (
-            self.gateway_cache
-            and prepared.cache_key
-            and response.get('status') == 'completed'
-        ):
-            set_operation_category(OperationCategory.CACHE)
-            await self._cache_response_object(
-                json.dumps({**response, 'model': prepared.model_selected.model_id}),
-                prepared.cache_key,
-                self.gateway_route_config.route_name,
-                prepared.identity['api_key_uuid'],
-                prepared.embeddings,
+        if response.get('status') == 'completed':
+            await prepared.cached.store(
+                {**response, 'model': prepared.model_selected.model_id}
             )
-
-    @task(name='lookup_responses_cache')
-    async def _lookup_responses_cache(self, prepared: ResponsesPrepared) -> None:
-        """Set the cache key of a prepared request, and its cached response on a hit."""
-        signature = cache_signature(prepared.body)
-        if signature is None:
-            return
-        route_name = self.gateway_route_config.route_name
-        prepared.cache_key = self.gateway_cache.generate_responses_cache_key(
-            project_uuid=self.project_uuid,
-            route_name=route_name,
-            key_uuid=prepared.identity['api_key_uuid'],
-            signature=signature,
-        )
-        user_content = last_user_text(prepared.body)
-        if self.gateway_cache.cache_type == CacheType.SEMANTIC:
-            embedding_model_selected = self._get_first_embedding_model()
-            if user_content and embedding_model_selected:
-                prepared.embeddings = await self._generate_embedding_for_semantic_cache(
-                    text=user_content,
-                    **prepared.identity,
-                    route_name=route_name,
-                    model_id_selected=embedding_model_selected.model_id,
-                )
-            if prepared.embeddings is None:
-                # Without embeddings the semantic cache can neither read nor write.
-                prepared.cache_key = ''
-                return
-
-        raw_cached_response = await self.gateway_cache.get(
-            cache_key=prepared.cache_key,
-            embeddings=prepared.embeddings,
-            user_content=user_content,
-            project_uuid=self.project_uuid,
-            route_name=route_name,
-            key_uuid=prepared.identity['api_key_uuid'],
-            k=1,
-        )
-        cached = _parse_cached_response_object(raw_cached_response)
-        if cached is None:
-            return
-
-        input_tokens, _, output_tokens = usage_token_counts(cached.get('usage'))
-        self._emit_cache_events_and_metrics(
-            **prepared.identity,
-            route_name=route_name,
-            model_id=cached.get('model', ''),
-            usage=CompletionUsage(
-                prompt_tokens=input_tokens,
-                completion_tokens=output_tokens,
-                total_tokens=input_tokens + output_tokens,
-            ),
-            cache_type=self.gateway_cache.cache_type,
-        )
-        now = int(time.time())
-        prepared.cached_response = {
-            **cached,
-            'created_at': now,
-            'completed_at': now if cached.get('completed_at') else None,
-        }
 
     # ============================================================================
     # Messages API
@@ -1175,43 +1077,16 @@ class GatewayRoute:
             return screened.soft_block.build_soft_block_embedding_response(route_name)
         redacted_texts = screened.payload.items
 
-        # Check cache
-        use_cache = self.gateway_cache and self.gateway_cache.cache_type in (
-            CacheType.EXACT,
-            CacheType.IN_MEMORY,
-        )
-        cache_key = ''
-        if use_cache:
-            set_operation_category(OperationCategory.CACHE)
-            cache_key = self.gateway_cache.generate_embedding_cache_key(
-                project_uuid=self.project_uuid,
-                route_name=route_name,
-                key_uuid=api_key_uuid,
-                input_texts=redacted_texts,
-            )
-            raw_cached_response = await self.gateway_cache.get(cache_key)
-            if raw_cached_response:
-                logger.debug(
-                    'Embedding cache hit. Key: %s',
-                    cache_key,
-                )
-                cached_response = CreateEmbeddingResponse.model_validate(
-                    json.loads(raw_cached_response)
-                )
-
-                self._emit_cache_events_and_metrics(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    api_key_name=api_key_name,
-                    group_name=group_name,
-                    route_name=route_name,
-                    model_id=cached_response.model,
-                    usage=cached_response.usage,
-                    cache_type=self.gateway_cache.cache_type,
-                )
-
-                return cached_response
+        cached = await self._request_cache(
+            limits,
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+        ).lookup(EmbeddingEntry(redacted_texts))
+        if cached.hit:
+            return cached.value
 
         set_operation_category(OperationCategory.INVOCATION)
         response = await self.embedding_invoker.embed(
@@ -1232,13 +1107,7 @@ class GatewayRoute:
                 Usage.priced(model_selected, response.usage.prompt_tokens)
             )
 
-        if use_cache and cache_key:
-            await self.gateway_cache.set(
-                cache_key=cache_key,
-                response=response.model_dump_json(indent=None),
-                ttl=self.ttl,
-            )
-
+        await cached.store(response)
         return response
 
     async def invoke_transcription(
@@ -1269,51 +1138,33 @@ class GatewayRoute:
         set_operation_category(OperationCategory.ROUTING)
         model_selected = self._select_and_prepare_transcription_model()
 
-        use_cache = self.gateway_cache and self.gateway_cache.cache_type in (
-            CacheType.EXACT,
-            CacheType.IN_MEMORY,
-        )
-        cache_key = ''
-        if use_cache:
-            set_operation_category(OperationCategory.CACHE)
-            cache_key = self.gateway_cache.generate_transcription_cache_key(
-                project_uuid=self.project_uuid,
-                route_name=route_name,
-                key_uuid=api_key_uuid,
-                audio_bytes=audio_bytes,
-                model_id=model_selected.model_id,
-                response_format=requested_response_format,
-                language=language,
-                prompt=prompt,
-                temperature=temperature,
+        # Limits before the cache, as on chat: a caller over its limit is not
+        # served. A hit spends no audio: its seconds count only on a miss.
+        demand = _transcription_demand(audio_bytes)
+        if limits.applies(demand):
+            await limits.check(demand, count=False)
+
+        cached = await self._request_cache(
+            limits,
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+        ).lookup(
+            TranscriptionEntry(
+                audio_bytes,
+                model_selected.model_id,
+                requested_response_format,
+                language,
+                prompt,
+                temperature,
             )
-            raw_cached_response = await self.gateway_cache.get(cache_key)
-            if raw_cached_response:
-                logger.debug('Transcription cache hit. Key: %s', cache_key)
-                cached_body: Transcription | TranscriptionVerbose
-                if requested_response_format == 'verbose_json':
-                    cached_body = TranscriptionVerbose.model_validate_json(
-                        raw_cached_response
-                    )
-                else:
-                    cached_body = Transcription.model_validate_json(raw_cached_response)
+        )
+        if cached.hit:
+            return cached.value
 
-                self._emit_cache_events_and_metrics(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    api_key_name=api_key_name,
-                    group_name=group_name,
-                    route_name=route_name,
-                    model_id=model_selected.model_id,
-                    usage=None,
-                    cache_type=self.gateway_cache.cache_type,
-                )
-
-                return cached_body
-
-        await _check_limits(limits, _transcription_demand(audio_bytes))
-
+        await limits.count_checked(demand)
         set_operation_category(OperationCategory.INVOCATION)
         result = await self.transcription_invoker.transcribe(
             request_uuid=request_uuid,
@@ -1336,13 +1187,7 @@ class GatewayRoute:
 
         await limits.count(Usage.transcription(model_selected, result.usage))
 
-        if use_cache and cache_key:
-            await self.gateway_cache.set(
-                cache_key=cache_key,
-                response=result.model_dump_json(indent=None),
-                ttl=self.ttl,
-            )
-
+        await cached.store(result)
         return result
 
     async def invoke_transcription_stream(
@@ -1446,40 +1291,24 @@ class GatewayRoute:
                 ),
             }
 
-        use_cache = self.gateway_cache and self.gateway_cache.cache_type in (
-            CacheType.EXACT,
-            CacheType.IN_MEMORY,
-        )
-        cache_key = ''
-        if use_cache:
-            set_operation_category(OperationCategory.CACHE)
-            cache_key = self.gateway_cache.generate_decision_cache_key(
-                project_uuid=self.project_uuid,
-                route_name=route_name,
-                key_uuid=api_key_uuid,
-                state=body.get('state'),
-                questions=body.get('questions'),
-                model_id=model_selected.model_id,
+        cached = await self._request_cache(
+            limits,
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+        ).lookup(
+            DecisionEntry(
+                body.get('state'), body.get('questions'), model_selected.model_id
             )
-            raw_cached_response = await self.gateway_cache.get(cache_key)
-            if raw_cached_response:
-                logger.debug('Decision cache hit. Key: %s', cache_key)
-                cached = json.loads(raw_cached_response)
-                self._emit_decision_cache_hit(
-                    request_uuid=request_uuid,
-                    api_key_uuid=api_key_uuid,
-                    group_uuid=group_uuid,
-                    api_key_name=api_key_name,
-                    group_name=group_name,
-                    route_name=route_name,
-                    model_id=cached['model_id'],
-                    input_tokens=cached['input_tokens'],
-                )
-                return DecisionResponse(
-                    status_code=cached['status_code'],
-                    content=cached['content'].encode('utf-8'),
-                    media_type=cached['media_type'],
-                )
+        )
+        if cached.hit:
+            return DecisionResponse(
+                status_code=cached.value['status_code'],
+                content=cached.value['content'].encode('utf-8'),
+                media_type=cached.value['media_type'],
+            )
 
         set_operation_category(OperationCategory.INVOCATION)
         response = await self.decision_invoker.decide(
@@ -1500,67 +1329,16 @@ class GatewayRoute:
                 await limits.count(
                     Usage.priced(response.model_invoked, response.input_tokens)
                 )
-            if use_cache and cache_key:
-                await self.gateway_cache.set(
-                    cache_key=cache_key,
-                    response=json.dumps(
-                        {
-                            'status_code': response.status_code,
-                            'content': response.content.decode('utf-8'),
-                            'media_type': response.media_type,
-                            'model_id': response.model_invoked.model_id,
-                            'input_tokens': response.input_tokens,
-                        }
-                    ),
-                    ttl=self.ttl,
-                )
-        return response
-
-    def _emit_decision_cache_hit(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
-        model_id: str,
-        input_tokens: int,
-    ) -> None:
-        """Record a hit. It costs nothing: cached input tokens are at $0."""
-        self._emit_cache_events_and_metrics(
-            request_uuid=request_uuid,
-            api_key_uuid=api_key_uuid,
-            group_uuid=group_uuid,
-            api_key_name=api_key_name,
-            group_name=group_name,
-            route_name=route_name,
-            model_id=model_id,
-            usage=None,
-            cache_type=self.gateway_cache.cache_type,
-        )
-        if input_tokens <= 0:
-            return
-        emit_event(
-            CacheEventPayload(
-                value=input_tokens,
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                event_type=EventType.CACHE_INPUT_TOKENS,
-                route_name=route_name,
-                group_name=group_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-                cost=0.0,
-                cache_type=str(self.gateway_cache.cache_type.value),
-                model_id=model_id,
+            await cached.store(
+                {
+                    'status_code': response.status_code,
+                    'content': response.content.decode('utf-8'),
+                    'media_type': response.media_type,
+                    'model_id': response.model_invoked.model_id,
+                    'input_tokens': response.input_tokens,
+                }
             )
-        )
-        cache_input_tokens.add(
-            input_tokens, {'route_name': route_name, 'model_name': model_id}
-        )
+        return response
 
     def _routing_spend_recorder(
         self, limits: RequestLimits, metrics: ModelInvoker
@@ -1634,9 +1412,6 @@ class GatewayRoute:
         # redaction: plugins, routers and redact guardrails never see it.
         # Input guardrails skip the prompt: it is not part of the conversation.
         prompt_messages = self._apply_config_prompt(redacted_messages, model_selected)
-        if redacted_messages is not messages:
-            # The cache still reads the unredacted list: keep the prompt there too.
-            self._apply_config_prompt(messages, model_selected)
 
         input_guardrails = await guardrails.check_input(
             Conversation(redacted_messages, skip=prompt_messages), redaction.flags
@@ -1650,9 +1425,6 @@ class GatewayRoute:
             return PrepareAndValidateResult(
                 model_selected=model_selected,
                 redacted_messages=redacted_messages,
-                cache_key='',
-                embeddings=None,
-                cached_response=None,
                 input_soft_block=input_guardrails.soft_block.build_soft_block_response(
                     self.gateway_route_config.route_name
                 ),
@@ -1660,44 +1432,29 @@ class GatewayRoute:
                 guardrails_block_triggered=True,
             )
 
-        # Check cache
-        if self.gateway_cache:
-            set_operation_category(OperationCategory.CACHE)
-            cache_result = await self._handle_cache(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                **kwargs,
+        # The cache reads the redacted messages, as the model does: no text a
+        # redaction masks reaches the key or the semantic cache's embedding
+        # provider (ADR 0010).
+        cached = await self._request_cache(
+            limits,
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+        ).lookup(
+            ChatEntry(
+                redacted_messages,
+                tools,
+                tool_choice,
+                kwargs,
+                stream=bool(kwargs.get('stream')),
             )
-        else:
-            cache_result = CacheResult(
-                cache_key='', embeddings=None, cached_response=None
-            )
-
-        if cache_result.cached_response:
-            return PrepareAndValidateResult(
-                model_selected=model_selected,
-                redacted_messages=redacted_messages,
-                cache_key=cache_result.cache_key,
-                embeddings=cache_result.embeddings,
-                cached_response=cache_result.cached_response,
-                input_soft_block=None,
-                guardrails_input_triggered=guardrails_input_triggered,
-                guardrails_block_triggered=guardrails_block_triggered,
-            )
-
+        )
         return PrepareAndValidateResult(
             model_selected=model_selected,
             redacted_messages=redacted_messages,
-            cache_key=cache_result.cache_key,
-            embeddings=cache_result.embeddings,
-            cached_response=None,
+            cached=cached,
             input_soft_block=None,
             guardrails_input_triggered=guardrails_input_triggered,
             guardrails_block_triggered=guardrails_block_triggered,
@@ -1950,232 +1707,6 @@ class GatewayRoute:
         )
 
     # ============================================================================
-    # Cache
-    # ============================================================================
-    @task(name='lookup_cache')
-    async def _handle_cache(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
-        messages: list,
-        tools: list[ChatCompletionToolParam] | None,
-        tool_choice: ChatCompletionToolChoiceOptionParam | None,
-        **kwargs,
-    ) -> CacheResult:
-        # Check cache
-        cached_response = None
-        embeddings = None
-        cache_key = ''
-        # Use messages from the last user message (HumanMessage) to the end for cache/embedding
-        last_human_idx = -1
-        for idx, m in enumerate(messages):
-            if isinstance(m, HumanMessage):
-                last_human_idx = idx
-
-        last_human = messages[last_human_idx] if last_human_idx != -1 else None
-        messages_for_cache: list[BaseMessage] = (
-            messages[last_human_idx:] if last_human_idx != -1 else []
-        )
-        user_content = (
-            ContentUtils.extract_text_content(last_human.content) if last_human else ''
-        )
-        logger.debug(
-            'Cache input based on last user message only. has_last_human=%s, used_text="%s"',
-            bool(last_human),
-            user_content,
-        )
-        if self.gateway_cache:
-            if messages_for_cache:
-                cache_key = self.gateway_cache.generate_cache_key(
-                    project_uuid=self.project_uuid,
-                    route_name=route_name,
-                    key_uuid=api_key_uuid,
-                    messages=messages_for_cache,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    **kwargs,
-                )
-                logger.debug('Generated cache key for last user message: %s', cache_key)
-            else:
-                logger.debug(
-                    'No HumanMessage found: skipping cache key generation and embeddings.'
-                )
-            if self.gateway_cache.cache_type == CacheType.SEMANTIC:
-                if messages_for_cache and user_content:
-                    embedding_model_selected = self._get_first_embedding_model()
-                    if embedding_model_selected:
-                        embeddings = await self._generate_embedding_for_semantic_cache(
-                            text=user_content,
-                            request_uuid=request_uuid,
-                            api_key_uuid=api_key_uuid,
-                            group_uuid=group_uuid,
-                            api_key_name=api_key_name,
-                            group_name=group_name,
-                            route_name=route_name,
-                            model_id_selected=embedding_model_selected.model_id,
-                        )
-                        logger.debug(
-                            'Generated embeddings for semantic cache based on last user message.'
-                        )
-            cached_response = await self._get_from_cache(
-                request_uuid,
-                api_key_uuid,
-                group_uuid,
-                api_key_name,
-                group_name,
-                route_name,
-                cache_key,
-                user_content,
-                embeddings,
-            )
-
-        return CacheResult(
-            cache_key=cache_key, embeddings=embeddings, cached_response=cached_response
-        )
-
-    @task(name='get_cached_response')
-    async def _get_from_cache(
-        self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
-        cache_key: str,
-        user_content: str,
-        embeddings: np.ndarray | None,
-    ) -> ChatCompletion | None:
-        kwargs = {
-            'embeddings': embeddings,
-            'user_content': user_content,
-            'project_uuid': self.project_uuid,
-            'route_name': route_name,
-            'key_uuid': api_key_uuid,
-            'k': 1,
-        }
-        if self.gateway_cache:
-            raw_cached_response = await self.gateway_cache.get(
-                cache_key=cache_key, **kwargs
-            )
-        else:
-            raw_cached_response = None
-        if raw_cached_response:
-            logger.debug(
-                'Cache hit. Hash name: %s',
-                cache_key if cache_key != '' else 'response:aigateway:cache:*',
-            )
-            try:
-                cached_response = ChatCompletion.model_validate(
-                    json.loads(raw_cached_response)
-                )
-            except ValueError:
-                # A semantic cache shares a route's entries between endpoints:
-                # a Responses API entry is a miss here.
-                logger.debug('Cached entry is not a chat completion: cache miss')
-                return None
-
-            self._emit_cache_events_and_metrics(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                model_id=cached_response.model,
-                usage=cached_response.usage,
-                cache_type=self.gateway_cache.cache_type,
-            )
-
-            # Update timestamp of cached response to have current timestamp
-            return cached_response.model_copy(
-                update={'created': int(datetime.datetime.now().timestamp())}
-            )
-        return None
-
-    @task(name='set_cached_response')
-    async def _cache_response(
-        self,
-        redacted_response: ChatCompletion,
-        cache_key: str,
-        route_name: str,
-        key_uuid: str | None,
-        embeddings: np.ndarray | None,
-    ) -> None:
-        """Cache the response if caching is enabled."""
-        await self._cache_response_object(
-            redacted_response.model_dump_json(indent=None),
-            cache_key,
-            route_name,
-            key_uuid,
-            embeddings,
-        )
-
-    async def _cache_response_object(
-        self,
-        response: str,
-        cache_key: str,
-        route_name: str,
-        key_uuid: str | None,
-        embeddings: np.ndarray | None,
-    ) -> None:
-        """Cache a serialized response object."""
-        kwargs = {
-            'embeddings': embeddings,
-            'project_uuid': self.project_uuid,
-            'route_name': route_name,
-            'key_uuid': key_uuid,
-        }
-        await self.gateway_cache.set(
-            cache_key=cache_key,
-            response=response,
-            ttl=self.ttl,
-            **kwargs,
-        )
-
-    @task(name='generate_semantic_cache_embedding')
-    async def _generate_embedding_for_semantic_cache(
-        self,
-        text: str,
-        route_name: str,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid,
-        api_key_name: str,
-        group_name: str,
-        model_id_selected: str,
-    ) -> np.ndarray | None:
-        try:
-            response = await self.embedding_invoker.embed(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                input_texts=[text],
-                model_id=model_id_selected,
-                is_semantic_search=True,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-            )
-            if not response.data or not response.data[0].embedding:
-                logger.warning(
-                    'Failed to generate embedding for semantic caching, continuing without cache'
-                )
-                return None
-            return np.array(response.data[0].embedding, dtype=np.float32)
-        except Exception as e:
-            logger.error(
-                'Error generating embedding for cache: %s, continuing without cache', e
-            )
-            return None
-
-    # ============================================================================
     # Guardrails
     # ============================================================================
     def _request_guardrails(
@@ -2191,17 +1722,48 @@ class GatewayRoute:
         to its limits (ADR 0006).
         """
         return self.guardrails.for_request(
-            RequestIdentity(
-                request_uuid=request_uuid,
-                route_name=self.gateway_route_config.route_name,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
+            self._identity(
+                request_uuid, api_key_uuid, group_uuid, api_key_name, group_name
             ),
             limits.charge_call,
+        )
+
+    def _request_cache(
+        self,
+        limits: RequestLimits,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+    ) -> RequestCache:
+        """Return the cache of a request; the semantic cache's embedding call
+        is charged to its limits (ADR 0006).
+        """
+        return self.cache.for_request(
+            self._identity(
+                request_uuid, api_key_uuid, group_uuid, api_key_name, group_name
+            ),
+            limits,
+        )
+
+    def _identity(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+    ) -> RequestIdentity:
+        return RequestIdentity(
+            request_uuid=request_uuid,
+            route_name=self.gateway_route_config.route_name,
+            api_key_uuid=api_key_uuid,
+            api_key_name=api_key_name,
+            group_uuid=group_uuid,
+            group_name=group_name,
+            project_uuid=self.project_uuid,
+            project_name=self.project_name,
         )
 
     @staticmethod
@@ -2244,8 +1806,7 @@ class GatewayRoute:
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
         model_selected: Model,
-        embeddings: list[float] | None = None,
-        cache_key: str | None = None,
+        cached: Cached,
         **kwargs,
     ):
         """Stream the model's reply whole, so the output guardrails can read
@@ -2282,40 +1843,24 @@ class GatewayRoute:
                     final_usage = result.usage_metadata
 
         # Output guardrails read the whole reply: redact, then check.
-        guardrails = self._request_guardrails(
+        text, output_flags = await self._screen_streamed_reply(
             limits,
             request_uuid=request_uuid,
             api_key_uuid=api_key_uuid,
             group_uuid=group_uuid,
             api_key_name=api_key_name,
             group_name=group_name,
+            text=full_content_text,
+            usage=final_usage,
         )
-        screened = await guardrails.screen_output(
-            Reply(full_content_text, usage=final_usage)
-        )
-        if screened.soft_block:
-            # A reply already streamed cannot be replaced: a soft block
-            # answers with the 400 the global handler renders.
-            raise GuardrailBadRequest(
-                message=screened.soft_block.get_soft_block_message(),
-                guardrail=screened.soft_block.guardrail,
-                reason={'action': 'soft_block'},
-            )
-        if screened.payload.text != full_content_text:
-            buffered_chunks = _with_text(buffered_chunks, screened.payload.text)
+        if text != full_content_text:
+            buffered_chunks = _with_text(buffered_chunks, text)
 
-        # Cache if applicable
-        if self.gateway_cache and cache_key and api_key_uuid:
-            set_operation_category(OperationCategory.CACHE)
-            await self._build_and_cache_stream_response(
-                full_content_text=full_content_text,
-                final_usage=final_usage,
-                model_id_invoked=model_id_invoked,
-                cache_key=cache_key,
-                route_name=route_name,
-                key_uuid=api_key_uuid,
-                embeddings=embeddings,
-                request_id=request_uuid,
+        # Cache the screened reply. A reply with no text (a tool call) is not
+        # stored: it would answer the next request with nothing.
+        if text:
+            await cached.store(
+                StreamedReply(text, final_usage, model_id_invoked, request_uuid)
             )
 
         # Count usage for token and budget limiting
@@ -2348,136 +1893,39 @@ class GatewayRoute:
                     request_id=request_uuid,
                 )
             )
-        return chunks, screened.flags
+        return chunks, output_flags
 
-    @task(name='set_cached_stream_response')
-    async def _build_and_cache_stream_response(
+    async def _screen_streamed_reply(
         self,
-        full_content_text: str,
-        final_usage: dict | None,
-        model_id_invoked: str,
-        cache_key: str,
-        route_name: str,
-        key_uuid: str,
-        embeddings: list[float] | None,
-        request_id: str | None = None,
-    ) -> None:
-        """Build a ChatCompletion from stream content and cache it."""
-        full_ai_message = AIMessage(
-            content=full_content_text, usage_metadata=final_usage
-        )
-        full_response = ChatUtils.to_openai_chat_completion(
-            full_ai_message,
-            model_id_invoked=model_id_invoked,
-            request_id=request_id,
-        )
-        await self._cache_response(
-            full_response,
-            cache_key,
-            route_name,
-            key_uuid,
-            embeddings,
-        )
-
-    # ============================================================================
-    # Observability
-    # ============================================================================
-    def _emit_cache_events_and_metrics(
-        self,
+        limits: RequestLimits,
         request_uuid: str,
         api_key_uuid: str,
         group_uuid: str,
         api_key_name: str,
         group_name: str,
-        route_name: str,
-        model_id: str,
-        usage,
-        cache_type: CacheType,
-    ) -> None:
-        cache_type_str = str(cache_type.value)
-        emit_event(
-            CacheEventPayload(
-                value=1.0,
-                request_uuid=request_uuid,
-                event_type=EventType.CACHE_HIT,
-                route_name=route_name,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-                project_uuid=self.project_uuid,
-                project_name=self.project_name,
-                cost=0.0,
-                cache_type=cache_type_str,
-                model_id=model_id,
+        text: str | None,
+        usage: dict | None = None,
+    ) -> tuple[str | None, GuardrailFlags]:
+        """Apply the output guardrails to a streamed reply's text, or to a
+        cache hit sent as a stream. Return the text to send and what the
+        guardrails did.
+
+        A reply already streamed cannot be replaced: a soft block answers
+        with the 400 the global handler renders.
+        """
+        guardrails = self._request_guardrails(
+            limits,
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+        )
+        screened = await guardrails.screen_output(Reply(text, usage=usage))
+        if screened.soft_block:
+            raise GuardrailBadRequest(
+                message=screened.soft_block.get_soft_block_message(),
+                guardrail=screened.soft_block.guardrail,
+                reason={'action': 'soft_block'},
             )
-        )
-        cache_hit_counter.add(
-            1,
-            {'route_name': route_name},
-        )
-
-        if usage and cache_type:
-            prompt_tokens = getattr(usage, 'prompt_tokens', None)
-            if prompt_tokens:
-                cost = self.cost_service.compute_cost(
-                    token_processed=prompt_tokens,
-                    where='input',
-                    model_id=model_id,
-                )
-                emit_event(
-                    CacheEventPayload(
-                        value=prompt_tokens,
-                        request_uuid=request_uuid,
-                        api_key_uuid=api_key_uuid,
-                        group_uuid=group_uuid,
-                        api_key_name=api_key_name,
-                        event_type=EventType.CACHE_INPUT_TOKENS,
-                        route_name=route_name,
-                        group_name=group_name,
-                        project_uuid=self.project_uuid,
-                        project_name=self.project_name,
-                        cost=cost,
-                        cache_type=cache_type_str,
-                        model_id=model_id,
-                    )
-                )
-                cache_input_tokens.add(
-                    prompt_tokens,
-                    {
-                        'route_name': route_name,
-                        'model_name': model_id,
-                    },
-                )
-
-            completion_tokens = getattr(usage, 'completion_tokens', None)
-            if completion_tokens:
-                cost = self.cost_service.compute_cost(
-                    token_processed=completion_tokens,
-                    where='output',
-                    model_id=model_id,
-                )
-                emit_event(
-                    CacheEventPayload(
-                        value=completion_tokens,
-                        request_uuid=request_uuid,
-                        api_key_uuid=api_key_uuid,
-                        group_uuid=group_uuid,
-                        api_key_name=api_key_name,
-                        event_type=EventType.CACHE_OUTPUT_TOKENS,
-                        route_name=route_name,
-                        group_name=group_name,
-                        project_uuid=self.project_uuid,
-                        project_name=self.project_name,
-                        cost=cost,
-                        cache_type=cache_type_str,
-                        model_id=model_id,
-                    )
-                )
-                cache_output_tokens.add(
-                    completion_tokens,
-                    {
-                        'route_name': route_name,
-                        'model_name': model_id,
-                    },
-                )
+        return screened.payload.text, screened.flags

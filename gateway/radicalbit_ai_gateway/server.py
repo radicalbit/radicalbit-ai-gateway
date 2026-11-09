@@ -708,9 +708,10 @@ async def chat_completions(
 
         else:
             # Standard streaming (Low Latency)
-            headers = prepared.guardrail_flags.headers()
-            if prepared.cached_response:
-                headers['X-RB-AIGATEWAY-CACHE-HIT'] = 'true'
+            headers = {
+                **prepared.cached.headers(),
+                **prepared.guardrail_flags.headers(),
+            }
 
             async def event_generator():
                 try:

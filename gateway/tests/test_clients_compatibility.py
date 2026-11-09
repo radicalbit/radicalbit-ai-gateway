@@ -17,6 +17,7 @@ from tests.common.mocked_build_openai_chat_completion import (
 )
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute, InvokeResponse
+from radicalbit_ai_gateway.caching.route_cache import Cached
 from radicalbit_ai_gateway.guardrails.guardrails import RouteGuardrails
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.server import app, group_service, key_service
@@ -40,7 +41,7 @@ class TestClientCompatibility(unittest.IsolatedAsyncioTestCase):
         prepared = MagicMock(
             guardrails_block_triggered=False,
             guardrails_input_triggered=False,
-            cached_response=None,
+            cached=Cached(),
         )
         cls.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
         cls.mock_gateway.guardrails = RouteGuardrails()

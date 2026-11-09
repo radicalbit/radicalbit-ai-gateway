@@ -1,10 +1,11 @@
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
+from radicalbit_ai_gateway.caching.route_cache import Cached
 from radicalbit_ai_gateway.guardrails.guardrails import GuardrailFlags
 from radicalbit_ai_gateway.limiting.limits import RequestLimits
 from radicalbit_ai_gateway.llm.messages import BaseMessage
@@ -39,12 +40,12 @@ class PrepareAndValidateResult:
 
     model_selected: Model
     redacted_messages: list[BaseMessage]
-    cache_key: str
-    embeddings: list[float] | None
-    cached_response: ChatCompletion | None
     input_soft_block: ChatCompletion | None
     guardrails_input_triggered: bool
     guardrails_block_triggered: bool
+    #: The request's cache lookup: the reply on a hit, where to store it on
+    #: a miss.
+    cached: Cached = field(default_factory=Cached)
 
     @property
     def guardrail_flags(self) -> GuardrailFlags:
@@ -67,9 +68,8 @@ class ResponsesPrepared:
             (``request_uuid``, ``api_key_uuid``, ``group_uuid``, ``api_key_name``,
             ``group_name``) the route's policies take.
         limits: The limits the request is subject to.
-        cache_key: The cache key of the request, empty when it is not cached.
-        embeddings: Embeddings for semantic cache (if applicable).
-        cached_response: The cached response object, on a cache hit.
+        cached: The request's cache lookup: the response object on a hit,
+            where to store the response on a miss.
         soft_block: The response object of an input soft block.
         guardrails_input_triggered: Whether an input REDACT or WARN guardrail triggered.
 
@@ -80,9 +80,7 @@ class ResponsesPrepared:
     allow_fallback: bool
     identity: dict[str, str]
     limits: RequestLimits
-    cache_key: str = ''
-    embeddings: Any = None
-    cached_response: dict | None = None
+    cached: Cached = field(default_factory=Cached)
     soft_block: dict | None = None
     guardrails_input_triggered: bool = False
 
@@ -105,22 +103,6 @@ class MessagesPrepared:
     headers: dict[str, str]
     model_selected: Model
     identity: dict[str, str]
-
-
-@dataclass
-class CacheResult:
-    """Result of cache lookup operation.
-
-    Attributes:
-        cache_key: The generated cache key for this request.
-        embeddings: Embeddings for semantic cache (if applicable).
-        cached_response: The cached response if found, None otherwise.
-
-    """
-
-    cache_key: str
-    embeddings: list[float] | None
-    cached_response: ChatCompletion | None
 
 
 @dataclass

@@ -10,6 +10,7 @@ from openai.types.chat.chat_completion import ChatCompletion
 import pook
 import pytest
 
+from tests.common.cache_keys import chat_key, embedding_key
 from tests.common.db_mock import (
     API_KEY_UUID,
     GROUP_UUID,
@@ -242,7 +243,7 @@ async def test_model_invocation_with_redis_cache(
         tools = []
         tool_choice = 'auto'
         kwargs = {}
-        cache_key = gateway_cache.generate_cache_key(
+        cache_key = chat_key(
             project_uuid=str(TEST_PROJECT_UUID),
             route_name='rb-gateway',
             key_uuid=str(API_KEY_UUID),
@@ -401,7 +402,7 @@ async def test_model_invocation_with_cachetools_cache(
         tools = []
         tool_choice = 'auto'
         kwargs = {}
-        cache_key = gateway_cache.generate_cache_key(
+        cache_key = chat_key(
             project_uuid=str(TEST_PROJECT_UUID),
             route_name='rb-gateway',
             key_uuid=str(API_KEY_UUID),
@@ -731,7 +732,7 @@ async def test_invoke_embeddings_with_cachetools_cache(
 
     input_texts = ['hello world']
 
-    cache_key = gateway_cache.generate_embedding_cache_key(
+    cache_key = embedding_key(
         project_uuid=str(TEST_PROJECT_UUID),
         route_name='rb-gateway',
         key_uuid=str(API_KEY_UUID),
@@ -1069,10 +1070,11 @@ async def test_invoke_transcription_checks_its_cost_and_audio_seconds():
         content_type='audio/wav',
     )
 
-    # Not a WAV file: its length can't be read.
-    limits.check.assert_awaited_once_with(
-        Demand(cost_room=True, audio_seconds='unknown')
-    )
+    # Not a WAV file: its length can't be read. Checked before the cache,
+    # counted once the model is called.
+    demand = Demand(cost_room=True, audio_seconds='unknown')
+    limits.check.assert_awaited_once_with(demand, count=False)
+    limits.count_checked.assert_awaited_once_with(demand)
 
 
 @pytest.mark.asyncio
@@ -1229,10 +1231,10 @@ async def test_invoke_transcription_cache_miss_then_hit_skips_reinvocation(
 
     second_result = await ai_gateway.invoke_transcription(**kwargs)
     assert second_result == fake_result
-    # Still called once each — the second call must be served from cache,
-    # never reaching the invoker or the limits.
+    # The second call is served from cache, never reaching the invoker; the
+    # limits are checked first, as on every request (D10).
     ai_gateway.transcription_invoker.transcribe.assert_awaited_once()
-    limits.check.assert_awaited_once()
+    assert limits.check.await_count == 2
 
 
 @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)

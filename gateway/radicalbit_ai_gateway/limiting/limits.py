@@ -237,14 +237,16 @@ class RequestLimits:
         """Return whether ``check`` would test any limit for ``demand``."""
         return any(_demands(demand, w.category) for w in self._windows)
 
-    async def check(self, demand: Demand) -> None:
+    async def check(self, demand: Demand, count: bool = True) -> None:
         """Raise the limit error of the first limit ``demand`` would exceed.
 
         A check that tests any limit marks the request's operation as LIMITING.
 
         Requests and audio seconds are counted here, a scope only once all
         its windows let the demand through. Every counter is read in one
-        round trip, and the counted ones written in another.
+        round trip, and the counted ones written in another. With ``count``
+        False nothing is counted: ``count_checked`` counts it later, once the
+        request is known to spend (a transcription the cache does not serve).
         """
         groups = self._demanded_groups(demand)
         if not groups:
@@ -255,12 +257,13 @@ class RequestLimits:
                 [window.key for _, windows, _ in groups for window in windows]
             )
         )
-        to_count: list[tuple[Window, int]] = []
+        to_count: list[tuple[Window, int]] | None = [] if count else None
         for span, windows, cost in groups:
             counters = [next(values) for _ in windows]
             check = _ROUTE_CHECKS[span] if span else RequestLimits._check_windows
             await check(self, windows, counters, cost, to_count)
-        await self._add(to_count)
+        if to_count:
+            await self._add(to_count)
 
     def _demanded_groups(
         self, demand: Demand
@@ -298,17 +301,19 @@ class RequestLimits:
         windows: list[Window],
         counters: list[int | None],
         cost: int,
-        to_count: list[tuple[Window, int]],
+        to_count: list[tuple[Window, int]] | None,
     ) -> None:
         """Check one scope's windows of a category against their counters.
 
-        A window it lets through and that counts on check joins ``to_count``.
+        A window it lets through and that counts on check joins ``to_count``,
+        unless it is None: then nothing is counted.
         """
         for window, counter in zip(windows, counters, strict=True):
             if (counter or 0) + cost > window.config.limit:
                 # What the scopes before this one let through still counts.
-                await self._add(to_count)
-                to_count.clear()
+                if to_count:
+                    await self._add(to_count)
+                    to_count.clear()
                 limiter = window.limiter(self._storage)
                 stats = await limiter.get_window_stats(window.config)
                 block = BLOCKS[(window.scope, window.category)]
@@ -325,8 +330,27 @@ class RequestLimits:
                 raise block.error(window, cost, stats, self.identity)
         for window in windows:
             log_allowed(window, cost, self.identity)
-            if window.category in _COUNTED_ON_CHECK:
+            if to_count is not None and window.category in _COUNTED_ON_CHECK:
                 to_count.append((window, cost))
+
+    async def count_checked(self, demand: Demand) -> None:
+        """Count what ``check(demand, count=False)`` let through without
+        counting: its requests and audio seconds. Never blocks.
+        """
+        to_count = []
+        for scope, category in CHECK_ORDER['estimate']:
+            if category not in _COUNTED_ON_CHECK or not _demands(demand, category):
+                continue
+            if category is Category.AUDIO_SECONDS:
+                if demand.audio_seconds == 'unknown':
+                    continue
+                amount = round(demand.audio_seconds)
+            else:
+                amount = 1
+            to_count.extend(
+                (window, amount) for window in self._windows_of(scope, category)
+            )
+        await self._add(to_count)
 
     async def count(self, usage: Usage) -> None:
         """Add what a call used to every limit it counts on, in one round
@@ -342,10 +366,11 @@ class RequestLimits:
         await self._add(to_count)
 
     async def charge_call(
-        self, model: Model, input_tokens: int, output_tokens: int
+        self, model: Model, input_tokens: int, output_tokens: int | None = None
     ) -> None:
         """Count a call made on the request's behalf at the called model's
-        price (ADR 0006): a judge's, for one.
+        price (ADR 0006): a judge's, for one. An embedding call has no
+        ``output_tokens``.
         """
         await self.count(Usage.priced(model, input_tokens, output_tokens))
 

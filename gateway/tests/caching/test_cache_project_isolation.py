@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.common.cache_keys import chat_key, embedding_key
 from tests.common.db_mock import (
     API_KEY_UUID,
     GROUP_UUID,
@@ -134,9 +135,8 @@ async def test_exact_cache_does_not_leak_across_projects(
 
 
 def test_cache_key_is_scoped_by_project(fake_redis_client):
-    gateway_cache = GatewayCache(RedisCache(fake_redis_client))
     keys = {
-        gateway_cache.generate_cache_key(
+        chat_key(
             project_uuid=project_uuid,
             route_name=ROUTE_NAME,
             key_uuid=str(API_KEY_UUID),
@@ -150,9 +150,8 @@ def test_cache_key_is_scoped_by_project(fake_redis_client):
 
 
 def test_embedding_cache_key_is_scoped_by_project(fake_redis_client):
-    gateway_cache = GatewayCache(RedisCache(fake_redis_client))
     keys = {
-        gateway_cache.generate_embedding_cache_key(
+        embedding_key(
             project_uuid=project_uuid,
             route_name=ROUTE_NAME,
             key_uuid=str(API_KEY_UUID),

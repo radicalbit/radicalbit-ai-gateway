@@ -82,8 +82,12 @@ class EmbeddingModelInvoker(ModelInvoker):
             **{**params, **credentials},
         )
 
+    async def embed(self, *args, **kwargs) -> CreateEmbeddingResponse:
+        response, _ = await self.embed_answered(*args, **kwargs)
+        return response
+
     @task(name='llm_embed')
-    async def embed(
+    async def embed_answered(
         self,
         request_uuid: str,
         api_key_uuid: str,
@@ -97,7 +101,10 @@ class EmbeddingModelInvoker(ModelInvoker):
         project_uuid: str = '',
         project_name: str = '',
         **kwargs,
-    ) -> CreateEmbeddingResponse:
+    ) -> tuple[CreateEmbeddingResponse, Model]:
+        """Embed ``input_texts``; return the response and the model that
+        answered it, the target or a fallback.
+        """
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Embed model {model_id} not defined')
 
@@ -172,6 +179,9 @@ class EmbeddingModelInvoker(ModelInvoker):
             for i, vec in enumerate(vectors)
         ]
 
-        return CreateEmbeddingResponse(
-            object='list', data=data, model=result_model_name, usage=usage
+        return (
+            CreateEmbeddingResponse(
+                object='list', data=data, model=result_model_name, usage=usage
+            ),
+            model_invoked,
         )

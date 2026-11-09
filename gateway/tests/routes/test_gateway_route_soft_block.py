@@ -10,6 +10,7 @@ from tests.common.db_mock import PLAIN_KEY, get_sample_key_with_group
 from tests.common.resolve_route_models import resolve_route_models
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.caching.route_cache import RouteCache
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
@@ -261,8 +262,9 @@ class TestGatewayRouteSoftBlockHTTP(unittest.TestCase):
 
         # Mock cache to ensure it's not called for soft block
         mock_cache = MagicMock()
-        mock_cache.get.return_value = None  # No cached response
-        self.gateway_route.gateway_cache = mock_cache
+        mock_cache.get = AsyncMock(return_value=None)  # No cached response
+        mock_cache.set = AsyncMock()
+        self.gateway_route.cache = RouteCache(backend=mock_cache)
 
         response = self.client.post(
             '/v1/chat/completions', json=request_data, headers=self.headers

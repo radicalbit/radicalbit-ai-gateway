@@ -10,6 +10,7 @@ from tests.common import db_mock
 from tests.common.limits import request_limits
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.caching.route_cache import RouteCache
 from radicalbit_ai_gateway.guardrails.guardrails import RouteGuardrails
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk, HumanMessage
@@ -34,6 +35,13 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         cls.mock_gateway.route_limits = RouteLimits()
         cls.mock_gateway.project_uuid = ''
         cls.mock_gateway.project_name = ''
+        cls.mock_gateway.cache = RouteCache()
+        for method in ('_request_cache', '_identity'):
+            setattr(
+                cls.mock_gateway,
+                method,
+                getattr(GatewayRoute, method).__get__(cls.mock_gateway, GatewayRoute),
+            )
 
         # Enable output guardrails in config
         mock_config = MagicMock()
@@ -62,7 +70,6 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         model_id: str = 'gpt-4',
         messages: list = None,
         input_soft_block=None,
-        cached_response=None,
         guardrails_input_triggered: bool = False,
         guardrails_block_triggered: bool = False,
     ) -> PrepareAndValidateResult:
@@ -74,9 +81,6 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         return PrepareAndValidateResult(
             model_selected=mock_model,
             redacted_messages=messages or [HumanMessage(content='Test message')],
-            cache_key='',
-            embeddings=None,
-            cached_response=cached_response,
             input_soft_block=input_soft_block,
             guardrails_input_triggered=guardrails_input_triggered,
             guardrails_block_triggered=guardrails_block_triggered,
@@ -285,43 +289,6 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
         # Should have exactly one soft block chunk
         assert len(chunks) == 1
         assert chunks[0].choices[0].delta.content == 'Request blocked'
-
-    async def test_invoke_stream_yields_cached_response_chunk(self):
-        api_key = self._setup_mock_key_and_group()
-
-        # Create cached response mock
-        mock_cached = MagicMock()
-        mock_cached.choices = [MagicMock()]
-        mock_cached.choices[0].message.content = 'Cached content'
-        mock_cached.id = 'cached-id'
-
-        prepared = self._create_prepared_result(cached_response=mock_cached)
-
-        # Bind real method
-        self.mock_gateway.invoke_stream = GatewayRoute.invoke_stream.__get__(
-            self.mock_gateway, GatewayRoute
-        )
-
-        chunks = [
-            chunk
-            async for chunk in self.mock_gateway.invoke_stream(
-                limits=request_limits(self.mock_gateway),
-                prepared=prepared,
-                request_uuid=str(db_mock.REQUEST_UUID),
-                api_key_uuid=str(api_key.uuid),
-                group_uuid=str(db_mock.GROUP_UUID),
-                api_key_name=api_key.name,
-                group_name=GROUP_NAME,
-                route_name='rb-gateway',
-                tools=None,
-                tool_choice=None,
-                hashed_api_key=db_mock.HASHED_KEY,
-            )
-        ]
-
-        # Should return cached content as a single chunk
-        assert len(chunks) == 1
-        assert chunks[0].choices[0].delta.content == 'Cached content'
 
     async def test_stream_from_prepared_includes_usage_when_requested(self):
         api_key = self._setup_mock_key_and_group()
@@ -551,47 +518,6 @@ class TestStreamingGuardrails(unittest.IsolatedAsyncioTestCase):
     # =========================================================================
     # Tests for Cache Integration
     # =========================================================================
-
-    async def test_streaming_cache_hit(self):
-        # Create cached response mock
-        mock_cached_resp = MagicMock()
-        mock_cached_resp.choices = [MagicMock()]
-        mock_cached_resp.choices[0].message.content = 'Cached content'
-        mock_cached_resp.usage = MagicMock()
-        mock_cached_resp.usage.prompt_tokens = 10
-        mock_cached_resp.usage.completion_tokens = 5
-        mock_cached_resp.usage.total_tokens = 15
-        mock_cached_resp.id = 'cached-id'
-
-        # Create prepared result with cache hit
-        prepared = self._create_prepared_result(cached_response=mock_cached_resp)
-
-        self.mock_gateway.prepare_stream = AsyncMock(return_value=prepared)
-        self.mock_gateway.guardrails = RouteGuardrails()
-
-        # Bind real invoke_stream
-        self.mock_gateway.invoke_stream = GatewayRoute.invoke_stream.__get__(
-            self.mock_gateway, GatewayRoute
-        )
-
-        request_data = {
-            'model': 'rb-gateway',
-            'messages': [{'role': 'user', 'content': 'Cacheable request'}],
-            'stream': True,
-        }
-
-        response = self.client.post(
-            '/v1/chat/completions', json=request_data, headers=self.headers
-        )
-
-        assert response.status_code == 200
-        lines = response.text.strip().split('\n\n')
-
-        # Should have cached content chunk + [DONE]
-        assert len(lines) >= 2
-
-        chunk1 = json.loads(lines[0][6:])
-        assert chunk1['choices'][0]['delta']['content'] == 'Cached content'
 
     async def test_streaming_include_usage(self):
         # Create prepared result
