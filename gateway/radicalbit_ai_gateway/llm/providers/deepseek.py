@@ -32,6 +32,16 @@ def _reasoning(text: str) -> dict:
     }
 
 
+def _has_reasoning_text(item: dict) -> bool:
+    return any(
+        isinstance(part, dict)
+        and part.get('type') == 'reasoning_text'
+        and isinstance(part.get('text'), str)
+        and part['text'].strip()
+        for part in item.get('content') or []
+    )
+
+
 def _with_reasoning_before_current_calls(items: list) -> list:
     """Put reasoning before each tool call of the current turn that has none."""
     last_user = max(
@@ -110,15 +120,19 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
     def adapt_responses_input(self, items: list) -> list:
         adapted = []
         for item in items:
-            if not (
-                isinstance(item, dict)
-                and item.get('type') == 'reasoning'
-                and is_openai_reasoning_blob(item.get('encrypted_content'))
+            if not (isinstance(item, dict) and item.get('type') == 'reasoning') or (
+                _has_reasoning_text(item)
+                and not is_openai_reasoning_blob(item.get('encrypted_content'))
             ):
                 adapted.append(item)
                 continue
-            # OpenAI's summary is the only part of its reasoning another model
-            # can read; DeepSeek takes it as plain-text reasoning ``content``.
+            # Reasoning without readable text: an OpenAI blob, or DeepSeek's own
+            # replayed without ``content``. DeepSeek's ``encrypted_content`` is
+            # only a label, and DeepSeek rejects a tool call whose reasoning text
+            # it cannot get. The summary is the only readable part; DeepSeek
+            # takes it as plain-text reasoning ``content``. Without one the item
+            # is dropped, and a tool call of the current turn gets the
+            # placeholder.
             summary = '\n\n'.join(
                 part['text']
                 for part in item.get('summary') or []

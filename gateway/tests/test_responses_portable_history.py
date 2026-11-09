@@ -343,6 +343,19 @@ class TestDeepSeekTarget:
             [USER, summarised, OPENAI_CALL, CALL_OUTPUT]
         )
 
+    def test_own_reasoning_replayed_without_its_text_gets_a_placeholder(self):
+        # A client replays DeepSeek's reasoning as it would OpenAI's: id and
+        # encrypted_content, without the reasoning_text DeepSeek requires.
+        replayed = _without(DEEPSEEK_REASONING, 'content')
+        items = [USER, replayed, DEEPSEEK_CALL, CALL_OUTPUT]
+
+        assert self.model.adapt_responses_input(items) == [
+            USER,
+            PLACEHOLDER,
+            DEEPSEEK_CALL,
+            CALL_OUTPUT,
+        ]
+
     def test_the_callers_items_are_not_mutated(self):
         items = [USER, OPENAI_REASONING, OPENAI_CALL, OPENAI_MESSAGE]
         before = copy.deepcopy(items)
