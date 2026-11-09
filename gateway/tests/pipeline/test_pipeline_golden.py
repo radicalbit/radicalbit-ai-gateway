@@ -27,6 +27,7 @@ from traceloop.sdk.tracing.tracing import TracerWrapper
 
 from tests.common import db_mock, provider_responses as upstream
 from tests.common.audio import make_wav_bytes
+from tests.common.limits import consumed
 from tests.common.provider_recorder import CannedResponse, ProviderRecorder
 
 from radicalbit_ai_gateway import server
@@ -35,6 +36,7 @@ from radicalbit_ai_gateway.events import events_processor
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.limiting.windows import Category
 from radicalbit_ai_gateway.metrics import define_metrics
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.prompt_manager import PromptManager
@@ -99,6 +101,7 @@ CONFIG = {
         _contains('warn_in', 'input', 'warn', 'warnme'),
         _contains('soft_in', 'input', 'soft_block', 'softme'),
         _contains('soft_out', 'output', 'soft_block', 'softout'),
+        _contains('block_out', 'output', 'block', 'blockout'),
         {
             'name': 'judge',
             'type': 'judge',
@@ -157,6 +160,11 @@ CONFIG = {
             },
         },
         'agent_metered': {'decision_models': ['d1'], 'token_limiting': ROOMY_LIMIT},
+        'output_metered': {
+            'chat_models': ['a'],
+            'guardrails': ['soft_out', 'block_out'],
+            'token_limiting': ROOMY_LIMIT,
+        },
     },
 }
 
@@ -1048,3 +1056,102 @@ async def test_spans(gateway, span_collector, name):
 
     assert response.status_code == 200
     assert _span_tree(span_collector.spans) == EXPECTED_SPANS[name]
+
+
+SCOPED_SPANS = {
+    'chat': 'select_model.task',
+    'embeddings': 'select_embedding_model.task',
+    'transcription': 'select_transcription_model.task',
+    'chat_output': 'apply_output_guardrails.workflow',
+    'chat_buffered_stream': 'stream_with_output_guardrails.workflow',
+    'responses': 'apply_responses_output_guardrails.workflow',
+}
+
+
+@pytest.mark.parametrize('name', list(SCOPED_SPANS))
+async def test_a_request_span_records_its_input_with_the_route_by_name(
+    gateway, span_collector, name
+):
+    """A span taking the request records its input, the request as the
+    route's name, as the route's methods did: the route is never copied.
+    """
+    span_collector.spans.clear()
+    span_collector.on = True
+    try:
+        SPAN_SCENARIOS[name](gateway)
+    finally:
+        span_collector.on = False
+
+    (span,) = [s for s in span_collector.spans if s.name == SCOPED_SPANS[name]]
+    recorded = json.loads(span.attributes['traceloop.entity.input'])
+    assert recorded['args'][0] == 'GatewayRoute'
+
+
+@pytest.mark.parametrize('name', list(SPAN_SCENARIOS))
+async def test_no_span_input_records_a_credential(gateway, span_collector, name):
+    span_collector.spans.clear()
+    span_collector.on = True
+    try:
+        SPAN_SCENARIOS[name](gateway)
+    finally:
+        span_collector.on = False
+
+    inputs = [
+        s.attributes.get('traceloop.entity.input', '') for s in span_collector.spans
+    ]
+    assert not [i for i in inputs if 'sk-test' in i or 'ts-test' in i]
+
+
+@pytest.mark.parametrize('name', list(SPAN_SCENARIOS))
+async def test_no_span_output_records_a_credential(gateway, span_collector, name):
+    span_collector.spans.clear()
+    span_collector.on = True
+    try:
+        SPAN_SCENARIOS[name](gateway)
+    finally:
+        span_collector.on = False
+
+    leaking = [
+        s.name
+        for s in span_collector.spans
+        if any(
+            secret in s.attributes.get('traceloop.entity.output', '')
+            for secret in ('sk-test', 'ts-test')
+        )
+    ]
+    assert leaking == []
+
+
+BLOCKED_OUTPUTS = {
+    'chat_buffered_soft_block': lambda g: g.chat(
+        [_stream('softout')], route='output_metered', stream=True
+    ),
+    'chat_buffered_block': lambda g: g.chat(
+        [_stream('blockout')], route='output_metered', stream=True
+    ),
+    'chat_block': lambda g: g.chat([_completion('blockout')], route='output_metered'),
+    'responses_block': lambda g: g.responses(
+        [upstream.openai_response('blockout', model='gpt-a')], route='output_metered'
+    ),
+    'responses_buffered_block': lambda g: g.responses(
+        [upstream.openai_response_stream(['blockout'], model='gpt-a')],
+        route='output_metered',
+        stream=True,
+    ),
+}
+
+
+@pytest.mark.parametrize('name', list(BLOCKED_OUTPUTS))
+async def test_a_reply_the_output_guardrails_block_is_counted(gateway, name):
+    """The model was paid for: its tokens count on the caller's limits even
+    when the output guardrails refuse the reply (ADR 0006).
+    """
+    window = server.app.state.routes['proj/output_metered'].route_limits.window(
+        Category.INPUT_TOKENS
+    )
+    before = await consumed(window)
+
+    response = BLOCKED_OUTPUTS[name](gateway)
+
+    assert response.status_code != 200 or 'softout' not in response.text
+    assert await consumed(window) > before

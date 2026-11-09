@@ -1476,9 +1476,10 @@ def test_a_stream_does_not_replay_a_reply_with_tool_calls(gateway):
     assert len(gateway.upstream) == 1
 
 
-def test_a_streamed_reply_without_text_is_not_cached(gateway):
-    """D17: a streamed tool call has no text to store; storing an empty reply
-    would answer the next request, streamed or not, with nothing.
+def test_a_streamed_tool_call_is_stored_whole(gateway):
+    """D17: a streamed reply is stored as the completion a non-streamed call
+    would get: a tool call answers a plain request with the tool call, and
+    is a miss for a stream, which replays text only.
     """
     gateway.chat(
         [
@@ -1489,8 +1490,58 @@ def test_a_streamed_reply_without_text_is_not_cached(gateway):
         route='guarded',
         stream=True,
     )
+    plain = gateway.chat([], route='guarded')
+    stream = gateway.chat([_stream()], route='guarded', stream=True)
 
-    assert gateway.stored('guarded') == {}
+    assert _cache_headers(plain) == {CACHE_HIT: 'true'}
+    (choice,) = _body(plain)['choices']
+    assert choice['finish_reason'] == 'tool_calls'
+    assert [call['id'] for call in choice['message']['tool_calls']] == [
+        upstream.WEATHER_TOOL_CALL['id']
+    ]
+    assert _cache_headers(stream) == {}
+
+
+@pytest.mark.parametrize('stream_route', ['chat', 'guarded'])
+def test_a_streamed_reply_with_text_and_a_tool_call_keeps_the_tool_call(
+    gateway, stream_route
+):
+    """D17: text before a tool call does not make a streamed reply a text
+    reply: a plain request served from it gets the tool call (live and
+    buffered streams alike).
+    """
+    gateway.chat(
+        [
+            upstream.openai_stream(
+                ['Let me check'],
+                model='gpt-4o',
+                tool_calls=[upstream.WEATHER_TOOL_CALL],
+            )
+        ],
+        route=stream_route,
+        stream=True,
+    )
+    plain = gateway.chat([], route=stream_route)
+
+    assert _cache_headers(plain) == {CACHE_HIT: 'true'}
+    (choice,) = _body(plain)['choices']
+    assert choice['finish_reason'] == 'tool_calls'
+    assert choice['message']['tool_calls']
+
+
+def test_a_truncated_stream_keeps_its_finish_reason(gateway):
+    gateway.chat(
+        [
+            upstream.openai_stream(
+                ['Paris', ' is'], model='gpt-4o', finish_reason='length'
+            )
+        ],
+        stream=True,
+    )
+    plain = gateway.chat([])
+
+    assert _cache_headers(plain) == {CACHE_HIT: 'true'}
+    assert _body(plain)['choices'][0]['finish_reason'] == 'length'
 
 
 OUTPUT_WARN = {
@@ -1624,3 +1675,50 @@ def test_the_semantic_cache_embedding_is_charged_at_the_answering_models_price(
     # One token at a dollar: the 0.50 budget is spent.
     second = gateway.chat([], route='semantic_fallback', text='Hi')
     assert second.status_code == 429
+
+
+def test_a_tool_call_reply_passes_the_output_guardrails(gateway):
+    """A reply with no text, only a tool call, has nothing for the output
+    guardrails to read: it is answered, not failed.
+    """
+    response = gateway.chat(
+        [
+            upstream.openai_completion(
+                None, model='gpt-4o', tool_calls=[upstream.WEATHER_TOOL_CALL]
+            )
+        ],
+        route='guarded',
+    )
+
+    assert response.status_code == 200
+    assert _body(response)['choices'][0]['message']['tool_calls']
+
+
+class _BrokenBackend:
+    """A cache backend whose store is down."""
+
+    def __init__(self, backend):
+        self.cache_type = backend.cache_type
+
+    async def get(self, *args, **kwargs):
+        raise ConnectionError('cache down')
+
+    async def set(self, *args, **kwargs):
+        raise ConnectionError('cache down')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_a_cache_that_is_down_is_skipped(gateway, stream):
+    """A failing cache backend costs the request its cache, not the reply:
+    the lookup is a miss and the store is skipped.
+    """
+    route = gateway.routes['proj/chat']
+    saved = route.cache
+    route.cache = replace(route.cache, backend=_BrokenBackend(route.cache.backend))
+    try:
+        response = gateway.chat([_stream() if stream else _completion()], stream=stream)
+    finally:
+        route.cache = saved
+
+    assert response.status_code == 200
+    assert _cache_headers(response) == {}

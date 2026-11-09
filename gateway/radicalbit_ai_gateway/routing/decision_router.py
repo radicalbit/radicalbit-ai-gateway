@@ -9,7 +9,12 @@ from radicalbit_ai_gateway.invocation.decision_model_invoker import (
     billed_input_tokens,
     is_number,
 )
-from radicalbit_ai_gateway.invocation.fallback_chain import Candidate, Reply, TryNext
+from radicalbit_ai_gateway.invocation.fallback_chain import (
+    Candidate,
+    Reply,
+    Skip,
+    TryNext,
+)
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import DecisionRoutingConfig
@@ -176,7 +181,12 @@ class DecisionRouter:
     async def _ask_model(
         self, model_id: str, body: dict, record_spend: RoutingSpendRecorder | None
     ) -> object:
-        """Return the decision model's answer. Raise TryNext when it gives none."""
+        """Return the decision model's answer. Raise TryNext when it gives
+        none, and Skip when the project does not define it: it is never called.
+        """
+        if model_id not in self._invoker.model_map:
+            logger.warning('Decision routing model %s: not defined', model_id)
+            raise Skip
         start = time.monotonic()
         try:
             response = await self._invoker.call(model_id, body)

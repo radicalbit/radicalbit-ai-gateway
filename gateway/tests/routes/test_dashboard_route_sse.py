@@ -51,6 +51,29 @@ PROJECT_NAME = 'sse-project'
 PROJECT_BASE = f'/public/api/v1/projects/{PROJECT_UUID}'
 
 
+STREAMED_EVENTS = 3
+
+
+class _EndOfStream(Exception):
+    """Ends a dashboard stream: its loop never ends on its own."""
+
+
+def _end_stream_after(events: int):
+    """Side effect for a stream's patched sleep: the stream sends *events*
+    events, then ends. A test reads them from a transport that keeps the
+    events sent before the app's error (``raise_app_exceptions=False``).
+    """
+    calls = 0
+
+    def sleep(*_):
+        nonlocal calls
+        calls += 1
+        if calls >= events:
+            raise _EndOfStream
+
+    return sleep
+
+
 def _r(route: str) -> str:
     return f'{PROJECT_NAME}/{route}'
 
@@ -126,13 +149,14 @@ class TestStreamMostRequestedRoute:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET', f'{PROJECT_BASE}/routes/most-requested/stream'
                     ) as response:
@@ -209,13 +233,14 @@ class TestStreamMostRequestedErrorRoute:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/most-requested-error/stream',
@@ -279,13 +304,14 @@ class TestStreamMostRequestedErrorRoute:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/most-requested-error/stream',
@@ -354,13 +380,14 @@ class TestStreamMostExpensiveRoute:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/most-expensive/stream',
@@ -426,13 +453,14 @@ class TestStreamMostExpensiveRoute:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/most-expensive/stream',
@@ -493,13 +521,14 @@ class TestStreamCostsChart:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/stream',
@@ -555,13 +584,14 @@ class TestStreamCostsChart:
         event_service.get_costs_chart_data = MagicMock(side_effect=cycle([mock_dto]))
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/stream',
@@ -614,13 +644,14 @@ class TestStreamCostsChart:
         event_service.get_costs_chart_data = MagicMock(side_effect=cycle([mock_dto]))
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/stream',
@@ -695,13 +726,14 @@ class TestStreamCostsSummary:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET', f'{PROJECT_BASE}/routes/costs/summary/stream'
                     ) as response:
@@ -750,13 +782,14 @@ class TestStreamCostsSummary:
         event_service.get_summary_costs = MagicMock(side_effect=cycle([mock_dto]))
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/summary/stream',
@@ -945,13 +978,14 @@ class TestSseGteFunctionality:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/most-requested/stream',
@@ -991,13 +1025,14 @@ class TestSseGteFunctionality:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/most-requested/stream',
@@ -1050,13 +1085,14 @@ class TestSseBackwardCompatibility:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/most-requested/stream',
@@ -1091,13 +1127,14 @@ class TestSseBackwardCompatibility:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET', f'{PROJECT_BASE}/routes/most-requested/stream'
                     ) as response:
@@ -1147,12 +1184,13 @@ class TestStreamLimitsProgress:
         with patch(
             'radicalbit_ai_gateway.routes.dashboard_route.asyncio.sleep',
             new_callable=AsyncMock,
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET', f'{PROJECT_BASE}/routes/limits/stream'
                     ) as response:
@@ -1207,12 +1245,13 @@ class TestStreamLimitsProgress:
         with patch(
             'radicalbit_ai_gateway.routes.dashboard_route.asyncio.sleep',
             new_callable=AsyncMock,
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/limits/stream',
@@ -1222,7 +1261,10 @@ class TestStreamLimitsProgress:
                             break
 
                         call_args = event_service.get_route_limits_progress.call_args
-                        assert call_args[0][1] == [_r('route-a'), _r('route-c')]
+                        assert call_args.args[1:3] == (
+                            PROJECT_NAME,
+                            ['route-a', 'route-c'],
+                        )
 
     @pytest.mark.asyncio
     async def test_progress_bar_absent_when_none(self, sse_test_app):
@@ -1242,12 +1284,13 @@ class TestStreamLimitsProgress:
         with patch(
             'radicalbit_ai_gateway.routes.dashboard_route.asyncio.sleep',
             new_callable=AsyncMock,
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET', f'{PROJECT_BASE}/routes/limits/stream'
                     ) as response:
@@ -1284,12 +1327,13 @@ class TestStreamLimitsProgress:
         with patch(
             'radicalbit_ai_gateway.routes.dashboard_route.asyncio.sleep',
             new_callable=AsyncMock,
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/limits/stream',
@@ -1302,7 +1346,7 @@ class TestStreamLimitsProgress:
                             break
 
                         call_args = event_service.get_route_limits_progress.call_args
-                        assert call_args[0][2] == [
+                        assert call_args.args[3] == [
                             WindowStatus.OK,
                             WindowStatus.WARNING,
                         ]
@@ -1331,13 +1375,14 @@ class TestStreamInvocations:
         event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET', f'{PROJECT_BASE}/routes/invocations/stream'
                     ) as response:
@@ -1389,13 +1434,14 @@ class TestStreamInvocations:
         event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/invocations/stream',
@@ -1429,13 +1475,14 @@ class TestStreamInvocations:
         event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET', f'{PROJECT_BASE}/routes/invocations/stream'
                     ) as response:
@@ -1469,13 +1516,14 @@ class TestStreamInvocations:
         expected_to = datetime.fromtimestamp(_to_ts, tz=timezone.utc)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/invocations/stream',
@@ -1507,13 +1555,14 @@ class TestStreamInvocations:
         event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/invocations/stream',
@@ -1569,13 +1618,14 @@ class TestStreamInvocations:
         event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/invocations/stream',
@@ -1612,13 +1662,14 @@ class TestStreamInvocations:
         event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/invocations/stream',
@@ -1678,13 +1729,14 @@ class TestStreamTokens:
         event_service.get_token_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET', f'{PROJECT_BASE}/routes/tokens/stream'
                     ) as response:
@@ -1735,13 +1787,14 @@ class TestStreamTokens:
         event_service.get_token_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/tokens/stream',
@@ -1775,13 +1828,14 @@ class TestStreamTokens:
         event_service.get_token_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET', f'{PROJECT_BASE}/routes/tokens/stream'
                     ) as response:
@@ -1815,13 +1869,14 @@ class TestStreamTokens:
         expected_to = datetime.fromtimestamp(_to_ts, tz=timezone.utc)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/tokens/stream',
@@ -1853,13 +1908,14 @@ class TestStreamTokens:
         event_service.get_token_chart_data = MagicMock(return_value=mock_result)
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/tokens/stream',
@@ -1925,13 +1981,14 @@ class TestStreamCostsChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/key/{key_uuid}/stream',
@@ -1989,13 +2046,14 @@ class TestStreamCostsChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/key/{key_uuid}/stream',
@@ -2037,13 +2095,14 @@ class TestStreamCostsChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/group/{group_uuid}/stream',
@@ -2083,13 +2142,14 @@ class TestStreamCostsChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/group/{group_uuid}/stream',
@@ -2127,13 +2187,14 @@ class TestStreamCostsChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/model/gpt-4o/stream',
@@ -2172,13 +2233,14 @@ class TestStreamCostsChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     async with async_client.stream(
                         'GET',
                         f'{PROJECT_BASE}/routes/costs/model/gpt-4o/stream',
@@ -2280,13 +2342,14 @@ class TestStreamMcpServersChart:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(async_client, {}, wanted=2)
 
                     assert len(events) == 2
@@ -2320,13 +2383,14 @@ class TestStreamMcpServersChart:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(async_client, {})
 
                     assert len(events) == 1
@@ -2367,13 +2431,14 @@ class TestStreamMcpServersChart:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(
                         async_client, {'group_by': group_by}
                     )
@@ -2413,13 +2478,14 @@ class TestStreamMcpServersChart:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(
                         async_client, {'routes': ['route-A', 'route-B']}
                     )
@@ -2458,13 +2524,14 @@ class TestStreamMcpServersChart:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(
                         async_client,
                         {'tags': ['env=prod', 'cost_center=retail']},
@@ -2501,13 +2568,14 @@ class TestStreamMcpServersChart:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(
                         async_client, {'_gte': 3600}, wanted=3
                     )
@@ -2695,13 +2763,14 @@ class TestStreamMcpServersChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(async_client, path, {}, wanted=2)
 
                     assert len(events) == 2
@@ -2742,13 +2811,14 @@ class TestStreamMcpServersChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(
                         async_client, path, {'routes': ['route-A', 'route-B']}
                     )
@@ -2779,13 +2849,14 @@ class TestStreamMcpServersChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(
                         async_client,
                         path,
@@ -2823,13 +2894,14 @@ class TestStreamMcpServersChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(async_client, path, {})
 
                     assert len(events) == 1
@@ -2859,13 +2931,14 @@ class TestStreamMcpServersChartByEntity:
         )
 
         with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
+            'radicalbit_ai_gateway.routes.dashboard_route.sleep',
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         ):
-            transport = ASGITransport(app=app)
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
             async with AsyncClient(
                 transport=transport, base_url='http://localhost:9000'
             ) as async_client:
-                with anyio.move_on_after(2):
+                with anyio.fail_after(5):
                     events = await self._read_events(
                         async_client, path, {'_gte': 3600}, wanted=3
                     )

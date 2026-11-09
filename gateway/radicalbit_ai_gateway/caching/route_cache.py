@@ -151,16 +151,17 @@ class Entry(Protocol[V]):
 
 @dataclass(frozen=True)
 class StreamedReply:
-    """A streamed chat reply, stored as the completion it adds up to."""
+    """A streamed chat reply, stored as the completion a non-streamed call
+    would have got: its text, tool calls, reasoning and finish reason.
+    """
 
-    text: str
-    usage: dict | None
+    message: AIMessage
     model_id: str
     request_id: str | None = None
 
     def completion(self) -> ChatCompletion:
         return ChatUtils.to_openai_chat_completion(
-            AIMessage(content=self.text, usage_metadata=self.usage),
+            self.message,
             model_id_invoked=self.model_id,
             request_id=self.request_id,
         )
@@ -563,7 +564,12 @@ class RequestCache:
         return Cached(value, store)
 
     async def _get(self, entry: Entry[V], key: str, kwargs: dict) -> V | None:
-        raw = await self._route.backend.get(key, **kwargs)
+        try:
+            raw = await self._route.backend.get(key, **kwargs)
+        except Exception as e:
+            # A cache that is down costs the request its cache, not its reply.
+            logger.error('Cache lookup failed: %s, continuing without cache', e)
+            return None
         if not raw:
             return None
         if entry.hit_log:
@@ -575,7 +581,12 @@ class RequestCache:
         return entry.refresh(value)
 
     async def _set(self, entry: Entry[V], key: str, tags: dict, reply: V) -> None:
-        await self._route.backend.set(key, entry.dump(reply), self._route.ttl, **tags)
+        try:
+            await self._route.backend.set(
+                key, entry.dump(reply), self._route.ttl, **tags
+            )
+        except Exception as e:
+            logger.error('Cache store failed: %s, reply not cached', e)
 
     async def _embed(self, text: str) -> np.ndarray | None:
         route = self._route

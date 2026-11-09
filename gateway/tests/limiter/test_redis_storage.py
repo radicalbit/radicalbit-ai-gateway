@@ -1,11 +1,17 @@
 """Tests for RedisStorage."""
 
-import asyncio
 import time
 
 import pytest
 
 from radicalbit_ai_gateway.limiter.storage.redis import RedisStorage
+
+
+def _expire_now(redis_client, key: str) -> None:
+    """Let Redis expire *key* now rather than wait out its one-second TTL."""
+    redis_client.pexpire(key, 1)
+    while redis_client.exists(key):
+        time.sleep(0.005)
 
 
 @pytest.fixture
@@ -121,7 +127,7 @@ class TestRedisStorage:
 
     @pytest.mark.asyncio
     async def test_window_id_is_none_for_expired_key(
-        self, redis_storage: RedisStorage
+        self, redis_storage: RedisStorage, redis_client
     ) -> None:
         key = 'test-key-window-expired'
         window_start = time.time_ns() // 1_000_000_000
@@ -129,14 +135,13 @@ class TestRedisStorage:
         window_id = await redis_storage.get_window_id(key)
         assert window_id is not None
 
-        # Wait for expiry
-        await asyncio.sleep(1.1)
+        _expire_now(redis_client, key)
         window_id = await redis_storage.get_window_id(key)
         assert window_id is None
 
     @pytest.mark.asyncio
     async def test_new_window_id_after_expiry(
-        self, redis_storage: RedisStorage
+        self, redis_storage: RedisStorage, redis_client
     ) -> None:
         key = 'test-key-new-window'
         window_start_1 = time.time_ns() // 1_000_000_000
@@ -146,8 +151,7 @@ class TestRedisStorage:
         window_id_1 = await redis_storage.get_window_id(key)
         assert window_id_1 is not None
 
-        # Wait for expiry
-        await asyncio.sleep(1.1)
+        _expire_now(redis_client, key)
 
         # Create new window
         window_start_2 = time.time_ns() // 1_000_000_000

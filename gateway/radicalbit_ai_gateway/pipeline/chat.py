@@ -13,7 +13,8 @@ from traceloop.sdk.decorators import workflow
 from radicalbit_ai_gateway.caching.route_cache import ChatEntry, StreamedReply
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation, Reply
 from radicalbit_ai_gateway.limiting.limits import Usage
-from radicalbit_ai_gateway.llm.messages import AIMessageChunk, BaseMessage
+from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
+from radicalbit_ai_gateway.llm.tracing import merge_chunks
 from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.pipeline.conversation import (
@@ -67,15 +68,27 @@ class ChatRequest:
         return bool(self.params.get('stream'))
 
 
-@dataclass
 class _Prepared:
     """A request after its input policies: the model it goes to, its
     messages, and the soft block that answers it in the model's place.
+
+    Not a dataclass: tracing would record its model whole, credentials
+    included. Tracing records it by ``to_json``.
     """
 
-    model: Model
-    messages: list[BaseMessage]
-    soft_block: ChatCompletion | None = None
+    def __init__(
+        self,
+        model: Model,
+        messages: list[BaseMessage],
+        soft_block: ChatCompletion | None = None,
+    ) -> None:
+        self.model = model
+        self.messages = messages
+        self.soft_block = soft_block
+
+    def to_json(self) -> dict:
+        """Return what a span records: the model by its id, and the messages."""
+        return {'model_id': self.model.model_id, 'messages': self.messages}
 
 
 async def complete(scope: RequestScope, chat: ChatRequest) -> ChatCompletion:
@@ -230,19 +243,15 @@ async def _live(
     user_stream_options = StreamingUtils.prepare_stream_options(params)
 
     if scope.cached.hit:
-        # A hit is screened as a model's reply is, then sent as one chunk.
-        # A live stream's route has no output guardrails: the screening
-        # changes nothing there.
-        cached = scope.cached.value
-        text = await _screen_streamed(scope, cached.choices[0].message.content)
-        yield StreamingUtils.cached_response_to_chunk(
-            _with_content(cached, text), route_name
-        )
+        # A live stream's route has no output guardrails (a route with them
+        # streams through _buffered): the hit is sent as is, in one chunk.
+        yield StreamingUtils.cached_response_to_chunk(scope.cached.value, route_name)
         return
 
     set_operation_category(OperationCategory.INVOCATION)
     full_content_text = ''
     final_usage = None
+    received: list[AIMessageChunk] = []
     async for chunk in scope.route.chat_invoker.stream(
         identity=scope.identity,
         messages=prepared.messages,
@@ -252,6 +261,7 @@ async def _live(
         **params,
     ):
         if isinstance(chunk, AIMessageChunk):
+            received.append(chunk)
             result = StreamingUtils.accumulate_chunk_content(chunk, full_content_text)
             full_content_text = result.text
             if result.usage_metadata:
@@ -277,11 +287,11 @@ async def _live(
             request_id=scope.identity.request_uuid,
         )
     # A live stream's route has no output guardrails: its text is the
-    # screened text. A reply with no text (a tool call) is not stored.
-    if full_content_text:
-        await scope.cached.store(
-            StreamedReply(full_content_text, final_usage, prepared.model.model_id)
-        )
+    # screened text.
+    if reply := _streamed_reply(
+        received, full_content_text, final_usage, prepared.model.model_id
+    ):
+        await scope.cached.store(reply)
 
 
 async def _buffered(
@@ -349,17 +359,8 @@ async def _stream_whole(
             if result.usage_metadata:
                 final_usage = result.usage_metadata
 
-    # Output guardrails read the whole reply: redact, then check.
-    text = await _screen_streamed(scope, full_content_text, usage=final_usage)
-    if text != full_content_text:
-        buffered_chunks = _with_text(buffered_chunks, text)
-
-    # Cache the screened reply. A reply with no text (a tool call) is not
-    # stored: it would answer the next request with nothing.
-    if text:
-        await scope.cached.store(
-            StreamedReply(text, final_usage, model_id, scope.identity.request_uuid)
-        )
+    # The model was paid for: count it before the output guardrails, which
+    # may refuse the reply (ADR 0006).
     if final_usage:
         await scope.limits.count(
             Usage.priced(
@@ -368,6 +369,17 @@ async def _stream_whole(
                 final_usage.get('output_tokens', 0),
             )
         )
+
+    # Output guardrails read the whole reply: redact, then check.
+    text = await _screen_streamed(scope, full_content_text, usage=final_usage)
+    if text != full_content_text:
+        buffered_chunks = _with_text(buffered_chunks, text)
+
+    # Cache the screened reply.
+    if reply := _streamed_reply(
+        buffered_chunks, text, final_usage, model_id, scope.identity.request_uuid
+    ):
+        await scope.cached.store(reply)
 
     chunks = [
         StreamingUtils.to_openai_chat_completion_chunk(
@@ -418,6 +430,39 @@ def _wants_usage(stream_options) -> bool:
 async def _aiter(items: list) -> AsyncIterator:
     for item in items:
         yield item
+
+
+def _streamed_reply(
+    chunks: list[AIMessageChunk],
+    text: str | None,
+    usage: dict | None,
+    model_id: str,
+    request_id: str | None = None,
+) -> StreamedReply | None:
+    """Return a streamed reply as the cache stores it: the screened text with
+    the stream's tool calls, reasoning and finish reason. None when the
+    reply has neither text nor tool calls: it would answer with nothing.
+    """
+    merged = merge_chunks(chunks) if chunks else AIMessageChunk(content='')
+    if not text and not merged.tool_calls:
+        return None
+    # The last finish reason wins: merging the chunks would join repeated ones.
+    finish_reason = next(
+        (
+            chunk.response_metadata['finish_reason']
+            for chunk in reversed(chunks)
+            if chunk.response_metadata.get('finish_reason')
+        ),
+        None,
+    )
+    message = AIMessage(
+        content=text or '',
+        tool_calls=merged.tool_calls,
+        additional_kwargs=merged.additional_kwargs,
+        response_metadata={'finish_reason': finish_reason} if finish_reason else {},
+        usage_metadata=usage,
+    )
+    return StreamedReply(message, model_id, request_id)
 
 
 def _with_text(chunks: list[AIMessageChunk], text: str) -> list[AIMessageChunk]:

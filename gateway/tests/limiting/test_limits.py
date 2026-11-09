@@ -331,6 +331,25 @@ class TestAudioSeconds:
         assert await _consumed(limits, route.windows[0]) == 0
         assert 'duration_not_determinable' in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_requests_that_passed_one_test_are_tested_again_as_counted(
+        self, limits
+    ):
+        """Two transcriptions test the limit before the cache lookup, both
+        pass, then both miss: the second one counted would exceed the limit,
+        so it gets the limit's error instead of being counted.
+        """
+        route = _route(**AUDIO)
+        first, second = _scope(limits, route), _scope(limits, route)
+        demand = Demand(audio_seconds=6)
+        await first.check(demand, count=False)
+        await second.check(demand, count=False)
+
+        await first.count_checked(demand)
+        with pytest.raises(AudioDurationLimitExceeded):
+            await second.count_checked(demand)
+        assert await _consumed(limits, route.windows[0]) == 6
+
 
 class TestUsage:
     def test_priced_costs_each_priced_part(self):

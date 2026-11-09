@@ -403,3 +403,18 @@ async def test_the_span_records_the_question_and_the_answer(span):
     assert attributes['routing.decision.chosen_model_id'] == 'gpt-5'
     assert attributes['routing.decision.default_used'] is False
     assert 'routing.decision.default_reason' not in attributes
+
+
+async def test_an_undefined_decision_model_is_not_recorded_as_called():
+    """A decision model the project does not define is never called: no
+    failed routing call is recorded for it, and the default model serves.
+    """
+    record_spend = AsyncMock()
+    record_spend.failed = MagicMock()
+
+    model = await _router(decision_model_id='nowhere').select_model(
+        [HumanMessage(content=USER_TEXT)], record_spend
+    )
+
+    assert model is MINI
+    record_spend.failed.assert_not_called()

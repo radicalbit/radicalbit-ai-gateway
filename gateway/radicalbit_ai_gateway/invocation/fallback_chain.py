@@ -77,7 +77,14 @@ class TryNext(Exception):  # noqa: N818 — a signal, not an error
 
 
 class Skip(Exception):  # noqa: N818 — a signal, not an error
-    """The candidate cannot serve this call: it is not tried."""
+    """The candidate cannot serve this call: it is not tried, and no model
+    call is recorded for it. ``error``, when given, says why: it reaches
+    ``on_exhausted`` as a failure (an undefined model).
+    """
+
+    def __init__(self, error: BaseException | None = None):
+        super().__init__(error)
+        self.error = error
 
 
 class Refused(Exception):  # noqa: N818 — a signal, not an error
@@ -182,7 +189,9 @@ class FallbackChain:
         for candidate in self.candidates:
             try:
                 reply = await fn(candidate)
-            except Skip:
+            except Skip as skip:
+                if skip.error is not None:
+                    failures.append(Failure(candidate, skip.error))
                 continue
             except TryNext as signal:
                 last, last_spent = candidate, signal.spent
@@ -228,7 +237,9 @@ class FallbackChain:
                         attempt = current
                         started = True
                         yield item
-                except Skip:
+                except Skip as skip:
+                    if skip.error is not None:
+                        failures.append(Failure(candidate, skip.error))
                     continue
                 except TryNext as signal:
                     attempt = current

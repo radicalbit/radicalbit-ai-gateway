@@ -106,8 +106,11 @@ class RedisStorage(Storage):
     async def increment_many(
         self, increments: list[tuple[str, int, int, int]]
     ) -> list[tuple[int, str]]:
-        """Increment several counters in one pipelined round trip."""
-        async with self._client.pipeline(transaction=False) as pipe:
+        """Increment several counters in one round trip, as one transaction
+        (MULTI/EXEC): a connection lost before EXEC applies none of them,
+        never some, so a request's counters stay consistent with each other.
+        """
+        async with self._client.pipeline(transaction=True) as pipe:
             for key, amount, ttl_seconds, window_start in increments:
                 await self._script(
                     keys=[key],

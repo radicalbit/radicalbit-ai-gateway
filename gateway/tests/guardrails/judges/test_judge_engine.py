@@ -2,6 +2,9 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
+from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
+    DecisionJudgeEngine,
+)
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.messages import (
@@ -11,9 +14,14 @@ from radicalbit_ai_gateway.llm.messages import (
     ToolMessage,
 )
 from radicalbit_ai_gateway.llm.prompts import PromptTemplate
-from radicalbit_ai_gateway.models.guardrails import GuardrailWhereType, JudgeParameter
+from radicalbit_ai_gateway.models.guardrails import (
+    DecisionJudgeParameter,
+    GuardrailWhereType,
+    JudgeParameter,
+)
 from radicalbit_ai_gateway.models.judge_result import JudgeResult
 from radicalbit_ai_gateway.models.judge_runtime_config import JudgeRuntimeConfig
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -988,3 +996,19 @@ class TestJudgeUsageCount:
             call(self.primary, 10, 5),
             call(self.fallback, 7, 3),
         ]
+
+
+async def test_a_decision_judge_on_an_undefined_model_fails_without_a_recorded_call():
+    jev = Model(model_id='jev', model='typesafe/jev-latest')
+    engine = DecisionJudgeEngine(
+        decision_models=[jev],
+        cost_service=CostService(decision_models_by_id={'jev': jev}),
+    )
+    engine._invoker.recorder = MagicMock()
+
+    with pytest.raises(JudgeInternalError):
+        await engine.ask(
+            [HumanMessage(content='hello')],
+            DecisionJudgeParameter(model_id='nowhere', instructions='Is it rude?'),
+        )
+    engine._invoker.recorder.failure.assert_not_called()

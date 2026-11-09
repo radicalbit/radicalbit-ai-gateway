@@ -6,7 +6,12 @@ import time
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-from radicalbit_ai_gateway.invocation.fallback_chain import Candidate, Reply, TryNext
+from radicalbit_ai_gateway.invocation.fallback_chain import (
+    Candidate,
+    Reply,
+    Skip,
+    TryNext,
+)
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
@@ -210,11 +215,12 @@ class LLMRouter:
     ) -> object:
         """Return the router model's parsed answer, or None when it has none.
 
-        Raise TryNext when the model gives no answer.
+        Raise TryNext when the model gives no answer, and Skip when it cannot
+        be asked (no structured output): it is never called.
         """
         structured_model = self._structured_models[model_id]
         if structured_model is None:
-            raise TryNext
+            raise Skip
         start = time.monotonic()
         try:
             response = await asyncio.wait_for(

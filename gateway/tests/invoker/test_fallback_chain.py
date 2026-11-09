@@ -238,3 +238,33 @@ async def test_a_spent_call_raises_its_cause_without_fallback():
         await chain.call(fn)
     assert tried == ['a']
     assert recorder.method_calls == []
+
+
+async def test_a_candidate_skipped_with_a_reason_is_a_failure_never_recorded():
+    """A candidate that cannot be called (an undefined model) tells why, for
+    on_exhausted, but no model call is recorded for it.
+    """
+    undefined = ValueError('model c not defined')
+    chain, recorder = _chain(
+        on_exhausted=lambda failures: [
+            (f.candidate.model.model_id, f.error) for f in failures
+        ],
+    )
+
+    async def fn(candidate):
+        if candidate.model is C:
+            raise Skip(undefined)
+        raise TryNext(spent=True)
+
+    assert await chain.call(fn) == [('a', None), ('b', None), ('c', undefined)]
+    assert recorder.method_calls == []
+
+
+async def test_only_skipped_candidates_record_nothing_and_exhaust():
+    chain, recorder = _chain(on_exhausted=len)
+
+    async def fn(candidate):
+        raise Skip(ValueError(candidate.client))
+
+    assert await chain.call(fn) == 3
+    assert recorder.method_calls == []

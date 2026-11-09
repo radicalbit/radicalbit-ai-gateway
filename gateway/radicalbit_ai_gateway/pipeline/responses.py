@@ -148,9 +148,11 @@ async def _respond(scope: RequestScope, prepared: _Prepared) -> dict:
             **_call(scope, prepared)
         )
 
+    if not scope.cached.hit:
+        await _count(scope, prepared, response)
     response = await _screen_output(scope, response)
     if not scope.cached.hit:
-        await _account(scope, prepared, response)
+        await _store(scope, prepared, response)
     return {**response, 'model': route_name}
 
 
@@ -178,7 +180,8 @@ async def _live(scope: RequestScope, prepared: _Prepared) -> AsyncIterator[str]:
         yield event.to_sse(route_name)
 
     if final_response:
-        await _account(scope, prepared, final_response)
+        await _count(scope, prepared, final_response)
+        await _store(scope, prepared, final_response)
 
 
 async def _buffered(scope: RequestScope, prepared: _Prepared) -> list[str]:
@@ -204,8 +207,9 @@ async def _buffered(scope: RequestScope, prepared: _Prepared) -> list[str]:
     if final_response is None:
         return frames
 
+    await _count(scope, prepared, final_response)
     response = await _screen_output(scope, final_response)
-    await _account(scope, prepared, response)
+    await _store(scope, prepared, response)
     if response != final_response:
         frames = response_events({**response, 'model': route_name})
     return frames
@@ -227,10 +231,17 @@ async def _screen_output(scope: RequestScope, response: dict) -> dict:
     return screened.payload.response()
 
 
-async def _account(scope: RequestScope, prepared: _Prepared, response: dict) -> None:
-    """Count a model's response against the limits, and cache it."""
+async def _count(scope: RequestScope, prepared: _Prepared, response: dict) -> None:
+    """Count a model's response against the limits. It runs before the
+    output guardrails: the model was paid for even when they refuse the
+    reply (ADR 0006).
+    """
     input_tokens, _, output_tokens = usage_token_counts(response.get('usage'))
     await scope.limits.count(Usage.priced(prepared.model, input_tokens, output_tokens))
+
+
+async def _store(scope: RequestScope, prepared: _Prepared, response: dict) -> None:
+    """Cache a model's screened response, when it completed."""
     if response.get('status') == 'completed':
         await scope.cached.store({**response, 'model': prepared.model.model_id})
 

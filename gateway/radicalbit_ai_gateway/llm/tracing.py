@@ -428,7 +428,10 @@ def _add_usage(left: dict | None, right: dict | None) -> dict:
     return _add_ints(left, right)
 
 
-def _merge_chunks(chunks: list[AIMessageChunk]) -> AIMessageChunk:
+def merge_chunks(chunks: list[AIMessageChunk]) -> AIMessageChunk:
+    """Add a stream's chunks up into one: content, tool calls, extra fields
+    (reasoning), metadata and usage.
+    """
     first, *others = chunks
     if not others:
         return first
@@ -563,7 +566,7 @@ class ChatTrace:
             if len(chunks) > 1
             else self._chunk_infos[0]
         )
-        merged = _merge_chunks(
+        merged = merge_chunks(
             [
                 c.model_copy(
                     update={

@@ -357,3 +357,31 @@ class TestPromptAndSchema:
         )
         assert schema['additionalProperties'] is False
         assert 'code_model' not in json.dumps(schema)
+
+
+async def test_a_router_model_without_structured_output_is_not_recorded_as_called():
+    """A router model that cannot answer is never called: no failed routing
+    call is recorded for it, and the default model serves.
+    """
+    chat_model = MagicMock()
+    chat_model.with_structured_output = MagicMock(side_effect=NotImplementedError)
+    config = get_gateway_routing_llm()
+    route = config.routes['smart_route']
+    router = LLMRouter(
+        config=_routing_config(),
+        models_by_id={mid: config.chat_models_by_id[mid] for mid in route.chat_models},
+        router_models={
+            'router_model': RouterModel(
+                config.chat_models_by_id['router_model'], chat_model
+            )
+        },
+    )
+    record_spend = AsyncMock()
+    record_spend.failed = MagicMock()
+
+    model = await router.select_model(
+        [HumanMessage(content='Where is Paris?')], record_spend
+    )
+
+    assert model.model_id == _routing_config().default_model_id
+    record_spend.failed.assert_not_called()

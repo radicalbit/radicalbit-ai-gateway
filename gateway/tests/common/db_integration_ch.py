@@ -1,3 +1,5 @@
+import atexit
+import functools
 import logging
 from typing import TypeVar
 import unittest
@@ -20,20 +22,30 @@ T = TypeVar('T')
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
 
+@functools.cache
+def _clickhouse() -> ClickHouseContainer:
+    """Start one ClickHouse for the test run: starting one takes seconds, and
+    each test empties its tables when it ends.
+    """
+    container = ClickHouseContainer(
+        'clickhouse/clickhouse-server:25.12',
+        port=9000,
+        username='default',
+        password='default',
+        dbname='default',
+    )
+    container.start()
+    atexit.register(container.stop)
+    return container
+
+
 class DatabaseIntegrationClickhouse(unittest.TestCase):
     container = None
     engine = None
 
     @classmethod
     def setUpClass(cls):
-        cls.container = ClickHouseContainer(
-            'clickhouse/clickhouse-server:25.12',
-            port=9000,
-            username='default',
-            password='default',
-            dbname='default',
-        )
-        cls.container.start()
+        cls.container = _clickhouse()
         cls.db_conf = ClickHouseConfig(
             clickhouse_db_host='localhost',
             clickhouse_db_port=cls.container.get_exposed_port(9000),
@@ -53,11 +65,8 @@ class DatabaseIntegrationClickhouse(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        # Stop container after all tests are complete
-        if cls.container:
-            cls.container.stop()
-            cls.container = None
-            cls.db = None
+        cls.container = None
+        cls.db = None
 
     def insert(self, table: list[T]):
         """Insert objects into the database.

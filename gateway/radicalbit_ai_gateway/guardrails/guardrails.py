@@ -171,9 +171,12 @@ class Reply:
     windowed = True
 
     def messages(self) -> list[BaseMessage]:
-        return [AIMessage(content=self.text, usage_metadata=self.usage)]
+        # A reply with no text (a tool call) is read as empty text.
+        return [AIMessage(content=self.text or '', usage_metadata=self.usage)]
 
     def with_messages(self, messages: list[BaseMessage]) -> Reply:
+        if self.text is None:
+            return self
         return replace(self, text=messages[0].content)
 
     @property

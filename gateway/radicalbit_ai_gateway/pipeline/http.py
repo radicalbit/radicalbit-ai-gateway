@@ -51,25 +51,36 @@ def sse_response(
     """Return ``items`` as server-sent events, then ``[DONE]``.
 
     An error before the first event answers with its status and body; one
-    after it ends the stream.
+    after it, once the 200 is sent, is the stream's last event, as OpenAI
+    streams one: ``data: {"error": ...}`` and no ``[DONE]``.
     """
 
     async def events():
+        started = False
+
+        def failed(body: str, code: int):
+            return f'data: {body}\n\n' if started else (body, code)
+
         try:
             async for item in items:
                 data = item.model_dump_json(exclude_none=True)
                 logger.debug(item_log, data)
+                started = True
                 yield f'data: {data}\n\n'
             logger.debug(done_log)
             yield 'data: [DONE]\n\n'
         except ModelInvokerUpstreamError as exc:
             # The provider's refusal, as the provider sent it.
-            yield json.dumps(exc.body), exc.status_code
+            yield failed(json.dumps(exc.body), exc.status_code)
         except AppError as exc:
-            yield _error(exc.client_message, 'model_invoker_error', exc.status_code)
+            yield failed(
+                *_error(exc.client_message, 'model_invoker_error', exc.status_code)
+            )
         except Exception:
             logger.exception(error_log)
-            yield _error('Unhandled error during streaming', 'internal_error', 500)
+            yield failed(
+                *_error('Unhandled error during streaming', 'internal_error', 500)
+            )
 
     set_operation_category(OperationCategory.ENDPOINT)
     return StreamingResponseWithStatusCode(

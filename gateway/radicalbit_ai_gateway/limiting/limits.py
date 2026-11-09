@@ -248,6 +248,9 @@ class RequestLimits:
         False nothing is counted: ``count_checked`` counts it later, once the
         request is known to spend (a transcription the cache does not serve).
         """
+        await self._check(demand, count, traced=True)
+
+    async def _check(self, demand: Demand, count: bool, traced: bool) -> None:
         groups = self._demanded_groups(demand)
         if not groups:
             return
@@ -260,8 +263,11 @@ class RequestLimits:
         to_count: list[tuple[Window, int]] | None = [] if count else None
         for span, windows, cost in groups:
             counters = [next(values) for _ in windows]
-            check = _ROUTE_CHECKS[span] if span else RequestLimits._check_windows
-            await check(self, windows, counters, cost, to_count)
+            check = (
+                _ROUTE_CHECKS[span] if span and traced else RequestLimits._check_windows
+            )
+            quiet = {} if traced else {'log': False}
+            await check(self, windows, counters, cost, to_count, **quiet)
         if to_count:
             await self._add(to_count)
 
@@ -302,11 +308,13 @@ class RequestLimits:
         counters: list[int | None],
         cost: int,
         to_count: list[tuple[Window, int]] | None,
+        log: bool = True,
     ) -> None:
         """Check one scope's windows of a category against their counters.
 
         A window it lets through and that counts on check joins ``to_count``,
-        unless it is None: then nothing is counted.
+        unless it is None: then nothing is counted. ``log`` False logs no
+        allowed line (a check repeated as it counts).
         """
         for window, counter in zip(windows, counters, strict=True):
             if (counter or 0) + cost > window.config.limit:
@@ -329,28 +337,19 @@ class RequestLimits:
                     block.metric.add(1, {'route_name': self.identity.route_name})
                 raise block.error(window, cost, stats, self.identity)
         for window in windows:
-            log_allowed(window, cost, self.identity)
+            if log:
+                log_allowed(window, cost, self.identity)
             if to_count is not None and window.category in _COUNTED_ON_CHECK:
                 to_count.append((window, cost))
 
     async def count_checked(self, demand: Demand) -> None:
-        """Count what ``check(demand, count=False)`` let through without
-        counting: its requests and audio seconds. Never blocks.
+        """Count what ``check(demand, count=False)`` let through: its
+        requests and audio seconds. The limits are tested again as they are
+        counted, so requests that all passed the first test cannot all be
+        counted past a limit: the one that would exceed it gets its error.
+        The second test records no span and logs no allowed line.
         """
-        to_count = []
-        for scope, category in CHECK_ORDER['estimate']:
-            if category not in _COUNTED_ON_CHECK or not _demands(demand, category):
-                continue
-            if category is Category.AUDIO_SECONDS:
-                if demand.audio_seconds == 'unknown':
-                    continue
-                amount = round(demand.audio_seconds)
-            else:
-                amount = 1
-            to_count.extend(
-                (window, amount) for window in self._windows_of(scope, category)
-            )
-        await self._add(to_count)
+        await self._check(demand, count=True, traced=False)
 
     async def count(self, usage: Usage) -> None:
         """Add what a call used to every limit it counts on, in one round

@@ -18,6 +18,7 @@ from radicalbit_ai_gateway.invocation.fallback_chain import (
     Candidate,
     FallbackChain,
     Reply,
+    Skip,
     Spent,
     TryNext,
     candidates,
@@ -212,6 +213,10 @@ class DecisionJudgeEngine:
         return Model(model_id=model_id, model=f'typesafe/{model_id}')
 
     async def _ask_model(self, model_id: str, body: dict, spend: _JudgeSpend) -> float:
+        if model_id not in self._invoker.model_map:
+            # Never called: the chain records no call, and raises this error
+            # when no other model answers.
+            raise Skip(self._error(model_id, f'Decision model {model_id} not defined'))
         start_time = time.monotonic()
         try:
             response = await self._invoker.call(model_id, body)
