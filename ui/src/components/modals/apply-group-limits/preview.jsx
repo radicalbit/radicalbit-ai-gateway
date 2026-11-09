@@ -1,13 +1,10 @@
-import Lucide from '@Components/lucide';
 import { LIMIT_CATEGORY_LABELS } from '@Components/limits/constants';
 import { formatCount, formatLimitValue, formatLimitWindow } from '@Components/limits/helpers';
 import { CredentialStateEnum } from '@Src/constants';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
-  Board, Button, DataTable, Segmented,
+  Button, Collapse, DataTable, Segmented,
 } from '@radicalbit/radicalbit-design-system';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useState } from 'react';
 import { areRowsValid, getConflicts, getPreview } from './helpers';
 import useMembers from './use-members';
 
@@ -92,9 +89,6 @@ function ChooseAll({ conflicts }) {
 }
 
 function MemberBlock({ items, member }) {
-  const [isExpanded, setIsExpanded] = useState(true);
-
-  const conflictCount = items.filter(({ existing }) => existing).length;
   const dataSource = items.map((item) => ({ ...item, member }));
 
   const columns = [
@@ -113,70 +107,39 @@ function MemberBlock({ items, member }) {
     },
   ];
 
-  const handleOnToggle = () => {
-    setIsExpanded((previous) => !previous);
-  };
-
-  if (!isExpanded) {
-    return (
-      <Board
-        header={<MemberHeader conflictCount={conflictCount} isExpanded={false} member={member} onToggle={handleOnToggle} />}
-        width="100%"
-      />
-    );
-  }
-
   return (
-    <Board
-      header={<MemberHeader conflictCount={conflictCount} isExpanded member={member} onToggle={handleOnToggle} />}
-      main={(
-        <DataTable
-          columns={columns}
-          dataSource={dataSource}
-          pagination={false}
-          rowClassName={getRowClassName}
-          rowKey={getRowKey}
-          showHeader={false}
-          size="small"
-        />
-      )}
-      width="100%"
+    <Collapse
+      defaultActiveKey={[member.uuid]}
+      items={[
+        {
+          key: member.uuid,
+          label: <MemberLabel member={member} />,
+          children: (
+            <DataTable
+              columns={columns}
+              dataSource={dataSource}
+              pagination={false}
+              rowClassName={getRowClassName}
+              rowKey={getRowKey}
+              showHeader={false}
+              size="small"
+            />
+          ),
+        },
+      ]}
+      type="card"
     />
   );
 }
 
-function MemberHeader({ conflictCount, isExpanded, member, onToggle }) {
+function MemberLabel({ member }) {
   return (
-    <button aria-expanded={isExpanded} className="flex w-full items-center justify-between gap-4 p-0 border-0 bg-transparent text-inherit text-left font-[inherit] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--coo-fg-black)]" onClick={onToggle} type="button">
-      <span className="flex items-center gap-2">
-        <Chevron isExpanded={isExpanded} />
+    <span className="flex flex-col">
+      <strong>{member.name}</strong>
 
-        <span className="flex flex-col">
-          <strong>{member.name}</strong>
-
-          <ExpiredMark member={member} />
-        </span>
-      </span>
-
-      <ConflictSummary conflictCount={conflictCount} />
-    </button>
+      <ExpiredMark member={member} />
+    </span>
   );
-}
-
-function Chevron({ isExpanded }) {
-  if (isExpanded) {
-    return <Lucide icon={ChevronDown} />;
-  }
-
-  return <Lucide icon={ChevronRight} />;
-}
-
-function ConflictSummary({ conflictCount }) {
-  if (conflictCount) {
-    return <small className="text-[var(--coo-warning)]">{`${conflictCount} already set`}</small>;
-  }
-
-  return <small className="opacity-70">all new</small>;
 }
 
 function NameCell({ record }) {
