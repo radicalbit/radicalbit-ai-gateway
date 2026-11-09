@@ -51,7 +51,7 @@ def _make_invoker(mock_chat_model) -> tuple[ChatModelInvoker, MagicMock]:
     cost_service.compute_cost.return_value = Decimal('0.001')
 
     with patch(
-        'radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model',
+        'radicalbit_ai_gateway.llm.factory.init_chat_model',
         return_value=mock_chat_model,
     ):
         invoker = ChatModelInvoker(

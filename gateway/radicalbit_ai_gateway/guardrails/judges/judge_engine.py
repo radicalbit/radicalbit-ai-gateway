@@ -16,9 +16,10 @@ from radicalbit_ai_gateway.invocation.fallback_chain import (
 )
 from radicalbit_ai_gateway.invocation.recorder import Call, Recorder
 from radicalbit_ai_gateway.llm.chat_model import StructuredChatModel
-from radicalbit_ai_gateway.llm.factory import init_chat_model
+from radicalbit_ai_gateway.llm.factory import build_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessage, BaseMessage, HumanMessage
 from radicalbit_ai_gateway.llm.prompts import PromptTemplate
+from radicalbit_ai_gateway.llm.usage import legacy_cached_tokens
 from radicalbit_ai_gateway.metrics.define_metrics import (
     fallbacks_triggered_counter,
     invocations_latency_histogram,
@@ -53,9 +54,6 @@ from radicalbit_ai_gateway.utils.judge import (
     extract_content_for_judge,
     extract_judge_result,
     extract_media_blocks_for_judge,
-)
-from radicalbit_ai_gateway.utils.parse_provider_and_model import (
-    parse_provider_and_model,
 )
 
 app_config = get_app_config()
@@ -287,12 +285,9 @@ class JudgeEngine:
         token_output_count: int | None = None
         cached_token_count: int | None = None
 
-        if isinstance(raw_response, AIMessage) and raw_response.response_metadata:
-            token_usage = raw_response.response_metadata.get('token_usage')
-            if token_usage:
-                prompt_tokens_details = token_usage.get('prompt_tokens_details')
-                if prompt_tokens_details:
-                    cached_token_count = prompt_tokens_details.get('cached_tokens')
+        if isinstance(raw_response, AIMessage):
+            # Only the OpenAI usage's cached tokens (D22).
+            cached_token_count = legacy_cached_tokens(raw_response.response_metadata)
 
         if isinstance(raw_response, AIMessage) and raw_response.usage_metadata:
             token_input_count = raw_response.usage_metadata.get('input_tokens')
@@ -311,21 +306,14 @@ class JudgeEngine:
     ) -> StructuredChatModel:
         cache_key = f'{model.model_id}:{config.temperature}:{config.max_tokens}'
         if cache_key not in self._model_cache:
-            provider, model_name = parse_provider_and_model(model.model)
-            params = dict(
-                temperature=config.temperature,
-                max_tokens=config.max_tokens,
-                **(
-                    model.credentials.model_dump(exclude_none=True)
-                    if model.credentials
-                    else {}
-                ),
-            )
-            if provider not in ('anthropic', 'mistralai'):
-                params['http_async_client'] = self.httpx_client
-            self._model_cache[cache_key] = init_chat_model(
-                model=f'{provider}:{model_name}',
-                **params,
+            self._model_cache[cache_key] = build_chat_model(
+                model,
+                self.httpx_client,
+                params={
+                    'temperature': config.temperature,
+                    'max_tokens': config.max_tokens,
+                },
+                mock=False,
             ).with_structured_output(schema=JudgeResult, include_raw=True)
         return self._model_cache[cache_key]
 

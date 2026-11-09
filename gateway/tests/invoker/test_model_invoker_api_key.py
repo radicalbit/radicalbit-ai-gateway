@@ -7,7 +7,7 @@ from radicalbit_ai_gateway.services.cost_service import CostService
 
 
 class TestModelInvokerApiKey:
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_openai_without_base_url_with_api_key_works(self, mock_init_chat_model):
         mock_init_chat_model.return_value = MagicMock()
         model = Model(
@@ -24,7 +24,7 @@ class TestModelInvokerApiKey:
         call_args = mock_init_chat_model.call_args
         assert call_args[1]['api_key'] == 'sk-real-key'
 
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_openai_with_base_url_without_api_key_gets_dummy_key(
         self, mock_init_chat_model
     ):
@@ -44,7 +44,7 @@ class TestModelInvokerApiKey:
         assert call_args[1]['api_key'] == 'dummy-api-key'
         assert call_args[1]['base_url'] == 'http://localhost:11434/v1'
 
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_openai_with_base_url_with_api_key_preserves_api_key(
         self, mock_init_chat_model
     ):
@@ -66,7 +66,7 @@ class TestModelInvokerApiKey:
         assert call_args[1]['api_key'] == 'custom-key'
         assert call_args[1]['base_url'] == 'http://custom.endpoint/v1'
 
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_non_openai_provider_without_api_key_works(self, mock_init_chat_model):
         mock_init_chat_model.return_value = MagicMock()
         model = Model(
@@ -83,7 +83,7 @@ class TestModelInvokerApiKey:
         call_args = mock_init_chat_model.call_args
         assert 'api_key' not in call_args[1] or call_args[1].get('api_key') is None
 
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_model_without_credentials_works_for_non_openai(self, mock_init_chat_model):
         mock_init_chat_model.return_value = MagicMock()
         model = Model(

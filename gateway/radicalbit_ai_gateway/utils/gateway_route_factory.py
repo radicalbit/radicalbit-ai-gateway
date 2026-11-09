@@ -17,15 +17,12 @@ from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
 )
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.invocation.chat_model_invoker import build_chat_model
 from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.limiting.windows import Category
-from radicalbit_ai_gateway.llm.embeddings import Embeddings
-from radicalbit_ai_gateway.llm.factory import init_embeddings
+from radicalbit_ai_gateway.llm.factory import build_chat_model, build_embeddings
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
-from radicalbit_ai_gateway.models.model import MockGatewayEmbeddings, Model
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.routing import (
     DecisionRoutingConfig,
@@ -44,32 +41,10 @@ from radicalbit_ai_gateway.routing import (
 from radicalbit_ai_gateway.routing.llm_router import RouterModel
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.parse_provider_and_model import (
-    parse_provider_and_model,
-)
 from radicalbit_ai_gateway.utils.secrets import resolve_secrets_from_string
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
-
-
-def build_embeddings_model(model: Model, httpx_client=None) -> Embeddings:
-    provider, model_name = parse_provider_and_model(model.model)
-    params = model.params or {}
-    credentials = (
-        model.credentials.model_dump(exclude_none=True) if model.credentials else {}
-    )
-    if provider == 'mock':
-        latency_ms = int(params.get('latency_ms', 0))
-        vector_size = int(params.get('vector_size', 5))
-        return MockGatewayEmbeddings(latency_ms=latency_ms, vector_size=vector_size)
-    factory_provider = provider.replace('-', '_')
-    return init_embeddings(
-        model=model_name,
-        provider=factory_provider,
-        http_async_client=httpx_client,
-        **{**params, **credentials},
-    )
 
 
 async def initialize_async_routers(routes: dict[str, GatewayRoute]) -> None:
@@ -164,9 +139,7 @@ def build_gateway_routes_from_config(
                     emb_model = gateway_config.embedding_models_by_id[
                         routing_config.embedding_model_id
                     ]
-                    embeddings_instance = build_embeddings_model(
-                        emb_model, httpx_client
-                    )
+                    embeddings_instance = build_embeddings(emb_model, httpx_client)
                     router = SemanticRouter(
                         config=routing_config,
                         models_by_id=route_models_by_id,

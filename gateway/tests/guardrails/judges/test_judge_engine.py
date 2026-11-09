@@ -50,12 +50,8 @@ def mock_all_external_llm_calls():
     mock_base_model.with_structured_output.return_value = mock_base_model
     with (
         patch(
-            'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
+            'radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model',
             return_value=mock_base_model,
-        ),
-        patch(
-            'radicalbit_ai_gateway.guardrails.judges.judge_engine.parse_provider_and_model',
-            return_value=('openai', 'gpt-4o-mini'),
         ),
     ):
         yield
@@ -248,13 +244,13 @@ class TestJudgeEngine:
         result = self.engine._get_or_create_model(config, model_cfg)
         assert result is mock_model
 
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
-    def test_get_or_create_model_applies_structured_output(self, mock_init_chat_model):
+    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model')
+    def test_get_or_create_model_applies_structured_output(self, mock_build_chat_model):
         """Verify that with_structured_output(JudgeResult, include_raw=True) is applied."""
         mock_base = MagicMock()
         mock_structured = MagicMock()
         mock_base.with_structured_output.return_value = mock_structured
-        mock_init_chat_model.return_value = mock_base
+        mock_build_chat_model.return_value = mock_base
 
         model_cfg = Mock()
         model_cfg.model_id = 'gpt-4o'
@@ -279,10 +275,10 @@ class TestJudgeEngine:
     # -----------------------------------------------------
     # Execution flows
     # -----------------------------------------------------
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
+    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
     @pytest.mark.asyncio
-    async def test_primary_model_succeeds(self, mock_emit_event, mock_init_chat_model):
+    async def test_primary_model_succeeds(self, mock_emit_event, mock_build_chat_model):
         """Primary model executes successfully and returns JudgeResult."""
         expected_result = JudgeResult(
             triggered=True,
@@ -321,11 +317,11 @@ class TestJudgeEngine:
         assert result.triggered
         assert result.violation_type == 'business_context'
 
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
+    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
     @pytest.mark.asyncio
     async def test_primary_fails_fallback_succeeds(
-        self, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_build_chat_model
     ):
         """Primary model fails, fallback model succeeds."""
 
@@ -402,11 +398,11 @@ class TestJudgeEngine:
 
         assert 'Both primary and fallback' in str(exc_info.value)
 
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
+    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
     @pytest.mark.asyncio
     async def test_execute_judge_without_reasoning(
-        self, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_build_chat_model
     ):
         """Judge runs with include_reasoning=False -> reasoning=None."""
 
@@ -454,11 +450,11 @@ class TestJudgeEngine:
     # -----------------------------------------------------
     # execute_judge with OUTPUT messages (AIMessage)
     # -----------------------------------------------------
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
+    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
     @pytest.mark.asyncio
     async def test_execute_judge_output_uses_ai_content(
-        self, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_build_chat_model
     ):
 
         expected = JudgeResult(
@@ -498,11 +494,11 @@ class TestJudgeEngine:
     # -----------------------------------------------------
     # execute_judge with exception handling
     # -----------------------------------------------------
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
+    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
     @pytest.mark.asyncio
     async def test_raises_truncated_error_on_finish_reason_length(
-        self, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_build_chat_model
     ):
         """Judge raises JudgeOutputTruncatedError when finish_reason is 'length'."""
 
@@ -544,11 +540,11 @@ class TestJudgeEngine:
         assert exc_info.value.finish_reason == 'length'
         assert exc_info.value.model_id == 'gpt-4o'
 
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
+    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
     @pytest.mark.asyncio
     async def test_raises_parsing_error_on_empty_parsed(
-        self, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_build_chat_model
     ):
         """Judge raises JudgeParsingError when structured output parsed is None."""
 
@@ -583,11 +579,11 @@ class TestJudgeEngine:
 
         assert 'Empty parsed response' in str(exc_info.value.original_error)
 
-    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model')
+    @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model')
     @patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event')
     @pytest.mark.asyncio
     async def test_raises_parsing_error_on_invalid_json(
-        self, mock_emit_event, mock_init_chat_model
+        self, mock_emit_event, mock_build_chat_model
     ):
         """Judge raises JudgeParsingError when structured output has parsing_error."""
 

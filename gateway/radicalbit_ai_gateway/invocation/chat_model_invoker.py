@@ -23,19 +23,16 @@ from radicalbit_ai_gateway.invocation.fallback_chain import (
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
 from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
-from radicalbit_ai_gateway.llm.factory import init_chat_model
+from radicalbit_ai_gateway.llm.factory import build_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
+from radicalbit_ai_gateway.llm.usage import StreamUsage, cache_tokens
 from radicalbit_ai_gateway.messages.events import stream_usage
 from radicalbit_ai_gateway.messages.thinking import (
     is_invalid_thinking_signature,
     without_old_thinking,
 )
 from radicalbit_ai_gateway.models.fallback import Fallback
-from radicalbit_ai_gateway.models.model import (
-    ENABLE_PROMPT_CACHE_PARAM,
-    MockGatewayChatModel,
-    Model,
-)
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.responses.events import NativeResponsesEvent
 from radicalbit_ai_gateway.responses.output import usage_token_counts
@@ -47,66 +44,12 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerInternalError,
     ModelInvokerUpstreamError,
 )
-from radicalbit_ai_gateway.utils.parse_provider_and_model import (
-    parse_provider_and_model,
-)
 
 app_config = get_app_config()
 
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 CHAT_MODEL_TYPE = 'chat-model'
-# What a stream counts, in the order of ``Tokens``' fields.
-STREAM_STATS = (
-    'token_input_count',
-    'token_output_count',
-    'cached_token_count',
-    'cache_creation_5m_token_count',
-    'cache_creation_1h_token_count',
-)
-
-
-def build_chat_model(model: Model, httpx_client=None) -> ChatModel:
-    """Build a chat model from configuration.
-
-    Shared by the chat invoker and by the routers that call a chat model.
-
-    Returns:
-        ChatModel: A chat model instance.
-
-    """
-    provider, model_name = parse_provider_and_model(model.model)
-    params = model.params or {}
-    credentials = (
-        model.credentials.model_dump(exclude_none=True) if model.credentials else {}
-    )
-
-    # Handle mock provider (gateway-specific)
-    if provider == 'mock':
-        latency_ms: int = int(params.get('latency_ms', 0))
-        response_text: str = params.get('response_text', 'ok')
-        return MockGatewayChatModel(
-            model_name=model_name,
-            latency_ms=latency_ms,
-            response_text=response_text,
-        )
-
-    # Strip gateway-only params that must not reach the provider
-    _GATEWAY_PARAMS = {ENABLE_PROMPT_CACHE_PARAM}
-    init_kwargs = {
-        k: v for k, v in {**params, **credentials}.items() if k not in _GATEWAY_PARAMS
-    }
-
-    # Factory provider keys use underscores (google_genai) where the gateway
-    # config uses hyphens (google-genai)
-    factory_provider = provider.replace('-', '_')
-
-    if provider not in ('anthropic', 'mistralai'):
-        init_kwargs['http_async_client'] = httpx_client
-    return init_chat_model(
-        model=f'{factory_provider}:{model_name}',
-        **init_kwargs,
-    )
 
 
 class ChatModelInvoker(ModelInvoker):
@@ -127,84 +70,6 @@ class ChatModelInvoker(ModelInvoker):
 
     def _build_model(self, model: Model) -> ChatModel:
         return build_chat_model(model, self.httpx_client)
-
-    @staticmethod
-    def _normalize_kwargs_for_model(model: Model, kwargs: dict) -> dict:
-        """Translate or strip kwargs to match what each provider accepts.
-
-        - max_completion_tokens → provider-native name
-        - stream_options, original_stream_options → stripped for Anthropic
-          (OpenAI-specific; Anthropic returns usage in chunks by default)
-        """
-        provider, _ = parse_provider_and_model(model.model)
-        normalized = dict(kwargs)
-
-        if 'max_completion_tokens' in normalized:
-            value = normalized.pop('max_completion_tokens')
-            if provider == 'google-genai':
-                normalized['max_output_tokens'] = value
-            elif provider == 'anthropic':
-                normalized['max_tokens'] = value
-            else:
-                normalized['max_completion_tokens'] = value
-
-        # stream_options is OpenAI-specific; Anthropic rejects it
-        if provider == 'anthropic':
-            normalized.pop('stream_options', None)
-            normalized.pop('original_stream_options', None)
-
-        return normalized
-
-    @staticmethod
-    def _extract_cache_token_counts(
-        usage_metadata,
-        response_metadata,
-    ) -> tuple[int | None, int | None, int | None]:
-        """Extract cache token counts from message metadata.
-
-        Returns:
-            Tuple of (cached_read, cache_creation_5m, cache_creation_1h).
-            Each value is None when not present in the response.
-
-        """
-        cached_token_count: int | None = None
-        cache_creation_5m_token_count: int | None = None
-        cache_creation_1h_token_count: int | None = None
-
-        if usage_metadata:
-            input_token_details = usage_metadata.get('input_token_details')
-            if input_token_details:
-                cache_read = input_token_details.get('cache_read')
-                if cache_read:
-                    cached_token_count = cache_read
-
-                # Prefer granular TTL breakdown when available
-                ephem_5m = input_token_details.get('ephemeral_5m_input_tokens')
-                ephem_1h = input_token_details.get('ephemeral_1h_input_tokens')
-                if ephem_5m or ephem_1h:
-                    if ephem_5m:
-                        cache_creation_5m_token_count = ephem_5m
-                    if ephem_1h:
-                        cache_creation_1h_token_count = ephem_1h
-                else:
-                    # Fallback: treat total cache_creation as 5-min cost
-                    cache_creation = input_token_details.get('cache_creation')
-                    if cache_creation:
-                        cache_creation_5m_token_count = cache_creation
-
-        # Fallback to response_metadata for providers using legacy format (e.g. OpenAI)
-        if cached_token_count is None and response_metadata:
-            token_usage = response_metadata.get('token_usage')
-            if token_usage:
-                prompt_tokens_details = token_usage.get('prompt_tokens_details')
-                if prompt_tokens_details:
-                    cached_token_count = prompt_tokens_details.get('cached_tokens')
-
-        return (
-            cached_token_count,
-            cache_creation_5m_token_count,
-            cache_creation_1h_token_count,
-        )
 
     @staticmethod
     def _call(model_id: str, identity: RequestIdentity) -> Call:
@@ -246,7 +111,7 @@ class ChatModelInvoker(ModelInvoker):
         """Return the tokens of a reply; None when it reports no usage."""
         if not isinstance(message, AIMessage) or not message.usage_metadata:
             return None
-        cached, creation_5m, creation_1h = cls._extract_cache_token_counts(
+        cached, creation_5m, creation_1h = cache_tokens(
             message.usage_metadata, message.response_metadata
         )
         input_tokens = message.usage_metadata.get('input_tokens')
@@ -298,8 +163,7 @@ class ChatModelInvoker(ModelInvoker):
 
         async def ask(candidate: Candidate) -> Reply:
             result = await self._bound(candidate, tools, tool_choice).ainvoke(
-                input=messages,
-                **self._normalize_kwargs_for_model(candidate.model, kwargs),
+                input=messages, **kwargs
             )
             return Reply((result, candidate.model), usage=self._tokens(result))
 
@@ -316,47 +180,23 @@ class ChatModelInvoker(ModelInvoker):
             request_id=identity.request_uuid,
         )
 
-    async def _stream_with_metrics(
-        self,
+    @staticmethod
+    async def _stream_counting(
         chat_model: ChatModel,
         messages: list[BaseMessage],
-        stats: dict[str, int],
+        usage: StreamUsage,
         **kwargs,
     ) -> AsyncIterator[AIMessageChunk]:
-        """Help generator to stream chunks and update metrics stats."""
+        """Stream the model's chunks, counting their usage in ``usage``."""
         async for chunk in chat_model.astream(input=messages, **kwargs):
-            if chunk.usage_metadata:
-                input_tokens = chunk.usage_metadata.get('input_tokens') or 0
-                stats['token_output_count'] += (
-                    chunk.usage_metadata.get('output_tokens') or 0
-                )
-
-                cached, creation_5m, creation_1h = self._extract_cache_token_counts(
-                    usage_metadata=chunk.usage_metadata,
-                    response_metadata=chunk.response_metadata,
-                )
-                if cached is not None:
-                    stats['cached_token_count'] = cached
-                if creation_5m is not None:
-                    stats['cache_creation_5m_token_count'] = creation_5m
-                if creation_1h is not None:
-                    stats['cache_creation_1h_token_count'] = creation_1h
-
-                if input_tokens:
-                    stats['token_input_count'] = (
-                        input_tokens
-                        - (stats['cached_token_count'] or 0)
-                        - (stats['cache_creation_5m_token_count'] or 0)
-                        - (stats['cache_creation_1h_token_count'] or 0)
-                    )
-
+            usage.add(chunk.usage_metadata, chunk.response_metadata)
             yield chunk
 
     @staticmethod
-    def _stream_tokens(stats: dict[str, int] | None) -> Tokens:
+    def _stream_tokens(usage: StreamUsage | None) -> Tokens:
         """Return a stream's tokens: a count of 0 is not reported."""
-        stats = stats or {}
-        return Tokens(*(stats.get(key) or None for key in STREAM_STATS))
+        counts = usage.counts() if usage else ()
+        return Tokens(*(count or None for count in counts))
 
     @task(name='llm_stream')
     async def stream(
@@ -407,12 +247,12 @@ class ChatModelInvoker(ModelInvoker):
                 logger.info(
                     'Trying fallback model %s for streaming', candidate.model.model_id
                 )
-            attempt.usage = dict.fromkeys(STREAM_STATS, 0)
-            async for chunk in self._stream_with_metrics(
+            attempt.usage = StreamUsage()
+            async for chunk in self._stream_counting(
                 self._bound(candidate, tools, tool_choice),
                 messages,
                 attempt.usage,
-                **self._normalize_kwargs_for_model(candidate.model, kwargs),
+                **kwargs,
             ):
                 yield chunk
 

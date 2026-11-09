@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk
+from radicalbit_ai_gateway.llm.usage import StreamUsage
 from radicalbit_ai_gateway.models.model import Model
 
 
@@ -18,7 +19,7 @@ class TestRefactoredStream(unittest.TestCase):
         self.mock_cost_service = MagicMock()
 
         with unittest.mock.patch(
-            'radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model'
+            'radicalbit_ai_gateway.llm.factory.init_chat_model'
         ) as mock_init:
             self.mock_chat_model = MagicMock()
             mock_init.return_value = self.mock_chat_model
@@ -57,26 +58,22 @@ class TestRefactoredStream(unittest.TestCase):
 
             self.mock_chat_model.astream = MagicMock(side_effect=mock_stream)
 
-            stats = {
-                'token_input_count': 0,
-                'token_output_count': 0,
-                'cached_token_count': 0,
-            }
+            usage = StreamUsage()
 
-            async for _ in self.invoker._stream_with_metrics(
-                self.mock_chat_model, [], stats
+            async for _ in self.invoker._stream_counting(
+                self.mock_chat_model, [], usage
             ):
                 pass
 
-            return stats
+            return usage
 
-        stats = asyncio.run(run_test())
+        usage = asyncio.run(run_test())
 
-        # Verify stats are updated correctly
-        assert stats['cached_token_count'] == 25
+        # Verify the counts are updated correctly
+        assert usage.cached == 25
         # Input tokens shoud be 100 - 25 = 75 (logic inside helper)
-        assert stats['token_input_count'] == 75
-        assert stats['token_output_count'] == 50
+        assert usage.input == 75
+        assert usage.output == 50
 
     def test_full_stream_flow(self):
         async def run_test():

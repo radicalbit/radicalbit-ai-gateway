@@ -16,9 +16,9 @@ from radicalbit_ai_gateway.invocation.fallback_chain import (
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
 from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.llm.embeddings import Embeddings
-from radicalbit_ai_gateway.llm.factory import init_embeddings
+from radicalbit_ai_gateway.llm.factory import build_embeddings
 from radicalbit_ai_gateway.models.fallback import Fallback
-from radicalbit_ai_gateway.models.model import MockGatewayEmbeddings, Model
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -52,35 +52,7 @@ class EmbeddingModelInvoker(ModelInvoker):
         self._initialize_models(self._build_model)
 
     def _build_model(self, model: Model) -> Embeddings:
-        """Build an embedding model from configuration.
-
-        Returns:
-            Embeddings: An embedding model instance.
-
-        """
-        provider, model_name = parse_provider_and_model(model.model)
-        params = model.params or {}
-        credentials = (
-            model.credentials.model_dump(exclude_none=True) if model.credentials else {}
-        )
-
-        # Handle mock provider (gateway-specific)
-        if provider == 'mock':
-            latency_ms: int = int(params.get('latency_ms', 0))
-            vector_size: int = int(params.get('vector_size', 5))
-            return MockGatewayEmbeddings(latency_ms=latency_ms, vector_size=vector_size)
-
-        # Factory provider keys use underscores (google_genai) where the gateway
-        # config uses hyphens (google-genai)
-        factory_provider = provider.replace('-', '_')
-
-        # Every provider accepts api_key directly as an alias for its own key
-        return init_embeddings(
-            model=model_name,
-            provider=factory_provider,
-            http_async_client=self.httpx_client,
-            **{**params, **credentials},
-        )
+        return build_embeddings(model, self.httpx_client)
 
     async def embed(self, *args, **kwargs) -> CreateEmbeddingResponse:
         response, _ = await self.embed_answered(*args, **kwargs)

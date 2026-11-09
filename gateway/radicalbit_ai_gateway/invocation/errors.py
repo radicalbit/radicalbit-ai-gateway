@@ -5,14 +5,10 @@ error contract of model calls.
 from collections.abc import Callable
 from enum import Enum
 import logging
-from typing import Any, NoReturn
-
-import anthropic
-from google.genai import errors as genai_errors
-import httpx
-import openai
+from typing import NoReturn
 
 from radicalbit_ai_gateway.invocation.fallback_chain import Failure
+from radicalbit_ai_gateway.llm.errors import provider_status
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerBadGateway,
@@ -51,7 +47,7 @@ def upstream_refusal(error: BaseException | None) -> ModelInvokerUpstreamError |
     seen = set()
     while error is not None and id(error) not in seen:
         seen.add(id(error))
-        refusal = _refusal(error)
+        refusal = provider_status(error)
         if refusal is not None:
             status, message, body = refusal
             if 400 <= status < 500:
@@ -59,24 +55,6 @@ def upstream_refusal(error: BaseException | None) -> ModelInvokerUpstreamError |
             return None
         error = error.__cause__
     return None
-
-
-def _refusal(error: BaseException) -> tuple[int, str, Any] | None:
-    if isinstance(error, openai.APIStatusError | anthropic.APIStatusError):
-        return error.status_code, error.message, _json(error.response, error.message)
-    if isinstance(error, httpx.HTTPStatusError):
-        return error.response.status_code, str(error), _json(error.response, str(error))
-    if isinstance(error, genai_errors.APIError):
-        body = error.details if isinstance(error.details, dict) else None
-        return error.code, error.message, body or {'error': {'message': str(error)}}
-    return None
-
-
-def _json(response: httpx.Response, message: str) -> Any:
-    try:
-        return response.json()
-    except ValueError:
-        return {'error': {'message': message}}
 
 
 # Statuses that refuse the gateway's own access to the provider (its

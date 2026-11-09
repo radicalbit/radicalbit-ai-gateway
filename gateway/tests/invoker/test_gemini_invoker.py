@@ -1,16 +1,14 @@
 """Tests for Gemini support in ChatModelInvoker and EmbeddingModelInvoker."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.embedding_model_invoker import (
     EmbeddingModelInvoker,
 )
-from radicalbit_ai_gateway.llm.messages import AIMessage
+from radicalbit_ai_gateway.llm.factory import build_chat_model
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.services.cost_service import CostService
@@ -19,7 +17,7 @@ from radicalbit_ai_gateway.services.cost_service import CostService
 class TestGeminiChatModelInvoker:
     """Tests for ChatModelInvoker with Gemini provider."""
 
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_gemini_chat_model_with_api_key(self, mock_init_chat_model):
         """Test that a Gemini model is correctly initialized with api_key via init_chat_model."""
         mock_init_chat_model.return_value = MagicMock()
@@ -40,7 +38,7 @@ class TestGeminiChatModelInvoker:
         # Verify that api_key is passed directly (LangChain accepts it as alias for google_api_key)
         assert call_kwargs['api_key'] == 'test-api-key'
 
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_gemini_chat_model_uses_init_chat_model(self, mock_init_chat_model):
         """Test that init_chat_model is called for Gemini models."""
         mock_init_chat_model.return_value = MagicMock()
@@ -68,7 +66,7 @@ class TestGeminiChatModelInvoker:
         with pytest.raises(ValueError, match='API key required'):
             ChatModelInvoker([model], cost_service, None)
 
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_gemini_chat_model_with_params(self, mock_init_chat_model):
         """Test that parameters are correctly passed to the Gemini model via init_chat_model."""
         mock_init_chat_model.return_value = MagicMock()
@@ -90,102 +88,51 @@ class TestGeminiChatModelInvoker:
         assert call_kwargs['api_key'] == 'test-api-key'
 
 
-class TestGeminiRuntimeParamNormalization:
-    """Tests for _normalize_kwargs_for_model per-provider kwarg translation."""
+class TestRuntimeParamAdaptation:
+    """Each chat model takes the OpenAI-style kwargs as its provider names them."""
 
-    def _make_model(self, provider_model: str) -> Model:
-        return Model(model_id='test', model=provider_model)
-
-    def test_normalize_google_genai(self):
-        model = self._make_model('google-genai/gemini-1.5-pro')
-        result = ChatModelInvoker._normalize_kwargs_for_model(
-            model, {'max_completion_tokens': 512, 'temperature': 0.5}
+    def _model(self, provider_model: str):
+        return build_chat_model(
+            Model(
+                model_id='test',
+                model=provider_model,
+                credentials=Credentials(api_key='test-key'),
+            )
         )
-        assert 'max_output_tokens' in result
-        assert result['max_output_tokens'] == 512
-        assert 'max_completion_tokens' not in result
-        assert result['temperature'] == 0.5
 
-    def test_normalize_anthropic(self):
-        model = self._make_model('anthropic/claude-3-5-haiku')
-        result = ChatModelInvoker._normalize_kwargs_for_model(
-            model, {'max_completion_tokens': 1024}
+    def test_adapt_google_genai(self):
+        result = self._model('google-genai/gemini-1.5-pro')._adapt_kwargs(
+            {'max_completion_tokens': 512, 'temperature': 0.5}
         )
-        assert 'max_tokens' in result
-        assert result['max_tokens'] == 1024
-        assert 'max_completion_tokens' not in result
+        assert result == {'temperature': 0.5, 'max_output_tokens': 512}
 
-    def test_normalize_openai_passthrough(self):
-        model = self._make_model('openai/gpt-4o')
-        result = ChatModelInvoker._normalize_kwargs_for_model(
-            model, {'max_completion_tokens': 256}
+    def test_adapt_anthropic(self):
+        result = self._model('anthropic/claude-3-5-haiku')._adapt_kwargs(
+            {'max_completion_tokens': 1024, 'stream_options': {'include_usage': True}}
         )
-        assert result['max_completion_tokens'] == 256
-        assert 'max_output_tokens' not in result
-        assert 'max_tokens' not in result
+        assert result == {'max_tokens': 1024}
 
-    def test_normalize_no_max_completion_tokens(self):
-        model = self._make_model('google-genai/gemini-1.5-pro')
+    @pytest.mark.parametrize(
+        'provider_model',
+        ['openai/gpt-4o', 'mistralai/mistral-small-latest', 'deepseek/deepseek-chat'],
+    )
+    def test_adapt_passthrough(self, provider_model):
+        kwargs = {
+            'max_completion_tokens': 256,
+            'stream_options': {'include_usage': True},
+        }
+        assert self._model(provider_model)._adapt_kwargs(kwargs) == kwargs
+
+    def test_adapt_no_max_completion_tokens(self):
         original = {'temperature': 0.7}
-        result = ChatModelInvoker._normalize_kwargs_for_model(model, original)
+        result = self._model('google-genai/gemini-1.5-pro')._adapt_kwargs(original)
         assert result == original
-
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
-    @pytest.mark.asyncio
-    async def test_complete_passes_max_output_tokens_to_gemini(
-        self, mock_init_chat_model
-    ):
-        """ainvoke() must receive max_output_tokens, not max_completion_tokens, for Gemini."""
-        mock_chat_model = MagicMock()
-
-        mock_chat_model.ainvoke = AsyncMock(
-            return_value=AIMessage(
-                content='hello',
-                usage_metadata={
-                    'input_tokens': 10,
-                    'output_tokens': 5,
-                    'total_tokens': 15,
-                },
-            )
-        )
-        mock_init_chat_model.return_value = mock_chat_model
-
-        cost_service = MagicMock(spec_set=CostService)
-        model = Model(
-            model_id='gemini-test',
-            model='google-genai/gemini-1.5-pro',
-            credentials=Credentials(api_key='test-key'),
-        )
-        invoker = ChatModelInvoker(
-            models=[model], cost_service=cost_service, fallbacks=None
-        )
-
-        await invoker.complete(
-            **with_identity(
-                request_uuid='uuid',
-                api_key_uuid='ak-uuid',
-                group_uuid='g-uuid',
-                api_key_name='key',
-                group_name='group',
-                route_name='route',
-                messages=[],
-                model_id='gemini-test',
-                tools=None,
-                tool_choice=None,
-                max_completion_tokens=512,
-            )
-        )
-
-        call_kwargs = mock_chat_model.ainvoke.call_args[1]
-        assert 'max_output_tokens' in call_kwargs
-        assert call_kwargs['max_output_tokens'] == 512
-        assert 'max_completion_tokens' not in call_kwargs
 
 
 class TestGeminiEmbeddingModelInvoker:
     """Tests for EmbeddingModelInvoker with Gemini provider."""
 
-    @patch('radicalbit_ai_gateway.invocation.embedding_model_invoker.init_embeddings')
+    @patch('radicalbit_ai_gateway.llm.factory.init_embeddings')
     def test_gemini_embedding_model_with_api_key(self, mock_init_embeddings):
         """Test that a Gemini embedding model is correctly initialized with api_key via init_embeddings."""
         mock_init_embeddings.return_value = MagicMock()
@@ -207,7 +154,7 @@ class TestGeminiEmbeddingModelInvoker:
         # Verify that api_key is passed directly (LangChain accepts it as alias for google_api_key)
         assert call_kwargs['api_key'] == 'test-api-key'
 
-    @patch('radicalbit_ai_gateway.invocation.embedding_model_invoker.init_embeddings')
+    @patch('radicalbit_ai_gateway.llm.factory.init_embeddings')
     def test_gemini_embedding_model_with_task_type(self, mock_init_embeddings):
         """Test that task_type is correctly passed to the Gemini embedding model via init_embeddings."""
         mock_init_embeddings.return_value = MagicMock()
@@ -227,7 +174,7 @@ class TestGeminiEmbeddingModelInvoker:
         assert call_kwargs['task_type'] == 'RETRIEVAL_QUERY'
         assert call_kwargs['api_key'] == 'test-api-key'
 
-    @patch('radicalbit_ai_gateway.invocation.embedding_model_invoker.init_embeddings')
+    @patch('radicalbit_ai_gateway.llm.factory.init_embeddings')
     def test_gemini_embedding_model_uses_init_embeddings(self, mock_init_embeddings):
         """Test that init_embeddings is called for Gemini embedding models."""
         mock_init_embeddings.return_value = MagicMock()

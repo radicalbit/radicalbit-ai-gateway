@@ -209,7 +209,7 @@ JUDGE_COUNTED = {
 def judge():
     with (
         patch(
-            'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
+            'radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model',
             return_value=_judge_llm(),
         ),
         patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event'),
@@ -258,7 +258,7 @@ async def test_warn_judge_is_called_and_charged_once(where, judge):
     gateway = _limited_gateway(where, behavior='warn', **ROUTE_LIMITS)
 
     with patch(
-        'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
+        'radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model',
         return_value=judge_llm,
     ):
         result = await invoke(
@@ -325,7 +325,7 @@ def judge_calls():
     llm = _judge_llm()
     with (
         patch(
-            'radicalbit_ai_gateway.guardrails.judges.judge_engine.init_chat_model',
+            'radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model',
             return_value=llm,
         ),
         patch('radicalbit_ai_gateway.guardrails.judges.judge_engine.emit_event'),

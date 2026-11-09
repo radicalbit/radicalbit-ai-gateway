@@ -33,7 +33,6 @@ from radicalbit_ai_gateway.llm.providers._openai_common import (
     dict_to_ai_message,
     message_to_dict,
     parse_first_tool_call,
-    pydantic_to_function,
     strip_v1_blocks,
     to_openai_tool,
     to_response_format,
@@ -41,6 +40,7 @@ from radicalbit_ai_gateway.llm.providers._openai_common import (
     usage_metadata,
     with_chunk_timeout,
 )
+from radicalbit_ai_gateway.llm.providers._schema import pydantic_to_function
 from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
 
 _DEFAULT_STREAM_CHUNK_TIMEOUT = 120.0

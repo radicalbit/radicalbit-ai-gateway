@@ -56,10 +56,8 @@ from radicalbit_ai_gateway.llm.messages import (
     BaseMessage,
     tool_call_chunk,
 )
-from radicalbit_ai_gateway.llm.providers._openai_common import (
-    _image_block,
-    is_data_content_block,
-)
+from radicalbit_ai_gateway.llm.providers._openai_common import _image_block
+from radicalbit_ai_gateway.llm.providers._schema import is_data_content_block
 
 if TYPE_CHECKING:
     from radicalbit_ai_gateway.llm.chat_model import ChatModel

@@ -10,7 +10,7 @@ from radicalbit_ai_gateway.services.cost_service import CostService
 
 
 class TestConfigOllamaNoApiKey:
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_config_ollama_no_api_key_works(self, mock_init_chat_model):
         mock_init_chat_model.return_value = MagicMock()
         gateway_config = get_gateway_ollama_no_api_key()
@@ -29,7 +29,7 @@ class TestConfigOllamaNoApiKey:
         assert call_args[1]['temperature'] == 0.7
         assert call_args[1]['top_p'] == 0.9
 
-    @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model')
+    @patch('radicalbit_ai_gateway.llm.factory.init_chat_model')
     def test_config_with_real_openai_with_api_key_works(self, mock_init_chat_model):
         mock_init_chat_model.return_value = MagicMock()
         cost_service: CostService = MagicMock(spec_set=CostService)

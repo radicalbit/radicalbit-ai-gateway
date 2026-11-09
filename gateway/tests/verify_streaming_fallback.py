@@ -41,7 +41,7 @@ class TestStreamingFallback(unittest.TestCase):
         # Instead, we will force the model_map populated after init.
 
         with unittest.mock.patch(
-            'radicalbit_ai_gateway.invocation.chat_model_invoker.init_chat_model'
+            'radicalbit_ai_gateway.llm.factory.init_chat_model'
         ) as mock_init:
             # We can't easily distinguish calls here, so we'll just patch the instance manually later
             mock_init.return_value = self.mock_chat_model
