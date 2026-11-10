@@ -1,4 +1,14 @@
+import { API_BASE_URL } from '@Api/config';
 import { API_TAGS, apiService } from '@Src/store/apis';
+import eventSourceWithBackoff from '@State/event-source-with-backoff';
+
+const DEFAULT_CONSUMPTION_STATE = {
+  consumption: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
 
 const LIST_ID = 'LIST';
 
@@ -283,10 +293,60 @@ export const projectsApiSlice = apiService.injectEndpoints({
         };
       },
     }),
+    getProjectBudgetLimitsConsumptionStream: builder.query({
+      keepUnusedDataFor: 0,
+      queryFn: () => ({ data: DEFAULT_CONSUMPTION_STATE }),
+      async onCacheEntryAdded(
+        { projects },
+        { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
+      ) {
+        try {
+          await cacheDataLoaded;
+
+          const params = new URLSearchParams();
+          [...projects].sort().forEach((uuid) => { params.append('projects', uuid); });
+
+          const url = `${API_BASE_URL}/projects/budget-limits/stream?${params.toString()}`;
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                consumption: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream budgets consumption';
+              });
+            },
+          });
+
+          await cacheEntryRemoved;
+          subscription.close();
+        } catch (error) {
+          console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
+        }
+      },
+    }),
   }),
 });
 
 export const {
+  useGetProjectBudgetLimitsConsumptionStreamQuery,
   useGetProjectsQuery,
   useGetProjectQuery,
   useGetProjectBudgetQuery,

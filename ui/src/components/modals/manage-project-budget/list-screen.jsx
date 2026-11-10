@@ -1,3 +1,4 @@
+import LimitConsumption from '@Components/limits/limit-consumption';
 import Lucide from '@Components/lucide';
 import { LimitCategoryEnum, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import {
@@ -5,6 +6,7 @@ import {
 } from '@Components/limits/helpers';
 import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
+import { useProjectBudgetLimitsConsumption } from '@State/projects/hooks';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
   Board, Button, DataTable, Tooltip, Void,
@@ -32,9 +34,9 @@ const columns = [
   },
   {
     title: '',
-    key: 'value',
-    align: 'right',
-    render: (_, { value }) => formatLimitValue(LimitCategoryEnum.BUDGET, value),
+    key: 'consumption',
+    width: '200px',
+    render: (_, limit) => <Consumption limit={limit} />,
   },
   {
     title: '',
@@ -95,6 +97,7 @@ function IsSuccess() {
         <DataTable
           columns={columns}
           dataSource={sortedLimits}
+          noPadding
           pagination={false}
           rowClassName={getRowClassName}
           rowKey={getRowKey}
@@ -133,15 +136,28 @@ function AddBudget() {
 }
 
 function Window({ limit }) {
+  const maxText = `${formatLimitValue(LimitCategoryEnum.BUDGET, limit?.value)} / ${formatLimitWindow(limit?.windowSize)}`;
   const windowTypeText = ` · ${WINDOW_TYPE_LABELS[limit?.algorithm]} window`;
 
   return (
     <span>
-      {formatLimitWindow(limit?.windowSize)}
+      {maxText}
 
       <span className="opacity-70">{windowTypeText}</span>
     </span>
   );
+}
+
+function Consumption({ limit }) {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const consumption = useProjectBudgetLimitsConsumption(uuid ? [uuid] : []);
+
+  const algorithm = limit?.algorithm;
+  const limitUuid = limit?.uuid;
+
+  return <LimitConsumption algorithm={algorithm} bar={consumption?.[limitUuid]} />;
 }
 
 function Actions({ limit }) {

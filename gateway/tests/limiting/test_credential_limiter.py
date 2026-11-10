@@ -1,3 +1,4 @@
+import time
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
 )
+from radicalbit_ai_gateway.models.event_dto import WindowStatus
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.utils.exceptions import (
     BudgetLimitExceededError,
@@ -316,3 +318,56 @@ class TestEditingAMax:
         _share_storage(before, after)
 
         await after.check_and_count_request(**_CALL_ARGS)
+
+
+class TestConsumption:
+    @pytest.mark.asyncio
+    async def test_reports_what_requests_consumed_keyed_by_limit_uuid(self):
+        rate = _limit(CredentialLimitCategory.RATE, 10)
+        budget = _limit(
+            CredentialLimitCategory.BUDGET,
+            2.0,
+            window_size='1 hour',
+            algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
+        )
+        serving = _limiter([rate, budget])
+        for _ in range(3):
+            await serving.check_and_count_request(**_CALL_ARGS)
+        await serving.count_budget_input(
+            token_count=1000, input_cost_per_token=0.0019, identity=IDENTITY
+        )
+
+        reading = _limiter([rate, budget])
+        _share_storage(serving, reading)
+        consumption = await reading.consumption()
+
+        assert set(consumption) == {str(rate.uuid), str(budget.uuid)}
+
+        rate_bar = consumption[str(rate.uuid)]
+        assert rate_bar.window_size == 10
+        assert rate_bar.window_filled_size == 3
+        assert rate_bar.window_filled_percentage == pytest.approx(30.0)
+        assert rate_bar.window_status == WindowStatus.OK
+
+        budget_bar = consumption[str(budget.uuid)]
+        assert budget_bar.window_size == pytest.approx(2.0)
+        assert budget_bar.window_filled_size == pytest.approx(1.9)
+        assert budget_bar.window_filled_percentage == pytest.approx(95.0)
+        assert budget_bar.window_status == WindowStatus.CRITICAL
+        next_hour = (int(time.time()) // 3600 + 1) * 3600
+        assert budget_bar.window_end_time == next_hour
+
+    @pytest.mark.asyncio
+    async def test_a_limit_never_hit_reports_nothing_consumed(self):
+        rate = _limit(CredentialLimitCategory.TOKEN_OUTPUT, 1000)
+
+        consumption = await _limiter([rate]).consumption()
+
+        bar = consumption[str(rate.uuid)]
+        assert bar.window_size == 1000
+        assert bar.window_filled_size == 0
+        assert bar.window_filled_percentage == 0
+
+    @pytest.mark.asyncio
+    async def test_no_limits_reports_nothing(self):
+        assert await _limiter([]).consumption() == {}

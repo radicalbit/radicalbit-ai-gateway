@@ -3,12 +3,21 @@ import { Popover } from '@radicalbit/radicalbit-design-system';
 import { useState } from 'react';
 import { LIMIT_CATEGORY_LABELS, LimitCategoryEnum, WINDOW_TYPE_LABELS } from './constants';
 import {
-  formatCount, formatLimitValue, formatLimitWindow, formatNeverReached, getLimitWarnings, sortLimits,
+  formatCount, formatLimitValue, formatLimitWindow, formatNeverReached, getLimitWarnings, getMostConsumed, sortLimits,
 } from './helpers';
+import LimitConsumption from './limit-consumption';
 
 const TRIGGER = ['hover', 'focus'];
 
-function LimitsSummary({ limits = [], noun = 'limit', onManage, warnings = [], withCategory = true }) {
+const STATUS_CLASS_NAMES = {
+  ok: '',
+  warning: 'text-[var(--coo-warning)]',
+  critical: 'text-[var(--coo-error)]',
+};
+
+function LimitsSummary({
+  consumption, limits = [], noun = 'limit', onManage, warnings = [], withCategory = true,
+}) {
   const [isOpen, setIsOpen] = useState(false);
 
   const handleOnClick = (e) => {
@@ -33,7 +42,7 @@ function LimitsSummary({ limits = [], noun = 'limit', onManage, warnings = [], w
   return (
     <Popover
       arrow={false}
-      content={<Content limits={limits} onManage={contentOnManage} warnings={warnings} withCategory={withCategory} />}
+      content={<Content consumption={consumption} limits={limits} onManage={contentOnManage} warnings={warnings} withCategory={withCategory} />}
       onOpenChange={setIsOpen}
       open={isOpen}
       placement="bottomLeft"
@@ -43,19 +52,33 @@ function LimitsSummary({ limits = [], noun = 'limit', onManage, warnings = [], w
       <span>
         <HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>
 
+        <Used consumption={consumption} limits={limits} />
+
         {neverReached}
       </span>
     </Popover>
   );
 }
 
-function Content({ limits, onManage, warnings, withCategory }) {
+function Used({ consumption, limits }) {
+  const mostConsumed = getMostConsumed(limits, consumption);
+  const percentage = mostConsumed?.percentage;
+  const status = mostConsumed?.status;
+
+  if (!mostConsumed) {
+    return false;
+  }
+
+  return <span className={STATUS_CLASS_NAMES[status]}>{` · up to ${percentage}% used`}</span>;
+}
+
+function Content({ consumption, limits, onManage, warnings, withCategory }) {
   const handleOnManage = (e) => {
     e.stopPropagation();
     onManage();
   };
 
-  const lines = sortLimits(limits).map((limit) => <LimitLine key={limit.uuid} limit={limit} warnings={getLimitWarnings(warnings, limit)} withCategory={withCategory} />);
+  const lines = sortLimits(limits).map((limit) => <LimitLine key={limit.uuid} bar={consumption?.[limit.uuid]} limit={limit} warnings={getLimitWarnings(warnings, limit)} withCategory={withCategory} />);
   const manageLabel = withCategory ? 'Manage limits' : 'Manage budgets';
   const manageLink = onManage ? <HtmlAnchor onClick={handleOnManage}>{manageLabel}</HtmlAnchor> : false;
 
@@ -70,7 +93,7 @@ function Content({ limits, onManage, warnings, withCategory }) {
   );
 }
 
-function LimitLine({ limit, warnings, withCategory }) {
+function LimitLine({ bar, limit, warnings, withCategory }) {
   const algorithm = limit?.algorithm;
   const category = limit?.category ?? LimitCategoryEnum.BUDGET;
   const value = limit?.value;
@@ -81,7 +104,7 @@ function LimitLine({ limit, warnings, withCategory }) {
   const windowTypeText = ` · ${WINDOW_TYPE_LABELS[algorithm]}`;
 
   return (
-    <span className="flex flex-col">
+    <span className="flex flex-col gap-1">
       <span>
         {categoryText}
 
@@ -89,6 +112,8 @@ function LimitLine({ limit, warnings, withCategory }) {
 
         <span className="opacity-70">{windowTypeText}</span>
       </span>
+
+      <LimitConsumption algorithm={algorithm} bar={bar} />
 
       {warnings.map((warning) => <small key={warning.routeName} className="text-[var(--coo-warning)]">{formatNeverReached(warning)}</small>)}
     </span>

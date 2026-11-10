@@ -1,3 +1,4 @@
+import LimitConsumption from '@Components/limits/limit-consumption';
 import Lucide from '@Components/lucide';
 import { LIMIT_CATEGORIES, LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import {
@@ -7,7 +8,7 @@ import RouteLimitWarnings from '@Components/limits/route-limit-warnings';
 import useModals from '@Hooks/use-modals';
 import { CredentialStateEnum } from '@Src/constants';
 import { useGetKeyQuery } from '@State/keys/api';
-import { useKeyLimitSaveWarnings } from '@State/keys/hooks';
+import { useKeyLimitSaveWarnings, useKeyLimitsConsumption } from '@State/keys/hooks';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
   Alert, Board, Button, DataTable, Void,
@@ -173,9 +174,9 @@ function CategoryBlock({ category }) {
     },
     {
       title: '',
-      key: 'value',
-      align: 'right',
-      render: (_, record) => formatLimitValue(record?.category, record?.value),
+      key: 'consumption',
+      width: '200px',
+      render: (_, record) => <Consumption limit={record} />,
     },
     {
       title: '',
@@ -195,6 +196,7 @@ function CategoryBlock({ category }) {
     <DataTable
       columns={columns}
       dataSource={dataSource}
+      noPadding
       pagination={false}
       rowClassName={getRowClassName}
       rowKey={getRowKey}
@@ -219,13 +221,14 @@ function CategoryBlock({ category }) {
 }
 
 function Window({ record }) {
+  const maxText = `${formatLimitValue(record?.category, record?.value)} / ${formatLimitWindow(record?.windowSize)}`;
   const windowTypeText = ` · ${WINDOW_TYPE_LABELS[record?.algorithm]} window`;
   const warnings = record?.warnings ?? [];
 
   return (
     <span className="flex flex-col">
       <span>
-        {formatLimitWindow(record?.windowSize)}
+        {maxText}
 
         <span className="opacity-70">{windowTypeText}</span>
       </span>
@@ -233,6 +236,18 @@ function Window({ record }) {
       {warnings.map((warning) => <small key={warning.routeName} className="text-[var(--coo-warning)]">{formatNeverReached(warning)}</small>)}
     </span>
   );
+}
+
+function Consumption({ limit }) {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const consumption = useKeyLimitsConsumption(uuid ? [uuid] : []);
+
+  const algorithm = limit?.algorithm;
+  const limitUuid = limit?.uuid;
+
+  return <LimitConsumption algorithm={algorithm} bar={consumption?.[limitUuid]} />;
 }
 
 function Actions({ isExpired, record }) {
