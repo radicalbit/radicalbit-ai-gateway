@@ -2,7 +2,6 @@ import InfoPopover from '@Components/info-popover';
 import { Divider } from '@radicalbit/radicalbit-design-system';
 import { Fragment } from 'react';
 
-// usedModels: the route's own models plus those its guardrails and routing call.
 const MODEL_GROUPS = [
   { key: 'chat', title: 'Chat models' },
   { key: 'embedding', title: 'Embedding models' },
