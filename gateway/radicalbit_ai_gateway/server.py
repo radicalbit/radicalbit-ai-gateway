@@ -48,6 +48,7 @@ from radicalbit_ai_gateway.endpoints.messages.route import MessagesRoute
 from radicalbit_ai_gateway.endpoints.responses.route import ResponsesRoute
 from radicalbit_ai_gateway.endpoints.transcriptions.route import TranscriptionsRoute
 from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
+from radicalbit_ai_gateway.gateway_route.factory import build_project_route_registrar
 from radicalbit_ai_gateway.limiter.storage.shared import close_limit_storage
 from radicalbit_ai_gateway.llm.tracing import TRACELOOP_INSTRUMENTS
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
@@ -116,9 +117,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
     token_limiter_exception_handler,
     unhandled_exception_handler,
     validation_error_param,
-)
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_project_route_registrar,
 )
 from radicalbit_ai_gateway.utils.logging_hooks import apply_log_filters
 from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers

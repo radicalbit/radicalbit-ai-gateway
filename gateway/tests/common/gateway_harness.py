@@ -32,6 +32,7 @@ from radicalbit_ai_gateway.events import events_processor
 from radicalbit_ai_gateway.events.alerts_processor import _alerts_buffer
 from radicalbit_ai_gateway.events.events_processor import _events_buffer
 from radicalbit_ai_gateway.events.request_events_processor import _request_events_buffer
+from radicalbit_ai_gateway.gateway_route.factory import build_gateway_routes_from_config
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
     DecisionJudgeEngine,
@@ -46,9 +47,6 @@ from radicalbit_ai_gateway.routes.dependencies import get_request_uuid
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-)
 from radicalbit_ai_gateway.utils.request_context import current_route_config_ctx
 
 LOGGER = get_app_config().log_config.logger_name

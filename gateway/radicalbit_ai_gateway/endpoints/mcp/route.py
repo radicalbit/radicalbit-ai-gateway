@@ -74,7 +74,7 @@ class McpRoute:
 
             list_cache = McpListCache.for_route(
                 gateway_cache=route.gateway_cache if route else None,
-                ttl=route.ttl if route else None,
+                ttl=route.cache.ttl if route else None,
                 authorized=authorized,
             )
 

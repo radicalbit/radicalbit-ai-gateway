@@ -117,7 +117,9 @@ def _make_client(
     # the route's live feature instances, keyed '{project}/{route}'.
     app.state.routes = {
         'proj/my-route': SimpleNamespace(
-            route_limits=route_limits, gateway_cache=gateway_cache, ttl=ttl
+            route_limits=route_limits,
+            gateway_cache=gateway_cache,
+            cache=SimpleNamespace(ttl=ttl),
         )
     }
     app.state.token_validator = SimpleNamespace(

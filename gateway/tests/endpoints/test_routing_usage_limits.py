@@ -18,6 +18,10 @@ from tests.common.mocked_build_openai_chat_completion import (
 )
 from tests.common.pipeline import invoke, stream
 
+from radicalbit_ai_gateway.gateway_route.factory import (
+    build_gateway_routes_from_config,
+    initialize_async_routers,
+)
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
@@ -34,10 +38,6 @@ from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.exceptions import InputTokenLimitExceeded
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-    initialize_async_routers,
-)
 
 PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000bb'
 ROUTE = 'routed'

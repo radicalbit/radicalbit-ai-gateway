@@ -174,7 +174,7 @@ def cached_client(client) -> Iterator[TestClient]:
         'proj/my-route': SimpleNamespace(
             route_limits=RouteLimits(),
             gateway_cache=GatewayCache(CacheToolsInMemory()),
-            ttl=60,
+            cache=SimpleNamespace(ttl=60),
         )
     }
     # A hit reports itself to the events pipeline; that is asserted in

@@ -28,6 +28,10 @@ from tests.common.mocked_build_openai_chat_completion import (
 from tests.common.pipeline import InvokeResponse, invoke
 
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
+from radicalbit_ai_gateway.gateway_route.factory import (
+    build_gateway_routes_from_config,
+    build_project_route_registrar,
+)
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
@@ -37,10 +41,6 @@ from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.routing.llm_router import LLMRouter
 from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-    build_project_route_registrar,
-)
 from radicalbit_ai_gateway.utils.secrets import resolve_secrets_from_string
 
 _PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
@@ -543,7 +543,7 @@ async def test_cache_client_asks_for_resp2():
     registrar, _deregistrar = build_project_route_registrar(app, httpx_client=None)
 
     with patch(
-        'radicalbit_ai_gateway.utils.gateway_route_factory.redis.asyncio.Redis',
+        'radicalbit_ai_gateway.gateway_route.factory.redis.asyncio.Redis',
         autospec=True,
     ) as mock_redis:
         await registrar(uuid.uuid4(), 'cached-project', _CACHED_PROJECT_YAML)

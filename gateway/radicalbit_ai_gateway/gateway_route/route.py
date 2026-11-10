@@ -95,9 +95,6 @@ class GatewayRoute:
         self.decision_invoker: DecisionModelInvoker | None = invoker(
             DecisionModelInvoker, self.decision_models, FallbackModelType.DECISION
         )
-        self.ttl = (
-            gateway_route_config.caching.ttl if gateway_route_config.caching else None
-        )
         self.cache = RouteCache.from_config(
             gateway_route_config,
             gateway_cache,
