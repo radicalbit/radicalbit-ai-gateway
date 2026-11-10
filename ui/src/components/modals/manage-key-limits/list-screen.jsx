@@ -196,6 +196,7 @@ function CategoryBlock({ category }) {
     <DataTable
       columns={columns}
       dataSource={dataSource}
+      noPadding
       pagination={false}
       rowClassName={getRowClassName}
       rowKey={getRowKey}

@@ -97,6 +97,7 @@ function IsSuccess() {
         <DataTable
           columns={columns}
           dataSource={sortedLimits}
+          noPadding
           pagination={false}
           rowClassName={getRowClassName}
           rowKey={getRowKey}
