@@ -5,6 +5,7 @@ its SDK are real, and Anthropic is mocked over HTTP with pook. The tests check
 only what the client and the provider see.
 """
 
+import asyncio
 import datetime
 import json
 import socket
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 import pook
+import pytest
 from starlette.requests import Request
 
 from tests.common import db_mock, provider_responses as canned
@@ -27,7 +29,10 @@ from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.exceptions import KeyNotFoundError
+from radicalbit_ai_gateway.utils.exceptions import (
+    KeyNotFoundError,
+    ModelInvokerBadRequest,
+)
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_gateway_routes_from_config,
 )
@@ -70,6 +75,12 @@ UPSTREAM_URLS = (
     'https://api.mistral.ai/v1/chat/completions',
 )
 
+EMBEDDING = {
+    'model_id': 'emb',
+    'model': 'openai/text-embedding-3-small',
+    'credentials': {'api_key': 'sk-openai'},
+}
+
 HAIKU = {
     'model_id': 'haiku',
     'model': 'anthropic/claude-haiku-4-5',
@@ -103,13 +114,18 @@ def _build_routes(
         route['fallback'] = [{'target': route_models[0], 'fallbacks': fallbacks}]
     if routing:
         route['routing'] = routing['name']
-    config = GatewayConfig.model_validate(
+    return _routes_from(
         {
             'chat_models': models,
             'routing': [routing] if routing else None,
             'routes': {'assistant': route},
         }
     )
+
+
+def _routes_from(config_data: dict) -> dict:
+    """Build the ``assistant`` route of a configuration, as the server holds it."""
+    config = GatewayConfig.model_validate(config_data)
     cost_service = CostService()
     guardrail_engine = GuardrailEngine(
         presidio_engine=PresidioEngine(),
@@ -303,6 +319,39 @@ class TestMessagesRoundTrip(MessagesTestCase):
         ]
         assert _sent(upstream)['messages'] == BODY['messages']
 
+    def test_configured_prompt_goes_before_a_cached_system_prompt(self):
+        # Claude Code sends its system prompt as blocks, the last one cached.
+        system = [
+            {'type': 'text', 'text': 'You are Claude Code.'},
+            {
+                'type': 'text',
+                'text': 'Project rules.',
+                'cache_control': {'type': 'ephemeral'},
+            },
+        ]
+        app.state.routes = _build_routes([{**CLAUDE, 'prompt': 'Be kind.'}])
+        upstream = self._mock_anthropic()
+
+        response = self._messages({**BODY, 'system': system})
+
+        assert response.status_code == 200
+        assert _sent(upstream)['system'] == [
+            {'type': 'text', 'text': 'Be kind.'},
+            *system,
+        ]
+
+    def test_configured_prompt_is_the_system_prompt_when_the_client_sends_none(
+        self,
+    ):
+        app.state.routes = _build_routes([{**CLAUDE, 'prompt': 'Be kind.'}])
+        upstream = self._mock_anthropic()
+        body = {key: value for key, value in BODY.items() if key != 'system'}
+
+        response = self._messages(body)
+
+        assert response.status_code == 200
+        assert _sent(upstream)['system'] == 'Be kind.'
+
     def test_blocks_without_text_pass_through_unchanged(self):
         body = {
             **BODY,
@@ -412,6 +461,25 @@ class TestMessagesErrors(MessagesTestCase):
         body = response.json()
         assert _shape(body) == _messages_error('invalid_request_error')
         assert 'proj/nowhere' in body['error']['message']
+
+    def test_route_without_chat_models_is_a_bad_request_naming_it(self):
+        app.state.routes = _routes_from(
+            {
+                'embedding_models': [EMBEDDING],
+                'routes': {'assistant': {'embedding_models': ['emb']}},
+            }
+        )
+        upstreams = self._mock_every_upstream()
+
+        response = self._messages()
+
+        assert response.status_code == 400
+        body = response.json()
+        assert _shape(body) == _messages_error('invalid_request_error')
+        assert body['error']['message'] == (
+            'Route assistant has no chat models defined'
+        )
+        assert not any(upstream.matched for upstream in upstreams)
 
     def test_malformed_body_is_a_bad_request_in_the_messages_shape(self):
         body = {key: value for key, value in BODY.items() if key != 'max_tokens'}
@@ -982,3 +1050,33 @@ class TestMessagesForeignThinking(MessagesTestCase):
         assert response.status_code == 400
         assert response.json() == SIGNATURE_REFUSAL
         assert retry.matched
+
+
+class TestMessagesInvokerGuards(unittest.TestCase):
+    """The invoker's own checks, behind the route's support check."""
+
+    def test_a_model_the_route_does_not_hold_does_not_serve_messages(self):
+        invoker = _build_routes([CLAUDE])[ROUTE_KEY].chat_invoker
+
+        assert not invoker.supports_messages('nowhere')
+
+    def test_the_invoker_refuses_a_model_without_messages_api(self):
+        invoker = _build_routes([MISTRAL])[ROUTE_KEY].chat_invoker
+
+        with pytest.raises(ModelInvokerBadRequest) as refused:
+            asyncio.run(
+                invoker.complete_messages(
+                    request_uuid='r',
+                    api_key_uuid='k',
+                    group_uuid='g',
+                    api_key_name='key',
+                    group_name='group',
+                    route_name=ROUTE_NAME,
+                    body=BODY,
+                    headers={},
+                    model_id='mistral',
+                )
+            )
+        assert refused.value.client_message == (
+            'Chat model mistral does not serve the Messages API'
+        )

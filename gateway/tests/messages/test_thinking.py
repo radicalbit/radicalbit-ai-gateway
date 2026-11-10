@@ -1,6 +1,12 @@
 import copy
 
-from radicalbit_ai_gateway.messages.thinking import without_old_thinking
+import anthropic
+import httpx
+
+from radicalbit_ai_gateway.messages.thinking import (
+    is_invalid_thinking_signature,
+    without_old_thinking,
+)
 
 THINKING = {'type': 'thinking', 'thinking': 'Hm.', 'signature': 'deepseek'}
 REDACTED = {'type': 'redacted_thinking', 'data': 'opaque'}
@@ -69,3 +75,47 @@ def test_a_body_without_messages_is_returned_as_it_is():
     body = {'model': 'proj/assistant', 'max_tokens': 10}
 
     assert without_old_thinking(body) == (body, 0)
+
+
+def _bad_request(body: object, message: str) -> anthropic.APIStatusError:
+    response = httpx.Response(
+        400, request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
+    )
+    return anthropic.APIStatusError(message, response=response, body=body)
+
+
+def test_a_signature_refusal_is_read_from_the_error_body():
+    error = _bad_request(
+        {
+            'type': 'error',
+            'error': {
+                'type': 'invalid_request_error',
+                'message': 'Invalid `signature` in `thinking` block',
+            },
+        },
+        'Error code: 400',
+    )
+
+    assert is_invalid_thinking_signature(error)
+
+
+def test_a_signature_refusal_without_a_messages_body_is_read_from_its_message():
+    error = _bad_request(None, 'Invalid signature in thinking block')
+
+    assert is_invalid_thinking_signature(error)
+
+
+def test_other_refusals_are_not_signature_refusals():
+    assert not is_invalid_thinking_signature(_bad_request(None, 'max_tokens too big'))
+    assert not is_invalid_thinking_signature(RuntimeError('signature thinking'))
+
+
+def test_thinking_goes_when_no_user_message_ends_a_tool_loop():
+    body = _body(
+        {'role': 'assistant', 'content': [THINKING, TEXT]},
+    )
+
+    stripped, count = without_old_thinking(body)
+
+    assert count == 1
+    assert stripped['messages'] == [{'role': 'assistant', 'content': [TEXT]}]
