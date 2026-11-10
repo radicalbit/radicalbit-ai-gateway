@@ -146,3 +146,47 @@ export const getDuplicateLimit = ({ limits, rows }) => {
 };
 
 export const isLimitComplete = ({ algorithm, category, value, windowSize }) => !!category && !!algorithm && !!windowSize && typeof value === 'number' && value > 0;
+
+const SECONDS_PER_MINUTE = 60;
+const SECONDS_PER_HOUR = 3600;
+const SECONDS_PER_DAY = 86400;
+
+export const WINDOW_NOT_STARTED = 'Starts at the first request';
+
+// A Fixed window starts at the first request: with nothing consumed it has not started,
+// and its end time is only "one window from now".
+export const formatResetsIn = ({ algorithm, bar, now }) => {
+  if (!bar) {
+    return undefined;
+  }
+
+  if (algorithm === WindowTypeEnum.FIXED && !bar.windowFilledSize) {
+    return WINDOW_NOT_STARTED;
+  }
+
+  const seconds = Math.max(0, bar.windowEndTime - now);
+
+  if (seconds < SECONDS_PER_HOUR) {
+    return `resets in ${Math.max(1, Math.ceil(seconds / SECONDS_PER_MINUTE))} min`;
+  }
+
+  if (seconds < SECONDS_PER_DAY) {
+    return `resets in ${Math.floor(seconds / SECONDS_PER_HOUR)} h`;
+  }
+
+  return `resets in ${formatCount(Math.floor(seconds / SECONDS_PER_DAY), 'day')}`;
+};
+
+export const getMostConsumed = (limits, consumption) => {
+  const bars = (limits ?? [])
+    .map(({ uuid }) => consumption?.[uuid])
+    .filter((bar) => Math.round(bar?.windowFilledPercentage ?? 0) > 0);
+
+  if (!bars.length) {
+    return null;
+  }
+
+  const most = bars.reduce((a, b) => (b.windowFilledPercentage > a.windowFilledPercentage ? b : a));
+
+  return { percentage: Math.round(most.windowFilledPercentage), status: most.windowStatus };
+};

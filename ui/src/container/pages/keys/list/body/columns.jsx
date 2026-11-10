@@ -1,8 +1,10 @@
 import HtmlAnchor from '@Components/html-anchor';
 import LimitsSummary from '@Components/limits/limits-summary';
+import { useRegisterVisibleRow, useVisibleRowUuids } from '@Components/limits/visible-rows-context';
 import Lucide from '@Components/lucide';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
 import useModals, { modals } from '@Hooks/use-modals';
+import { useKeyLimitsConsumption } from '@State/keys/hooks';
 import {
   CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum, SEARCH_PARAMS,
 } from '@Src/constants';
@@ -179,11 +181,19 @@ function AssociatedGroup({ group }) {
 function Limits({ limits, uuid, warnings }) {
   const { showModal } = useModals();
 
+  const visibleUuids = useVisibleRowUuids();
+
+  const consumption = useKeyLimitsConsumption(visibleUuids);
+
+  const hasLimits = !!limits?.length;
+
   const handleOnManage = () => {
     showModal(modals.MANAGE_KEY_LIMITS, { uuid });
   };
 
-  return <LimitsSummary limits={limits} onManage={handleOnManage} warnings={warnings} />;
+  useRegisterVisibleRow(hasLimits ? uuid : undefined);
+
+  return <LimitsSummary consumption={consumption} limits={limits} onManage={handleOnManage} warnings={warnings} />;
 }
 
 function Actions({ name, uuid }) {
