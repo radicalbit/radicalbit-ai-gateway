@@ -1,4 +1,5 @@
 import datetime
+from decimal import Decimal
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
@@ -12,7 +13,13 @@ from tests.common import db_mock
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
-from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiter import InMemoryStorage
+from radicalbit_ai_gateway.limiting.limits import (
+    Demand,
+    Limits,
+    RouteLimits,
+    shared_limits,
+)
 from radicalbit_ai_gateway.limiting.windows import credential_window
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -30,6 +37,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.group_limiting import GroupLimitOutcome, GroupLimitsIn
 from radicalbit_ai_gateway.models.limiting import RateLimiting
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -1134,3 +1142,58 @@ class TestSavedLimitWarnings:
         service.group_dao.get_route_names_by_group_uuid.assert_called_once_with(
             group_uuid
         )
+
+
+class TestLimitsConsumption:
+    """The credentials list's consumption stream (AG-1082) reads the counters
+    a key's requests write, keyed by limit uuid.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reports_what_the_keys_requests_counted(self):
+        key_uuid = uuid.uuid4()
+        # The DB returns NUMERIC maxima as Decimal.
+        rate = db_mock.get_sample_key_limit(
+            uuid=uuid.uuid4(),
+            key_uuid=key_uuid,
+            category=CredentialLimitCategory.RATE.value,
+            window_size='1 minute',
+            max_value=Decimal('10'),
+        )
+        budget = db_mock.get_sample_key_limit(
+            uuid=uuid.uuid4(), key_uuid=key_uuid, max_value=Decimal('2')
+        )
+        key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
+        key_limit_dao.get_all_by_key_uuids.return_value = [rate, budget]
+        service = KeyService(
+            key_dao=MagicMock(spec_set=KeyDAO),
+            api_key_security=MagicMock(spec_set=ApiKeySecurity),
+            group_dao=MagicMock(spec_set=GroupDAO),
+            key_limit_dao=key_limit_dao,
+        )
+        limits = Limits(InMemoryStorage())
+        request = limits.resolve(
+            RequestIdentity(
+                request_uuid='req',
+                route_name='route',
+                api_key_uuid=str(key_uuid),
+                api_key_name='key',
+                group_uuid='group',
+                group_name='group',
+                project_uuid='project',
+                project_name='project',
+            ),
+            RouteLimits(),
+            [CredentialLimitOut.from_key_limit(row) for row in (rate, budget)],
+        )
+        for _ in range(3):
+            await request.check(Demand(request=True))
+
+        with patch('radicalbit_ai_gateway.services.key_service.shared_limits', limits):
+            consumption = await service.get_limits_consumption([key_uuid])
+
+        key_limit_dao.get_all_by_key_uuids.assert_called_once_with([key_uuid])
+        assert {
+            limit: (bar.window_size, bar.window_filled_size)
+            for limit, bar in consumption.items()
+        } == {str(rate.uuid): (10.0, 3.0), str(budget.uuid): (2.0, 0.0)}

@@ -599,25 +599,20 @@ class KeyService:
     async def get_limits_consumption(
         self, key_uuids: list[UUID]
     ) -> dict[str, WindowProgressBarDTO]:
-        """Consumption of every limit of *key_uuids*, keyed by limit uuid."""
-        limits_by_key: dict[UUID, list[CredentialLimitOut]] = {}
+        """Consumption of every limit of *key_uuids*, keyed by limit uuid:
+        the counters requests write, read without consuming them.
+        """
+        windows = {}
         for row in self.key_limit_dao.get_all_by_key_uuids(key_uuids):
-            limits_by_key.setdefault(row.key_uuid, []).append(
-                CredentialLimitOut.from_key_limit(row)
+            limit = CredentialLimitOut.from_key_limit(row)
+            windows[str(limit.uuid)] = credential_window(
+                str(row.key_uuid),
+                limit.category.value,
+                limit.algorithm,
+                limit.window_size,
+                limit.value,
             )
-        return await shared_limits.consumption(
-            {
-                str(limit.uuid): credential_window(
-                    str(key_uuid),
-                    limit.category.value,
-                    limit.algorithm,
-                    limit.window_size,
-                    limit.value,
-                )
-                for key_uuid, limits in limits_by_key.items()
-                for limit in limits
-            }
-        )
+        return await shared_limits.consumption(windows)
 
     def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:
         key = self.key_dao.get_by_uuid(key_uuid)

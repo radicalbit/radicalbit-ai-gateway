@@ -29,7 +29,6 @@ from radicalbit_ai_gateway.limiting.messages import (
     log_allowed,
     log_unknown_audio_duration,
 )
-from radicalbit_ai_gateway.limiting.window_progress import window_progress_bar
 from radicalbit_ai_gateway.limiting.windows import (
     Category,
     Window,
@@ -464,11 +463,24 @@ class Limits:
         return 1 - (stats.remaining / window.config.limit)
 
     async def progress(self, window: Window) -> WindowProgressBarDTO:
-        """Return how much of ``window`` is used, and when it resets."""
-        return await window_progress_bar(
-            window.limiter(self.storage),
-            window.config,
-            is_budget=window.category is Category.COST,
+        """Return how much of ``window`` is used, and when it resets.
+
+        A budget is counted in billionths of a dollar and shown in dollars.
+        """
+        config = window.config
+        stats = await window.limiter(self.storage).get_window_stats(config)
+        filled = config.limit - stats.remaining
+        if window.category is Category.COST:
+            size, filled = config.limit / BUDGET_MULTIPLIER, filled / BUDGET_MULTIPLIER
+        else:
+            size, filled = float(config.limit), float(max(0, filled))
+        return WindowProgressBarDTO(
+            window_length=config.window_seconds,
+            window_start_time=stats.reset_time - config.window_seconds,
+            window_end_time=stats.reset_time,
+            window_size=size,
+            window_filled_size=filled,
+            window_filled_percentage=filled / size * 100 if size > 0 else 0.0,
         )
 
     async def consumption(

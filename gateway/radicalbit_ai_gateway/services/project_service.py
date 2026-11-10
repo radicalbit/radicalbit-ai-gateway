@@ -428,23 +428,18 @@ class ProjectService:
     async def get_budget_limits_consumption(
         self, project_uuids: list[UUID]
     ) -> dict[str, WindowProgressBarDTO]:
-        """Consumption of every budget of *project_uuids*, keyed by limit uuid."""
-        limits_by_project: dict[UUID, list[ProjectBudgetLimitOut]] = {}
+        """Consumption of every budget of *project_uuids*, keyed by limit uuid:
+        the counters requests write, read without consuming them.
+        """
+        windows = {}
         for row in self.project_budget_limit_dao.get_all_by_project_uuids(
             project_uuids
         ):
-            limits_by_project.setdefault(row.project_uuid, []).append(
-                ProjectBudgetLimitOut.from_project_budget_limit(row)
+            limit = ProjectBudgetLimitOut.from_project_budget_limit(row)
+            windows[str(limit.uuid)] = project_window(
+                str(row.project_uuid), limit.algorithm, limit.window_size, limit.value
             )
-        return await shared_limits.consumption(
-            {
-                str(limit.uuid): project_window(
-                    str(project_uuid), limit.algorithm, limit.window_size, limit.value
-                )
-                for project_uuid, limits in limits_by_project.items()
-                for limit in limits
-            }
-        )
+        return await shared_limits.consumption(windows)
 
     def update_budget_limit_value(
         self,

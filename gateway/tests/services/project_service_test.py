@@ -1,4 +1,5 @@
 import asyncio
+from decimal import Decimal
 import io
 from unittest.mock import AsyncMock, MagicMock, call, patch
 import uuid
@@ -13,13 +14,20 @@ from tests.common.db_integration import DatabaseIntegration
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
-from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiter import InMemoryStorage
+from radicalbit_ai_gateway.limiting.limits import (
+    Limits,
+    RouteLimits,
+    Usage,
+    shared_limits,
+)
 from radicalbit_ai_gateway.limiting.windows import project_window
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitIn,
+    ProjectBudgetLimitOut,
     ProjectBudgetLimitsIn,
     ProjectBudgetLimitValueIn,
 )
@@ -30,7 +38,9 @@ from radicalbit_ai_gateway.models.project_dto import (
     ProjectIn,
 )
 from radicalbit_ai_gateway.models.project_status import ProjectStatus
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.project_service import ProjectService
+from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.exceptions import (
     ProjectAlreadyExistsError,
     ProjectBudgetLimitAlreadyExistsError,
@@ -689,3 +699,50 @@ class TestBudgetLimitRedisClear:
 
         dao.delete_by_project_uuid.assert_not_called()
         mock_clear.assert_not_awaited()
+
+
+class TestBudgetLimitsConsumption:
+    """The projects list's consumption stream (AG-1083) reads the counters a
+    project's requests write, keyed by limit uuid.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reports_what_the_projects_requests_spent(self):
+        project_uuid = uuid.uuid4()
+        # The DB returns NUMERIC maxima as Decimal.
+        budget = db_mock.get_sample_project_budget_limit(
+            uuid=uuid.uuid4(), project_uuid=project_uuid, max_value=Decimal('4')
+        )
+        budget_dao = MagicMock(spec_set=ProjectBudgetLimitDAO)
+        budget_dao.get_all_by_project_uuids.return_value = [budget]
+        service = ProjectService(
+            MagicMock(spec_set=ProjectDAO),
+            MagicMock(spec_set=ProjectConfigDAO),
+            budget_dao,
+        )
+        limits = Limits(InMemoryStorage())
+        request = limits.resolve(
+            RequestIdentity(
+                request_uuid='req',
+                route_name='route',
+                api_key_uuid='key',
+                api_key_name='key',
+                group_uuid='group',
+                group_name='group',
+                project_uuid=str(project_uuid),
+                project_name='project',
+            ),
+            RouteLimits(),
+            project_limits=[ProjectBudgetLimitOut.from_project_budget_limit(budget)],
+        )
+        await request.count(Usage(costs=(BUDGET_MULTIPLIER,)))
+
+        with patch(
+            'radicalbit_ai_gateway.services.project_service.shared_limits', limits
+        ):
+            consumption = await service.get_budget_limits_consumption([project_uuid])
+
+        budget_dao.get_all_by_project_uuids.assert_called_once_with([project_uuid])
+        bar = consumption[str(budget.uuid)]
+        assert (bar.window_size, bar.window_filled_size) == (4.0, 1.0)
+        assert bar.window_filled_percentage == 25.0

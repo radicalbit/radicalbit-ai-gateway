@@ -12,6 +12,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from tests.common import db_mock
+from tests.common.sse import first_events
 
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
@@ -31,6 +32,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitValueIn,
     RouteLimitConsistencyWarning,
 )
+from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType, RateLimiting
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
@@ -936,3 +938,50 @@ class TestKeyRouteRotation(unittest.TestCase):
     def test_end_grace_period_on_a_missing_credential(self):
         self.key = None
         assert self.client.delete(self.url).status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'keys',
+    [
+        pytest.param([uuid.uuid4(), uuid.uuid4()], id='keys'),
+        pytest.param([], id='none'),
+    ],
+)
+async def test_limits_stream_sends_the_keys_consumption(key_service, keys):
+    limit_uuid = str(uuid.uuid4())
+    key_service.get_limits_consumption = AsyncMock(
+        return_value={
+            limit_uuid: WindowProgressBarDTO(
+                window_length=60,
+                window_start_time=1_700_000_000,
+                window_end_time=1_700_000_060,
+                window_size=10.0,
+                window_filled_size=3.0,
+                window_filled_percentage=30.0,
+            )
+        }
+    )
+    app = FastAPI(title='AI Gateway', debug=True)
+    app.include_router(KeyRoute.get_key_router(key_service), prefix=PREFIX)
+
+    [event] = await first_events(
+        app,
+        f'{PREFIX}/keys/limits/stream',
+        sleep='radicalbit_ai_gateway.routes.key_route.asyncio.sleep',
+        interval=10,
+        params={'keys': [str(k) for k in keys]},
+    )
+
+    key_service.get_limits_consumption.assert_awaited_once_with(keys)
+    assert event == {
+        limit_uuid: {
+            'windowLength': 60,
+            'windowStartTime': 1_700_000_000,
+            'windowEndTime': 1_700_000_060,
+            'windowSize': 10.0,
+            'windowFilledSize': 3.0,
+            'windowFilledPercentage': 30.0,
+            'windowStatus': 'ok',
+        }
+    }
