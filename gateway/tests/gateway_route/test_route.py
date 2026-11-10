@@ -1,5 +1,5 @@
 """How a route wires its invokers. What a route does with a request is driven
-over HTTP in ``tests/pipeline/test_route_http.py``.
+over HTTP in ``tests/endpoints/cross_endpoint/test_route_http.py``.
 """
 
 from unittest.mock import MagicMock

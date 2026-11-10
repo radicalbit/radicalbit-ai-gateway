@@ -1,4 +1,4 @@
-"""Server-sent events of the proxy endpoints (``routes/proxy/http.py``)."""
+"""Server-sent events of the proxy endpoints (``endpoints/common/http.py``)."""
 
 import json
 

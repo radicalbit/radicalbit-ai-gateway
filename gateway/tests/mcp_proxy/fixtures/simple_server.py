@@ -1,6 +1,6 @@
 """Minimal MCP server used by upstream-client integration tests.
 
-Run over stdio: ``python tests/mcp/fixtures/simple_server.py``.
+Run over stdio: ``python tests/mcp_proxy/fixtures/simple_server.py``.
 """
 
 from mcp.server.mcpserver import MCPServer

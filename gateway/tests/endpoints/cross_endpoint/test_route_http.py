@@ -13,7 +13,7 @@ from tests.common import db_mock
 from tests.common.gateway_harness import LOGGER, build_routes, open_gateway
 from tests.common.limits import consumed
 from tests.common.provider_recorder import CannedResponse
-from tests.endpoints.test_pipeline_golden import _completion
+from tests.endpoints.cross_endpoint.test_pipeline_golden import _completion
 
 from radicalbit_ai_gateway import server
 from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits, Usage

@@ -17,7 +17,11 @@ from tests.common import db_mock
 from tests.common.gateway_harness import HEADERS, WAV, build_routes, open_gateway
 from tests.common.limits import consumed, project_limit
 from tests.common.provider_recorder import CannedResponse, ProviderRecorder
-from tests.endpoints.test_pipeline_golden import CONFIG, _completion, _stream
+from tests.endpoints.cross_endpoint.test_pipeline_golden import (
+    CONFIG,
+    _completion,
+    _stream,
+)
 
 from radicalbit_ai_gateway import server
 from radicalbit_ai_gateway.limiting.limits import RequestLimits

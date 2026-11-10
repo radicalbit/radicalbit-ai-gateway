@@ -498,10 +498,10 @@ def test_a_rejected_origin_still_reports_the_route_it_targeted():
 
 
 # Span status and attribute placement are asserted against a real OTel pipeline
-# in tests/mcp/test_span_attributes.py — mocks here cannot tell which span an
+# in tests/mcp_proxy/test_span_attributes.py — mocks here cannot tell which span an
 # attribute lands on, which is the property that matters. Middleware path
 # matching and uuid stamping live in
-# tests/middlewares/test_request_event_middleware.py.
+# tests/middleware/test_request_event_middleware.py.
 
 
 # ---------------------------------------------------------------------------
