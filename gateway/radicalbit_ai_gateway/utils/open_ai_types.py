@@ -337,7 +337,7 @@ class CompletionCreateParamsBaseCustom(TypedDict, total=False):
     are present.
     """
 
-    tools: Iterable[ChatCompletionToolUnionParam]
+    tools: list[ChatCompletionToolUnionParam]
     """A list of tools the model may call.
 
     You can provide either
