@@ -45,7 +45,7 @@ dependencies = [
     "fastapi>=0.135.1",
     "fastapi-pagination>=0.15.11",
     "azure-health-deidentification>=1.0.0b3",
-    "azure-identity>=1.26.0",
+    "azure-identity>=1.27.0",
     "python-multipart>=0.0.20",
     "mcp>=2.0,<3",
 ]
