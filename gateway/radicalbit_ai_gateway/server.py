@@ -126,6 +126,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     gateway_exception_handler,
     guardrail_exception_handler,
     judge_exception_handler,
+    limit_scope_headers,
     mcp_transport_exception_handler,
     model_invoker_exception_handler,
     rate_limit_exceeded_handler,
@@ -1041,7 +1042,7 @@ async def audio_transcriptions(
                         }
                     }
                 )
-                yield error_body, exc.status_code
+                yield error_body, exc.status_code, limit_scope_headers(exc)
             except Exception:
                 logger.exception('Unhandled error during transcription streaming')
                 error_body = json.dumps(

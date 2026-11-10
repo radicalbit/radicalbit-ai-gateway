@@ -761,6 +761,66 @@ class TestServer(unittest.TestCase):
         assert 'error' in body
         assert 'whisper-1 does not support streaming' in body['error']['message']
 
+    def test_audio_transcriptions_streaming_limit_429_names_the_scope(self):
+        """A limit that blocks inside the transcription stream still answers a
+        429 naming its scope, as the non-streaming handlers do.
+        """
+        key_service.get_key_by_hashed_key = MagicMock(
+            return_value=db_mock.get_sample_key_with_group(
+                group_uuid=db_mock.GROUP_UUID
+            )
+        )
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+
+        async def mock_invoke_transcription_stream_blocked(*args, **kwargs):
+            raise BudgetLimitExceededError(
+                'Credential budget limit exceeded',
+                limit_scope=LimitScope.CREDENTIAL,
+            )
+            yield  # noqa: RUF027 — makes this an async generator
+
+        self.gateways_mock[
+            'rb-gateway'
+        ].invoke_transcription_stream = mock_invoke_transcription_stream_blocked
+
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway', 'stream': 'true'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+            headers=self.headers,
+        )
+
+        assert response.status_code == 429
+        assert response.headers['X-RB-AIGATEWAY-LIMIT-SCOPE'] == 'credential'
+
+    def test_audio_transcriptions_streaming_error_without_scope_has_no_scope_header(
+        self,
+    ):
+        key_service.get_key_by_hashed_key = MagicMock(
+            return_value=db_mock.get_sample_key_with_group(
+                group_uuid=db_mock.GROUP_UUID
+            )
+        )
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+
+        async def mock_invoke_transcription_stream_error(*args, **kwargs):
+            raise ModelInvokerBadRequest('bad request')
+            yield  # noqa: RUF027 — makes this an async generator
+
+        self.gateways_mock[
+            'rb-gateway'
+        ].invoke_transcription_stream = mock_invoke_transcription_stream_error
+
+        response = self.client.post(
+            '/v1/audio/transcriptions',
+            data={'model': 'rb-gateway', 'stream': 'true'},
+            files={'file': ('test.wav', b'fake-audio-bytes', 'audio/wav')},
+            headers=self.headers,
+        )
+
+        assert response.status_code == 400
+        assert 'X-RB-AIGATEWAY-LIMIT-SCOPE' not in response.headers
+
     @patch('radicalbit_ai_gateway.ai_gateway.emit_event', autospec=True)
     @patch('radicalbit_ai_gateway.invocation.model_invoker.emit_event', autospec=True)
     @pook.activate

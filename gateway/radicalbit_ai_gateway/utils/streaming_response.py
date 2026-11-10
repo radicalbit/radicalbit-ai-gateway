@@ -2,7 +2,8 @@
 
 The generator can yield plain ``str`` content (normal chunks) or a
 ``(str, int)`` tuple where the second element is the desired HTTP status
-code.  The status code from the **first** yielded item is used for the
+code, optionally followed by a ``dict`` of extra response headers.  The
+headers, like the status, only count on the first yielded item.  The status code from the **first** yielded item is used for the
 ``http.response.start`` ASGI message, so errors that surface on the very
 first chunk (e.g. invalid API key) still produce a non-200 response.
 """
@@ -30,7 +31,9 @@ class StreamingResponseWithStatusCode(StreamingResponse):
 
         async for chunk in body_iterator:
             if isinstance(chunk, tuple):
-                first_chunk_content, status_code = chunk
+                first_chunk_content, status_code, *extra = chunk
+                for name, value in (extra[0] if extra else {}).items():
+                    self.headers[name] = value
             else:
                 first_chunk_content = chunk
 

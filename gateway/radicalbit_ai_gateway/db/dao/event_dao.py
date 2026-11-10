@@ -29,7 +29,7 @@ from radicalbit_ai_gateway.db.models.event import (
     TokensCounter,
 )
 from radicalbit_ai_gateway.db.tables.event_table import Event
-from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENT_TYPES
+from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENTS
 from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
@@ -554,7 +554,7 @@ class EventDAO:
             'FALLBACK',
             'GUARDRAIL',
             'CACHE_HIT',
-            *LIMIT_BLOCK_EVENT_TYPES,
+            *LIMIT_BLOCK_EVENTS,
         ]
         row_number_col = (
             F.row_number()

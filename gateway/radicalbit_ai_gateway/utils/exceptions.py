@@ -8,6 +8,7 @@ from pydantic.alias_generators import to_snake
 from starlette.requests import Request
 
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 app_config = get_app_config()
@@ -384,7 +385,7 @@ class TokenLimitExceeded(AppError):
         code: str,
         *,
         log_message: str | None = None,
-        limit_scope: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             client_message=message,
@@ -403,7 +404,7 @@ class RBRateLimitExceeded(AppError):
         *,
         log_message: str | None = None,
         param: Any = None,
-        limit_scope: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             client_message=message,
@@ -422,7 +423,7 @@ class RequestRateLimitExceeded(RBRateLimitExceeded):
         *,
         log_message: str | None = None,
         route_name: str | None = None,
-        limit_scope: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             message,
@@ -440,7 +441,7 @@ class AudioDurationLimitExceeded(RBRateLimitExceeded):
         *,
         log_message: str | None = None,
         route_name: str | None = None,
-        limit_scope: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             message,
@@ -457,7 +458,7 @@ class InputTokenLimitExceeded(TokenLimitExceeded):
         message: str,
         *,
         log_message: str | None = None,
-        limit_scope: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             message,
@@ -473,7 +474,7 @@ class OutputTokenLimitExceeded(TokenLimitExceeded):
         message: str,
         *,
         log_message: str | None = None,
-        limit_scope: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             message,
@@ -822,7 +823,7 @@ class BudgetLimitExceeded(AppError):
         code: str,
         *,
         log_message: str | None = None,
-        limit_scope: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             client_message=message,
@@ -839,7 +840,7 @@ class BudgetLimitExceededError(BudgetLimitExceeded):
         message: str,
         *,
         log_message: str | None = None,
-        limit_scope: str | None = None,
+        limit_scope: LimitScope | None = None,
     ):
         super().__init__(
             message,
@@ -906,14 +907,21 @@ def guardrail_exception_handler(request: Request, err: GuardrailError):
     return response
 
 
+def limit_scope_headers(err: Exception) -> dict[str, str]:
+    """Return the header naming the limit scope that blocked, if `err` has one."""
+    limit_scope = getattr(err, 'limit_scope', None)
+    if limit_scope is None:
+        return {}
+    return {LIMIT_SCOPE_HEADER: str(limit_scope)}
+
+
 def _limit_response(
     err: TokenLimitExceeded | RBRateLimitExceeded | BudgetLimitExceeded,
     error_type: str,
 ) -> JSONResponse:
     """Build a limit's 429, naming the scope that blocked it when known."""
     response = _log_and_json_response(err, error_type)
-    if err.limit_scope is not None:
-        response.headers[LIMIT_SCOPE_HEADER] = str(err.limit_scope)
+    response.headers.update(limit_scope_headers(err))
     return response
 
 

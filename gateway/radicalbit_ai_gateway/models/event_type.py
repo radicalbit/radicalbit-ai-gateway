@@ -26,17 +26,18 @@ class EventType(str, Enum):
     REQUEST = 'REQUEST'
 
 
-# The events a limit records when it blocks a request, whatever its scope.
+# The events a limit records when it blocks a request, each with the scope and
+# category it names, for rows recorded before the event carried them.
 # LIMIT_THRESHOLD is not one: it warns, it does not block.
-LIMIT_BLOCK_EVENT_TYPES: tuple[EventType, ...] = (
-    EventType.RATE_LIMIT,
-    EventType.TOKEN_INPUT_LIMIT,
-    EventType.TOKEN_OUTPUT_LIMIT,
-    EventType.AUDIO_DURATION_LIMIT,
-    EventType.BUDGET_LIMIT,
-    EventType.CREDENTIAL_RATE_LIMIT,
-    EventType.CREDENTIAL_TOKEN_INPUT_LIMIT,
-    EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT,
-    EventType.CREDENTIAL_BUDGET_LIMIT,
-    EventType.PROJECT_BUDGET_LIMIT,
-)
+LIMIT_BLOCK_EVENTS: dict[str, tuple[str, str]] = {
+    EventType.RATE_LIMIT.value: ('route', 'request_rate'),
+    EventType.TOKEN_INPUT_LIMIT.value: ('route', 'token_input'),
+    EventType.TOKEN_OUTPUT_LIMIT.value: ('route', 'token_output'),
+    EventType.AUDIO_DURATION_LIMIT.value: ('route', 'audio_duration'),
+    EventType.BUDGET_LIMIT.value: ('route', 'budget'),
+    EventType.CREDENTIAL_RATE_LIMIT.value: ('credential', 'request_rate'),
+    EventType.CREDENTIAL_TOKEN_INPUT_LIMIT.value: ('credential', 'token_input'),
+    EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT.value: ('credential', 'token_output'),
+    EventType.CREDENTIAL_BUDGET_LIMIT.value: ('credential', 'budget'),
+    EventType.PROJECT_BUDGET_LIMIT.value: ('project', 'budget'),
+}
