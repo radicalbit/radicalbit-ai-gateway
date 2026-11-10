@@ -79,6 +79,41 @@ def set_early_project_trace_attributes(
         )
 
 
+class AdmissionRules:
+    """What admission does where endpoints differ: what it records before the
+    route is known, and how it refuses an unknown route and a caller who is
+    not a member of the route. The defaults are the /v1 endpoints'.
+    """
+
+    def opened(
+        self,
+        request: Request,
+        route_key: str | None,
+        route: GatewayRoute | None,
+        request_uuid: str,
+    ) -> None:
+        """Record the request before the route is validated."""
+        set_early_project_trace_attributes(request, route_key, route)
+
+    async def unknown_route(
+        self, request: Request, route_key: str | None, authenticate: Authenticate
+    ) -> Exception:
+        """Return the error that refuses a request to a route not served."""
+        return GatewayBadRequest(
+            f'The route name [{route_key}] was not found in the config'
+        )
+
+    def not_member(self, route: GatewayRoute) -> Exception:
+        """Return the error that refuses a caller who is not a member of
+        ``route``. On /v1, the same answer as a wrong key, so a caller cannot
+        tell the route exists.
+        """
+        return InvalidApiKey('Incorrect API key provided.')
+
+
+V1_RULES = AdmissionRules()
+
+
 class Admission:
     """Admits a request to a route: finds the route, authenticates the
     caller, checks the caller may use the route, and resolves and checks the
@@ -103,18 +138,19 @@ class Admission:
         streaming: bool = False,
         announce: Callable[[str], None] | None = None,
         authenticate: Authenticate | None = None,
+        rules: AdmissionRules = V1_RULES,
     ) -> RequestScope:
         """Return the scope of a request the gateway serves, or raise the
         error that refuses it. ``announce`` logs the request once its caller
         is known. ``authenticate`` reads the caller's credential: by default,
-        its bearer token.
+        its bearer token. ``rules`` are where endpoints differ (see
+        ``AdmissionRules``).
         """
+        authenticate = authenticate or set_api_key_uuid
         route = routes.get(route_key)
-        set_early_project_trace_attributes(request, route_key, route)
+        rules.opened(request, route_key, route, request_uuid)
         if route is None:
-            raise GatewayBadRequest(
-                f'The route name [{route_key}] was not found in the config'
-            )
+            raise await rules.unknown_route(request, route_key, authenticate)
         route_name = route.gateway_route_config.route_name
         # The route labels the request's metrics and, for per-route log
         # filtering, its log lines (cleared by @endpoint).
@@ -133,7 +169,7 @@ class Admission:
         ctx.is_streaming = streaming
 
         set_operation_category(OperationCategory.AUTH)
-        key_details = await (authenticate or set_api_key_uuid)(
+        key_details = await authenticate(
             request, route.project_uuid, route.project_name
         )
         set_trace_attributes(
@@ -148,12 +184,10 @@ class Admission:
         if announce:
             announce(route_name)
 
-        # Not a member: the same answer as a wrong key, so a caller cannot
-        # tell the route exists.
         if not self._group_service.check_key_uuid_for_route(
             route_key, UUID(key_details.api_key_uuid)
         ):
-            raise InvalidApiKey('Incorrect API key provided.')
+            raise rules.not_member(route)
 
         ctx.project_uuid = route.project_uuid
         ctx.project_name = route.project_name
