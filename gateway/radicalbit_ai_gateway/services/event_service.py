@@ -1139,7 +1139,7 @@ class EventService:
             total += (
                 cost_dto.total
                 if cost_dto.total is not None
-                else cost_dto.total_cost or 0.0
+                else cost_data.total_cost or 0.0
             )
 
             route_dtos.append(RouteCostDTO(route_name=route_name, summary=cost_dto))

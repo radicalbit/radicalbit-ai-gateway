@@ -366,13 +366,10 @@ STREAM_CASES = [
         'event',
         'get_summary_costs',
         [
-            CostDataDTO(input_cost=10.0, output_cost=20.0, total_cost=30.0),
-            CostDataDTO(input_cost=15.0, output_cost=25.0, total_cost=40.0),
+            CostDataDTO(total=30.0),
+            CostDataDTO(total=40.0),
         ],
-        [
-            {'inputCost': 10.0, 'outputCost': 20.0, 'totalCost': 30.0},
-            {'inputCost': 15.0, 'totalCost': 40.0},
-        ],
+        [{'total': 30.0}, {'total': 40.0}],
         {'route_names': ROUTES},
         id='costs-summary',
     ),

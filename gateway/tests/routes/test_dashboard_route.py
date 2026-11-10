@@ -360,18 +360,14 @@ class TestDashboardRoute(unittest.TestCase):
         )
         assert response.status_code == 200
         data = response.json()
-        assert 'inputCost' in data
-        assert 'outputCost' in data
-        assert 'totalCost' in data
-        assert data['inputCost'] == 5.0
-        assert data['outputCost'] == 10.0
-        assert data['totalCost'] == 15.0
-        assert 'total' in data
-        assert 'totals' in data
-        assert 'chatModels' in data
-        assert 'embeddingModels' in data
-        assert data['totals']['input'] == 3.5
-        assert data['totals']['cachedInput'] == 1.2
+        # The breakdown only: the pre-breakdown totals are no longer served.
+        assert set(data) == {'total', 'totals', 'chatModels', 'embeddingModels'}
+        assert data['totals'] == {
+            'input': 3.5,
+            'cachedInput': 1.2,
+            'output': 12.0,
+            'saved': 2.5,
+        }
         assert data['chatModels']['input']['total'] == 2.5
         assert data['chatModels']['input']['direct'] == 2.0
         assert data['chatModels']['input']['judges'] == 0.5
@@ -385,7 +381,7 @@ class TestDashboardRoute(unittest.TestCase):
         assert data['embeddingModels']['input']['embedding'] == 0.7
         assert data['embeddingModels']['input']['semanticCache'] == 0.3
 
-    def test_get_summary_costs_backward_compatibility(self):
+    def test_get_summary_costs_without_a_breakdown_is_empty(self):
         route_name = 'rb-gateway'
         expected_response = CostData(
             input_cost=5.0,
@@ -399,18 +395,7 @@ class TestDashboardRoute(unittest.TestCase):
             f'{self.project_path}/routes/{route_name}/costs/summary?_with_saved_tokens=false'
         )
         assert response.status_code == 200
-        data = response.json()
-        assert 'inputCost' in data
-        assert 'outputCost' in data
-        assert 'totalCost' in data
-        assert data['inputCost'] == 5.0
-        assert data['outputCost'] == 10.0
-        assert data['totalCost'] == 15.0
-        assert 'input' not in data
-        assert 'output' not in data
-        assert 'savings' not in data
-        assert 'chatModels' not in data
-        assert 'embeddingModels' not in data
+        assert response.json() == {}
 
     def _build_route_config_out(self, route_config) -> GatewayRouteConfigOut:
         route_dict = route_config.model_dump()
@@ -857,17 +842,7 @@ def test_costs_chart_passes_the_parsed_window_and_grouping(
             _dt(2025, 1, 7),
             _dt(2025, 1, 9),
             True,
-            CostData(
-                input_cost=10.5,
-                output_cost=20.3,
-                total_cost=30.8,
-                cache_saved_tokens_input=100,
-                cache_saved_tokens_output=200,
-                saved_amount_input=0.05,
-                saved_amount_output=0.10,
-                total_cached_tokens=300,
-                total_saved_amount=0.15,
-            ),
+            CostDataDTO(total=30.8),
             id='window-with-saved-tokens',
         ),
         pytest.param(
@@ -875,7 +850,7 @@ def test_costs_chart_passes_the_parsed_window_and_grouping(
             None,
             None,
             False,
-            CostData(input_cost=5.0, output_cost=10.0, total_cost=15.0),
+            CostDataDTO(total=15.0),
             id='no-window-without-saved-tokens',
         ),
     ],
@@ -890,7 +865,7 @@ def test_summary_costs_passes_the_window_and_the_saved_tokens_flag(
     )
 
     assert response.status_code == 200
-    assert response.json() == jsonable_encoder(result, exclude_none=True)
+    assert response.json() == {'total': result.total}
     kwargs = dash.event_service.get_summary_costs.call_args.kwargs
     assert kwargs['route_names'] == [ROUTE]
     assert kwargs['_from'] == from_dt
