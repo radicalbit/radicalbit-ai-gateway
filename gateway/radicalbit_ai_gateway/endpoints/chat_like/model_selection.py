@@ -1,78 +1,27 @@
-"""What chat and Responses requests share: their limit check, their routing
-and the route's system prompt.
+"""Selecting the model of a chat-like request, and charging the request for
+the routing calls that select it.
 """
 
 import logging
 
 from traceloop.sdk.decorators import task
 
-from radicalbit_ai_gateway.endpoints.common.openai_messages import (
-    select_message_by_role,
-)
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
 from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
-from radicalbit_ai_gateway.limiting.limits import (
-    Demand,
-    InputEstimate,
-    RequestLimits,
-    Usage,
-)
-from radicalbit_ai_gateway.llm.messages import BaseMessage, SystemMessage
+from radicalbit_ai_gateway.limiting.limits import RequestLimits, Usage
+from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.event_payload import RoutingEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
-from radicalbit_ai_gateway.models.model import ENABLE_PROMPT_CACHE_PARAM, Model
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.build_user_content import build_user_content
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     set_operation_category,
 )
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
-
-
-def chat_demand(messages: list[BaseMessage], model: Model) -> Demand:
-    """Return what a chat request demands; ``model`` picks the tokenizer."""
-    return Demand(
-        input=InputEstimate(build_user_content(messages), model.model),
-        output_room=True,
-        cost_room=True,
-    )
-
-
-async def _check(limits: RequestLimits, demand: Demand) -> None:
-    await limits.check(demand)
-
-
-def checked_in_span(name: str):
-    """Return a limit check that runs in a trace span named ``name``."""
-    return task(name=name)(_check)
-
-
-_check_in_chat_span = checked_in_span('check_limiters')
-
-
-async def check_limits(limits: RequestLimits, demand: Demand, check=None) -> None:
-    """Check ``demand`` on the request's limits, if any applies.
-
-    ``check`` runs the check in a trace span of its own.
-    """
-    if limits.applies(demand):
-        await (check or _check)(limits, demand)
-
-
-async def check_chat_limits(scope: RequestScope, messages: list[BaseMessage]) -> None:
-    """Check a conversation on the request's limits, before anything spends.
-    Routing has not run yet: the route's first chat model picks the
-    tokenizer.
-    """
-    await check_limits(
-        scope.limits,
-        chat_demand(messages, scope.route.chat_models[0]),
-        _check_in_chat_span,
-    )
 
 
 class RoutingSpend:
@@ -166,44 +115,3 @@ async def route_chat(scope: RequestScope, messages: list[BaseMessage]) -> Model:
             )
         )
     return model_selected
-
-
-def apply_config_prompt(messages: list[BaseMessage], model_selected: Model) -> int:
-    """Prepend the route's configured system prompt to *messages* in place.
-
-    Runs *after* preprocessing so the configured prompt is never exposed to
-    preprocessing plugins. Return how many messages it added (0 or 1).
-    """
-    config_prompt, role = model_selected.effective_prompt, model_selected.role
-
-    logger.debug(
-        'Config prompt for model %s: %s and role: %s',
-        model_selected.model_id,
-        config_prompt,
-        role,
-    )
-
-    if config_prompt:
-        logger.debug('Adding config prompt to messages')
-        enable_prompt_cache = bool(
-            (model_selected.params or {}).get(ENABLE_PROMPT_CACHE_PARAM, False)
-        )
-        if model_selected.model.startswith('anthropic/') and enable_prompt_cache:
-            # Wrap the system prompt as a content block with cache_control so Anthropic
-            # caches it across requests (requires enable_prompt_cache: true in model params)
-            system_msg = SystemMessage(
-                content=[
-                    {
-                        'type': 'text',
-                        'text': config_prompt,
-                        'cache_control': {'type': 'ephemeral'},
-                    }
-                ]
-            )
-        else:
-            system_msg = select_message_by_role(
-                content=config_prompt, role=role, tool_calls=[], tool_call_id=None
-            )
-        messages[:] = [system_msg, *messages]
-        return 1
-    return 0

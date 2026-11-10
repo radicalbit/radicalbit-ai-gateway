@@ -5,10 +5,7 @@ import logging
 from openai.types.create_embedding_response import CreateEmbeddingResponse
 from traceloop.sdk.decorators import task
 
-from radicalbit_ai_gateway.endpoints.common.conversation import (
-    check_limits,
-    checked_in_span,
-)
+from radicalbit_ai_gateway.endpoints.common.limits import check_limits, checked_in_span
 from radicalbit_ai_gateway.endpoints.embeddings.cache import EmbeddingEntry
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Texts

@@ -11,7 +11,7 @@ from openai.types.audio.transcription_stream_event import TranscriptionStreamEve
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from traceloop.sdk.decorators import task
 
-from radicalbit_ai_gateway.endpoints.common.conversation import check_limits
+from radicalbit_ai_gateway.endpoints.common.limits import check_limits
 from radicalbit_ai_gateway.endpoints.transcriptions.audio_duration import (
     estimate_audio_duration_seconds,
 )

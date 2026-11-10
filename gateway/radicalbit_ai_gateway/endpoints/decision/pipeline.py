@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from radicalbit_ai_gateway.endpoints.common.conversation import check_limits
+from radicalbit_ai_gateway.endpoints.common.limits import check_limits
 from radicalbit_ai_gateway.endpoints.decision.cache import DecisionEntry
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import RequestGuardrails, Texts

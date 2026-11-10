@@ -19,14 +19,12 @@ from radicalbit_ai_gateway.endpoints.chat_completions.params import (
     CompletionCreateParams,
 )
 from radicalbit_ai_gateway.endpoints.chat_completions.streaming import StreamingUtils
-from radicalbit_ai_gateway.endpoints.common.conversation import (
-    apply_config_prompt,
-    check_chat_limits,
-    route_chat,
-)
-from radicalbit_ai_gateway.endpoints.common.openai_messages import (
+from radicalbit_ai_gateway.endpoints.chat_like.limits import check_chat_limits
+from radicalbit_ai_gateway.endpoints.chat_like.model_selection import route_chat
+from radicalbit_ai_gateway.endpoints.chat_like.openai_messages import (
     convert_openai_messages,
 )
+from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config_prompt
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation
 from radicalbit_ai_gateway.limiting.limits import Usage

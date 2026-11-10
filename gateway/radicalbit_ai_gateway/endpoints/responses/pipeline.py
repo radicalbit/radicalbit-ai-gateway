@@ -11,11 +11,9 @@ from dataclasses import dataclass
 
 from traceloop.sdk.decorators import workflow
 
-from radicalbit_ai_gateway.endpoints.common.conversation import (
-    apply_config_prompt,
-    check_chat_limits,
-    route_chat,
-)
+from radicalbit_ai_gateway.endpoints.chat_like.limits import check_chat_limits
+from radicalbit_ai_gateway.endpoints.chat_like.model_selection import route_chat
+from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config_prompt
 from radicalbit_ai_gateway.endpoints.responses.cache import ResponsesEntry
 from radicalbit_ai_gateway.endpoints.responses.events import response_events
 from radicalbit_ai_gateway.endpoints.responses.guardrails import ResponsesReply

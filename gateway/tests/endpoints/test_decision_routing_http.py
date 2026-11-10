@@ -48,7 +48,7 @@ CHAT_ROUTE_KEY = 'proj/chat'
 OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
 MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
-GATEWAY_EMIT = 'radicalbit_ai_gateway.endpoints.common.conversation.emit_event'
+GATEWAY_EMIT = 'radicalbit_ai_gateway.endpoints.chat_like.model_selection.emit_event'
 
 SYSTEM_PROMPT = 'You are the configured system prompt.'
 GPT_4O = {

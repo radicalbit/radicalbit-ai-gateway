@@ -243,7 +243,7 @@ def post():
 
     with (
         patch('radicalbit_ai_gateway.events.buffer.celery_app.send_task'),
-        patch('radicalbit_ai_gateway.endpoints.common.conversation.emit_event'),
+        patch('radicalbit_ai_gateway.endpoints.chat_like.model_selection.emit_event'),
     ):
         yield _post
     app.state.routes = previous_routes

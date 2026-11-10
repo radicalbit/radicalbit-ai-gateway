@@ -46,7 +46,10 @@ class FakeSemanticGatewayCache(GatewayCache):
 
 
 @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.ChatModelInvoker.complete')
-@patch('radicalbit_ai_gateway.endpoints.common.conversation.emit_event', autospec=True)
+@patch(
+    'radicalbit_ai_gateway.endpoints.chat_like.model_selection.emit_event',
+    autospec=True,
+)
 @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pytest.mark.asyncio
 async def test_exact_cache_hit_with_different_history(

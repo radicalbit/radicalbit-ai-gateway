@@ -10,11 +10,9 @@ the Messages API yet (AG-1132).
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from radicalbit_ai_gateway.endpoints.common.conversation import (
-    apply_config_prompt,
-    check_chat_limits,
-    route_chat,
-)
+from radicalbit_ai_gateway.endpoints.chat_like.limits import check_chat_limits
+from radicalbit_ai_gateway.endpoints.chat_like.model_selection import route_chat
+from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config_prompt
 from radicalbit_ai_gateway.endpoints.messages.events import relay_frame
 from radicalbit_ai_gateway.endpoints.messages.request import MessagesRequest
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope

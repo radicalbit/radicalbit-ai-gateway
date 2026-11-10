@@ -31,7 +31,7 @@ EVENT_EMITS = (
 )
 QUIET_EMITS = (
     'radicalbit_ai_gateway.invocation.recorder.emit_event',
-    'radicalbit_ai_gateway.endpoints.common.conversation.emit_event',
+    'radicalbit_ai_gateway.endpoints.chat_like.model_selection.emit_event',
 )
 
 EMAIL = 'ada.lovelace@analytical-engine.example.com'
