@@ -24,15 +24,15 @@ from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.route_cache import (
     CACHE_HIT_HEADER,
     Cached,
-    ChatEntry,
-    DecisionEntry,
-    EmbeddingEntry,
-    ResponsesEntry,
     RouteCache,
-    TranscriptionEntry,
     cache_key,
 )
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
+from radicalbit_ai_gateway.endpoints.chat_completions.cache import ChatEntry
+from radicalbit_ai_gateway.endpoints.decision.cache import DecisionEntry
+from radicalbit_ai_gateway.endpoints.embeddings.cache import EmbeddingEntry
+from radicalbit_ai_gateway.endpoints.responses.cache import ResponsesEntry
+from radicalbit_ai_gateway.endpoints.transcriptions.cache import TranscriptionEntry
 from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity

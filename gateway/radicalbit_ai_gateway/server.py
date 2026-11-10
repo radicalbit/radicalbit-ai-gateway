@@ -38,16 +38,23 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
+from radicalbit_ai_gateway.endpoints.chat_completions.route import ChatCompletionsRoute
+from radicalbit_ai_gateway.endpoints.common.admission import Admission
+from radicalbit_ai_gateway.endpoints.decision.route import DecisionRoute
+from radicalbit_ai_gateway.endpoints.embeddings.route import EmbeddingsRoute
+from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
+from radicalbit_ai_gateway.endpoints.messages.errors import with_messages_error_shapes
+from radicalbit_ai_gateway.endpoints.messages.route import MessagesRoute
+from radicalbit_ai_gateway.endpoints.responses.route import ResponsesRoute
+from radicalbit_ai_gateway.endpoints.transcriptions.route import TranscriptionsRoute
 from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
 from radicalbit_ai_gateway.limiter.storage.shared import close_limit_storage
 from radicalbit_ai_gateway.llm.tracing import TRACELOOP_INSTRUMENTS
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
-from radicalbit_ai_gateway.messages.errors import with_messages_error_shapes
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
-from radicalbit_ai_gateway.pipeline.admission import Admission
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
@@ -56,13 +63,6 @@ from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
-from radicalbit_ai_gateway.routes.proxy.chat_completions import ChatCompletionsRoute
-from radicalbit_ai_gateway.routes.proxy.decision import DecisionRoute
-from radicalbit_ai_gateway.routes.proxy.embeddings import EmbeddingsRoute
-from radicalbit_ai_gateway.routes.proxy.mcp import McpRoute
-from radicalbit_ai_gateway.routes.proxy.messages import MessagesRoute
-from radicalbit_ai_gateway.routes.proxy.responses import ResponsesRoute
-from radicalbit_ai_gateway.routes.proxy.transcriptions import TranscriptionsRoute
 from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.routes.tag_route import TagRoute
 from radicalbit_ai_gateway.routes.tracing_route import TracingRoute

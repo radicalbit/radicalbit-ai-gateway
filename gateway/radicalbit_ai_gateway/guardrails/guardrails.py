@@ -10,8 +10,9 @@ The methods carry the order ADR 0010 sets: ``redact_input`` runs before
 routing, ``check_input`` after the route's system prompt is injected, and
 ``screen_input`` runs both where nothing comes between. ``screen_output``
 redacts, then checks, the reply. What they read comes in a payload adapter
-(``Conversation``, ``Texts``, ``Reply``, ``ResponsesReply``), so one
-implementation serves every endpoint. A soft block comes back as a
+(``Conversation`` and ``Texts`` here; a chat or a Responses reply in its
+endpoint's ``guardrails`` module), so one implementation serves every
+endpoint. A soft block comes back as a
 ``SoftBlock``: the module never builds a response, each endpoint renders the
 block in its own shape.
 """
@@ -33,7 +34,7 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import (
     JudgeUsageCounter,
 )
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.llm.messages import AIMessage, BaseMessage, HumanMessage
+from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
     Guardrail,
@@ -43,7 +44,6 @@ from radicalbit_ai_gateway.models.guardrails import (
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.models.soft_block_info import SoftBlock
-from radicalbit_ai_gateway.responses.output import ResponsesOutput
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -159,56 +159,6 @@ class Texts:
                 for m in messages
             ]
         )
-
-
-@dataclass(frozen=True)
-class Reply:
-    """A chat model's reply text. An empty reply is checked, not redacted."""
-
-    text: str | None
-    usage: dict | None = None
-    skip = 0
-    windowed = True
-
-    def messages(self) -> list[BaseMessage]:
-        # A reply with no text (a tool call) is read as empty text.
-        return [AIMessage(content=self.text or '', usage_metadata=self.usage)]
-
-    def with_messages(self, messages: list[BaseMessage]) -> Reply:
-        if self.text is None:
-            return self
-        return replace(self, text=messages[0].content)
-
-    @property
-    def redactable(self) -> bool:
-        return bool(self.text)
-
-
-@dataclass(frozen=True)
-class ResponsesReply:
-    """The output message texts of a Responses API response."""
-
-    output: ResponsesOutput
-    items: list[BaseMessage]
-    skip = 0
-    windowed = True
-    redactable = True
-
-    @classmethod
-    def of(cls, response: dict) -> ResponsesReply:
-        output = ResponsesOutput(response)
-        return cls(output, output.messages())
-
-    def messages(self) -> list[BaseMessage]:
-        return self.items
-
-    def with_messages(self, messages: list[BaseMessage]) -> ResponsesReply:
-        return replace(self, items=messages)
-
-    def response(self) -> dict:
-        """Return the response with the texts of this reply written in."""
-        self.output.write_back(self.items)
-        return self.output.response
 
 
 @dataclass(frozen=True)

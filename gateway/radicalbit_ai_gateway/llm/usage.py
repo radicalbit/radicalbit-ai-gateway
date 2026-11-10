@@ -110,3 +110,11 @@ class StreamUsage:
             self.cache_creation_5m,
             self.cache_creation_1h,
         )
+
+
+def responses_token_counts(usage: dict | None) -> tuple[int, int, int]:
+    """Return ``(input, cached input, output)`` tokens of a Responses usage."""
+    if not usage:
+        return 0, 0, 0
+    cached = (usage.get('input_tokens_details') or {}).get('cached_tokens') or 0
+    return usage.get('input_tokens') or 0, cached, usage.get('output_tokens') or 0

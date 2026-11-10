@@ -1,11 +1,9 @@
 """The cache keys the gateway stores entries under, by endpoint."""
 
-from radicalbit_ai_gateway.caching.route_cache import (
-    ChatEntry,
-    EmbeddingEntry,
-    TranscriptionEntry,
-    cache_key,
-)
+from radicalbit_ai_gateway.caching.route_cache import cache_key
+from radicalbit_ai_gateway.endpoints.chat_completions.cache import ChatEntry
+from radicalbit_ai_gateway.endpoints.embeddings.cache import EmbeddingEntry
+from radicalbit_ai_gateway.endpoints.transcriptions.cache import TranscriptionEntry
 
 
 def chat_key(

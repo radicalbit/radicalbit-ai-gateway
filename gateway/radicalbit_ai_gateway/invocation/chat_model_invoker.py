@@ -25,17 +25,20 @@ from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.factory import build_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
-from radicalbit_ai_gateway.llm.usage import StreamUsage, cache_tokens
-from radicalbit_ai_gateway.messages.events import stream_usage
-from radicalbit_ai_gateway.messages.thinking import (
+from radicalbit_ai_gateway.llm.messages_stream import stream_usage
+from radicalbit_ai_gateway.llm.messages_thinking import (
     is_invalid_thinking_signature,
     without_old_thinking,
+)
+from radicalbit_ai_gateway.llm.responses_stream import NativeResponsesEvent
+from radicalbit_ai_gateway.llm.usage import (
+    StreamUsage,
+    cache_tokens,
+    responses_token_counts,
 )
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
-from radicalbit_ai_gateway.responses.events import NativeResponsesEvent
-from radicalbit_ai_gateway.responses.output import usage_token_counts
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
@@ -322,7 +325,7 @@ class ChatModelInvoker(ModelInvoker):
     def _record_responses(
         self, call: Call, candidate: Candidate, usage: dict | None, latency_ms: float
     ) -> None:
-        input_tokens, cached, output = usage_token_counts(usage)
+        input_tokens, cached, output = responses_token_counts(usage)
         self.recorder.invocation(
             call,
             candidate.model,

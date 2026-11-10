@@ -33,6 +33,7 @@ from traceloop.sdk.tracing.tracing import TracerWrapper
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
+from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
@@ -43,7 +44,6 @@ from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
-from radicalbit_ai_gateway.routes.proxy.mcp import McpRoute
 from radicalbit_ai_gateway.services.mcp_service import McpService, encode_resource_uri
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,

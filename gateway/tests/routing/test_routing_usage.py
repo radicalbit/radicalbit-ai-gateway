@@ -5,11 +5,11 @@ from tests.common.mocked_gateway_config_openai import get_gateway_routing_llm
 from tests.common.resolve_route_models import resolve_route_models
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.endpoints.common.conversation import RoutingSpend
 from radicalbit_ai_gateway.limiting.limits import RequestLimits, Usage
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
-from radicalbit_ai_gateway.pipeline.conversation import RoutingSpend
 from radicalbit_ai_gateway.services.cost_service import CostService
 
 IDENTITY = RequestIdentity(

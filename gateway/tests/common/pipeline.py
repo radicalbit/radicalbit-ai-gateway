@@ -10,14 +10,14 @@ from dataclasses import dataclass, field
 from tests.common.limits import request_limits
 from tests.common.request_identity import with_identity
 
-from radicalbit_ai_gateway.pipeline import (
-    chat_completions as chat_pipeline,
-    embeddings as embeddings_pipeline,
-    transcriptions as transcription_pipeline,
+from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
+from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import ChatRequest
+from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
+from radicalbit_ai_gateway.endpoints.embeddings import pipeline as embeddings_pipeline
+from radicalbit_ai_gateway.endpoints.transcriptions import (
+    pipeline as transcription_pipeline,
 )
-from radicalbit_ai_gateway.pipeline.chat_completions import ChatRequest
-from radicalbit_ai_gateway.pipeline.scope import RequestScope
-from radicalbit_ai_gateway.pipeline.transcriptions import Audio
+from radicalbit_ai_gateway.endpoints.transcriptions.pipeline import Audio
 
 _CHAT_FIELDS = {'messages', 'tools', 'tool_choice'}
 

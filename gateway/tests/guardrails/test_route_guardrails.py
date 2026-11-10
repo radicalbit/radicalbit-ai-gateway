@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from radicalbit_ai_gateway.endpoints.chat_completions.guardrails import Reply
 from radicalbit_ai_gateway.guardrails.guardrail_check import CheckResult
 from radicalbit_ai_gateway.guardrails.guardrails import (
     Conversation,
     GuardrailFlags,
     Guardrails,
-    Reply,
     RouteGuardrails,
     Texts,
 )
