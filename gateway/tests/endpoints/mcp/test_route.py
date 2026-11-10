@@ -448,7 +448,7 @@ async def test_end_to_end_against_real_upstream():
 # ---------------------------------------------------------------------------
 
 MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
-DEPENDENCIES = 'radicalbit_ai_gateway.routes.dependencies'
+DEPENDENCIES = 'radicalbit_ai_gateway.endpoints.common.dependencies'
 
 
 def test_the_service_reports_the_request_uuid_the_middleware_stamped():

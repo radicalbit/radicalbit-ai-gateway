@@ -2,14 +2,14 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
 from radicalbit_ai_gateway.endpoints.common.admission import caller_identity
+from radicalbit_ai_gateway.endpoints.common.dependencies import (
+    get_gateway_routes,
+    get_request_uuid,
+)
 from radicalbit_ai_gateway.endpoints.common.http import traced_endpoint
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.limiting.limits import ADMISSION, shared_limits
 from radicalbit_ai_gateway.mcp_proxy.list_cache import McpListCache
-from radicalbit_ai_gateway.routes.dependencies import (
-    get_gateway_routes,
-    get_request_uuid,
-)
 from radicalbit_ai_gateway.services.mcp_service import McpService
 
 

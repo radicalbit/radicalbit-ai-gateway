@@ -13,12 +13,12 @@ from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import (
     ChatRequest,
 )
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
-from radicalbit_ai_gateway.endpoints.common.http import endpoint, sse_response
-from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
-from radicalbit_ai_gateway.routes.dependencies import (
+from radicalbit_ai_gateway.endpoints.common.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
+from radicalbit_ai_gateway.endpoints.common.http import endpoint, sse_response
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,

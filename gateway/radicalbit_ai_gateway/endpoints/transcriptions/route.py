@@ -5,6 +5,10 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
+from radicalbit_ai_gateway.endpoints.common.dependencies import (
+    get_gateway_routes,
+    get_request_uuid,
+)
 from radicalbit_ai_gateway.endpoints.common.http import endpoint, sse_response
 from radicalbit_ai_gateway.endpoints.transcriptions import (
     pipeline as transcription_pipeline,
@@ -14,10 +18,6 @@ from radicalbit_ai_gateway.endpoints.transcriptions.params import (
 )
 from radicalbit_ai_gateway.endpoints.transcriptions.pipeline import Audio
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
-from radicalbit_ai_gateway.routes.dependencies import (
-    get_gateway_routes,
-    get_request_uuid,
-)
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     set_operation_category,

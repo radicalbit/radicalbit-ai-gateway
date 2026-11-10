@@ -28,6 +28,7 @@ from tests.common.provider_recorder import CannedResponse, ProviderRecorder
 
 from radicalbit_ai_gateway import server
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
+from radicalbit_ai_gateway.endpoints.common.dependencies import get_request_uuid
 from radicalbit_ai_gateway.events import events_processor
 from radicalbit_ai_gateway.events.alerts_processor import _alerts_buffer
 from radicalbit_ai_gateway.events.events_processor import _events_buffer
@@ -43,7 +44,6 @@ from radicalbit_ai_gateway.invocation import decision_model_invoker
 from radicalbit_ai_gateway.metrics import define_metrics
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.routes.dependencies import get_request_uuid
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config

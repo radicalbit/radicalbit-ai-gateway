@@ -30,6 +30,7 @@ from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.route_cache import RouteCache
 from radicalbit_ai_gateway.endpoints.chat_completions.cache import ChatEntry
+from radicalbit_ai_gateway.endpoints.common.dependencies import get_request_uuid
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
@@ -51,7 +52,6 @@ from radicalbit_ai_gateway.models.guardrails import (
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.responses import ResponsesSettings
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.routes.dependencies import get_request_uuid
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
 

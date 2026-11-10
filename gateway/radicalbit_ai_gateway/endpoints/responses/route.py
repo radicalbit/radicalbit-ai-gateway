@@ -4,6 +4,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
+from radicalbit_ai_gateway.endpoints.common.dependencies import (
+    get_gateway_routes,
+    get_request_uuid,
+)
 from radicalbit_ai_gateway.endpoints.common.http import endpoint
 from radicalbit_ai_gateway.endpoints.common.streaming_response import (
     StreamingResponseWithStatusCode,
@@ -12,10 +16,6 @@ from radicalbit_ai_gateway.endpoints.responses import pipeline as responses_pipe
 from radicalbit_ai_gateway.endpoints.responses.params import ResponseCreateParamsCustom
 from radicalbit_ai_gateway.endpoints.responses.serving import serve_stream
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
-from radicalbit_ai_gateway.routes.dependencies import (
-    get_gateway_routes,
-    get_request_uuid,
-)
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
 from radicalbit_ai_gateway.utils.trace_attributes import (

@@ -16,7 +16,7 @@ import pytest
 from tests.common.provider_recorder import CannedResponse, ProviderRecorder
 from tests.common.request_identity import with_identity
 
-from radicalbit_ai_gateway.endpoints.chat_completions.streaming import StreamingUtils
+from radicalbit_ai_gateway.endpoints.chat_completions import streaming
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.recorder import Recorder
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
@@ -476,7 +476,7 @@ class TestChatChunkConversion:
             ],
         )
 
-        converted = StreamingUtils.to_openai_chat_completion_chunk(chunk, 'r')
+        converted = streaming.to_openai_chat_completion_chunk(chunk, 'r')
 
         assert converted.choices[0].delta.tool_calls[0].index == 1
 
@@ -485,7 +485,7 @@ class TestChatChunkConversion:
             content='', additional_kwargs={'reasoning_content': 'Thinking'}
         )
 
-        converted = StreamingUtils.to_openai_chat_completion_chunk(chunk, 'r')
+        converted = streaming.to_openai_chat_completion_chunk(chunk, 'r')
 
         assert converted.choices[0].delta.model_extra['reasoning_content'] == 'Thinking'
         assert '"reasoning_content":"Thinking"' in converted.model_dump_json()

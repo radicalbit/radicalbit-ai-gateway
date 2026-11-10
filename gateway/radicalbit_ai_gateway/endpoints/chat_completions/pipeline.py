@@ -10,6 +10,7 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
 from traceloop.sdk.decorators import workflow
 
+from radicalbit_ai_gateway.endpoints.chat_completions import streaming
 from radicalbit_ai_gateway.endpoints.chat_completions.cache import (
     ChatEntry,
     StreamedReply,
@@ -18,7 +19,6 @@ from radicalbit_ai_gateway.endpoints.chat_completions.guardrails import Reply
 from radicalbit_ai_gateway.endpoints.chat_completions.params import (
     CompletionCreateParams,
 )
-from radicalbit_ai_gateway.endpoints.chat_completions.streaming import StreamingUtils
 from radicalbit_ai_gateway.endpoints.chat_like.limits import check_chat_limits
 from radicalbit_ai_gateway.endpoints.chat_like.model_selection import route_chat
 from radicalbit_ai_gateway.endpoints.chat_like.openai_messages import (
@@ -242,17 +242,17 @@ async def _live(
     route_name = scope.route.gateway_route_config.route_name
     if prepared.soft_block:
         # The soft block is the stream's one chunk.
-        yield StreamingUtils.build_soft_block_chunk(prepared.soft_block, route_name)
+        yield streaming.build_soft_block_chunk(prepared.soft_block, route_name)
         return
 
     # Upstream always streams its usage; the client gets it if it asked.
     params = dict(chat.params)
-    user_stream_options = StreamingUtils.prepare_stream_options(params)
+    user_stream_options = streaming.prepare_stream_options(params)
 
     if scope.cached.hit:
         # A live stream's route has no output guardrails (a route with them
         # streams through _buffered): the hit is sent as is, in one chunk.
-        yield StreamingUtils.cached_response_to_chunk(scope.cached.value, route_name)
+        yield streaming.cached_response_to_chunk(scope.cached.value, route_name)
         return
 
     set_operation_category(OperationCategory.INVOCATION)
@@ -260,13 +260,13 @@ async def _live(
     async for chunk in received.take(
         _model_stream(scope, chat, prepared, params), warn_unexpected=True
     ):
-        yield StreamingUtils.to_openai_chat_completion_chunk(
+        yield streaming.to_openai_chat_completion_chunk(
             chunk, model_id_invoked=route_name
         )
 
     await received.count(scope, prepared.model)
     if received.usage and _wants_usage(user_stream_options):
-        yield StreamingUtils.build_usage_chunk(
+        yield streaming.build_usage_chunk(
             final_usage=received.usage,
             model_id_invoked=route_name,
             request_id=scope.identity.request_uuid,
@@ -312,7 +312,7 @@ class _Received:
         async for chunk in stream:
             if isinstance(chunk, AIMessageChunk):
                 self.chunks.append(chunk)
-                result = StreamingUtils.accumulate_chunk_content(chunk, self.text)
+                result = streaming.accumulate_chunk_content(chunk, self.text)
                 self.text = result.text
                 if result.usage_metadata:
                     self.usage = result.usage_metadata
@@ -339,17 +339,17 @@ async def _buffered(
     set_streaming()
     route_name = scope.route.gateway_route_config.route_name
     if prepared.soft_block:
-        return [StreamingUtils.build_soft_block_chunk(prepared.soft_block, route_name)]
+        return [streaming.build_soft_block_chunk(prepared.soft_block, route_name)]
 
     if scope.cached.hit:
         # A hit is screened as a model's reply is, then sent as one chunk.
         cached = scope.cached.value
         text = await _screen_streamed(scope, cached.choices[0].message.content)
         cached = _with_content(cached, text)
-        chunks = [StreamingUtils.cached_response_to_chunk(cached, route_name)]
+        chunks = [streaming.cached_response_to_chunk(cached, route_name)]
         if _wants_usage(chat.params.get('stream_options')) and cached.usage:
             chunks.append(
-                StreamingUtils.build_usage_chunk(
+                streaming.build_usage_chunk(
                     final_usage={
                         'input_tokens': cached.usage.prompt_tokens,
                         'output_tokens': cached.usage.completion_tokens,
@@ -362,7 +362,7 @@ async def _buffered(
         return chunks
 
     params = dict(chat.params)
-    user_stream_options = StreamingUtils.prepare_stream_options(params)
+    user_stream_options = streaming.prepare_stream_options(params)
     return await _stream_whole(scope, chat, prepared, params, user_stream_options)
 
 
@@ -402,14 +402,12 @@ async def _stream_whole(
         await scope.cached.store(reply)
 
     chunks = [
-        StreamingUtils.to_openai_chat_completion_chunk(
-            chunk, model_id_invoked=route_name
-        )
+        streaming.to_openai_chat_completion_chunk(chunk, model_id_invoked=route_name)
         for chunk in buffered_chunks
     ]
     if final_usage and _wants_usage(user_stream_options):
         chunks.append(
-            StreamingUtils.build_usage_chunk(
+            streaming.build_usage_chunk(
                 final_usage=final_usage,
                 model_id_invoked=route_name,
                 request_id=scope.identity.request_uuid,
