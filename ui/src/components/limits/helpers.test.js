@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { WindowTypeEnum } from './constants';
-import { formatResetsIn, getDuplicateLimit, getMostConsumed } from './helpers';
+import {
+  formatBlockedBy, formatLimitCategory, formatResetsIn, formatWindowSeconds, getDuplicateLimit, getMostConsumed,
+} from './helpers';
 
 const SAVED = {
   algorithm: 'fixed_window', category: 'requests', uuid: 'saved-1', value: 10, windowSize: '1 minute',
@@ -128,5 +130,53 @@ describe('getMostConsumed', () => {
 
   it('returns nothing before the stream has data', () => {
     expect(getMostConsumed(limits, undefined)).toBeNull();
+  });
+});
+
+describe('formatBlockedBy', () => {
+  it('names a route block', () => {
+    expect(formatBlockedBy({ apiKeyName: 'alice', limitScope: 'route' })).toBe('Route');
+  });
+
+  it('names the credential whose limit blocked', () => {
+    expect(formatBlockedBy({ apiKeyName: 'alice', limitScope: 'credential' })).toBe('Credential "alice"');
+  });
+
+  it('names a project block', () => {
+    expect(formatBlockedBy({ apiKeyName: 'alice', limitScope: 'project' })).toBe('Project');
+  });
+});
+
+describe('formatLimitCategory', () => {
+  it('uses the limit category labels', () => {
+    expect(formatLimitCategory('request_rate')).toBe('Requests');
+    expect(formatLimitCategory('token_output')).toBe('Output tokens');
+  });
+
+  it('names the route-only audio duration category', () => {
+    expect(formatLimitCategory('audio_duration')).toBe('Audio duration');
+  });
+});
+
+describe('formatWindowSeconds', () => {
+  it('uses the largest exact unit', () => {
+    expect(formatWindowSeconds(60)).toBe('1 min');
+    expect(formatWindowSeconds(300)).toBe('5 min');
+    expect(formatWindowSeconds(3600)).toBe('1 h');
+    expect(formatWindowSeconds(7200)).toBe('2 h');
+    expect(formatWindowSeconds(86400)).toBe('1 day');
+    expect(formatWindowSeconds(172800)).toBe('2 days');
+    expect(formatWindowSeconds(604800)).toBe('1 week');
+    expect(formatWindowSeconds(2592000)).toBe('1 month');
+  });
+
+  it('keeps windows that are not a whole unit in a smaller one', () => {
+    expect(formatWindowSeconds(90)).toBe('90 s');
+    expect(formatWindowSeconds(5400)).toBe('90 min');
+  });
+
+  it('shows a dash when the event did not record its window', () => {
+    expect(formatWindowSeconds(undefined)).toBe('—');
+    expect(formatWindowSeconds(null)).toBe('—');
   });
 });

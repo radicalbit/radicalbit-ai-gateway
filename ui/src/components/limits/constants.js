@@ -5,6 +5,13 @@ export const LimitCategoryEnum = {
   BUDGET: 'budget',
 };
 
+// Who owns the limit that blocked a request (`limitScope` on a limit event).
+export const LimitScopeEnum = {
+  ROUTE: 'route',
+  CREDENTIAL: 'credential',
+  PROJECT: 'project',
+};
+
 export const WindowTypeEnum = {
   FIXED: 'FIXED_WINDOW',
   ALIGNED: 'ALIGNED_FIXED_WINDOW',
@@ -16,6 +23,9 @@ export const LIMIT_CATEGORIES = [
   LimitCategoryEnum.TOKEN_OUTPUT,
   LimitCategoryEnum.BUDGET,
 ];
+
+// A route-only limiter category: credentials and projects can't limit it.
+export const AUDIO_DURATION_CATEGORY = 'audio_duration';
 
 export const LIMIT_CATEGORY_LABELS = {
   [LimitCategoryEnum.REQUEST_RATE]: 'Requests',
