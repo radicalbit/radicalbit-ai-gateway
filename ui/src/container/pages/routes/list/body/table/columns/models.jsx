@@ -3,15 +3,15 @@ import { Divider } from '@radicalbit/radicalbit-design-system';
 import { Fragment } from 'react';
 
 const MODEL_GROUPS = [
-  { key: 'chatModels', title: 'Chat models' },
-  { key: 'embeddingModels', title: 'Embedding models' },
-  { key: 'transcriptionModels', title: 'Transcription models' },
-  { key: 'decisionModels', title: 'Decision models' },
+  { key: 'chat', title: 'Chat models' },
+  { key: 'embedding', title: 'Embedding models' },
+  { key: 'transcription', title: 'Transcription models' },
+  { key: 'decision', title: 'Decision models' },
 ];
 
 function Models({ configuration }) {
   const groups = MODEL_GROUPS
-    .map(({ key, title }) => ({ key, title, models: configuration?.[key] || [] }))
+    .map(({ key, title }) => ({ key, title, models: configuration?.usedModels?.[key] || [] }))
     .filter(({ models }) => models.length > 0);
 
   const count = groups.reduce((sum, { models }) => sum + models.length, 0);
