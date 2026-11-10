@@ -1,6 +1,6 @@
 import pytest
 
-from radicalbit_ai_gateway.endpoints.common.messages import (
+from radicalbit_ai_gateway.endpoints.common.openai_messages import (
     convert_openai_messages,
     parse_tool_calls,
 )

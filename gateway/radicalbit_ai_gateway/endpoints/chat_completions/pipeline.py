@@ -24,7 +24,9 @@ from radicalbit_ai_gateway.endpoints.common.conversation import (
     check_chat_limits,
     route_chat,
 )
-from radicalbit_ai_gateway.endpoints.common.messages import convert_openai_messages
+from radicalbit_ai_gateway.endpoints.common.openai_messages import (
+    convert_openai_messages,
+)
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation
 from radicalbit_ai_gateway.limiting.limits import Usage

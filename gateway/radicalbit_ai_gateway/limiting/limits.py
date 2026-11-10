@@ -24,17 +24,17 @@ from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.limiter import Consumption, Storage
 from radicalbit_ai_gateway.limiter.storage.shared import get_limit_storage
 from radicalbit_ai_gateway.limiting.limit_event import emit_thresholds, limit_fields
-from radicalbit_ai_gateway.limiting.messages import (
-    BLOCKS,
-    log_allowed,
-    log_unknown_audio_duration,
-)
 from radicalbit_ai_gateway.limiting.windows import (
     Category,
     Window,
     credential_windows,
     project_windows,
     route_windows,
+)
+from radicalbit_ai_gateway.limiting.wording import (
+    BLOCKS,
+    log_allowed,
+    log_unknown_audio_duration,
 )
 from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope

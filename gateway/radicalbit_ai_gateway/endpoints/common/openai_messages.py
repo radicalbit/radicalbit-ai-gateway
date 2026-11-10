@@ -1,3 +1,5 @@
+"""Converting OpenAI chat messages to the gateway's message types."""
+
 import ast
 from collections.abc import Iterable, Mapping
 import json
