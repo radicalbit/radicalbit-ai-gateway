@@ -34,12 +34,6 @@ const columns = [
   },
   {
     title: '',
-    key: 'value',
-    align: 'right',
-    render: (_, { value }) => formatLimitValue(LimitCategoryEnum.BUDGET, value),
-  },
-  {
-    title: '',
     key: 'consumption',
     width: '200px',
     render: (_, limit) => <Consumption limit={limit} />,
@@ -141,11 +135,12 @@ function AddBudget() {
 }
 
 function Window({ limit }) {
+  const maxText = `${formatLimitValue(LimitCategoryEnum.BUDGET, limit?.value)} / ${formatLimitWindow(limit?.windowSize)}`;
   const windowTypeText = ` · ${WINDOW_TYPE_LABELS[limit?.algorithm]} window`;
 
   return (
     <span>
-      {formatLimitWindow(limit?.windowSize)}
+      {maxText}
 
       <span className="opacity-70">{windowTypeText}</span>
     </span>

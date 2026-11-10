@@ -174,12 +174,6 @@ function CategoryBlock({ category }) {
     },
     {
       title: '',
-      key: 'value',
-      align: 'right',
-      render: (_, record) => formatLimitValue(record?.category, record?.value),
-    },
-    {
-      title: '',
       key: 'consumption',
       width: '200px',
       render: (_, record) => <Consumption limit={record} />,
@@ -226,13 +220,14 @@ function CategoryBlock({ category }) {
 }
 
 function Window({ record }) {
+  const maxText = `${formatLimitValue(record?.category, record?.value)} / ${formatLimitWindow(record?.windowSize)}`;
   const windowTypeText = ` · ${WINDOW_TYPE_LABELS[record?.algorithm]} window`;
   const warnings = record?.warnings ?? [];
 
   return (
     <span className="flex flex-col">
       <span>
-        {formatLimitWindow(record?.windowSize)}
+        {maxText}
 
         <span className="opacity-70">{windowTypeText}</span>
       </span>
