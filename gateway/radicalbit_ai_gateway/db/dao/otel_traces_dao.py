@@ -50,6 +50,7 @@ _ROOT_SPAN_NAMES_BY_REQUEST_TYPE: dict[RequestType, list[str]] = {
     RequestType.CHAT_COMPLETIONS: [
         'chat_completions.workflow',
         'responses.workflow',
+        'messages.workflow',
     ],
     RequestType.EMBEDDINGS: ['embeddings.workflow'],
     RequestType.TRANSCRIPTIONS: ['audio_transcriptions.workflow'],

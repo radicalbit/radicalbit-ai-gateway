@@ -27,7 +27,24 @@ async def authenticate_bearer_request(
     if not auth or not auth.startswith('Bearer '):
         raise MissingApiKey('Missing API key')
     token = auth.split(' ')[1]
+    return await _authenticate_token(request, token, project_uuid, project_name)
 
+
+async def authenticate_anthropic_request(
+    request: Request, project_uuid: str, project_name: str
+) -> KeyDetails:
+    """Authenticate a request via its credential, sent as Anthropic clients
+    send their key (``x-api-key``) or as an ``Authorization: Bearer`` token.
+    """
+    token = request.headers.get('x-api-key')
+    if token:
+        return await _authenticate_token(request, token, project_uuid, project_name)
+    return await authenticate_bearer_request(request, project_uuid, project_name)
+
+
+async def _authenticate_token(
+    request: Request, token: str, project_uuid: str, project_name: str
+) -> KeyDetails:
     key_details = await request.app.state.token_validator.validate_token(
         token,
     )

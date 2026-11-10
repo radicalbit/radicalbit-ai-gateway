@@ -43,6 +43,8 @@ from radicalbit_ai_gateway.llm.messages import (
     HumanMessage,
     SystemMessage,
 )
+from radicalbit_ai_gateway.messages.events import relay_frame
+from radicalbit_ai_gateway.messages.request import MessagesRequest
 from radicalbit_ai_gateway.metrics.define_metrics import (
     cache_hit_counter,
     cache_input_tokens,
@@ -88,6 +90,7 @@ from radicalbit_ai_gateway.utils.ai_gateway_types import (
     CacheResult,
     InputGuardrailsResult,
     InvokeResponse,
+    MessagesPrepared,
     OutputProcessResult,
     PrepareAndValidateResult,
     ResponsesPrepared,
@@ -647,25 +650,13 @@ class GatewayRoute:
         that goes upstream.
         """
         route_name = self.gateway_route_config.route_name
-        # Who sent the request: routing charges its own calls to them.
-        set_current_request_identity(
-            self._request_identity(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_uuid=group_uuid,
-                group_name=group_name,
-            )
+        identity = self._start_native_request(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
         )
-        if not self.chat_invoker:
-            raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
-        identity = {
-            'request_uuid': request_uuid,
-            'api_key_uuid': api_key_uuid,
-            'group_uuid': group_uuid,
-            'api_key_name': api_key_name,
-            'group_name': group_name,
-        }
 
         check_supported(body)
         request = ResponsesRequest(body)
@@ -1065,6 +1056,101 @@ class GatewayRoute:
             'created_at': now,
             'completed_at': now if cached.get('completed_at') else None,
         }
+
+    # ============================================================================
+    # Messages API
+    # ============================================================================
+
+    async def prepare_messages(
+        self,
+        body: dict,
+        headers: dict[str, str],
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+    ) -> MessagesPrepared:
+        """Apply the route's policies to an Anthropic Messages API request.
+
+        The policies read the request's texts as chat messages (see
+        ``MessagesRequest``); what they change is written back into the body
+        that goes upstream.
+        """
+        route_name = self.gateway_route_config.route_name
+        identity = self._start_native_request(
+            request_uuid=request_uuid,
+            api_key_uuid=api_key_uuid,
+            group_uuid=group_uuid,
+            api_key_name=api_key_name,
+            group_name=group_name,
+        )
+
+        request = MessagesRequest(body)
+        set_operation_category(OperationCategory.PREPROCESSING)
+        messages = await run_preprocessing(
+            request.messages(), self.gateway_route_config.plugins
+        )
+        # Input guardrails (redact before routing, check, soft block) go here,
+        # as on the Responses API: AG-1132.
+        model_selected = await self._route_chat_request(
+            **identity,
+            messages=messages,
+        )
+        if not self.chat_invoker.supports_messages(model_selected.model_id):
+            raise GatewayBadRequest(
+                f'Model {model_selected.model_id} of route {route_name} '
+                'does not serve the Messages API'
+            )
+
+        prompt_messages = self._apply_config_prompt(messages, model_selected)
+        request.write_back(messages[prompt_messages:])
+        if prompt_messages:
+            # A deliberate choice, as on the Responses API: the configured
+            # prompt goes first in ``system``. It changes the prefix the
+            # client's prompt cache sees.
+            request.insert_system_prompt(messages[0])
+
+        # The cache lookup and the limits go here, as on the Responses API:
+        # AG-1132.
+        return MessagesPrepared(
+            body=request.body,
+            headers=headers,
+            model_selected=model_selected,
+            identity=identity,
+        )
+
+    def _messages_call(self, prepared: MessagesPrepared) -> dict:
+        """Return the arguments of the invoker's call for a prepared request."""
+        return {
+            **prepared.identity,
+            'route_name': self.gateway_route_config.route_name,
+            'body': prepared.body,
+            'headers': prepared.headers,
+            'model_id': prepared.model_selected.model_id,
+            'project_uuid': self.project_uuid,
+            'project_name': self.project_name,
+        }
+
+    async def invoke_messages(self, prepared: MessagesPrepared) -> dict:
+        """Answer a prepared Messages API request; return the message object."""
+        set_operation_category(OperationCategory.INVOCATION)
+        message, _ = await self.chat_invoker.complete_messages(
+            **self._messages_call(prepared)
+        )
+        # Output guardrails and usage accounting go here: AG-1132.
+        return {**message, 'model': self.gateway_route_config.route_name}
+
+    async def stream_messages(self, prepared: MessagesPrepared) -> AsyncIterator[str]:
+        """Relay a prepared Messages API request's upstream events as SSE frames."""
+        set_streaming()
+        set_operation_category(OperationCategory.INVOCATION)
+        route_name = self.gateway_route_config.route_name
+        async for event, data in self.chat_invoker.stream_messages(
+            **self._messages_call(prepared)
+        ):
+            yield relay_frame(event, data, route_name)
+        # Buffered mode, for output guardrails and the cache: AG-1132.
 
     async def invoke_embeddings(
         self,
@@ -1738,6 +1824,42 @@ class GatewayRoute:
                 project_uuid=self.project_uuid,
                 project_name=self.project_name,
             )
+
+    def _start_native_request(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+    ) -> dict[str, str]:
+        """Start a Responses or Messages API request.
+
+        Record who sent it (routing charges its own calls to them) and check
+        the route has chat models. Return who sent it, as the keyword arguments
+        the route's policies take.
+        """
+        set_current_request_identity(
+            self._request_identity(
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                api_key_name=api_key_name,
+                group_uuid=group_uuid,
+                group_name=group_name,
+            )
+        )
+        if not self.chat_invoker:
+            raise GatewayBadRequest(
+                f'Route {self.gateway_route_config.route_name} '
+                'has no chat models defined'
+            )
+        return {
+            'request_uuid': request_uuid,
+            'api_key_uuid': api_key_uuid,
+            'group_uuid': group_uuid,
+            'api_key_name': api_key_name,
+            'group_name': group_name,
+        }
 
     def _request_identity(
         self,

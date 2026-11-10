@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 import logging
 import time
 
+import anthropic
 import openai
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
@@ -12,6 +13,11 @@ from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.factory import init_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
+from radicalbit_ai_gateway.messages.events import stream_usage
+from radicalbit_ai_gateway.messages.thinking import (
+    is_invalid_thinking_signature,
+    without_old_thinking,
+)
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import (
     ENABLE_PROMPT_CACHE_PARAM,
@@ -36,6 +42,30 @@ from radicalbit_ai_gateway.utils.parse_provider_and_model import (
 app_config = get_app_config()
 
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+# Upstream statuses that refuse the gateway's own access to the provider
+# (its configured key, say), not the client's request.
+_UPSTREAM_ACCESS_REFUSALS = (401, 403)
+
+
+def _upstream_refusal(
+    error: openai.APIStatusError | anthropic.APIStatusError, unreadable_body: dict
+) -> ModelInvokerUpstreamError:
+    """Return an upstream's refusal, to relay with its status and body.
+
+    ``unreadable_body`` stands in for a body that is not JSON.
+    """
+    try:
+        body = error.response.json()
+    except ValueError:
+        body = unreadable_body
+    return ModelInvokerUpstreamError(error.message, error.status_code, body)
+
+
+def _all_models_failed(route_name: str, error: Exception) -> ModelInvokerError:
+    return ModelInvokerInternalError(
+        f'All chat models failed for model {route_name}: {error}'
+    )
 
 
 def build_chat_model(model: Model, httpx_client=None) -> ChatModel:
@@ -550,14 +580,8 @@ class ChatModelInvoker(ModelInvoker):
         would without the gateway.
         """
         if isinstance(error, openai.APIStatusError) and 400 <= error.status_code < 500:
-            try:
-                body = error.response.json()
-            except ValueError:
-                body = {'error': {'message': error.message}}
-            return ModelInvokerUpstreamError(error.message, error.status_code, body)
-        return ModelInvokerInternalError(
-            f'All chat models failed for model {route_name}: {error}'
-        )
+            return _upstream_refusal(error, {'error': {'message': error.message}})
+        return _all_models_failed(route_name, error)
 
     def _record_responses_metrics(
         self,
@@ -701,3 +725,287 @@ class ChatModelInvoker(ModelInvoker):
             )
             return result, candidate
         raise self._responses_failure(route_name, first_error) from first_error
+
+    # ── Messages API ─────────────────────────────────────────────────────
+
+    def supports_messages(self, model_id: str) -> bool:
+        """Whether the model serves the Anthropic Messages API."""
+        if model_id not in self.model_map:
+            return False
+        _, chat_model, _ = self.model_map[model_id]
+        return chat_model.supports_native_messages()
+
+    def _messages_attempts(self, model_id: str) -> list[tuple[Model, ChatModel]]:
+        """Return the model, then its fallbacks in order.
+
+        A fallback that does not serve the Messages API is kept: the request
+        fails when it gets there (see ``_check_messages_attempt``), it is never
+        translated.
+        """
+        if not self.supports_messages(model_id):
+            raise ModelInvokerBadRequest(
+                f'Chat model {model_id} does not serve the Messages API'
+            )
+        model, chat_model, fallbacks = self.model_map[model_id]
+        return [(model, chat_model), *(fallbacks or [])]
+
+    @staticmethod
+    def _check_messages_attempt(
+        model: Model, chat_model: ChatModel, route_name: str, error: Exception
+    ) -> None:
+        """Refuse a fallback that does not serve the Messages API."""
+        if not chat_model.supports_native_messages():
+            raise ModelInvokerBadRequest(
+                f'Model {model.model_id} of route {route_name} '
+                'does not serve the Messages API'
+            ) from error
+
+    @staticmethod
+    def _is_relayed_messages_error(error: Exception) -> bool:
+        """Whether an upstream error reaches the client as the upstream sent it.
+
+        That is a 4xx, but not a 401 or 403: those refuse the gateway's own
+        access to the provider. The client must not read them as a refusal of
+        its credential, so they fall back, and end as an ``api_error``.
+        """
+        return (
+            isinstance(error, anthropic.APIStatusError)
+            and 400 <= error.status_code < 500
+            and error.status_code not in _UPSTREAM_ACCESS_REFUSALS
+        )
+
+    @classmethod
+    def _is_final_messages_error(cls, error: Exception) -> bool:
+        """Whether the upstream refused the request itself: no fallback then.
+
+        A relayed 4xx other than 429 says the request is wrong, so another
+        model would refuse it too.
+        """
+        return cls._is_relayed_messages_error(error) and error.status_code != 429
+
+    @classmethod
+    def _messages_failure(cls, route_name: str, error: Exception) -> ModelInvokerError:
+        """Return the error of a Messages request no model could serve."""
+        if cls._is_relayed_messages_error(error):
+            return _upstream_refusal(
+                error,
+                {
+                    'type': 'error',
+                    'error': {'type': 'api_error', 'message': error.message},
+                },
+            )
+        return _all_models_failed(route_name, error)
+
+    @staticmethod
+    def _signature_retry_body(model: Model, body: dict, error: Exception) -> dict:
+        """Return the body to retry when the upstream refused a thinking signature.
+
+        A client that switched models sends thinking that another provider
+        signed. The retry goes to the same model without that thinking. Without
+        such a refusal, or with nothing to strip, ``error`` is raised again.
+        """
+        if not is_invalid_thinking_signature(error):
+            raise error
+        retry_body, stripped = without_old_thinking(body)
+        if not stripped:
+            raise error
+        logger.warning(
+            'Messages model %s refused a thinking signature: '
+            'retrying without %d old thinking blocks',
+            model.model_id,
+            stripped,
+        )
+        return retry_body
+
+    async def _invoke_messages(
+        self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
+    ) -> dict:
+        """Make one Messages call to one model (see ``_signature_retry_body``)."""
+        try:
+            return await chat_model.ainvoke_native_messages(body, headers)
+        except Exception as error:
+            retry_body = self._signature_retry_body(model, body, error)
+        return await chat_model.ainvoke_native_messages(retry_body, headers)
+
+    async def _stream_messages(
+        self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Stream one Messages call from one model (see ``_signature_retry_body``).
+
+        The refusal comes before the first event, so the retry is safe.
+        """
+        started = False
+        try:
+            async for event, data in chat_model.astream_native_messages(body, headers):
+                started = True
+                yield event, data
+        except Exception as error:
+            if started:
+                raise
+            retry_body = self._signature_retry_body(model, body, error)
+        else:
+            return
+        async for event, data in chat_model.astream_native_messages(
+            retry_body, headers
+        ):
+            yield event, data
+
+    @task(name='llm_complete_messages')
+    async def complete_messages(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        body: dict,
+        headers: dict[str, str],
+        model_id: str,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> tuple[dict, Model]:
+        """Answer a Messages API request; return the upstream's message object
+        and the model that answered.
+        """
+        start_time = time.monotonic()
+        first_error: Exception | None = None
+        for position, (candidate, chat_model) in enumerate(
+            self._messages_attempts(model_id)
+        ):
+            if first_error is not None:
+                self._check_messages_attempt(
+                    candidate, chat_model, route_name, first_error
+                )
+            try:
+                result = await self._invoke_messages(
+                    candidate, chat_model, body, headers
+                )
+            except Exception as error:
+                first_error = first_error or error
+                logger.warning(
+                    'Messages model %s failed: %s', candidate.model_id, str(error)
+                )
+                if self._is_final_messages_error(error):
+                    raise self._messages_failure(route_name, error) from error
+                continue
+            self._record_messages_metrics(
+                usage=result.get('usage'),
+                model=candidate,
+                fallback_triggered=position > 0,
+                start_time=start_time,
+                target_model_id=model_id,
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                route_name=route_name,
+                project_uuid=project_uuid,
+                project_name=project_name,
+            )
+            return result, candidate
+        raise self._messages_failure(route_name, first_error) from first_error
+
+    @task(name='llm_stream_messages')
+    async def stream_messages(
+        self,
+        request_uuid: str,
+        api_key_uuid: str,
+        group_uuid: str,
+        api_key_name: str,
+        group_name: str,
+        route_name: str,
+        body: dict,
+        headers: dict[str, str],
+        model_id: str,
+        project_uuid: str = '',
+        project_name: str = '',
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Stream a Messages API request and yield the upstream's ``(event, data)``.
+
+        A fallback is tried only while nothing has been yielded: once the
+        client has part of a reply, an error ends the stream.
+        """
+        attempts = self._messages_attempts(model_id)
+        start_time = time.monotonic()
+        usage: dict = {}
+        model_invoked = attempts[0][0]
+        fallback_triggered = False
+        first_error: Exception | None = None
+        try:
+            for position, (candidate, chat_model) in enumerate(attempts):
+                if first_error is not None:
+                    self._check_messages_attempt(
+                        candidate, chat_model, route_name, first_error
+                    )
+                model_invoked = candidate
+                fallback_triggered = position > 0
+                usage = {}
+                started = False
+                try:
+                    async for event, data in self._stream_messages(
+                        candidate, chat_model, body, headers
+                    ):
+                        usage = stream_usage(event, data, usage)
+                        started = True
+                        yield event, data
+                except Exception as error:
+                    if started:
+                        raise
+                    first_error = first_error or error
+                    logger.warning(
+                        'Messages model %s failed: %s', candidate.model_id, str(error)
+                    )
+                    if self._is_final_messages_error(error):
+                        raise self._messages_failure(route_name, error) from error
+                else:
+                    return
+            raise self._messages_failure(route_name, first_error) from first_error
+        finally:
+            self._record_messages_metrics(
+                usage=usage,
+                model=model_invoked,
+                fallback_triggered=fallback_triggered,
+                start_time=start_time,
+                target_model_id=model_id,
+                request_uuid=request_uuid,
+                api_key_uuid=api_key_uuid,
+                group_uuid=group_uuid,
+                api_key_name=api_key_name,
+                group_name=group_name,
+                route_name=route_name,
+                project_uuid=project_uuid,
+                project_name=project_name,
+            )
+
+    def _record_messages_metrics(
+        self,
+        usage: dict | None,
+        model: Model,
+        fallback_triggered: bool,
+        start_time: float,
+        target_model_id: str,
+        **request: str,
+    ) -> None:
+        usage = usage or {}
+        cache_creation = usage.get('cache_creation') or {}
+        self._record_metrics(
+            **request,
+            model=model,
+            target_model_id=target_model_id,
+            latency_ms=(time.monotonic() - start_time) * 1000,
+            model_type='chat-model',
+            token_input_count=usage.get('input_tokens') or None,
+            token_output_count=usage.get('output_tokens') or None,
+            cached_token_count=usage.get('cache_read_input_tokens') or None,
+            cache_creation_5m_token_count=cache_creation.get(
+                'ephemeral_5m_input_tokens'
+            )
+            or None,
+            cache_creation_1h_token_count=cache_creation.get(
+                'ephemeral_1h_input_tokens'
+            )
+            or None,
+            fallback_triggered=fallback_triggered,
+        )
