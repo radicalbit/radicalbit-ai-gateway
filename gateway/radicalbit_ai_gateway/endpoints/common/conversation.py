@@ -7,8 +7,8 @@ import logging
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.endpoints.common.messages import select_message_by_role
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
 from radicalbit_ai_gateway.events.events_processor import emit_event
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
 from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.limiting.limits import (

@@ -1,6 +1,6 @@
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.route_cache import RouteCache
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import RouteGuardrails
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
@@ -29,7 +29,7 @@ class GatewayRoute:
     """A route, built once when its configuration is loaded: its models and
     their invokers, its router, and its limits, guardrails and cache. A
     request to it runs in a ``RequestScope`` (see ``for_request``) through
-    the endpoint's pipeline (``radicalbit_ai_gateway.endpoints.<name>.pipeline``).
+    the endpoint's pipeline (``endpoints/<name>/pipeline.py``).
     """
 
     def __init__(

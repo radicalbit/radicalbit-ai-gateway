@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
 from radicalbit_ai_gateway.endpoints.chat_completions.params import (
     CompletionCreateParams,
@@ -15,6 +14,7 @@ from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import (
 )
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.common.http import endpoint, sse_response
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.routes.dependencies import (
     get_gateway_routes,
     get_request_uuid,

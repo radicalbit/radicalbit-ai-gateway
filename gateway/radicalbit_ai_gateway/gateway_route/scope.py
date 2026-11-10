@@ -11,7 +11,7 @@ from radicalbit_ai_gateway.limiting.limits import RequestLimits
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 
 if TYPE_CHECKING:
-    from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+    from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 
 
 class RequestScope:

@@ -19,7 +19,7 @@ from tests.common.mocked_build_openai_chat_completion import (
 from tests.common.pipeline import invoke, invoke_embeddings
 from tests.common.resolve_route_models import resolve_route_models
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine

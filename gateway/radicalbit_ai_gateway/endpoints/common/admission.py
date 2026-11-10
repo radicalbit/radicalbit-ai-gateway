@@ -7,10 +7,10 @@ from uuid import UUID
 from fastapi import Request
 from traceloop.sdk.decorators import task
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.limiting.limits import (
     ADMISSION,
     RequestLimits,

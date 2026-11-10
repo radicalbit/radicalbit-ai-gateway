@@ -9,8 +9,8 @@ from radicalbit_ai_gateway.endpoints.common.conversation import (
     check_limits,
     checked_in_span,
 )
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
 from radicalbit_ai_gateway.endpoints.embeddings.cache import EmbeddingEntry
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Texts
 from radicalbit_ai_gateway.limiting.limits import Demand, InputEstimate, Usage
 from radicalbit_ai_gateway.models.model import Model

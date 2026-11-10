@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from traceloop.sdk.decorators import workflow
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.limiting.limits import ADMISSION, shared_limits
 from radicalbit_ai_gateway.mcp_proxy.list_cache import McpListCache
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity

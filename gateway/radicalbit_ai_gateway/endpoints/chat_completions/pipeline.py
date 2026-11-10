@@ -25,7 +25,7 @@ from radicalbit_ai_gateway.endpoints.common.conversation import (
     route_chat,
 )
 from radicalbit_ai_gateway.endpoints.common.messages import convert_openai_messages
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation
 from radicalbit_ai_gateway.limiting.limits import Usage
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage

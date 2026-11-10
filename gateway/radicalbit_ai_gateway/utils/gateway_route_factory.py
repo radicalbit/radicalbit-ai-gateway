@@ -5,12 +5,12 @@ from uuid import UUID
 from fastapi import FastAPI
 import redis
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.abstract_cache import AbstractCache
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
     DecisionJudgeEngine,

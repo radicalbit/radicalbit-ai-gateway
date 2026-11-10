@@ -4,7 +4,7 @@ over HTTP in ``tests/pipeline/test_route_http.py``.
 
 from unittest.mock import MagicMock
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback, FallbackModelType
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig

@@ -12,12 +12,12 @@ from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
 from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import ChatRequest
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
 from radicalbit_ai_gateway.endpoints.embeddings import pipeline as embeddings_pipeline
 from radicalbit_ai_gateway.endpoints.transcriptions import (
     pipeline as transcription_pipeline,
 )
 from radicalbit_ai_gateway.endpoints.transcriptions.pipeline import Audio
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 
 _CHAT_FIELDS = {'messages', 'tools', 'tool_choice'}
 

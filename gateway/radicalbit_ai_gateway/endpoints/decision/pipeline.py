@@ -3,8 +3,8 @@
 from typing import Any
 
 from radicalbit_ai_gateway.endpoints.common.conversation import check_limits
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
 from radicalbit_ai_gateway.endpoints.decision.cache import DecisionEntry
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import RequestGuardrails, Texts
 from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionResponse
 from radicalbit_ai_gateway.limiting.limits import Demand, Usage

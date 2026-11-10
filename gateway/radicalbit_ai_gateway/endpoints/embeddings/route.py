@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, Request
 from openai.types import CreateEmbeddingResponse
 from openai.types.embedding_create_params import EmbeddingCreateParams
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.common.http import endpoint
 from radicalbit_ai_gateway.endpoints.embeddings import pipeline as embeddings_pipeline
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.routes.dependencies import (
     get_gateway_routes,
     get_request_uuid,

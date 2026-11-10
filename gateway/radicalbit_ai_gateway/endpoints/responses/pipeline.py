@@ -16,7 +16,6 @@ from radicalbit_ai_gateway.endpoints.common.conversation import (
     check_chat_limits,
     route_chat,
 )
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
 from radicalbit_ai_gateway.endpoints.responses.cache import ResponsesEntry
 from radicalbit_ai_gateway.endpoints.responses.events import response_events
 from radicalbit_ai_gateway.endpoints.responses.guardrails import ResponsesReply
@@ -30,6 +29,7 @@ from radicalbit_ai_gateway.endpoints.responses.request import (
     check_supported,
     references_stored_state,
 )
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation, GuardrailFlags
 from radicalbit_ai_gateway.limiting.limits import Usage
 from radicalbit_ai_gateway.llm.usage import responses_token_counts

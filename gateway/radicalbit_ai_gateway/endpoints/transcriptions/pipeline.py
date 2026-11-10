@@ -12,11 +12,11 @@ from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.endpoints.common.conversation import check_limits
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
 from radicalbit_ai_gateway.endpoints.transcriptions.audio_duration import (
     estimate_audio_duration_seconds,
 )
 from radicalbit_ai_gateway.endpoints.transcriptions.cache import TranscriptionEntry
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.limiting.limits import Demand, Usage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.utils.app_config import get_app_config

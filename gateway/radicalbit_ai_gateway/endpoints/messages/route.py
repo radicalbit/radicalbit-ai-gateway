@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from traceloop.sdk.decorators import task
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.auth.request_auth import authenticate_anthropic_request
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.common.http import endpoint
@@ -17,6 +16,7 @@ from radicalbit_ai_gateway.endpoints.messages.serving import (
     anthropic_headers,
     serve_stream,
 )
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.routes.dependencies import (
     get_gateway_routes,

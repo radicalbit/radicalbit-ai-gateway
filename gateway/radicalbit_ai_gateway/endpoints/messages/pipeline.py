@@ -15,9 +15,9 @@ from radicalbit_ai_gateway.endpoints.common.conversation import (
     check_chat_limits,
     route_chat,
 )
-from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
 from radicalbit_ai_gateway.endpoints.messages.events import relay_frame
 from radicalbit_ai_gateway.endpoints.messages.request import MessagesRequest
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.limiting.limits import Usage
 from radicalbit_ai_gateway.llm.messages_stream import stream_usage
 from radicalbit_ai_gateway.llm.usage import messages_token_counts
