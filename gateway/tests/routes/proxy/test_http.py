@@ -1,4 +1,4 @@
-"""Server-sent events of the proxy endpoints (``pipeline/http.py``)."""
+"""Server-sent events of the proxy endpoints (``routes/proxy/http.py``)."""
 
 import json
 
@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 import pytest
 
-from radicalbit_ai_gateway.pipeline.http import sse_response
+from radicalbit_ai_gateway.routes.proxy.http import sse_response
 from radicalbit_ai_gateway.utils.exceptions import AppError, ModelInvokerUpstreamError
 
 

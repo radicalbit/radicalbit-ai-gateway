@@ -6,18 +6,18 @@ from fastapi.responses import JSONResponse
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.pipeline import responses as responses_pipeline
 from radicalbit_ai_gateway.pipeline.admission import Admission
-from radicalbit_ai_gateway.pipeline.http import endpoint
 from radicalbit_ai_gateway.responses.serving import serve_stream
-from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import (
+from radicalbit_ai_gateway.routes.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
-from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
-from radicalbit_ai_gateway.utils.open_ai_types import ResponseCreateParamsCustom
-from radicalbit_ai_gateway.utils.streaming_response import (
+from radicalbit_ai_gateway.routes.proxy.http import endpoint
+from radicalbit_ai_gateway.routes.proxy.streaming_response import (
     StreamingResponseWithStatusCode,
 )
+from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
+from radicalbit_ai_gateway.utils.open_ai_types import ResponseCreateParamsCustom
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     in_request_trace,

@@ -18,13 +18,13 @@ from starlette.requests import Request
 from tests.common import db_mock
 from tests.common.limits import project_limit
 from tests.common.pipeline import scope_of
-from tests.test_responses_native import (
+from tests.responses.test_native import (
     OPENCODE_TURN,
     FakeChatModel,
     _openai,
     _status_error,
 )
-from tests.utils.test_responses_output import events_of
+from tests.responses.test_output import events_of
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
@@ -50,9 +50,9 @@ from radicalbit_ai_gateway.models.guardrails import (
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.responses import ResponsesSettings
 from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.routes.dependencies import get_request_uuid
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 
 PROJECT_LIMITS = 'radicalbit_ai_gateway.pipeline.admission.load_project_limits'
 ROUTE = 'agents'

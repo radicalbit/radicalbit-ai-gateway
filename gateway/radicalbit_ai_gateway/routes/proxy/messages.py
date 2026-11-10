@@ -3,28 +3,36 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.auth.request_auth import authenticate_anthropic_request
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
+from radicalbit_ai_gateway.limiting.limits import (
+    RequestLimits,
+    load_project_limits,
+    shared_limits,
+)
 from radicalbit_ai_gateway.messages.request import MessageCreateParams
 from radicalbit_ai_gateway.messages.serving import (
     anthropic_headers,
     serve_messages_stream,
 )
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
+from radicalbit_ai_gateway.models.auth_dto import KeyDetails
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.pipeline import messages as messages_pipeline
-from radicalbit_ai_gateway.pipeline.http import endpoint
-from radicalbit_ai_gateway.services.group_service import GroupService
-from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import (
+from radicalbit_ai_gateway.pipeline.admission import set_early_project_trace_attributes
+from radicalbit_ai_gateway.routes.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
-from radicalbit_ai_gateway.utils.endpoint_helpers import (
-    resolve_request_limits,
-    set_anthropic_api_key_uuid,
-    set_early_project_trace_attributes,
+from radicalbit_ai_gateway.routes.proxy.http import endpoint
+from radicalbit_ai_gateway.routes.proxy.streaming_response import (
+    StreamingResponseWithStatusCode,
 )
+from radicalbit_ai_gateway.services.group_service import GroupService
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
     GatewayNotFoundError,
@@ -34,9 +42,6 @@ from radicalbit_ai_gateway.utils.request_context import (
     get_current_request_tags,
     set_current_route_config,
 )
-from radicalbit_ai_gateway.utils.streaming_response import (
-    StreamingResponseWithStatusCode,
-)
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     in_request_trace,
@@ -45,6 +50,43 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
 )
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
+
+
+@task(name='auth_api_key')
+async def set_anthropic_api_key_uuid(
+    request: Request, project_uuid: str, project_name: str
+) -> KeyDetails:
+    """Authenticate a request, also reading the credential from ``x-api-key``."""
+    return await authenticate_anthropic_request(request, project_uuid, project_name)
+
+
+async def resolve_request_limits(
+    route: GatewayRoute,
+    key_details: KeyDetails,
+    request_uuid: str,
+    project_budget_limit_dao: ProjectBudgetLimitDAO,
+) -> RequestLimits:
+    """Return the limits of a request: its route's, its credential's and its
+    project's, read as they are now.
+    """
+    project_limits = await load_project_limits(
+        route.project_uuid, project_budget_limit_dao
+    )
+    return shared_limits.resolve(
+        RequestIdentity(
+            request_uuid=request_uuid,
+            route_name=route.gateway_route_config.route_name,
+            api_key_uuid=key_details.api_key_uuid,
+            api_key_name=key_details.api_key_name,
+            group_uuid=key_details.group_uuid,
+            group_name=key_details.group_name,
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+        ),
+        route.route_limits,
+        key_details.limits,
+        project_limits,
+    )
 
 
 class MessagesRoute:
@@ -145,7 +187,6 @@ class MessagesRoute:
             message = await messages_pipeline.respond(scope, prepared)
             set_operation_category(OperationCategory.ENDPOINT)
             return JSONResponse(content=message)
-
 
         # The Messages API endpoints the gateway does not serve: count_tokens, batches.
         @router.api_route(

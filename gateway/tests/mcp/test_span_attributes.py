@@ -22,6 +22,7 @@ import uuid
 
 from fastapi import FastAPI
 from mcp import types
+from opentelemetry import trace
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
@@ -42,7 +43,7 @@ from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
-from radicalbit_ai_gateway.routes.gateway.mcp_route import McpRoute
+from radicalbit_ai_gateway.routes.proxy.mcp import McpRoute
 from radicalbit_ai_gateway.services.mcp_service import McpService, encode_resource_uri
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
@@ -61,18 +62,25 @@ ROOT_SPAN = 'mcp_request.workflow'
 @pytest.fixture(scope='module')
 def exporter() -> Iterator[InMemorySpanExporter]:
     exp = InMemorySpanExporter()
-    Traceloop.init(
-        app_name='test-gateway',
-        telemetry_enabled=False,
-        disable_batch=True,
-        processor=SimpleSpanProcessor(exp),
-        # Omitting this enables every instrumentor Traceloop ships (openai,
-        # httpx, ...), which monkeypatch their libraries globally and are not
-        # undone by set_disabled below — they would stay installed for the rest
-        # of the session. The MCP path needs none of them, and production only
-        # enables LANGCHAIN.
-        instruments=set(),
-    )
+    processor = SimpleSpanProcessor(exp)
+    # Traceloop.init is a no-op once TracerWrapper has an instance, so a second
+    # init would drop this processor: attach it to the live provider instead.
+    initialized = hasattr(TracerWrapper, 'instance')
+    if initialized:
+        trace.get_tracer_provider().add_span_processor(processor)
+    else:
+        Traceloop.init(
+            app_name='test-gateway',
+            telemetry_enabled=False,
+            disable_batch=True,
+            processor=processor,
+            # Omitting this enables every instrumentor Traceloop ships (openai,
+            # httpx, ...), which monkeypatch their libraries globally and are not
+            # undone by set_disabled below — they would stay installed for the
+            # rest of the session. The MCP path needs none of them, and
+            # production only enables LANGCHAIN.
+            instruments=set(),
+        )
     TracerWrapper.set_disabled(False)
     yield exp
     # Traceloop installs a global tracer provider that cannot be uninstalled, so
@@ -80,9 +88,10 @@ def exporter() -> Iterator[InMemorySpanExporter]:
     # this exporter — unbounded growth that OOM-kills the full run. Disabling the
     # wrapper makes the decorators no-op again, restoring the behaviour the rest
     # of the suite has always had (Traceloop is never initialized in production
-    # tests).
+    # tests). A shut-down exporter also drops any span it still receives.
     TracerWrapper.set_disabled(True)
     exp.clear()
+    exp.shutdown()
 
 
 @pytest.fixture

@@ -5,8 +5,10 @@ import logging
 from uuid import UUID
 
 from fastapi import Request
+from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
+from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.limiting.limits import (
     ADMISSION,
@@ -20,10 +22,6 @@ from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.pipeline.scope import RequestScope
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.endpoint_helpers import (
-    set_api_key_uuid,
-    set_early_project_trace_attributes,
-)
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest, InvalidApiKey
 from radicalbit_ai_gateway.utils.request_context import (
     get_current_request_tags,
@@ -36,6 +34,46 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
 )
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
+
+
+@task(name='auth_api_key')
+async def set_api_key_uuid(
+    request: Request, project_uuid: str, project_name: str
+) -> KeyDetails:
+    return await authenticate_bearer_request(request, project_uuid, project_name)
+
+
+def set_early_project_trace_attributes(
+    request: Request,
+    route_key: str | None,
+    route: GatewayRoute | None,
+) -> None:
+    """Set project identity on the span before route validation and auth.
+
+    Ensures traces from failed requests (unknown route, bad API key) remain
+    visible in project-scoped queries.
+    """
+    if route is not None:
+        set_trace_attributes(
+            project_uuid=route.project_uuid,
+            project_name=route.project_name,
+            tags=list(get_current_request_tags()),
+        )
+        return
+    project_name, _, route_name_part = (route_key or '').partition('/')
+    entry = getattr(request.app.state, 'project_configs', {}).get(project_name)
+    if entry:
+        set_trace_attributes(
+            project_uuid=str(entry.uuid),
+            project_name=project_name,
+            route_name=route_name_part or route_key,
+            tags=list(get_current_request_tags()),
+        )
+    else:
+        set_trace_attributes(
+            route_name=route_name_part or route_key,
+            tags=list(get_current_request_tags()),
+        )
 
 
 class Admission:

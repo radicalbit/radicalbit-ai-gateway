@@ -2,7 +2,9 @@ import pytest
 
 from tests.common.audio import make_wav_bytes
 
-from radicalbit_ai_gateway.utils.audio_duration import estimate_audio_duration_seconds
+from radicalbit_ai_gateway.pipeline.audio_duration import (
+    estimate_audio_duration_seconds,
+)
 
 
 def test_wav_duration_is_accurate():

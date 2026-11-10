@@ -53,20 +53,16 @@ from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
-from radicalbit_ai_gateway.routes.gateway.chat_completions_route import (
-    ChatCompletionsRoute,
-)
-from radicalbit_ai_gateway.routes.gateway.decision_route import DecisionRoute
-from radicalbit_ai_gateway.routes.gateway.embeddings_route import EmbeddingsRoute
-from radicalbit_ai_gateway.routes.gateway.mcp_route import McpRoute
-from radicalbit_ai_gateway.routes.gateway.messages_route import MessagesRoute
-from radicalbit_ai_gateway.routes.gateway.responses_route import ResponsesRoute
-from radicalbit_ai_gateway.routes.gateway.transcriptions_route import (
-    TranscriptionsRoute,
-)
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
+from radicalbit_ai_gateway.routes.proxy.chat_completions import ChatCompletionsRoute
+from radicalbit_ai_gateway.routes.proxy.decision import DecisionRoute
+from radicalbit_ai_gateway.routes.proxy.embeddings import EmbeddingsRoute
+from radicalbit_ai_gateway.routes.proxy.mcp import McpRoute
+from radicalbit_ai_gateway.routes.proxy.messages import MessagesRoute
+from radicalbit_ai_gateway.routes.proxy.responses import ResponsesRoute
+from radicalbit_ai_gateway.routes.proxy.transcriptions import TranscriptionsRoute
 from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.routes.tag_route import TagRoute
 from radicalbit_ai_gateway.routes.tracing_route import TracingRoute

@@ -16,10 +16,10 @@ from radicalbit_ai_gateway.limiting.limits import (
     Usage,
 )
 from radicalbit_ai_gateway.llm.messages import BaseMessage, SystemMessage
-from radicalbit_ai_gateway.models.chat_request import select_message_by_role
 from radicalbit_ai_gateway.models.event_payload import RoutingEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.model import ENABLE_PROMPT_CACHE_PARAM, Model
+from radicalbit_ai_gateway.pipeline.openai_messages import select_message_by_role
 from radicalbit_ai_gateway.pipeline.scope import RequestScope
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import build_user_content

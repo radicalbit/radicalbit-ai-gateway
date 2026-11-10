@@ -5,15 +5,15 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
-from radicalbit_ai_gateway.pipeline import chat as chat_pipeline
+from radicalbit_ai_gateway.pipeline import chat_completions as chat_pipeline
 from radicalbit_ai_gateway.pipeline.admission import Admission
-from radicalbit_ai_gateway.pipeline.chat import CHAT_FIELDS, ChatRequest
-from radicalbit_ai_gateway.pipeline.http import endpoint, sse_response
-from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import (
+from radicalbit_ai_gateway.pipeline.chat_completions import CHAT_FIELDS, ChatRequest
+from radicalbit_ai_gateway.routes.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
+from radicalbit_ai_gateway.routes.proxy.http import endpoint, sse_response
+from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.open_ai_types import CompletionCreateParams
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,

@@ -29,6 +29,9 @@ from tests.common.provider_recorder import CannedResponse, ProviderRecorder
 from radicalbit_ai_gateway import server
 from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.events import events_processor
+from radicalbit_ai_gateway.events.alerts_processor import _alerts_buffer
+from radicalbit_ai_gateway.events.events_processor import _events_buffer
+from radicalbit_ai_gateway.events.request_events_processor import _request_events_buffer
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
     DecisionJudgeEngine,
@@ -39,10 +42,10 @@ from radicalbit_ai_gateway.invocation import decision_model_invoker
 from radicalbit_ai_gateway.metrics import define_metrics
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.routes.dependencies import get_request_uuid
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.gateway_route_factory import (
     build_gateway_routes_from_config,
 )
@@ -252,6 +255,13 @@ def open_gateway(
         return lambda value, attributes: gateway.metrics.append(
             (name, value, dict(attributes))
         )
+
+    # Earlier tests may leave items in the process-wide event buffers, with a
+    # flush timer running. Flush them now, before the gateway's logs are
+    # recorded: a timer firing during the block would log from its own thread
+    # (on a failed send) and land in route_context.
+    for leftover in (_events_buffer, _request_events_buffer, _alerts_buffer):
+        leftover.flush()
 
     with ExitStack() as stack:
         saved_overrides = dict(app.dependency_overrides)

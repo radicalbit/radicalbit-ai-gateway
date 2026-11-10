@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from tests.test_responses_native import OPENCODE_TURN
+from tests.responses.test_native import OPENCODE_TURN
 
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,

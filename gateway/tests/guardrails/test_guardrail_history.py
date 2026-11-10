@@ -196,8 +196,11 @@ _INPUT = GuardrailWhereType.INPUT
     ],
 )
 def test_select_messages(messages, where, kwargs, expected):
-    window_kwargs = {k: kwargs.pop(k) for k in ('windowed', 'skip') if k in kwargs}
-    got = _select_messages(messages, _guardrail(**kwargs), where, **window_kwargs)
+    window_kwargs = {k: v for k, v in kwargs.items() if k in ('windowed', 'skip')}
+    guardrail_kwargs = {k: v for k, v in kwargs.items() if k not in window_kwargs}
+    got = _select_messages(
+        messages, _guardrail(**guardrail_kwargs), where, **window_kwargs
+    )
     assert got == expected
 
 

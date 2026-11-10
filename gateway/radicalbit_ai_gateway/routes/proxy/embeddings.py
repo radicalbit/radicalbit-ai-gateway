@@ -5,11 +5,11 @@ from openai.types.embedding_create_params import EmbeddingCreateParams
 from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.pipeline import embeddings as embeddings_pipeline
 from radicalbit_ai_gateway.pipeline.admission import Admission
-from radicalbit_ai_gateway.pipeline.http import endpoint
-from radicalbit_ai_gateway.utils.dependencies import (
+from radicalbit_ai_gateway.routes.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
+from radicalbit_ai_gateway.routes.proxy.http import endpoint
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     set_operation_category,

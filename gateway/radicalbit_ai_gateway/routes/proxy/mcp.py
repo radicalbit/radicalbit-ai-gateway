@@ -6,11 +6,11 @@ from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.limiting.limits import ADMISSION, shared_limits
 from radicalbit_ai_gateway.mcp_proxy.list_cache import McpListCache
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
-from radicalbit_ai_gateway.services.mcp_service import McpService
-from radicalbit_ai_gateway.utils.dependencies import (
+from radicalbit_ai_gateway.routes.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
+from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.utils.request_context import reset_route_context
 from radicalbit_ai_gateway.utils.trace_attributes import ensure_endpoint_category
 

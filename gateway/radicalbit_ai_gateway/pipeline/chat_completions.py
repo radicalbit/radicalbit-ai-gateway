@@ -15,13 +15,14 @@ from radicalbit_ai_gateway.guardrails.guardrails import Conversation, Reply
 from radicalbit_ai_gateway.limiting.limits import Usage
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
 from radicalbit_ai_gateway.llm.tracing import merge_chunks
-from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.pipeline.chat_streaming import StreamingUtils
 from radicalbit_ai_gateway.pipeline.conversation import (
     apply_config_prompt,
     check_chat_limits,
     route_chat,
 )
+from radicalbit_ai_gateway.pipeline.openai_messages import convert_openai_messages
 from radicalbit_ai_gateway.pipeline.scope import RequestScope
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -31,7 +32,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
     GuardrailBadRequest,
 )
 from radicalbit_ai_gateway.utils.open_ai_types import CompletionCreateParams
-from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     set_operation_category,

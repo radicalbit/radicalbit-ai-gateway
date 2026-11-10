@@ -6,7 +6,7 @@ from radicalbit_ai_gateway.llm.messages import (
     SystemMessage,
     ToolMessage,
 )
-from radicalbit_ai_gateway.models.chat_request import (
+from radicalbit_ai_gateway.pipeline.openai_messages import (
     convert_openai_messages,
     parse_tool_calls,
 )

@@ -44,7 +44,7 @@ import pytest
 from tests.common import provider_responses as upstream
 from tests.common.gateway_harness import Gateway, build_routes, open_gateway
 from tests.common.provider_recorder import CannedResponse, ProviderRecorder
-from tests.invoker.provider_golden_expected import EXPECTED, SCHEMAS
+from tests.invocation.provider_golden_expected import EXPECTED, SCHEMAS
 
 from radicalbit_ai_gateway.llm import tracing
 from radicalbit_ai_gateway.llm.factory import init_chat_model

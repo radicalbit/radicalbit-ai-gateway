@@ -11,13 +11,13 @@ from tests.common.limits import request_limits
 from tests.common.request_identity import with_identity
 
 from radicalbit_ai_gateway.pipeline import (
-    chat as chat_pipeline,
+    chat_completions as chat_pipeline,
     embeddings as embeddings_pipeline,
-    transcription as transcription_pipeline,
+    transcriptions as transcription_pipeline,
 )
-from radicalbit_ai_gateway.pipeline.chat import ChatRequest
+from radicalbit_ai_gateway.pipeline.chat_completions import ChatRequest
 from radicalbit_ai_gateway.pipeline.scope import RequestScope
-from radicalbit_ai_gateway.pipeline.transcription import Audio
+from radicalbit_ai_gateway.pipeline.transcriptions import Audio
 
 _CHAT_FIELDS = {'messages', 'tools', 'tool_choice'}
 

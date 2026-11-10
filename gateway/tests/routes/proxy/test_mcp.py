@@ -20,7 +20,7 @@ from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
-from radicalbit_ai_gateway.routes.gateway.mcp_route import McpRoute
+from radicalbit_ai_gateway.routes.proxy.mcp import McpRoute
 from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
@@ -446,7 +446,7 @@ async def test_end_to_end_against_real_upstream():
 # ---------------------------------------------------------------------------
 
 MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
-DEPENDENCIES = 'radicalbit_ai_gateway.utils.dependencies'
+DEPENDENCIES = 'radicalbit_ai_gateway.routes.dependencies'
 
 
 def test_the_service_reports_the_request_uuid_the_middleware_stamped():

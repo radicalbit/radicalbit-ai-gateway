@@ -23,13 +23,13 @@ from radicalbit_ai_gateway.llm.factory import init_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk
 from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.pipeline.chat_streaming import StreamingUtils
 from radicalbit_ai_gateway.responses.events import NativeResponsesEvent
 from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerBadRequest,
     ModelInvokerInternalError,
     ModelInvokerUpstreamError,
 )
-from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
 
 # A turn as opencode sends it back: reasoning only the model can resume, a
 # commentary message, two parallel calls and their outputs.

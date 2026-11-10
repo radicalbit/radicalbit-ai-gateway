@@ -27,9 +27,9 @@ from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.routes.dependencies import get_request_uuid
 from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import (
     KeyNotFoundError,
     ModelInvokerBadRequest,
