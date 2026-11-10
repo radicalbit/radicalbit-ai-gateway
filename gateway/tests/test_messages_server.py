@@ -832,3 +832,153 @@ class TestMessagesRequestEvents(MessagesTestCase):
         event = self._event()
         assert event.status == RequestStatus.HANDLED_ERROR
         assert event.http_status_code == 401
+
+
+# What Anthropic says when a thinking block was signed by another provider.
+SIGNATURE_REFUSAL = {
+    'type': 'error',
+    'error': {
+        'type': 'invalid_request_error',
+        'message': 'messages.1.content.0: Invalid `signature` in `thinking` block',
+    },
+    'request_id': 'req_1',
+}
+
+FOREIGN_THINKING = {'type': 'thinking', 'thinking': 'Hm.', 'signature': 'deepseek'}
+ANSWER = {'type': 'text', 'text': 'Hello'}
+
+# A conversation another provider answered with thinking.
+FOREIGN_HISTORY = {
+    **BODY,
+    'messages': [
+        {'role': 'user', 'content': 'Hi'},
+        {'role': 'assistant', 'content': [FOREIGN_THINKING, ANSWER]},
+        {'role': 'user', 'content': 'And now?'},
+    ],
+}
+
+
+class TestMessagesForeignThinking(MessagesTestCase):
+    """A thinking block another provider signed: retried once without it."""
+
+    def _refuse(self, refusal: dict | None = None):
+        mock = pook.post(ANTHROPIC_URL).times(1)
+        mock.reply(400).json(refusal or SIGNATURE_REFUSAL)
+        return mock
+
+    def test_signature_refusal_is_retried_without_the_old_thinking(self):
+        first = self._refuse()
+        retry = self._mock_anthropic()
+
+        response = self._messages(FOREIGN_HISTORY)
+
+        assert response.status_code == 200
+        assert _sent(first)['messages'] == FOREIGN_HISTORY['messages']
+        assert _sent(retry)['messages'] == [
+            {'role': 'user', 'content': 'Hi'},
+            {'role': 'assistant', 'content': [ANSWER]},
+            {'role': 'user', 'content': 'And now?'},
+        ]
+        assert _sent(retry)['model'] == 'claude-sonnet-4-5'
+
+    def test_thinking_of_a_running_tool_loop_stays_on_retry(self):
+        tool_use = {
+            'type': 'tool_use',
+            'id': 'toolu_1',
+            'name': 'get_weather',
+            'input': {'city': 'Paris'},
+        }
+        own_thinking = {'type': 'thinking', 'thinking': 'Tool.', 'signature': 'own'}
+        tool_loop = [
+            {'role': 'assistant', 'content': [own_thinking, tool_use]},
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'tool_result', 'tool_use_id': 'toolu_1', 'content': 'Sun'}
+                ],
+            },
+        ]
+        body = {**FOREIGN_HISTORY, 'messages': FOREIGN_HISTORY['messages'] + tool_loop}
+        self._refuse()
+        retry = self._mock_anthropic()
+
+        response = self._messages(body)
+
+        assert response.status_code == 200
+        assert _sent(retry)['messages'] == [
+            {'role': 'user', 'content': 'Hi'},
+            {'role': 'assistant', 'content': [ANSWER]},
+            {'role': 'user', 'content': 'And now?'},
+            *tool_loop,
+        ]
+
+    def test_other_refusal_is_relayed_without_retry(self):
+        refusal = {
+            'type': 'error',
+            'error': {'type': 'invalid_request_error', 'message': 'max_tokens: bad'},
+        }
+        self._refuse(refusal)
+        unused = self._mock_anthropic()
+
+        response = self._messages(FOREIGN_HISTORY)
+
+        assert response.status_code == 400
+        assert response.json() == refusal
+        assert not unused.matched
+
+    def test_signature_refusal_with_nothing_to_strip_is_relayed_without_retry(self):
+        only_thinking = {
+            **BODY,
+            'messages': [
+                {'role': 'user', 'content': 'Hi'},
+                {'role': 'assistant', 'content': [FOREIGN_THINKING]},
+                {'role': 'user', 'content': 'And now?'},
+            ],
+        }
+        self._refuse()
+        unused = self._mock_anthropic()
+
+        response = self._messages(only_thinking)
+
+        assert response.status_code == 400
+        assert response.json() == SIGNATURE_REFUSAL
+        assert not unused.matched
+
+    def test_refused_retry_is_relayed_as_sent(self):
+        self._refuse()
+        refusal = {
+            'type': 'error',
+            'error': {'type': 'invalid_request_error', 'message': 'still no'},
+        }
+        retry = self._refuse(refusal)
+        unused = self._mock_anthropic()
+
+        response = self._messages(FOREIGN_HISTORY)
+
+        assert response.status_code == 400
+        assert response.json() == refusal
+        assert retry.matched
+        assert not unused.matched
+
+    def test_signature_refusal_of_a_stream_is_retried_without_the_old_thinking(self):
+        self._refuse()
+        retry = self._mock_anthropic_stream()
+
+        response = self._messages({**FOREIGN_HISTORY, 'stream': True})
+
+        assert response.status_code == 200
+        assert _sent(retry)['messages'][1] == {
+            'role': 'assistant',
+            'content': [ANSWER],
+        }
+        assert [event for event, _ in _frames(response.text)][-1] == 'message_stop'
+
+    def test_refused_stream_retry_is_an_http_error_as_sent(self):
+        self._refuse()
+        retry = self._refuse()
+
+        response = self._messages({**FOREIGN_HISTORY, 'stream': True})
+
+        assert response.status_code == 400
+        assert response.json() == SIGNATURE_REFUSAL
+        assert retry.matched

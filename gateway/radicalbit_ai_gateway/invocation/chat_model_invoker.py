@@ -14,6 +14,10 @@ from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.factory import init_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
 from radicalbit_ai_gateway.messages.events import stream_usage
+from radicalbit_ai_gateway.messages.thinking import (
+    is_invalid_thinking_signature,
+    without_old_thinking,
+)
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import (
     ENABLE_PROMPT_CACHE_PARAM,
@@ -792,6 +796,60 @@ class ChatModelInvoker(ModelInvoker):
             )
         return _all_models_failed(route_name, error)
 
+    @staticmethod
+    def _signature_retry_body(model: Model, body: dict, error: Exception) -> dict:
+        """Return the body to retry when the upstream refused a thinking signature.
+
+        A client that switched models sends thinking that another provider
+        signed. The retry goes to the same model without that thinking. Without
+        such a refusal, or with nothing to strip, ``error`` is raised again.
+        """
+        if not is_invalid_thinking_signature(error):
+            raise error
+        retry_body, stripped = without_old_thinking(body)
+        if not stripped:
+            raise error
+        logger.warning(
+            'Messages model %s refused a thinking signature: '
+            'retrying without %d old thinking blocks',
+            model.model_id,
+            stripped,
+        )
+        return retry_body
+
+    async def _invoke_messages(
+        self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
+    ) -> dict:
+        """Make one Messages call to one model (see ``_signature_retry_body``)."""
+        try:
+            return await chat_model.ainvoke_native_messages(body, headers)
+        except Exception as error:
+            retry_body = self._signature_retry_body(model, body, error)
+        return await chat_model.ainvoke_native_messages(retry_body, headers)
+
+    async def _stream_messages(
+        self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Stream one Messages call from one model (see ``_signature_retry_body``).
+
+        The refusal comes before the first event, so the retry is safe.
+        """
+        started = False
+        try:
+            async for event, data in chat_model.astream_native_messages(body, headers):
+                started = True
+                yield event, data
+        except Exception as error:
+            if started:
+                raise
+            retry_body = self._signature_retry_body(model, body, error)
+        else:
+            return
+        async for event, data in chat_model.astream_native_messages(
+            retry_body, headers
+        ):
+            yield event, data
+
     @task(name='llm_complete_messages')
     async def complete_messages(
         self,
@@ -820,7 +878,9 @@ class ChatModelInvoker(ModelInvoker):
                     candidate, chat_model, route_name, first_error
                 )
             try:
-                result = await chat_model.ainvoke_native_messages(body, headers)
+                result = await self._invoke_messages(
+                    candidate, chat_model, body, headers
+                )
             except Exception as error:
                 first_error = first_error or error
                 logger.warning(
@@ -884,8 +944,8 @@ class ChatModelInvoker(ModelInvoker):
                 usage = {}
                 started = False
                 try:
-                    async for event, data in chat_model.astream_native_messages(
-                        body, headers
+                    async for event, data in self._stream_messages(
+                        candidate, chat_model, body, headers
                     ):
                         usage = stream_usage(event, data, usage)
                         started = True
