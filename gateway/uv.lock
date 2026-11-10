@@ -365,7 +365,7 @@ wheels = [
 
 [[package]]
 name = "azure-identity"
-version = "1.26.0"
+version = "1.27.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core" },
@@ -4063,7 +4063,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.18.1" },
     { name = "anthropic", specifier = ">=1.4.0" },
     { name = "azure-health-deidentification", specifier = ">=1.0.0b3" },
-    { name = "azure-identity", specifier = ">=1.26.0" },
+    { name = "azure-identity", specifier = ">=1.27.0,<2" },
     { name = "cachetools", specifier = ">=6.2.4" },
     { name = "celery", specifier = ">=5.6.2" },
     { name = "certifi", specifier = ">=2026.10.19" },
