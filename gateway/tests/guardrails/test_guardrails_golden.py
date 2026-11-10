@@ -7,33 +7,19 @@ guardrail events and log lines are compared with literals. Only the drivers
 """
 
 import json
-import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from fastapi.testclient import TestClient
 import pook
 import pytest
-from starlette.requests import Request
 import tiktoken
 
-from tests.common import db_mock
+from tests.common.gateway_harness import LOGGER, Gateway, build_routes, open_gateway
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
 
-from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import app, group_service, key_service
-from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-)
+from radicalbit_ai_gateway.server import app
 
 OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
@@ -46,9 +32,7 @@ EVENT_EMITS = (
 QUIET_EMITS = (
     'radicalbit_ai_gateway.invocation.recorder.emit_event',
     'radicalbit_ai_gateway.pipeline.conversation.emit_event',
-    'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event',
 )
-LOGGER = get_app_config().log_config.logger_name
 
 EMAIL = 'ada.lovelace@analytical-engine.example.com'
 
@@ -99,11 +83,6 @@ SOFT_OUT = _contains('soft_out', 'output', 'soft_block', 'softout')
 SOFT_IO = _contains('soft_io', 'io', 'soft_block', 'softout')
 
 
-def _mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
 def _build_routes(
     *guardrails: dict, unknown: tuple[str, ...] = (), **chat_route
 ) -> dict:
@@ -134,97 +113,40 @@ def _build_routes(
     # The config rejects unknown names: only code that builds routes by hand
     # can hand one over.
     config.routes['chat'].guardrails = [*unknown, *names]
-    cost_service = CostService(
-        chat_models_by_id=config.chat_models_by_id,
-        embedding_models_by_id=config.embedding_models_by_id,
-        decision_models_by_id=config.decision_models_by_id,
-    )
-    project_guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
-        cost_service=cost_service,
-        guardrails=config.guardrails,
-        chat_models_by_id=config.chat_models_by_id,
-    )
-    routes = build_gateway_routes_from_config(
-        config,
-        project_guardrails,
-        redis_client=None,
-        cost_service=cost_service,
-        httpx_client=None,
-        project_uuid='',
-    )
-    for route in routes.values():
-        route.project_name = 'proj'
-    return {f'proj/{name}': route for name, route in routes.items()}
+    return build_routes(config)
 
 
 @pytest.fixture
 def gateway(caplog):
-    app.dependency_overrides[get_request_uuid] = _mock_request_uuid
-    saved_validator = app.state.token_validator
-    app.state.token_validator = ApiKeyValidator(key_service=key_service)
-    api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
     events: list = []
-    patchers = [
-        patch.object(key_service, 'get_key_by_hashed_key', return_value=api_key),
-        patch.object(group_service, 'check_key_uuid_for_route', return_value=True),
-        *(patch(target, side_effect=events.append) for target in EVENT_EMITS),
-        *(patch(target) for target in QUIET_EMITS),
-    ]
-    for patcher in patchers:
-        patcher.start()
-    pook.on()
-    pook.enable_network('testserver')
-    caplog.set_level(logging.DEBUG, logger=LOGGER)
-    try:
-        yield _Gateway(TestClient(app), events, caplog)
-    finally:
-        pook.off()
-        pook.disable_network()
-        for patcher in reversed(patchers):
-            patcher.stop()
-        app.state.token_validator = saved_validator
-        app.dependency_overrides = {}
+    with open_gateway(
+        caplog=caplog,
+        use_pook=True,
+        patches=[
+            *(patch(target, side_effect=events.append) for target in EVENT_EMITS),
+            *(patch(target) for target in QUIET_EMITS),
+        ],
+        gateway_class=_Gateway,
+    ) as gateway:
+        gateway.events = events
+        yield gateway
 
 
-class _Gateway:
-    def __init__(self, client: TestClient, events: list, caplog):
-        self.client = client
-        self.events = events
-        self.caplog = caplog
-        self.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
+class _Gateway(Gateway):
+    """Sends the requests with no canned replies: pook answers for the providers."""
 
     def chat(self, text: str, stream: bool = False):
-        return self.client.post(
-            '/v1/chat/completions',
-            json={
-                'model': 'proj/chat',
-                'messages': [{'role': 'user', 'content': text}],
-                'stream': stream,
-            },
-            headers=self.headers,
-        )
+        return super().chat(None, text=text, stream=stream)
 
     def responses(self, text: str, stream: bool = False):
-        return self.client.post(
-            '/v1/responses',
-            json={'model': 'proj/chat', 'input': text, 'stream': stream},
-            headers=self.headers,
-        )
+        return super().responses(None, text=text, stream=stream)
 
     def embed(self, texts: list[str]):
-        return self.client.post(
-            '/v1/embeddings',
-            json={'model': 'proj/embed', 'input': texts},
-            headers=self.headers,
-        )
+        return super().embed(None, texts=texts)
 
     def decide(self, ticket: str):
-        return self.client.post(
-            '/v1/systemone',
-            json={'model': 'proj/agent', 'state': {'ticket': ticket}},
-            headers=self.headers,
+        return self.post(
+            '/v1/systemone', json={'model': 'proj/agent', 'state': {'ticket': ticket}}
         )
 
     def guardrail_events(self) -> list[tuple]:
@@ -666,11 +588,12 @@ def test_chat_output_redaction(gateway):
     )
 
 
-def test_chat_input_block(gateway):
+@pytest.mark.parametrize('stream', [False, True], ids=['complete', 'live_stream'])
+def test_chat_input_block(gateway, stream):
     app.state.routes = _build_routes(BLOCK_IN)
     openai = _mock_openai('never')
 
-    response = gateway.chat('please blockme')
+    response = gateway.chat('please blockme', stream=stream)
 
     assert response.status_code == 400
     assert response.json() == {

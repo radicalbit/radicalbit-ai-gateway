@@ -81,7 +81,6 @@ class KeyDAOTest(DatabaseIntegration):
         inserted_group = self.group_dao.insert(group)
         assert inserted.uuid == key.uuid
         assigned_key = self.key_dao.assign_group(key.uuid, inserted_group.uuid)
-        assert assigned_key is not None
         assert assigned_key.group_uuid == inserted_group.uuid
 
     def test_assign_group_not_exists_error(self):

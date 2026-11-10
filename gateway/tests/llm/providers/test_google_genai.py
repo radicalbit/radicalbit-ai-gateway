@@ -1560,6 +1560,7 @@ async def test_grounding_metadata_is_exposed():
     assert grounding['grounding_supports'] == []
 
 
+@pytest.mark.filterwarnings('ignore:SOMETHING_NEW is not a valid FinishReason')
 async def test_unknown_finish_reason_is_named():
     result = await reply([{'text': 'x'}], finishReason='SOMETHING_NEW')
     assert result.response_metadata['finish_reason'] == 'SOMETHING_NEW'

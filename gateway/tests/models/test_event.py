@@ -1,3 +1,5 @@
+import pytest
+
 from tests.common.mocked_gateway_config import (
     get_default_gateway,
     get_default_gateway_without_features,
@@ -10,6 +12,11 @@ from radicalbit_ai_gateway.db.models.event import (
     SemanticCacheCostData,
 )
 from radicalbit_ai_gateway.models.event_dto import CostDataDTO, EventsDTO
+
+# The pre-breakdown cost fields are deprecated but still served.
+pytestmark = pytest.mark.filterwarnings(
+    'ignore:Deprecated after the new cost breakdown:DeprecationWarning'
+)
 
 
 def test_flags_event_dto():

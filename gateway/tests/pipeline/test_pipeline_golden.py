@@ -12,47 +12,20 @@ send the requests and read what they caused) may change.
 """
 
 import json
-import logging
 import re
-from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
-import openai
-from opentelemetry import trace
-from opentelemetry.sdk.trace import SpanProcessor
 import pytest
-from starlette.requests import Request
-from traceloop.sdk import Traceloop
-from traceloop.sdk.tracing.tracing import TracerWrapper
 
-from tests.common import db_mock, provider_responses as upstream
+from tests.common import provider_responses as upstream
 from tests.common.audio import make_wav_bytes
+from tests.common.gateway_harness import Gateway, build_routes, open_gateway
 from tests.common.limits import consumed
-from tests.common.provider_recorder import CannedResponse, ProviderRecorder
+from tests.common.provider_recorder import CannedResponse
 
 from radicalbit_ai_gateway import server
-from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.events import events_processor
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.windows import Category
-from radicalbit_ai_gateway.metrics import define_metrics
-from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import app, group_service, key_service
-from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-    initialize_async_routers,
-)
-from radicalbit_ai_gateway.utils.request_context import current_route_config_ctx
 
-LOGGER = get_app_config().log_config.logger_name
 CREDENTIALS = {'api_key': 'sk-test'}
-WAV = make_wav_bytes(1.0)
 LONG_WAV = make_wav_bytes(2.0)
 
 
@@ -169,180 +142,10 @@ CONFIG = {
 }
 
 
-async def _build_routes() -> dict:
-    config = GatewayConfig.model_validate(CONFIG)
-    cost_service = CostService(
-        chat_models_by_id=config.chat_models_by_id,
-        embedding_models_by_id=config.embedding_models_by_id,
-        transcription_models_by_id=config.transcription_models_by_id,
-        decision_models_by_id=config.decision_models_by_id,
-    )
-    guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
-        cost_service=cost_service,
-        guardrails=config.guardrails,
-        chat_models_by_id=config.chat_models_by_id,
-    )
-    routes = build_gateway_routes_from_config(
-        config,
-        guardrails,
-        redis_client=None,
-        cost_service=cost_service,
-        httpx_client=None,
-        project_uuid='',
-    )
-    await initialize_async_routers(routes)
-    for route in routes.values():
-        route.project_name = 'proj'
-    return {f'proj/{name}': route for name, route in routes.items()}
-
-
-def _mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
-class _RouteContext(logging.Filter):
-    """Records the route each gateway log line is filtered on."""
-
-    def __init__(self):
-        super().__init__()
-        self.routes: list[str | None] = []
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        config = current_route_config_ctx.get()
-        self.routes.append(config.route_name if config is not None else None)
-        return True
-
-
 @pytest.fixture
-async def gateway(caplog):
-    routes = await _build_routes()
-    app.dependency_overrides[get_request_uuid] = _mock_request_uuid
-    saved_validator = app.state.token_validator
-    saved_routes = getattr(app.state, 'routes', None)
-    app.state.token_validator = ApiKeyValidator(key_service=key_service)
-    app.state.routes = routes
-    api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-    gateway = _Gateway(TestClient(app))
-    patchers = [
-        patch.object(key_service, 'get_key_by_hashed_key', return_value=api_key),
-        patch.object(
-            group_service,
-            'check_key_uuid_for_route',
-            side_effect=lambda *_: gateway.member,
-        ),
-        patch.object(
-            server.project_budget_limit_dao, 'get_by_project_uuid', return_value=[]
-        ),
-        patch.object(
-            events_processor._events_buffer, 'add', side_effect=gateway.events.append
-        ),
-        patch(
-            'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event',
-            side_effect=gateway.request_events.append,
-        ),
-        patch.object(
-            define_metrics.total_requests_counter,
-            'add',
-            side_effect=lambda value, attributes: gateway.http_metrics.append(
-                dict(attributes)
-            ),
-        ),
-        patch.object(
-            openai._base_client.BaseClient, '_should_retry', return_value=False
-        ),
-    ]
-    for patcher in patchers:
-        patcher.start()
-    logger = logging.getLogger(LOGGER)
-    logger.addFilter(gateway.route_context)
-    caplog.set_level(logging.DEBUG, logger=LOGGER)
-    try:
+def gateway(caplog):
+    with open_gateway(build_routes(CONFIG), caplog=caplog) as gateway:
         yield gateway
-    finally:
-        logger.removeFilter(gateway.route_context)
-        for patcher in reversed(patchers):
-            patcher.stop()
-        app.state.token_validator = saved_validator
-        if saved_routes is not None:
-            app.state.routes = saved_routes
-        app.dependency_overrides = {}
-
-
-class _Gateway:
-    def __init__(self, client: TestClient):
-        self.client = client
-        self.member = True
-        self.events: list = []
-        self.request_events: list = []
-        self.http_metrics: list = []
-        self.route_context = _RouteContext()
-        self.upstream: list = []
-
-    def post(self, path: str, replies: list[CannedResponse], key=True, **kwargs):
-        self.events.clear()
-        self.request_events.clear()
-        self.http_metrics.clear()
-        self.route_context.routes.clear()
-        headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'} if key else {}
-        with ProviderRecorder(replies) as recorder:
-            response = self.client.post(path, headers=headers, **kwargs)
-        assert recorder.unused == 0, 'a canned reply was not asked for'
-        self.upstream = [_upstream_call(r) for r in recorder.requests]
-        return response
-
-    def chat(self, replies, route='chat', text='Where is Paris?', key=True, **params):
-        return self.post(
-            '/v1/chat/completions',
-            replies,
-            key=key,
-            json={
-                'model': f'proj/{route}',
-                'messages': [{'role': 'user', 'content': text}],
-                **params,
-            },
-        )
-
-    def responses(
-        self, replies, route='chat', text='Where is Paris?', key=True, **params
-    ):
-        return self.post(
-            '/v1/responses',
-            replies,
-            key=key,
-            json={'model': f'proj/{route}', 'input': text, **params},
-        )
-
-    def embed(self, replies, route='embed', texts=('Where is Paris?',), **params):
-        return self.post(
-            '/v1/embeddings',
-            replies,
-            json={'model': f'proj/{route}', 'input': list(texts)},
-            **params,
-        )
-
-    def transcribe(self, replies, route='audio', stream=False, audio=WAV, **params):
-        return self.post(
-            '/v1/audio/transcriptions',
-            replies,
-            data={'model': f'proj/{route}', 'stream': str(stream).lower()},
-            files={'file': ('a.wav', audio, 'audio/wav')},
-            **params,
-        )
-
-    def decide(self, replies, route='agent', ticket='printer on fire', **params):
-        return self.post(
-            '/v1/systemone',
-            replies,
-            json={
-                'model': f'proj/{route}',
-                'state': {'ticket': ticket},
-                'questions': {'urgent': {'type': 'noul', 'instructions': 'Urgent?'}},
-            },
-            **params,
-        )
 
 
 def _upstream_call(request: dict) -> str:
@@ -408,7 +211,7 @@ def _distinct(values: list) -> list:
     return seen
 
 
-def _snapshot(gateway: _Gateway, response) -> dict:
+def _snapshot(gateway: Gateway, response) -> dict:
     request_event = gateway.request_events[-1] if gateway.request_events else None
     return {
         'status': response.status_code,
@@ -418,8 +221,8 @@ def _snapshot(gateway: _Gateway, response) -> dict:
             for k, v in response.headers.items()
             if k.upper().startswith('X-RB-AIGATEWAY-')
         },
-        'upstream': gateway.upstream,
-        'events': [_event(e) for e in gateway.events],
+        'upstream': [_upstream_call(r) for r in gateway.upstream],
+        'events': [_event(e) for e in gateway.event_rows],
         'request_event': None
         if request_event is None
         else (
@@ -939,39 +742,6 @@ async def test_golden(gateway, name):
 # ---------------------------------------------------------------------------
 # Trace spans: their names and parents, as the trace shows them
 # ---------------------------------------------------------------------------
-
-
-class _SpanCollector(SpanProcessor):
-    """Keeps the spans that end while it is on."""
-
-    def __init__(self):
-        self.on = False
-        self.spans: list = []
-
-    def on_end(self, span) -> None:
-        if self.on:
-            self.spans.append(span)
-
-
-@pytest.fixture(scope='module')
-def span_collector():
-    collector = _SpanCollector()
-    initialized = hasattr(TracerWrapper, 'instance')
-    if initialized:
-        trace.get_tracer_provider().add_span_processor(collector)
-    else:
-        Traceloop.init(
-            app_name='test-gateway',
-            telemetry_enabled=False,
-            disable_batch=True,
-            processor=collector,
-            instruments=set(),
-        )
-    TracerWrapper.set_disabled(False)
-    yield collector
-    TracerWrapper.set_disabled(True)
-    if not initialized:
-        del TracerWrapper.instance
 
 
 def _span_tree(spans: list) -> list[tuple[str, str | None]]:

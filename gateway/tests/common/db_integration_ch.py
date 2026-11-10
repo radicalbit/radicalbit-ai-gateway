@@ -5,7 +5,7 @@ from typing import TypeVar
 import unittest
 
 from sqlalchemy import text
-from testcontainers.clickhouse import ClickHouseContainer
+from testcontainers.community.clickhouse import ClickHouseContainer
 
 from radicalbit_ai_gateway.db.clickhouse_database import (
     ClickHouseBaseTable,
@@ -65,6 +65,8 @@ class DatabaseIntegrationClickhouse(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        # Close the pooled connections: reset_connection only drops the engine.
+        cls.db._engine.dispose()
         cls.container = None
         cls.db = None
 

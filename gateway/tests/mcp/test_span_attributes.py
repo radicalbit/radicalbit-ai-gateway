@@ -204,22 +204,36 @@ def _mcp_attrs(span) -> dict:
     }
 
 
-def test_root_span_carries_the_request_uuid(client, exporter):
-    assert _post(client, 'ping').status_code == 200
-
-    recorded = _span(exporter, ROOT_SPAN).attributes[f'{ASSOC}request_uuid']
-    assert uuid.UUID(recorded).version == 4
+EMIT = 'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
+LIST_SPAN = 'mcp_tools_list.task'
 
 
-def test_root_span_carries_the_auth_identity(client, exporter):
-    """Supplied by authenticate_bearer_request, and must survive the MCP merge."""
-    assert _post(client, 'ping').status_code == 200
+def _post_notification(client: TestClient):
+    return client.post(
+        PATH,
+        json={'jsonrpc': '2.0', 'method': 'notifications/initialized'},
+        headers=AUTH,
+    )
+
+
+def test_root_span_and_request_event_share_the_request_uuid_and_identity(
+    client, exporter
+):
+    """The identity is supplied by authenticate_bearer_request and must
+    survive the MCP merge. The shared uuid is the join the traces and events
+    pipelines rely on.
+    """
+    with patch(EMIT) as emit:
+        assert _post(client, 'ping').status_code == 200
 
     attrs = _span(exporter, ROOT_SPAN).attributes
+    recorded = attrs[f'{ASSOC}request_uuid']
+    assert uuid.UUID(recorded).version == 4
     assert attrs[f'{ASSOC}api_key_name'] == 'my-key'
     assert attrs[f'{ASSOC}group_name'] == 'team-a'
     assert attrs[f'{ASSOC}project_name'] == 'proj'
     assert attrs[f'{ASSOC}route_name'] == 'my-route'
+    assert emit.call_args.args[0].request_uuid == recorded
 
 
 @pytest.mark.parametrize(
@@ -234,22 +248,41 @@ def test_root_span_carries_the_auth_identity(client, exporter):
         ),
     ],
 )
-def test_root_span_carries_method_alias_and_target(
+def test_a_successful_call_is_recorded_on_the_root_span_and_request_event(
     client, exporter, method, params, expected_target
 ):
-    """The regression guard: these must reach the ROOT span, not just the task."""
-    assert _post(client, method, params).status_code == 200
+    """The regression guard: method, alias and target must reach the ROOT
+    span, not just the task. The span carries no denied marker and no error,
+    the upstream call is its own child span (the only place real upstream
+    latency shows), and the REQUEST event has every identity column the
+    dashboard needs.
+    """
+    with patch(EMIT) as emit:
+        assert _post(client, method, params).status_code == 200
 
-    assert _mcp_attrs(_span(exporter, ROOT_SPAN)) == {
+    root = _span(exporter, ROOT_SPAN)
+    assert _mcp_attrs(root) == {
         'method': method,
         'alias': 'github',
         'target': expected_target,
     }
+    assert root.status.status_code is not StatusCode.ERROR
+    _span(exporter, f'mcp_{method.replace("/", "_")}.task')
+    payload = emit.call_args.args[0]
+    assert payload.request_type is RequestType.MCP
+    assert payload.route_name == 'my-route'
+    assert payload.project_name == 'proj'
+    assert payload.project_uuid
+    assert payload.api_key_name == 'my-key'
+    assert payload.group_name == 'team-a'
+    assert payload.status is RequestStatus.SUCCESS
+    assert payload.duration_ms > 0
 
 
-def test_a_jsonrpc_error_marks_the_root_span(client, exporter):
+def test_a_jsonrpc_error_marks_the_root_span_and_the_request_event(client, exporter):
     """HTTP is 200, so the span status is the only failure signal."""
-    response = _post(client, 'tools/call', {'name': 'nope__missing'})
+    with patch(EMIT) as emit:
+        response = _post(client, 'tools/call', {'name': 'nope__missing'})
 
     assert response.status_code == 200
     root = _span(exporter, ROOT_SPAN)
@@ -259,91 +292,42 @@ def test_a_jsonrpc_error_marks_the_root_span(client, exporter):
     assert _mcp_attrs(root) == {'method': 'tools/call', 'error_code': '-32602'}
     # ... and stays diagnosable through the free-text status description
     assert root.status.description == 'Unknown tool: nope__missing'
+    payload = emit.call_args.args[0]
+    assert payload.http_status_code == 200
+    assert payload.status is RequestStatus.HANDLED_ERROR
+    assert payload.error_type == 'mcp_jsonrpc_error'
+    assert payload.error_code == '-32602'
 
 
-def test_a_successful_call_leaves_the_root_span_unset(client, exporter):
-    assert _post(client, 'tools/call', {'name': 'github__get_issue'}).status_code == 200
-
-    assert _span(exporter, ROOT_SPAN).status.status_code is not StatusCode.ERROR
-
-
-def test_a_partial_fanout_failure_is_recorded_on_the_task_span(
+def test_a_partial_fanout_failure_reaches_both_spans_and_not_the_next_request(
     client, exporter, upstream
 ):
+    """The task span is invisible to the root-span query behind the traces
+    list, so the marker crosses the task boundary via a ContextVar. Each
+    request is its own asyncio task with a copied context; a module-level
+    ContextVar would otherwise mark every later request as degraded.
+    """
     upstream.list_tools = AsyncMock(
         side_effect=[
             types.ListToolsResult(tools=[types.Tool(name='t', inputSchema={})]),
             McpUpstreamError('jira', 'boom'),
+            types.ListToolsResult(tools=[]),
+            types.ListToolsResult(tools=[]),
         ]
     )
 
     assert _post(client, 'tools/list').status_code == 200
-
-    attrs = _span(exporter, 'mcp_tools_list.task').attributes
+    attrs = _span(exporter, LIST_SPAN).attributes
     assert attrs['rb.gateway.mcp_upstream_total'] == 2
     assert attrs['rb.gateway.mcp_upstream_failed'] == 'jira'
     assert attrs['rb.gateway.mcp_result_count'] == 1
-
-
-def test_a_partial_fanout_failure_also_reaches_the_root_span(
-    client, exporter, upstream
-):
-    """The task span is invisible to the root-span query behind the traces list."""
-    upstream.list_tools = AsyncMock(
-        side_effect=[
-            types.ListToolsResult(tools=[types.Tool(name='t', inputSchema={})]),
-            McpUpstreamError('jira', 'boom'),
-        ]
-    )
-
-    assert _post(client, 'tools/list').status_code == 200
-
     root = _span(exporter, ROOT_SPAN)
     assert _mcp_attrs(root) == {'method': 'tools/list', 'upstream_failed': 'jira'}
     # a degraded fan-out is still a 200 with results — not a failed request
     assert root.status.status_code is not StatusCode.ERROR
 
-
-def test_a_healthy_fanout_leaves_the_root_span_without_the_degraded_marker(
-    client, exporter, upstream
-):
-    upstream.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
-
     assert _post(client, 'tools/list').status_code == 200
-
     assert _mcp_attrs(_span(exporter, ROOT_SPAN)) == {'method': 'tools/list'}
-
-
-def test_one_requests_degradation_does_not_leak_into_the_next(
-    client, exporter, upstream
-):
-    """The marker crosses a task boundary via a ContextVar, so prove the scope.
-
-    Each request is its own asyncio task with a copied context; a module-level
-    ContextVar would otherwise mark every later request as degraded.
-    """
-    upstream.list_tools = AsyncMock(
-        side_effect=[
-            types.ListToolsResult(tools=[]),
-            McpUpstreamError('jira', 'boom'),
-            types.ListToolsResult(tools=[]),
-            types.ListToolsResult(tools=[]),
-        ]
-    )
-
-    assert _post(client, 'tools/list').status_code == 200
-    assert _mcp_attrs(_span(exporter, ROOT_SPAN))['upstream_failed'] == 'jira'
-
-    assert _post(client, 'tools/list').status_code == 200
-    assert 'upstream_failed' not in _mcp_attrs(_span(exporter, ROOT_SPAN))
-
-
-def test_upstream_calls_get_their_own_child_span(client, exporter, upstream):
-    """Real upstream latency is only visible if the outbound call is its own span."""
-    assert _post(client, 'tools/call', {'name': 'github__get_issue'}).status_code == 200
-
-    names = {s.name for s in exporter.get_finished_spans()}
-    assert {'mcp_request.workflow', 'mcp_tools_call.task'} <= names
 
 
 def test_a_parse_error_marks_the_root_span(client, exporter):
@@ -359,64 +343,37 @@ def test_a_parse_error_marks_the_root_span(client, exporter):
     assert _mcp_attrs(root) == {'error_code': '-32700'}
 
 
-def test_a_notification_leaves_the_root_span_unset(client, exporter):
-    response = client.post(
-        PATH,
-        json={'jsonrpc': '2.0', 'method': 'notifications/initialized'},
-        headers=AUTH,
-    )
+def test_a_notification_leaves_the_root_span_unset_and_emits_no_request_event(
+    client, exporter
+):
+    with patch(EMIT) as emit:
+        response = _post_notification(client)
 
     assert response.status_code == 202
     root = _span(exporter, ROOT_SPAN)
     assert root.status.status_code is not StatusCode.ERROR
     assert _mcp_attrs(root) == {'method': 'notifications/initialized'}
+    emit.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# REQUEST events (same wiring, other pipeline)
-# ---------------------------------------------------------------------------
+def test_an_auth_failure_still_reports_the_route_it_targeted(client):
+    """Context is populated before auth, so 401s stay attributable to a route."""
+    client.app.state.token_validator = SimpleNamespace(
+        validate_token=AsyncMock(side_effect=InvalidApiKey('nope'))
+    )
 
-EMIT = 'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
-
-
-def test_the_request_event_carries_route_project_and_key_identity(client):
-    """Empty identity columns would make the rows useless to the dashboard."""
     with patch(EMIT) as emit:
-        assert (
-            _post(client, 'tools/call', {'name': 'github__get_issue'}).status_code
-            == 200
-        )
+        assert _post(client, 'ping').status_code == 401
 
     payload = emit.call_args.args[0]
-    assert payload.request_type is RequestType.MCP
     assert payload.route_name == 'my-route'
     assert payload.project_name == 'proj'
-    assert payload.project_uuid
-    assert payload.api_key_name == 'my-key'
-    assert payload.group_name == 'team-a'
-    assert payload.status is RequestStatus.SUCCESS
-    assert payload.duration_ms > 0
-
-
-def test_the_request_event_shares_the_request_uuid_with_the_span(client, exporter):
-    """Pin the join that the traces and events pipelines rely on."""
-    with patch(EMIT) as emit:
-        assert _post(client, 'ping').status_code == 200
-
-    span_uuid = _span(exporter, ROOT_SPAN).attributes[f'{ASSOC}request_uuid']
-    assert emit.call_args.args[0].request_uuid == span_uuid
-
-
-def test_a_jsonrpc_error_is_a_handled_error_in_the_request_event(client):
-    with patch(EMIT) as emit:
-        assert _post(client, 'tools/call', {'name': 'nope__missing'}).status_code == 200
-
-    payload = emit.call_args.args[0]
-    assert payload.http_status_code == 200
     assert payload.status is RequestStatus.HANDLED_ERROR
-    assert payload.error_type == 'mcp_jsonrpc_error'
-    assert payload.error_code == '-32602'
 
+
+# ---------------------------------------------------------------------------
+# Allowlist rejections
+# ---------------------------------------------------------------------------
 
 GATED_TOOL = 'get_issue'
 GATED_PROMPT = 'review'
@@ -449,20 +406,20 @@ def gated_client(client) -> TestClient:
     return client
 
 
-GATED_CALLS = [
-    ('tools/call', {'name': f'github__{GATED_TOOL}'}, GATED_TOOL),
-    ('prompts/get', {'name': f'github__{GATED_PROMPT}'}, GATED_PROMPT),
-    (
-        'resources/read',
-        {'uri': encode_resource_uri('github', GATED_RESOURCE)},
-        GATED_RESOURCE,
-    ),
-]
-
-
-@pytest.mark.parametrize(('method', 'params', 'target'), GATED_CALLS)
-def test_an_allowlist_rejection_is_attributable_on_the_root_span(
-    gated_client, exporter, method, params, target
+@pytest.mark.parametrize(
+    ('method', 'params', 'target'),
+    [
+        ('tools/call', {'name': f'github__{GATED_TOOL}'}, GATED_TOOL),
+        ('prompts/get', {'name': f'github__{GATED_PROMPT}'}, GATED_PROMPT),
+        (
+            'resources/read',
+            {'uri': encode_resource_uri('github', GATED_RESOURCE)},
+            GATED_RESOURCE,
+        ),
+    ],
+)
+def test_an_allowlist_rejection_is_attributable_and_never_reaches_the_upstream(
+    gated_client, exporter, upstream, method, params, target
 ):
     """Pin the marker that tells a policy rejection from a typo.
 
@@ -470,7 +427,8 @@ def test_an_allowlist_rejection_is_attributable_on_the_root_span(
     ``denied`` attribute is the only thing separating the two when the trace is
     read back — and it has to reach the ROOT span, not just the task.
     """
-    assert _post(gated_client, method, params).status_code == 200
+    with patch(EMIT) as emit:
+        assert _post(gated_client, method, params).status_code == 200
 
     root = _span(exporter, ROOT_SPAN)
     assert root.status.status_code is StatusCode.ERROR
@@ -481,33 +439,18 @@ def test_an_allowlist_rejection_is_attributable_on_the_root_span(
         'error_code': '-32602',
         'denied': 'allowlist',
     }
-
-
-@pytest.mark.parametrize(('method', 'params', 'target'), GATED_CALLS)
-def test_an_allowlist_rejection_is_an_error_in_the_request_event(
-    gated_client, method, params, target
-):
-    with patch(EMIT) as emit:
-        assert _post(gated_client, method, params).status_code == 200
-
     payload = emit.call_args.args[0]
     assert payload.http_status_code == 200
     assert payload.status is RequestStatus.HANDLED_ERROR
     assert payload.error_type == 'mcp_jsonrpc_error'
     assert payload.error_code == '-32602'
+    upstream.call_tool.assert_not_awaited()
+    upstream.get_prompt.assert_not_awaited()
+    upstream.read_resource.assert_not_awaited()
 
 
-@pytest.mark.parametrize(
-    ('method', 'span', 'total'),
-    [
-        ('tools/list', 'mcp_tools_list.task', 1),
-        ('prompts/list', 'mcp_prompts_list.task', 1),
-        ('resources/list', 'mcp_resources_list.task', 1),
-    ],
-)
-def test_a_fully_gated_list_still_records_its_fanout(
-    gated_client, exporter, method, span, total
-):
+@pytest.mark.parametrize('method', ['tools/list', 'prompts/list', 'resources/list'])
+def test_a_fully_gated_list_still_records_its_fanout(gated_client, exporter, method):
     """No upstream is contacted, but an absent count reads as an unreported one.
 
     ``mcp_upstream_total`` stays the route's server count so the dimension keeps
@@ -515,27 +458,10 @@ def test_a_fully_gated_list_still_records_its_fanout(
     """
     assert _post(gated_client, method).status_code == 200
 
-    attrs = _span(exporter, span).attributes
-    assert attrs['rb.gateway.mcp_upstream_total'] == total
+    attrs = _span(exporter, f'mcp_{method.replace("/", "_")}.task').attributes
+    assert attrs['rb.gateway.mcp_upstream_total'] == 1
     assert attrs['rb.gateway.mcp_upstream_failed'] == ''
     assert attrs['rb.gateway.mcp_result_count'] == 0
-
-
-@pytest.mark.parametrize(('method', 'params', 'target'), GATED_CALLS)
-def test_a_gated_call_never_reaches_the_upstream(
-    gated_client, upstream, method, params, target
-):
-    assert _post(gated_client, method, params).status_code == 200
-
-    upstream.call_tool.assert_not_awaited()
-    upstream.get_prompt.assert_not_awaited()
-    upstream.read_resource.assert_not_awaited()
-
-
-def test_a_permitted_call_carries_no_denied_marker(client, exporter):
-    assert _post(client, 'tools/call', {'name': 'github__get_issue'}).status_code == 200
-
-    assert 'denied' not in _mcp_attrs(_span(exporter, ROOT_SPAN))
 
 
 def test_a_denial_does_not_leak_into_the_next_request(gated_client, exporter):
@@ -550,37 +476,12 @@ def test_a_denial_does_not_leak_into_the_next_request(gated_client, exporter):
     assert 'denied' not in _mcp_attrs(_span(exporter, ROOT_SPAN))
 
 
-def test_a_notification_emits_no_request_event(client):
-    with patch(EMIT) as emit:
-        response = client.post(
-            PATH,
-            json={'jsonrpc': '2.0', 'method': 'notifications/initialized'},
-            headers=AUTH,
-        )
-
-    assert response.status_code == 202
-    emit.assert_not_called()
+# ---------------------------------------------------------------------------
+# Cache hits
+# ---------------------------------------------------------------------------
 
 
-def test_an_auth_failure_still_reports_the_route_it_targeted(client):
-    """Context is populated before auth, so 401s stay attributable to a route."""
-    client.app.state.token_validator = SimpleNamespace(
-        validate_token=AsyncMock(side_effect=InvalidApiKey('nope'))
-    )
-
-    with patch(EMIT) as emit:
-        assert _post(client, 'ping').status_code == 401
-
-    payload = emit.call_args.args[0]
-    assert payload.route_name == 'my-route'
-    assert payload.project_name == 'proj'
-    assert payload.status is RequestStatus.HANDLED_ERROR
-
-
-LIST_SPAN = 'mcp_tools_list.task'
-
-
-def test_a_list_served_from_cache_is_categorised_as_cache(
+def test_a_list_served_from_cache_is_categorised_as_cache_on_its_task_only(
     cached_client, exporter, upstream
 ):
     """A hit contacted no upstream, so it must not be bucketed as one.
@@ -589,40 +490,20 @@ def test_a_list_served_from_cache_is_categorised_as_cache(
     set_operation_category, because where it lands is the whole point:
     get_category_latencies groups every span by this attribute, and the task
     span inherits the INVOCATION that dispatch set before it knew the method.
+    ensure_endpoint_category owns the root span; the phases are per-span. The
+    correction is attached inside a task, so it unwinds with it.
     """
     upstream.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    upstream.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
 
     assert _post(cached_client, 'tools/list').status_code == 200
     assert _category(_span(exporter, LIST_SPAN)) == 'invocation'
 
     assert _post(cached_client, 'tools/list').status_code == 200
     assert _category(_span(exporter, LIST_SPAN)) == 'cache'
+    assert _category(_span(exporter, ROOT_SPAN)) == 'endpoint'
     # and the second request really was a hit, not a second fan-out
     assert upstream.list_tools.await_count == 2
-
-
-def test_the_root_span_of_a_cache_hit_stays_the_endpoint_bucket(
-    cached_client, exporter, upstream
-):
-    """ensure_endpoint_category owns the root span; the phases are per-span."""
-    upstream.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
-
-    assert _post(cached_client, 'tools/list').status_code == 200
-    assert _post(cached_client, 'tools/list').status_code == 200
-
-    assert _category(_span(exporter, ROOT_SPAN)) == 'endpoint'
-
-
-def test_a_cache_hit_does_not_recategorise_the_next_requests_fanout(
-    cached_client, exporter, upstream
-):
-    """The correction is attached inside a task, so prove it unwinds with it."""
-    upstream.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
-    upstream.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
-
-    assert _post(cached_client, 'tools/list').status_code == 200
-    assert _post(cached_client, 'tools/list').status_code == 200
-    assert _category(_span(exporter, LIST_SPAN)) == 'cache'
 
     # a different list method on the same route: a miss, and its own category
     assert _post(cached_client, 'prompts/list').status_code == 200

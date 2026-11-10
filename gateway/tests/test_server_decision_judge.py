@@ -4,29 +4,22 @@
 Typesafe and OpenAI are mocked with pook.
 """
 
+from contextlib import nullcontext
 import json
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
 import httpx
 import pook
 import pytest
-from starlette.requests import Request
 
 from tests.common import db_mock
+from tests.common.gateway_harness import build_routes, open_gateway
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
 
-from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
-    DecisionJudgeEngine,
-)
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
@@ -37,19 +30,8 @@ from radicalbit_ai_gateway.models.event_payload import (
     ModelInvocationPayload,
     OutputTokenProcessedPayload,
 )
-from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import (
-    app,
-    group_service,
-    key_service,
-    project_budget_limit_dao,
-)
-from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-)
+from radicalbit_ai_gateway.server import app, key_service, project_budget_limit_dao
 
 CHAT_ROUTE_KEY = 'proj/chat'
 EMBEDDING_ROUTE_KEY = 'proj/embed'
@@ -60,11 +42,7 @@ OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 OPENAI_EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings'
 
 MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
-GATEWAY_EMIT = 'radicalbit_ai_gateway.pipeline.conversation.emit_event'
 GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
-REQUEST_EVENT_EMIT = (
-    'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
-)
 JUDGE_SPAN = (
     'radicalbit_ai_gateway.guardrails.judges.decision_judge_engine'
     '.trace.get_current_span'
@@ -72,7 +50,6 @@ JUDGE_SPAN = (
 GUARDRAIL_SPAN = (
     'radicalbit_ai_gateway.guardrails.guardrail_check.trace.get_current_span'
 )
-BACKOFF_SLEEP = 'radicalbit_ai_gateway.invocation.decision_model_invoker.asyncio.sleep'
 
 GPT = {
     'model_id': 'gpt',
@@ -140,11 +117,6 @@ DECISION_ANSWER = {
 }
 
 
-def _mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
 def _decision_judge(
     behavior: str = 'block', where: str = 'input', **parameters
 ) -> dict:
@@ -171,7 +143,7 @@ def _build_routes(
     """
     names = [g['name'] for g in guardrails]
     input_names = [g['name'] for g in guardrails if g.get('where') != 'output']
-    config = GatewayConfig.model_validate(
+    return build_routes(
         {
             'chat_models': [GPT],
             'embedding_models': [EMBEDDING],
@@ -182,37 +154,9 @@ def _build_routes(
                 'embed': {'embedding_models': ['emb'], 'guardrails': input_names},
                 'agent': {'decision_models': ['jev'], 'guardrails': input_names},
             },
-        }
+        },
+        prompt_manager=prompt_manager,
     )
-    cost_service = CostService(
-        chat_models_by_id=config.chat_models_by_id,
-        embedding_models_by_id=config.embedding_models_by_id,
-        decision_models_by_id=config.decision_models_by_id,
-    )
-    project_guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(
-            prompt_manager=prompt_manager or MagicMock(spec_set=PromptManager)
-        ),
-        decision_judge_engine=DecisionJudgeEngine(
-            decision_models=config.decision_models,
-            cost_service=cost_service,
-        ),
-        cost_service=cost_service,
-        guardrails=config.guardrails,
-        chat_models_by_id=config.chat_models_by_id,
-    )
-    routes = build_gateway_routes_from_config(
-        config,
-        project_guardrails,
-        redis_client=None,
-        cost_service=cost_service,
-        httpx_client=None,
-        project_uuid='',
-    )
-    for route in routes.values():
-        route.project_name = 'proj'
-    return {f'proj/{name}': route for name, route in routes.items()}
 
 
 def _noul_answer(noul, input_tokens: int = 40) -> dict:
@@ -224,41 +168,21 @@ def _noul_answer(noul, input_tokens: int = 40) -> dict:
 
 
 class TestDecisionJudgeEndpoints(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        app.dependency_overrides[get_request_uuid] = _mock_request_uuid
-        cls.client = TestClient(app)
-        cls.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
-
-    @classmethod
-    def tearDownClass(cls):
-        app.dependency_overrides = {}
-
     def setUp(self):
-        self.addCleanup(
-            setattr, app.state, 'token_validator', app.state.token_validator
-        )
-        app.state.token_validator = ApiKeyValidator(key_service=key_service)
-        self.api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-        key_service.get_key_by_hashed_key = MagicMock(return_value=self.api_key)
-        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
-
         self.emitted = []
         self.guardrail_events = []
-        for patcher in (
-            patch(MODEL_INVOKER_EMIT, side_effect=self.emitted.append),
-            patch(GATEWAY_EMIT),
-            patch(REQUEST_EVENT_EMIT),
-            patch(GUARDRAIL_EMIT, side_effect=self.guardrail_events.append),
-            patch(BACKOFF_SLEEP, new=AsyncMock()),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        pook.on()
-        # The TestClient talks httpx too: let only its own host through.
-        pook.enable_network('testserver')
-        self.addCleanup(pook.off)
-        self.addCleanup(pook.disable_network)
+        gateway = self.enterContext(
+            open_gateway(
+                use_pook=True,
+                patches=[
+                    patch(MODEL_INVOKER_EMIT, side_effect=self.emitted.append),
+                    patch(GUARDRAIL_EMIT, side_effect=self.guardrail_events.append),
+                ],
+            )
+        )
+        self.client = gateway.client
+        self.headers = gateway.headers
+        self.api_key = gateway.api_key
 
     def _chat(self, messages: list[dict] | None = None, stream: bool = False):
         return self.client.post(
@@ -316,48 +240,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         )
         return mock
 
-    def test_noul_above_threshold_blocks_before_the_chat_model(self):
-        app.state.routes = _build_routes(_decision_judge(threshold=0.7))
-        self._mock_typesafe(noul=0.9)
-        openai = self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 400
-        assert response.json()['error']['message'] == 'block by decision judge'
-        assert not openai.isdone()
-
-    def test_noul_at_threshold_triggers(self):
-        app.state.routes = _build_routes(_decision_judge(threshold=0.7))
-        self._mock_typesafe(noul=0.7)
-        openai = self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 400
-        assert not openai.isdone()
-
-    def test_noul_below_threshold_passes(self):
-        app.state.routes = _build_routes(_decision_judge(threshold=0.7))
-        self._mock_typesafe(noul=0.69)
-        self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 200
-        assert response.json()['choices'][0]['message']['content'] == 'Paris'
-        assert pook.isdone()
-
-    def test_default_threshold_is_one_half(self):
-        app.state.routes = _build_routes(_decision_judge())
-        self._mock_typesafe(noul=0.5)
-        openai = self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 400
-        assert not openai.isdone()
-
     def test_request_carries_text_as_state_and_one_noul_question(self):
         app.state.routes = _build_routes(_decision_judge(criteria=CRITERIA))
         typesafe = self._mock_typesafe(
@@ -401,67 +283,9 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         assert response.json()['choices'][0]['message']['content'] == 'Paris'
         assert pook.isdone()
 
-    def test_trigger_emits_the_guardrail_event(self):
-        app.state.routes = _build_routes(_decision_judge())
-        self._mock_typesafe(noul=0.9)
-        self._mock_openai()
-
-        self._chat()
-
-        [event] = self.guardrail_events
-        assert event.name == 'off_topic_block'
-        assert event.type == 'DECISION_JUDGE'
-        assert event.where == 'INPUT'
-        assert event.behavior == 'BLOCK'
-
     # Text sent as state
 
-    def test_by_default_only_user_messages_are_sent(self):
-        app.state.routes = _build_routes(_decision_judge())
-        typesafe = self._mock_typesafe(noul=0.1)
-        self._mock_openai()
-
-        response = self._chat(
-            [
-                {'role': 'system', 'content': 'You are a billing assistant'},
-                {'role': 'user', 'content': USER_TEXT},
-            ]
-        )
-
-        assert response.status_code == 200
-        assert typesafe.isdone()
-
-    def test_message_roles_change_what_is_sent(self):
-        guardrail = _decision_judge()
-        guardrail['message_roles'] = ['system', 'user']
-        app.state.routes = _build_routes(guardrail)
-        typesafe = self._mock_typesafe(
-            noul=0.1, state=f'You are a billing assistant\n{USER_TEXT}'
-        )
-        self._mock_openai()
-
-        response = self._chat(
-            [
-                {'role': 'system', 'content': 'You are a billing assistant'},
-                {'role': 'user', 'content': USER_TEXT},
-            ]
-        )
-
-        assert response.status_code == 200
-        assert typesafe.isdone()
-
     # Retries and fail closed
-
-    def test_transient_error_is_retried(self):
-        app.state.routes = _build_routes(_decision_judge())
-        self._mock_typesafe(status=503, body={'detail': 'busy'})
-        self._mock_typesafe(noul=0.1)
-        self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 200
-        assert pook.isdone()
 
     def test_exhausted_retries_fail_closed(self):
         app.state.routes = _build_routes(_decision_judge())
@@ -484,88 +308,10 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         self._assert_fails_closed(response, openai)
         assert typesafe.isdone()
 
-    def test_answer_without_noul_fails_closed(self):
-        app.state.routes = _build_routes(_decision_judge())
-        self._mock_typesafe(body={'answers': {}, 'usage': {'input_tokens': 40}})
-        openai = self._mock_openai()
-
-        self._assert_fails_closed(self._chat(), openai)
-
-    def _assert_noul_fails_closed(self, noul):
-        app.state.routes = _build_routes(_decision_judge())
-        self._mock_typesafe(noul=noul)
-        openai = self._mock_openai()
-
-        self._assert_fails_closed(self._chat(), openai)
-
-    def test_string_noul_fails_closed(self):
-        self._assert_noul_fails_closed('high')
-
-    def test_boolean_noul_fails_closed(self):
-        self._assert_noul_fails_closed(True)
-
-    def test_null_noul_fails_closed(self):
-        self._assert_noul_fails_closed(None)
-
-    def test_non_json_answer_fails_closed(self):
-        app.state.routes = _build_routes(_decision_judge())
-        self._mock_typesafe(raw_body='<html>oops</html>')
-        openai = self._mock_openai()
-
-        self._assert_fails_closed(self._chat(), openai)
-
-    def test_rate_limited_answer_is_retried(self):
-        app.state.routes = _build_routes(_decision_judge())
-        self._mock_typesafe(status=429, body={'detail': 'slow down'})
-        self._mock_typesafe(noul=0.1)
-        self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 200
-        assert pook.isdone()
-
-    def test_network_error_is_retried(self):
-        app.state.routes = _build_routes(_decision_judge())
-        pook.post(TYPESAFE_URL).times(1).error(httpx.ConnectError('refused'))
-        self._mock_typesafe(noul=0.1)
-        self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 200
-        assert pook.isdone()
-
-    def test_timeout_is_retried(self):
-        app.state.routes = _build_routes(_decision_judge())
-        pook.post(TYPESAFE_URL).times(1).error(httpx.ReadTimeout('too slow'))
-        self._mock_typesafe(noul=0.1)
-        self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 200
-        assert pook.isdone()
-
     # Fallback
 
     def _mock_backup(self, **kwargs):
         return self._mock_typesafe(model='jev-backup', **kwargs)
-
-    def test_fallback_answers_when_the_primary_is_exhausted(self):
-        app.state.routes = _build_routes(
-            _decision_judge(threshold=0.7, fallback_model_id='jev-backup')
-        )
-        self._mock_typesafe(status=503, body={'detail': 'busy'}, times=4)
-        backup = self._mock_backup(noul=0.9)
-        openai = self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 400
-        assert response.json()['error']['message'] == 'block by decision judge'
-        assert backup.isdone()
-        assert not openai.isdone()
 
     def test_fallback_noul_below_threshold_passes(self):
         app.state.routes = _build_routes(
@@ -619,62 +365,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         self._assert_fails_closed(response, openai)
         assert typesafe.isdone()
         assert not backup.isdone()
-
-    def test_primary_rate_limited_after_retries_moves_to_the_fallback(self):
-        app.state.routes = _build_routes(
-            _decision_judge(fallback_model_id='jev-backup')
-        )
-        self._mock_typesafe(status=429, body={'detail': 'slow down'}, times=4)
-        backup = self._mock_backup(noul=0.9)
-        openai = self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 400
-        assert backup.isdone()
-        assert not openai.isdone()
-
-    def test_primary_unreachable_moves_to_the_fallback(self):
-        app.state.routes = _build_routes(
-            _decision_judge(fallback_model_id='jev-backup')
-        )
-        pook.post(TYPESAFE_URL).times(4).error(httpx.ConnectError('refused'))
-        backup = self._mock_backup(noul=0.9)
-        openai = self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 400
-        assert backup.isdone()
-        assert not openai.isdone()
-
-    def test_primary_answer_without_noul_moves_to_the_fallback(self):
-        app.state.routes = _build_routes(
-            _decision_judge(fallback_model_id='jev-backup')
-        )
-        self._mock_typesafe(body={'answers': {}, 'usage': {'input_tokens': 40}})
-        backup = self._mock_backup(noul=0.9)
-        openai = self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 400
-        assert backup.isdone()
-        assert not openai.isdone()
-
-    def test_primary_invalid_noul_moves_to_the_fallback(self):
-        app.state.routes = _build_routes(
-            _decision_judge(fallback_model_id='jev-backup')
-        )
-        self._mock_typesafe(noul='high')
-        backup = self._mock_backup(noul=0.9)
-        openai = self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 400
-        assert backup.isdone()
-        assert not openai.isdone()
 
     # Cost and limits
 
@@ -782,51 +472,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         )
         key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
 
-    def test_route_input_token_limit_counts_judge_usage(self):
-        app.state.routes = _build_routes(
-            _decision_judge(), token_limiting={'input': {'max_tokens': 100}}
-        )
-
-        self._assert_judge_usage_blocks_the_next_request()
-
-    def test_route_budget_counts_judge_cost(self):
-        app.state.routes = _build_routes(
-            _decision_judge(),
-            decision_models=(self.PRICEY_JEV, JEV_BACKUP),
-            budget_limiting={'max_budget': 0.1},
-        )
-
-        self._assert_judge_usage_blocks_the_next_request()
-
-    def test_credential_input_token_limit_counts_judge_usage(self):
-        app.state.routes = _build_routes(_decision_judge())
-        self._limit_credential(CredentialLimitCategory.TOKEN_INPUT, 100)
-
-        self._assert_judge_usage_blocks_the_next_request()
-
-    def test_credential_budget_counts_judge_cost(self):
-        app.state.routes = _build_routes(
-            _decision_judge(), decision_models=(self.PRICEY_JEV, JEV_BACKUP)
-        )
-        self._limit_credential(CredentialLimitCategory.BUDGET, 0.1)
-
-        self._assert_judge_usage_blocks_the_next_request()
-
-    def test_project_budget_counts_judge_cost(self):
-        app.state.routes = _build_routes(
-            _decision_judge(), decision_models=(self.PRICEY_JEV, JEV_BACKUP)
-        )
-        app.state.routes[CHAT_ROUTE_KEY].project_uuid = str(db_mock.RANDOM_UUID)
-        dao = MagicMock(
-            return_value=[
-                db_mock.get_sample_project_budget_limit(
-                    window_size='1 minute', max_value=0.1
-                )
-            ]
-        )
-        with patch.object(project_budget_limit_dao, 'get_by_project_uuid', dao):
-            self._assert_judge_usage_blocks_the_next_request()
-
     # Tracing
 
     def _record_span(self) -> MagicMock:
@@ -854,43 +499,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         assert attributes['guardrail.decision_judge.threshold'] == 0.7
         assert attributes['guardrail.decision_judge.noul'] == noul
         assert attributes['guardrail.decision_judge.state'] == USER_TEXT
-
-    def test_passing_call_records_the_judge_on_the_span(self):
-        span = self._record_span()
-        app.state.routes = _build_routes(
-            _decision_judge(threshold=0.7, criteria=CRITERIA)
-        )
-        self._mock_typesafe(noul=0.2, question=self._question_with_criteria())
-        self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 200
-        attributes = self._span_attributes(span)
-        self._assert_judge_recorded(attributes, noul=0.2)
-        assert attributes['guardrail.decision_judge.answered_model_id'] == 'jev'
-        assert attributes['guardrail.decision_judge.fallback_triggered'] is False
-        assert 'guardrail.triggered.name' not in attributes
-
-    def test_triggering_call_records_the_judge_and_the_triggered_guardrail(self):
-        span = self._record_span()
-        app.state.routes = _build_routes(
-            _decision_judge(threshold=0.7, criteria=CRITERIA)
-        )
-        self._mock_typesafe(noul=0.9, question=self._question_with_criteria())
-        self._mock_openai()
-
-        response = self._chat()
-
-        assert response.status_code == 400
-        attributes = self._span_attributes(span)
-        self._assert_judge_recorded(attributes, noul=0.9)
-        assert attributes['guardrail.decision_judge.answered_model_id'] == 'jev'
-        assert attributes['guardrail.decision_judge.fallback_triggered'] is False
-        assert attributes['guardrail.triggered.name'] == 'off_topic_block'
-        assert attributes['guardrail.triggered.type'] == 'DECISION_JUDGE'
-        assert attributes['guardrail.triggered.where'] == 'INPUT'
-        assert attributes['guardrail.triggered.behavior'] == 'BLOCK'
 
     def test_fallback_answer_is_recorded_on_the_span(self):
         span = self._record_span()
@@ -1023,6 +631,12 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         assert response.status_code == 400
         assert response.json()['error']['message'] == 'block by decision judge'
         assert typesafe.isdone()
+        [event] = self.guardrail_events
+        assert (event.type, event.where, event.behavior) == (
+            'DECISION_JUDGE',
+            'OUTPUT',
+            'BLOCK',
+        )
 
     def test_output_judge_below_threshold_returns_the_response_unchanged(self):
         app.state.routes = _build_routes(_decision_judge(where='output'))
@@ -1057,17 +671,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         assert response.status_code == 200
         assert response.json()['choices'][0]['message']['content'] == 'Paris'
         assert [e.behavior for e in self.guardrail_events] == ['WARN']
-
-    def test_output_trigger_emits_an_output_guardrail_event(self):
-        app.state.routes = _build_routes(_decision_judge(where='output'))
-        self._mock_typesafe(noul=0.9, state='Paris')
-        self._mock_openai()
-
-        self._chat()
-
-        [event] = self.guardrail_events
-        assert event.type == 'DECISION_JUDGE'
-        assert event.where == 'OUTPUT'
 
     def test_io_judge_reads_the_input_then_the_output(self):
         app.state.routes = _build_routes(_decision_judge(where='io'))
@@ -1121,18 +724,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
     def _mock_typesafe_on_embedding_texts(self, noul):
         return self._mock_typesafe(noul=noul, state='\n'.join(EMBEDDING_TEXTS))
 
-    def test_embeddings_judge_blocks_before_the_embedding_model(self):
-        app.state.routes = _build_routes(_decision_judge())
-        typesafe = self._mock_typesafe_on_embedding_texts(noul=0.9)
-        openai = self._mock_openai_embeddings()
-
-        response = self._embed()
-
-        assert response.status_code == 400
-        assert response.json()['error']['message'] == 'block by decision judge'
-        assert typesafe.isdone()
-        assert not openai.isdone()
-
     def test_embeddings_soft_block_returns_no_vectors(self):
         app.state.routes = _build_routes(_decision_judge('soft_block'))
         self._mock_typesafe_on_embedding_texts(noul=0.9)
@@ -1166,17 +757,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
 
         assert response.status_code == 200
         assert pook.isdone()
-
-    def test_io_judge_reads_embeddings_input(self):
-        app.state.routes = _build_routes(_decision_judge(where='io'))
-        judge = self._mock_typesafe_on_embedding_texts(noul=0.9)
-        openai = self._mock_openai_embeddings()
-
-        response = self._embed()
-
-        assert response.status_code == 400
-        assert judge.isdone()
-        assert not openai.isdone()
 
     def test_embeddings_judge_failure_is_a_judge_internal_error(self):
         app.state.routes = _build_routes(_decision_judge())
@@ -1215,18 +795,6 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         mock.reply(200).json(DECISION_ANSWER)
         return mock
 
-    def test_decision_judge_blocks_before_the_decision_model(self):
-        app.state.routes = _build_routes(_decision_judge())
-        judge = self._mock_typesafe(noul=0.9, state=DECISION_TEXT)
-        decision_model = self._mock_decision_model()
-
-        response = self._decide()
-
-        assert response.status_code == 400
-        assert response.json()['error']['message'] == 'block by decision judge'
-        assert judge.isdone()
-        assert not decision_model.isdone()
-
     def test_decision_soft_block_returns_400_without_the_decision_model(self):
         app.state.routes = _build_routes(_decision_judge('soft_block'))
         self._mock_typesafe(noul=0.9, state=DECISION_TEXT)
@@ -1250,13 +818,265 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         assert response.json() == {**DECISION_ANSWER, 'model': 'jev'}
         assert pook.isdone()
 
-    def test_io_judge_reads_decision_input(self):
-        app.state.routes = _build_routes(_decision_judge(where='io'))
-        judge = self._mock_typesafe(noul=0.9, state=DECISION_TEXT)
-        decision_model = self._mock_decision_model()
 
-        response = self._decide()
+@pytest.fixture
+def judge_case():
+    """Set up a TestDecisionJudgeEndpoints as for its own tests, for parametrized functions."""
+    case = TestDecisionJudgeEndpoints()
+    case.setUp()
+    yield case
+    case.doCleanups()
 
+
+@pytest.mark.parametrize(
+    'typesafe_reply',
+    [
+        pytest.param(
+            {'body': {'answers': {}, 'usage': {'input_tokens': 40}}}, id='no-noul'
+        ),
+        pytest.param({'noul': 'high'}, id='string-noul'),
+        pytest.param({'noul': True}, id='boolean-noul'),
+        pytest.param({'noul': None}, id='null-noul'),
+        pytest.param({'raw_body': '<html>oops</html>'}, id='non-json'),
+    ],
+)
+def test_an_unusable_answer_fails_closed(judge_case, typesafe_reply):
+    app.state.routes = _build_routes(_decision_judge())
+    judge_case._mock_typesafe(**typesafe_reply)
+    openai = judge_case._mock_openai()
+
+    judge_case._assert_fails_closed(judge_case._chat(), openai)
+
+
+LIMITS = {
+    'route-input-tokens': {'route': {'token_limiting': {'input': {'max_tokens': 100}}}},
+    'route-budget': {'pricey': True, 'route': {'budget_limiting': {'max_budget': 0.1}}},
+    'credential-input-tokens': {
+        'credential': (CredentialLimitCategory.TOKEN_INPUT, 100)
+    },
+    'credential-budget': {
+        'pricey': True,
+        'credential': (CredentialLimitCategory.BUDGET, 0.1),
+    },
+    'project-budget': {'pricey': True, 'project_budget': True},
+}
+
+
+@pytest.mark.parametrize('limit', LIMITS.values(), ids=LIMITS.keys())
+def test_judge_usage_counts_against_the_limits(judge_case, limit):
+    pricey = judge_case.PRICEY_JEV if limit.get('pricey') else JEV
+    app.state.routes = _build_routes(
+        _decision_judge(),
+        decision_models=(pricey, JEV_BACKUP),
+        **limit.get('route', {}),
+    )
+    if limit.get('credential'):
+        judge_case._limit_credential(*limit['credential'])
+    budgets = nullcontext()
+    if limit.get('project_budget'):
+        app.state.routes[CHAT_ROUTE_KEY].project_uuid = str(db_mock.RANDOM_UUID)
+        budget = db_mock.get_sample_project_budget_limit(
+            window_size='1 minute', max_value=0.1
+        )
+        budgets = patch.object(
+            project_budget_limit_dao,
+            'get_by_project_uuid',
+            MagicMock(return_value=[budget]),
+        )
+
+    with budgets:
+        judge_case._assert_judge_usage_blocks_the_next_request()
+
+
+@pytest.mark.parametrize(
+    ('parameters', 'noul', 'blocked'),
+    [
+        pytest.param({'threshold': 0.7}, 0.9, True, id='above-threshold-blocks'),
+        pytest.param({'threshold': 0.7}, 0.7, True, id='at-threshold-triggers'),
+        pytest.param({'threshold': 0.7}, 0.69, False, id='below-threshold-passes'),
+        pytest.param({}, 0.5, True, id='default-threshold-is-one-half'),
+    ],
+)
+def test_noul_threshold_decides_the_block(judge_case, parameters, noul, blocked):
+    app.state.routes = _build_routes(_decision_judge(**parameters))
+    judge_case._mock_typesafe(noul=noul)
+    openai = judge_case._mock_openai()
+
+    response = judge_case._chat()
+
+    if blocked:
         assert response.status_code == 400
-        assert judge.isdone()
-        assert not decision_model.isdone()
+        assert response.json()['error']['message'] == 'block by decision judge'
+        assert not openai.isdone()
+        [event] = judge_case.guardrail_events
+        assert (event.name, event.type, event.where, event.behavior) == (
+            'off_topic_block',
+            'DECISION_JUDGE',
+            'INPUT',
+            'BLOCK',
+        )
+    else:
+        assert response.status_code == 200
+        assert response.json()['choices'][0]['message']['content'] == 'Paris'
+        assert pook.isdone()
+        assert judge_case.guardrail_events == []
+
+
+@pytest.mark.parametrize(
+    ('message_roles', 'state'),
+    [
+        pytest.param(None, USER_TEXT, id='only-user-messages-by-default'),
+        pytest.param(
+            ['system', 'user'],
+            f'You are a billing assistant\n{USER_TEXT}',
+            id='message-roles-change-what-is-sent',
+        ),
+    ],
+)
+def test_text_sent_as_state(judge_case, message_roles, state):
+    guardrail = _decision_judge()
+    if message_roles:
+        guardrail['message_roles'] = message_roles
+    app.state.routes = _build_routes(guardrail)
+    typesafe = judge_case._mock_typesafe(noul=0.1, state=state)
+    judge_case._mock_openai()
+
+    response = judge_case._chat(
+        [
+            {'role': 'system', 'content': 'You are a billing assistant'},
+            {'role': 'user', 'content': USER_TEXT},
+        ]
+    )
+
+    assert response.status_code == 200
+    assert typesafe.isdone()
+
+
+def _fail_status(status: int, detail: str, times: int = 1):
+    return lambda case: case._mock_typesafe(
+        status=status, body={'detail': detail}, times=times
+    )
+
+
+def _fail_error(error: Exception, times: int = 1):
+    return lambda case: pook.post(TYPESAFE_URL).times(times).error(error)
+
+
+@pytest.mark.parametrize(
+    'fail_once',
+    [
+        pytest.param(_fail_status(503, 'busy'), id='server-error'),
+        pytest.param(_fail_status(429, 'slow down'), id='rate-limited'),
+        pytest.param(_fail_error(httpx.ConnectError('refused')), id='network'),
+        pytest.param(_fail_error(httpx.ReadTimeout('too slow')), id='timeout'),
+    ],
+)
+def test_transient_judge_failure_is_retried(judge_case, fail_once):
+    app.state.routes = _build_routes(_decision_judge())
+    fail_once(judge_case)
+    judge_case._mock_typesafe(noul=0.1)
+    judge_case._mock_openai()
+
+    response = judge_case._chat()
+
+    assert response.status_code == 200
+    assert pook.isdone()
+
+
+@pytest.mark.parametrize(
+    'fail_primary',
+    [
+        pytest.param(_fail_status(503, 'busy', times=4), id='exhausted'),
+        pytest.param(_fail_status(429, 'slow down', times=4), id='rate-limited'),
+        pytest.param(
+            _fail_error(httpx.ConnectError('refused'), times=4), id='unreachable'
+        ),
+        pytest.param(
+            lambda case: case._mock_typesafe(
+                body={'answers': {}, 'usage': {'input_tokens': 40}}
+            ),
+            id='answer-without-noul',
+        ),
+        pytest.param(lambda case: case._mock_typesafe(noul='high'), id='invalid-noul'),
+    ],
+)
+def test_a_failing_primary_moves_to_the_fallback(judge_case, fail_primary):
+    app.state.routes = _build_routes(
+        _decision_judge(threshold=0.7, fallback_model_id='jev-backup')
+    )
+    fail_primary(judge_case)
+    backup = judge_case._mock_backup(noul=0.9)
+    openai = judge_case._mock_openai()
+
+    response = judge_case._chat()
+
+    assert response.status_code == 400
+    assert response.json()['error']['message'] == 'block by decision judge'
+    assert backup.isdone()
+    assert not openai.isdone()
+
+
+@pytest.mark.parametrize(
+    ('noul', 'status', 'triggered'),
+    [
+        pytest.param(0.2, 200, None, id='passing'),
+        pytest.param(
+            0.9,
+            400,
+            {
+                'guardrail.triggered.name': 'off_topic_block',
+                'guardrail.triggered.type': 'DECISION_JUDGE',
+                'guardrail.triggered.where': 'INPUT',
+                'guardrail.triggered.behavior': 'BLOCK',
+                'guardrail.triggered.context': USER_TEXT,
+                'guardrail.triggered.message_indices': [0],
+            },
+            id='triggering',
+        ),
+    ],
+)
+def test_the_call_records_the_judge_on_the_span(judge_case, noul, status, triggered):
+    span = judge_case._record_span()
+    app.state.routes = _build_routes(_decision_judge(threshold=0.7, criteria=CRITERIA))
+    judge_case._mock_typesafe(noul=noul, question=judge_case._question_with_criteria())
+    judge_case._mock_openai()
+
+    response = judge_case._chat()
+
+    assert response.status_code == status
+    attributes = judge_case._span_attributes(span)
+    judge_case._assert_judge_recorded(attributes, noul=noul)
+    assert attributes['guardrail.decision_judge.answered_model_id'] == 'jev'
+    assert attributes['guardrail.decision_judge.fallback_triggered'] is False
+    recorded = {
+        k: v for k, v in attributes.items() if k.startswith('guardrail.triggered.')
+    }
+    assert recorded == (triggered or {})
+
+
+@pytest.mark.parametrize('where', ['input', 'io'])
+def test_embeddings_judge_blocks_before_the_embedding_model(judge_case, where):
+    app.state.routes = _build_routes(_decision_judge(where=where))
+    typesafe = judge_case._mock_typesafe_on_embedding_texts(noul=0.9)
+    openai = judge_case._mock_openai_embeddings()
+
+    response = judge_case._embed()
+
+    assert response.status_code == 400
+    assert response.json()['error']['message'] == 'block by decision judge'
+    assert typesafe.isdone()
+    assert not openai.isdone()
+
+
+@pytest.mark.parametrize('where', ['input', 'io'])
+def test_decision_judge_blocks_before_the_decision_model(judge_case, where):
+    app.state.routes = _build_routes(_decision_judge(where=where))
+    judge = judge_case._mock_typesafe(noul=0.9, state=DECISION_TEXT)
+    decision_model = judge_case._mock_decision_model()
+
+    response = judge_case._decide()
+
+    assert response.status_code == 400
+    assert response.json()['error']['message'] == 'block by decision judge'
+    assert judge.isdone()
+    assert not decision_model.isdone()

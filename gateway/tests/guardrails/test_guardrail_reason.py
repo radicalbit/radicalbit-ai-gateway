@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,6 +17,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     GuardrailType,
     GuardrailWhereType,
     JudgeParameter,
+    RedactParameter,
 )
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.prompt_manager import PromptManager
@@ -23,312 +25,47 @@ from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
 
 
-def _route_config_with_guardrails(names: list[str]) -> GatewayRouteConfig:
-    return GatewayRouteConfig(
-        route_name='test-route',
-        chat_models=['m1'],
-        embedding_models=None,
-        guardrails=names,
-    )
-
-
-@pytest.mark.asyncio
-async def test_reason_logged_for_starts_with():
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    gr = Guardrail(
-        name='gr_sw',
-        type=GuardrailType.STARTS_WITH,
-        where=GuardrailWhereType.INPUT,
-        behavior=GuardrailBehaviorType.BLOCK,
-        parameters=CheckParameter(values=['Hello']),
-    )
-    chk = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=[gr],
-    )
-    cfg = _route_config_with_guardrails(['gr_sw'])
-
-    with (
-        patch(
-            'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event',
-            autospec=True,
-        ),
-        pytest.raises(GuardrailBadRequest) as exc,
-    ):
-        await apply_check(
-            chk,
-            request_uuid='r',
-            api_key_uuid='k',
-            group_uuid='g',
-            api_key_name='kn',
-            group_name='gn',
-            route_config=cfg,
-            messages=[HumanMessage(content='Hello there')],
-            where=GuardrailWhereType.INPUT,
+class _Judge:
+    async def execute_judge(self, **kwargs):
+        return SimpleNamespace(
+            triggered=True,
+            reasoning='disallowed context',
+            violation_type='BUSINESS_CONTEXT',
         )
 
-    assert '[GUARDRAIL TRIGGERED]' in str(exc.value)
-    assert exc.value.reason is not None
-    assert exc.value.reason['kind'] == 'starts_with'
-    assert exc.value.reason['value'] == 'Hello'
-    assert exc.value.reason['message_indices'] == [0]
-    assert isinstance(exc.value.reason.get('context'), str)
 
-
-@pytest.mark.asyncio
-async def test_reason_logged_for_contains_case_insensitive():
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    gr = Guardrail(
-        name='gr_contains',
-        type=GuardrailType.CONTAINS,
+def _guardrail(kind, parameters):
+    return Guardrail(
+        name='gr',
+        type=kind,
         where=GuardrailWhereType.INPUT,
         behavior=GuardrailBehaviorType.BLOCK,
-        parameters=CheckParameter(values=['sensitive']),
+        parameters=parameters,
     )
+
+
+async def _blocked(guardrail, content, judge_engine=None):
+    """Run ``guardrail`` on ``content`` under a recording span; return the
+    error it raised and the span.
+    """
     chk = Guardrails(
         presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=[gr],
+        judge_engine=judge_engine
+        or JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
+        cost_service=MagicMock(spec_set=CostService),
+        guardrails=[guardrail],
     )
-    cfg = _route_config_with_guardrails(['gr_contains'])
-
+    chk._check._chat_models_by_id = {
+        'm1': Model(model_id='m1', model='mock/gateway', params={'latency_ms': 0})
+    }
+    span = MagicMock(**{'is_recording.return_value': True})
     with (
-        patch(
-            'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event',
-            autospec=True,
-        ),
-        pytest.raises(GuardrailBadRequest) as exc,
-    ):
-        await apply_check(
-            chk,
-            request_uuid='r',
-            api_key_uuid='k',
-            group_uuid='g',
-            api_key_name='kn',
-            group_name='gn',
-            route_config=cfg,
-            messages=[HumanMessage(content='This has SenSiTive info')],
-            where=GuardrailWhereType.INPUT,
-        )
-
-    assert '[GUARDRAIL TRIGGERED]' in str(exc.value)
-    assert exc.value.reason is not None
-    assert exc.value.reason['kind'] == 'contains'
-    assert exc.value.reason['value'] == 'sensitive'
-    assert exc.value.reason['message_indices'] == [0]
-    assert isinstance(exc.value.reason.get('context'), str)
-
-
-@pytest.mark.asyncio
-async def test_reason_logged_for_regex():
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    gr = Guardrail(
-        name='gr_re',
-        type=GuardrailType.REGEX,
-        where=GuardrailWhereType.INPUT,
-        behavior=GuardrailBehaviorType.BLOCK,
-        parameters=CheckParameter(values=[r'\d+'], ignore_case=True),
-    )
-    chk = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=[gr],
-    )
-    cfg = _route_config_with_guardrails(['gr_re'])
-
-    with (
-        patch(
-            'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event',
-            autospec=True,
-        ),
-        pytest.raises(GuardrailBadRequest) as exc,
-    ):
-        await apply_check(
-            chk,
-            request_uuid='r',
-            api_key_uuid='k',
-            group_uuid='g',
-            api_key_name='kn',
-            group_name='gn',
-            route_config=cfg,
-            messages=[HumanMessage(content='value 123')],
-            where=GuardrailWhereType.INPUT,
-        )
-
-    assert '[GUARDRAIL TRIGGERED]' in str(exc.value)
-    assert exc.value.reason is not None
-    assert exc.value.reason['kind'] == 'regex'
-    assert exc.value.reason['pattern'] == r'\d+'
-    assert exc.value.reason['message_indices'] == [0]
-    assert isinstance(exc.value.reason.get('context'), str)
-
-
-@pytest.mark.asyncio
-async def test_reason_includes_context_when_debug_mode_enabled():
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-    gr = Guardrail(
-        name='gr_contains_ctx',
-        type=GuardrailType.CONTAINS,
-        where=GuardrailWhereType.INPUT,
-        behavior=GuardrailBehaviorType.BLOCK,
-        parameters=CheckParameter(values=['sensitive']),
-    )
-    chk = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
-        guardrails=[gr],
-    )
-    cfg = _route_config_with_guardrails(['gr_contains_ctx'])
-
-    with (
-        patch(
-            'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event',
-            autospec=True,
-        ),
-        pytest.raises(GuardrailBadRequest) as exc,
-    ):
-        await apply_check(
-            chk,
-            request_uuid='r',
-            api_key_uuid='k',
-            group_uuid='g',
-            api_key_name='kn',
-            group_name='gn',
-            route_config=cfg,
-            messages=[HumanMessage(content='this is very sensitive data indeed')],
-            where=GuardrailWhereType.INPUT,
-        )
-
-    assert exc.value.reason is not None
-    assert '<<sensitive>>' in exc.value.reason.get('context', '')
-
-
-@pytest.mark.asyncio
-async def test_reason_is_available_for_judge_guardrail():
-    class _DummyJudgeEngine:
-        async def execute_judge(self, **kwargs):
-            class _R:
-                triggered = True
-                reasoning = 'The prompt contains disallowed business context.'
-                violation_type = 'BUSINESS_CONTEXT'
-
-            return _R()
-
-    gr = Guardrail(
-        name='gr_judge',
-        type=GuardrailType.JUDGE,
-        where=GuardrailWhereType.INPUT,
-        behavior=GuardrailBehaviorType.BLOCK,
-        parameters=JudgeParameter(
-            prompt_ref='business_context_check.md', model_id='m1'
-        ),
-    )
-
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    chk = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=_DummyJudgeEngine(),
-        cost_service=cost_service,
-        guardrails=[gr],
-    )
-
-    m1 = Model(
-        model_id='m1',
-        model='mock/gateway',
-        credentials=None,
-        params={'latency_ms': 0},
-    )
-
-    chk._check._chat_models_by_id = {'m1': m1}
-
-    cfg = _route_config_with_guardrails(['gr_judge'])
-
-    with (
-        patch(
-            'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event',
-            autospec=True,
-        ),
-        pytest.raises(GuardrailBadRequest) as exc,
-    ):
-        await apply_check(
-            chk,
-            request_uuid='r',
-            api_key_uuid='k',
-            group_uuid='g',
-            api_key_name='kn',
-            group_name='gn',
-            route_config=cfg,
-            messages=[HumanMessage(content='Some business context here')],
-            where=GuardrailWhereType.INPUT,
-        )
-
-    assert exc.value.reason is not None
-    assert exc.value.reason['kind'] == 'judge'
-    assert exc.value.reason['value'] == 'BUSINESS_CONTEXT'
-    assert 'business_context_check.md' in (exc.value.reason.get('prompt_ref') or '')
-    assert isinstance(exc.value.reason.get('reasoning'), str)
-
-
-@pytest.mark.asyncio
-async def test_judge_span_attributes():
-    class _DummyJudgeEngine:
-        async def execute_judge(self, **kwargs):
-            class _R:
-                triggered = True
-                reasoning = 'disallowed context'
-                violation_type = 'BUSINESS_CONTEXT'
-
-            return _R()
-
-    gr = Guardrail(
-        name='gr_judge',
-        type=GuardrailType.JUDGE,
-        where=GuardrailWhereType.INPUT,
-        behavior=GuardrailBehaviorType.BLOCK,
-        parameters=JudgeParameter(
-            prompt_ref='business_context_check.md', model_id='m1'
-        ),
-    )
-
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    chk = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=_DummyJudgeEngine(),
-        cost_service=cost_service,
-        guardrails=[gr],
-    )
-
-    m1 = Model(
-        model_id='m1',
-        model='mock/gateway',
-        credentials=None,
-        params={'latency_ms': 0},
-    )
-    chk._check._chat_models_by_id = {'m1': m1}
-    cfg = _route_config_with_guardrails(['gr_judge'])
-
-    mock_span = MagicMock()
-    mock_span.is_recording.return_value = True
-
-    with (
-        patch(
-            'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event',
-            autospec=True,
-        ),
+        patch('radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'),
         patch(
             'radicalbit_ai_gateway.guardrails.guardrail_check.trace.get_current_span',
-            return_value=mock_span,
+            return_value=span,
         ),
-        pytest.raises(GuardrailBadRequest),
+        pytest.raises(GuardrailBadRequest) as exc,
     ):
         await apply_check(
             chk,
@@ -337,19 +74,89 @@ async def test_judge_span_attributes():
             group_uuid='g',
             api_key_name='kn',
             group_name='gn',
-            route_config=cfg,
-            messages=[HumanMessage(content='Some business context here')],
+            route_config=GatewayRouteConfig(
+                route_name='test-route', chat_models=['m1'], guardrails=['gr']
+            ),
+            messages=[HumanMessage(content=content)],
             where=GuardrailWhereType.INPUT,
         )
+    assert '[GUARDRAIL TRIGGERED]' in str(exc.value)
+    return exc.value, span
 
-    # Verify that mock_span.set_attribute was called with the correct attributes
-    mock_span.set_attribute.assert_any_call(
-        'guardrail.judge.violation_type', 'BUSINESS_CONTEXT'
+
+@pytest.mark.parametrize(
+    ('kind', 'parameters', 'content', 'reason', 'attribute'),
+    [
+        (
+            GuardrailType.STARTS_WITH,
+            CheckParameter(values=['Hello']),
+            'Hello there',
+            {'kind': 'starts_with', 'value': 'Hello'},
+            ('guardrail.triggered.value', 'Hello'),
+        ),
+        (
+            GuardrailType.CONTAINS,
+            CheckParameter(values=['sensitive']),
+            'this is very SenSiTive data indeed',
+            {'kind': 'contains', 'value': 'sensitive'},
+            ('guardrail.triggered.value', 'sensitive'),
+        ),
+        (
+            GuardrailType.REGEX,
+            CheckParameter(values=[r'\d+'], ignore_case=True),
+            'value 123',
+            {'kind': 'regex', 'pattern': r'\d+'},
+            ('guardrail.triggered.pattern', r'\d+'),
+        ),
+        (
+            GuardrailType.PRESIDIO_ANALYZER,
+            RedactParameter(language='it', entities=['EMAIL_ADDRESS']),
+            'write to test@radicalbit.io now',
+            {'kind': 'presidio', 'entity_type': 'EMAIL_ADDRESS'},
+            ('guardrail.triggered.entity_type', 'EMAIL_ADDRESS'),
+        ),
+    ],
+    ids=['starts_with', 'contains_ignoring_case', 'regex', 'presidio'],
+)
+async def test_a_check_reports_what_matched_where(
+    kind, parameters, content, reason, attribute
+):
+    error, span = await _blocked(_guardrail(kind, parameters), content)
+
+    assert error.reason.items() >= {**reason, 'message_indices': [0]}.items()
+    assert isinstance(error.reason['context'], str)
+    span.set_attribute.assert_any_call(*attribute)
+    span.set_attribute.assert_any_call('guardrail.triggered.message_indices', [0])
+
+
+async def test_a_contains_reason_marks_the_match_in_its_context():
+    error, _ = await _blocked(
+        _guardrail(GuardrailType.CONTAINS, CheckParameter(values=['sensitive'])),
+        'this is very sensitive data indeed',
     )
-    mock_span.set_attribute.assert_any_call(
-        'guardrail.judge.reasoning', 'disallowed context'
+
+    assert '<<sensitive>>' in error.reason['context']
+
+
+async def test_a_judge_reports_its_verdict_and_traces_it():
+    error, span = await _blocked(
+        _guardrail(
+            GuardrailType.JUDGE,
+            JudgeParameter(prompt_ref='business_context_check.md', model_id='m1'),
+        ),
+        'Some business context here',
+        judge_engine=_Judge(),
     )
-    mock_span.set_attribute.assert_any_call(
-        'guardrail.judge.prompt_ref', 'business_context_check.md'
-    )
-    mock_span.set_attribute.assert_any_call('guardrail.judge.model_id', 'm1')
+
+    assert error.reason['kind'] == 'judge'
+    assert error.reason['value'] == 'BUSINESS_CONTEXT'
+    assert error.reason['prompt_ref'] == 'business_context_check.md'
+    assert error.reason['reasoning'] == 'disallowed context'
+    for name, value in [
+        ('guardrail.judge.violation_type', 'BUSINESS_CONTEXT'),
+        ('guardrail.judge.reasoning', 'disallowed context'),
+        ('guardrail.judge.prompt_ref', 'business_context_check.md'),
+        ('guardrail.judge.model_id', 'm1'),
+        ('guardrail.triggered.reasoning', 'disallowed context'),
+    ]:
+        span.set_attribute.assert_any_call(name, value)

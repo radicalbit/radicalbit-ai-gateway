@@ -123,10 +123,3 @@ async def invoke_transcription(route, **kwargs):
     """Transcribe ``audio_bytes``."""
     scope = scope_of(route, **_caller(kwargs))
     return await transcription_pipeline.transcribe(scope, _audio(kwargs))
-
-
-async def invoke_transcription_stream(route, **kwargs):
-    """Transcribe ``audio_bytes`` as a stream of events; return them all."""
-    scope = scope_of(route, **_caller(kwargs))
-    events = await transcription_pipeline.stream(scope, _audio(kwargs))
-    return [event async for event in events]

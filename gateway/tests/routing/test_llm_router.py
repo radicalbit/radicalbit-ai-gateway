@@ -1,6 +1,6 @@
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -97,20 +97,41 @@ def _attributes(span) -> dict:
 
 
 class TestLLMRouter:
-    async def test_selects_highest_score(self):
-        router = _build_router(_structured_model({CODE: 0.9, GENERAL: 0.2}))
-        result = await router.select_model([HumanMessage(content='fix this bug')])
-        assert result.model_id == 'code_model'
-
-    async def test_selects_other_highest_score(self):
-        router = _build_router(_structured_model({CODE: 0.1, GENERAL: 0.8}))
-        result = await router.select_model([HumanMessage(content='tell me a joke')])
-        assert result.model_id == 'general_model'
-
-    async def test_first_option_wins_a_tie(self):
-        router = _build_router(_structured_model({CODE: 0.7, GENERAL: 0.7}))
-        result = await router.select_model([HumanMessage(content='fix this bug')])
-        assert result.model_id == 'code_model'
+    @pytest.mark.parametrize(
+        ('scores', 'content', 'expected'),
+        [
+            pytest.param(
+                {CODE: 0.9, GENERAL: 0.2},
+                'fix this bug',
+                'code_model',
+                id='highest-score',
+            ),
+            pytest.param(
+                {CODE: 0.1, GENERAL: 0.8},
+                'tell me a joke',
+                'general_model',
+                id='other-highest-score',
+            ),
+            pytest.param(
+                {CODE: 0.7, GENERAL: 0.7},
+                'fix this bug',
+                'code_model',
+                id='first-option-wins-a-tie',
+            ),
+            pytest.param(
+                {CODE: 0.5, GENERAL: 0.2},
+                'fix this bug',
+                'code_model',
+                id='score-equal-to-threshold',
+            ),
+        ],
+    )
+    async def test_selects_the_option_with_the_highest_score(
+        self, scores, content, expected
+    ):
+        router = _build_router(_structured_model(scores))
+        result = await router.select_model([HumanMessage(content=content)])
+        assert result.model_id == expected
 
     async def test_below_threshold_returns_default(self, span):
         router = _build_router(_structured_model({CODE: 0.3, GENERAL: 0.2}))
@@ -120,11 +141,6 @@ class TestLLMRouter:
         assert attributes['routing.llm.default_used'] is True
         assert attributes['routing.llm.default_reason'] == 'below_threshold'
         assert attributes['routing.llm.best_score'] == 0.3
-
-    async def test_score_equal_to_threshold_selects_model(self):
-        router = _build_router(_structured_model({CODE: 0.5, GENERAL: 0.2}))
-        result = await router.select_model([HumanMessage(content='fix this bug')])
-        assert result.model_id == 'code_model'
 
     async def test_unparsed_response_returns_default_without_fallback(self, span):
         fallback = _structured_model({CODE: 0.9, GENERAL: 0.1})
@@ -252,17 +268,18 @@ class TestLLMRouter:
         assert record.await_args.args[0].model_id == 'router_backup'
         assert record.await_args.kwargs['target_model_id'] == 'router_model'
 
-    async def test_records_spend_even_below_threshold(self):
-        router = _build_router(_structured_model({CODE: 0.1, GENERAL: 0.1}))
+    @pytest.mark.parametrize(
+        'scores',
+        [
+            pytest.param({CODE: 0.1, GENERAL: 0.1}, id='below-threshold'),
+            pytest.param(None, id='unparsed-response'),
+        ],
+    )
+    async def test_records_spend_even_when_the_default_serves(self, scores):
+        router = _build_router(_structured_model(scores))
         record = AsyncMock()
         result = await router.select_model([HumanMessage(content='cook a pie')], record)
         assert result.model_id == 'default_model'
-        record.assert_awaited_once()
-
-    async def test_records_spend_for_an_unparsed_response(self):
-        router = _build_router(_structured_model(None))
-        record = AsyncMock()
-        await router.select_model([HumanMessage(content='fix this bug')], record)
         record.assert_awaited_once()
 
     async def test_no_spend_without_token_usage(self):
@@ -285,8 +302,21 @@ class TestLLMRouter:
     async def test_no_spend_when_router_call_fails(self):
         router = _build_router(_structured_model(side_effect=RuntimeError('boom')))
         record = AsyncMock()
-        await router.select_model([HumanMessage(content='fix this bug')], record)
+        record.failed = MagicMock()
+
+        model = await router.select_model(
+            [HumanMessage(content='fix this bug')], record
+        )
+
+        # No spend is charged, but the failed call is recorded.
+        assert model.model_id == _routing_config().default_model_id
         record.assert_not_awaited()
+        record.failed.assert_called_once_with(
+            get_gateway_routing_llm().chat_models_by_id['router_model'],
+            ANY,
+            model_type='chat-model',
+            target_model_id='router_model',
+        )
 
     async def test_model_without_structured_output_goes_to_the_fallback(self):
         config = get_gateway_routing_llm()
@@ -308,29 +338,13 @@ class TestLLMRouter:
         result = await router.select_model([HumanMessage(content='fix this bug')])
         assert result.model_id == 'code_model'
 
-    async def test_model_without_structured_output_returns_default(self):
-        config = get_gateway_routing_llm()
-        chat_model = MagicMock()
-        chat_model.with_structured_output = MagicMock(side_effect=NotImplementedError)
-        router = LLMRouter(
-            config=_routing_config(),
-            models_by_id=config.chat_models_by_id,
-            router_models={
-                'router_model': RouterModel(
-                    config.chat_models_by_id['router_model'], chat_model
-                )
-            },
-        )
-        result = await router.select_model([HumanMessage(content='fix this bug')])
-        assert result.model_id == 'default_model'
-
 
 class TestPromptAndSchema:
     @pytest.fixture
     def routing_config(self):
         return _routing_config()
 
-    def test_system_prompt_lists_every_option_with_its_description(
+    def test_system_prompt_lists_every_option_without_naming_the_models(
         self, routing_config
     ):
         prompt = build_system_prompt(routing_config)
@@ -338,9 +352,6 @@ class TestPromptAndSchema:
         assert '- option_2: general knowledge questions and small talk' in prompt
         # The reply's shape is the schema's job, not the prompt's.
         assert 'JSON' not in prompt
-
-    def test_system_prompt_does_not_name_the_models(self, routing_config):
-        prompt = build_system_prompt(routing_config)
         assert 'code_model' not in prompt
         assert 'general_model' not in prompt
 

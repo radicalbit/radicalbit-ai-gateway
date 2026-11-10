@@ -3,19 +3,17 @@
 Typesafe and OpenAI are mocked with pook.
 """
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
 import httpx
 import pook
 import pytest
-from starlette.requests import Request
 
 from tests.common import db_mock
 from tests.common.decision_routing import (
-    BACKOFF_SLEEP,
     CHINESE,
     EMAILS,
     INSTRUCTIONS,
@@ -27,17 +25,11 @@ from tests.common.decision_routing import (
     TYPESAFE_URL,
     USER_TEXT,
 )
+from tests.common.gateway_harness import build_routes, open_gateway
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
 
-from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
-    DecisionJudgeEngine,
-)
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
@@ -49,30 +41,14 @@ from radicalbit_ai_gateway.models.event_payload import (
     RoutingEventPayload,
 )
 from radicalbit_ai_gateway.models.event_type import EventType
-from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routing import DecisionRouter
-from radicalbit_ai_gateway.server import (
-    app,
-    group_service,
-    key_service,
-    project_budget_limit_dao,
-)
-from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-)
+from radicalbit_ai_gateway.server import app, key_service, project_budget_limit_dao
 
 CHAT_ROUTE_KEY = 'proj/chat'
 OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
 MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
 GATEWAY_EMIT = 'radicalbit_ai_gateway.pipeline.conversation.emit_event'
-GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
-REQUEST_EVENT_EMIT = (
-    'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
-)
 
 SYSTEM_PROMPT = 'You are the configured system prompt.'
 GPT_4O = {
@@ -89,11 +65,6 @@ GPT_5 = {
 }
 
 
-def _mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
 def _build_routes(
     *,
     decision_models: tuple[dict, ...] = (JEV, JEV_BACKUP),
@@ -105,7 +76,7 @@ def _build_routes(
 
     `route` adds to the chat route's config, `top_level` to the gateway's.
     """
-    config = GatewayConfig.model_validate(
+    return build_routes(
         {
             'chat_models': [GPT_4O, GPT_5],
             'decision_models': list(decision_models),
@@ -131,34 +102,8 @@ def _build_routes(
                 }
             },
             **(top_level or {}),
-        }
+        },
     )
-    cost_service = CostService(
-        chat_models_by_id=config.chat_models_by_id,
-        decision_models_by_id=config.decision_models_by_id,
-    )
-    project_guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
-        decision_judge_engine=DecisionJudgeEngine(
-            decision_models=config.decision_models,
-            cost_service=cost_service,
-        ),
-        cost_service=cost_service,
-        guardrails=config.guardrails,
-        chat_models_by_id=config.chat_models_by_id,
-    )
-    routes = build_gateway_routes_from_config(
-        config,
-        project_guardrails,
-        redis_client=None,
-        cost_service=cost_service,
-        httpx_client=None,
-        project_uuid='',
-    )
-    for built in routes.values():
-        built.project_name = 'proj'
-    return {f'proj/{name}': route for name, route in routes.items()}
 
 
 def _choice_answer(probabilities: dict, input_tokens: int = 280) -> dict:
@@ -179,44 +124,24 @@ def _choice_answer(probabilities: dict, input_tokens: int = 280) -> dict:
 
 
 class TestDecisionRoutingEndpoint(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        app.dependency_overrides[get_request_uuid] = _mock_request_uuid
-        cls.client = TestClient(app)
-        cls.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
-
-    @classmethod
-    def tearDownClass(cls):
-        app.dependency_overrides = {}
-
     def setUp(self):
-        self.addCleanup(
-            setattr, app.state, 'token_validator', app.state.token_validator
-        )
-        app.state.token_validator = ApiKeyValidator(key_service=key_service)
-        self.api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-        key_service.get_key_by_hashed_key = MagicMock(return_value=self.api_key)
-        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
-
-        self.emitted = []
-        self.gateway_events = []
         self.span = MagicMock()
         self.span.is_recording.return_value = True
-        for patcher in (
-            patch(MODEL_INVOKER_EMIT, side_effect=self.emitted.append),
-            patch(GATEWAY_EMIT, side_effect=self.gateway_events.append),
-            patch(REQUEST_EVENT_EMIT),
-            patch(GUARDRAIL_EMIT),
-            patch(BACKOFF_SLEEP, new=AsyncMock()),
-            patch(ROUTER_SPAN, return_value=self.span),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        pook.on()
-        # The TestClient talks httpx too: let only its own host through.
-        pook.enable_network('testserver')
-        self.addCleanup(pook.off)
-        self.addCleanup(pook.disable_network)
+        self.emitted = []
+        self.gateway_events = []
+        gateway = self.enterContext(
+            open_gateway(
+                use_pook=True,
+                patches=[
+                    patch(MODEL_INVOKER_EMIT, side_effect=self.emitted.append),
+                    patch(GATEWAY_EMIT, side_effect=self.gateway_events.append),
+                    patch(ROUTER_SPAN, return_value=self.span),
+                ],
+            )
+        )
+        self.client = gateway.client
+        self.headers = gateway.headers
+        self.api_key = gateway.api_key
 
     def _chat(self, messages: list[dict] | None = None):
         return self.client.post(
@@ -546,46 +471,6 @@ class TestDecisionRoutingEndpoint(unittest.TestCase):
         )
         key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
 
-    def test_route_input_token_limit_counts_routing_usage(self):
-        app.state.routes = _build_routes(
-            route={'token_limiting': {'input': {'max_tokens': 100}}}
-        )
-
-        self._assert_routing_usage_blocks_the_next_request()
-
-    def test_route_budget_counts_routing_cost(self):
-        app.state.routes = _build_routes(
-            decision_models=(self.PRICEY_JEV, JEV_BACKUP),
-            route={'budget_limiting': {'max_budget': 0.1}},
-        )
-
-        self._assert_routing_usage_blocks_the_next_request()
-
-    def test_credential_input_token_limit_counts_routing_usage(self):
-        app.state.routes = _build_routes()
-        self._limit_credential(CredentialLimitCategory.TOKEN_INPUT, 100)
-
-        self._assert_routing_usage_blocks_the_next_request()
-
-    def test_credential_budget_counts_routing_cost(self):
-        app.state.routes = _build_routes(decision_models=(self.PRICEY_JEV, JEV_BACKUP))
-        self._limit_credential(CredentialLimitCategory.BUDGET, 0.1)
-
-        self._assert_routing_usage_blocks_the_next_request()
-
-    def test_project_budget_counts_routing_cost(self):
-        app.state.routes = _build_routes(decision_models=(self.PRICEY_JEV, JEV_BACKUP))
-        app.state.routes[CHAT_ROUTE_KEY].project_uuid = str(db_mock.RANDOM_UUID)
-        dao = MagicMock(
-            return_value=[
-                db_mock.get_sample_project_budget_limit(
-                    window_size='1 minute', max_value=0.1
-                )
-            ]
-        )
-        with patch.object(project_budget_limit_dao, 'get_by_project_uuid', dao):
-            self._assert_routing_usage_blocks_the_next_request()
-
     def test_fallback_answer_is_costed_at_the_fallback_price(self):
         app.state.routes = _build_routes(
             fallback_model_id='jev-backup',
@@ -669,3 +554,50 @@ class TestDecisionRoutingEndpoint(unittest.TestCase):
             (e.model_id, e.cost)
             for e in self._routing_events(InputTokenProcessedPayload)
         ] == [('jev', pytest.approx(0.312))] * 2
+
+
+@pytest.fixture
+def routing_case():
+    """Set up a TestDecisionRoutingEndpoint as for its own tests, for parametrized functions."""
+    case = TestDecisionRoutingEndpoint()
+    case.setUp()
+    yield case
+    case.doCleanups()
+
+
+LIMITS = {
+    'route-input-tokens': {'route': {'token_limiting': {'input': {'max_tokens': 100}}}},
+    'route-budget': {'pricey': True, 'route': {'budget_limiting': {'max_budget': 0.1}}},
+    'credential-input-tokens': {
+        'credential': (CredentialLimitCategory.TOKEN_INPUT, 100)
+    },
+    'credential-budget': {
+        'pricey': True,
+        'credential': (CredentialLimitCategory.BUDGET, 0.1),
+    },
+    'project-budget': {'pricey': True, 'project_budget': True},
+}
+
+
+@pytest.mark.parametrize('limit', LIMITS.values(), ids=LIMITS.keys())
+def test_routing_usage_counts_against_the_limits(routing_case, limit):
+    pricey = routing_case.PRICEY_JEV if limit.get('pricey') else JEV
+    app.state.routes = _build_routes(
+        decision_models=(pricey, JEV_BACKUP), route=limit.get('route')
+    )
+    if limit.get('credential'):
+        routing_case._limit_credential(*limit['credential'])
+    budgets = nullcontext()
+    if limit.get('project_budget'):
+        app.state.routes[CHAT_ROUTE_KEY].project_uuid = str(db_mock.RANDOM_UUID)
+        budget = db_mock.get_sample_project_budget_limit(
+            window_size='1 minute', max_value=0.1
+        )
+        budgets = patch.object(
+            project_budget_limit_dao,
+            'get_by_project_uuid',
+            MagicMock(return_value=[budget]),
+        )
+
+    with budgets:
+        routing_case._assert_routing_usage_blocks_the_next_request()

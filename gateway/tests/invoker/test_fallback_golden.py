@@ -13,40 +13,15 @@ the routes and send the requests) may change.
 from decimal import Decimal
 import json
 import logging
-from unittest.mock import MagicMock, patch
 
-import anthropic
-from fastapi.testclient import TestClient
-import openai
 import pytest
-from starlette.requests import Request
 
-from tests.common import db_mock, provider_responses as upstream
-from tests.common.audio import make_wav_bytes
-from tests.common.provider_recorder import CannedResponse, ProviderRecorder
+from tests.common import provider_responses as upstream
+from tests.common.gateway_harness import LOGGER, Gateway, build_routes, open_gateway
+from tests.common.provider_recorder import CannedResponse
 
-from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.events import events_processor
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
-    DecisionJudgeEngine,
-)
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.metrics import define_metrics
 from radicalbit_ai_gateway.models.event_type import EventType
-from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import app, group_service, key_service
-from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-    initialize_async_routers,
-)
 
-LOGGER = get_app_config().log_config.logger_name
 MODEL_EVENTS = {
     EventType.MODEL_INVOCATION,
     EventType.FALLBACK,
@@ -62,7 +37,6 @@ METRICS = (
 )
 CREDENTIALS = {'api_key': 'sk-test'}
 TYPESAFE = {'api_key': 'ts-test'}
-WAV = make_wav_bytes(1.0)
 
 
 def _chat(model_id: str, name: str, **extra) -> dict:
@@ -213,152 +187,14 @@ CONFIG = {
 }
 
 
-async def _build_routes() -> dict:
-    config = GatewayConfig.model_validate(CONFIG)
-    cost_service = CostService(
-        chat_models_by_id=config.chat_models_by_id,
-        embedding_models_by_id=config.embedding_models_by_id,
-        transcription_models_by_id=config.transcription_models_by_id,
-        decision_models_by_id=config.decision_models_by_id,
-    )
-    guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
-        cost_service=cost_service,
-        guardrails=config.guardrails,
-        chat_models_by_id=config.chat_models_by_id,
-        decision_judge_engine=DecisionJudgeEngine(
-            decision_models=config.decision_models, cost_service=cost_service
-        ),
-    )
-    routes = build_gateway_routes_from_config(
-        config,
-        guardrails,
-        redis_client=None,
-        cost_service=cost_service,
-        httpx_client=None,
-        project_uuid='',
-    )
-    await initialize_async_routers(routes)
-    for route in routes.values():
-        route.project_name = 'proj'
-    return {f'proj/{name}': route for name, route in routes.items()}
+class _Gateway(Gateway):
+    embed_texts = ('one', 'two')
 
-
-def _mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
-@pytest.fixture
-async def gateway(caplog):
-    routes = await _build_routes()
-    app.dependency_overrides[get_request_uuid] = _mock_request_uuid
-    saved_validator = app.state.token_validator
-    saved_routes = getattr(app.state, 'routes', None)
-    app.state.token_validator = ApiKeyValidator(key_service=key_service)
-    app.state.routes = routes
-    api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-    events: list = []
-    metrics: list = []
-    patchers = [
-        patch.object(key_service, 'get_key_by_hashed_key', return_value=api_key),
-        patch.object(group_service, 'check_key_uuid_for_route', return_value=True),
-        patch.object(events_processor._events_buffer, 'add', side_effect=events.append),
-        # The SDKs' own retries would ask for more canned replies.
-        patch.object(
-            openai._base_client.BaseClient, '_should_retry', return_value=False
-        ),
-        patch.object(
-            anthropic._base_client.BaseClient, '_should_retry', return_value=False
-        ),
-        *(
-            patch.object(
-                getattr(define_metrics, name),
-                method,
-                side_effect=lambda value, attributes, name=name: metrics.append(
-                    (
-                        name,
-                        None if name == 'invocations_latency_histogram' else value,
-                        dict(attributes),
-                    )
-                ),
-            )
-            for name, method in METRICS
-        ),
-    ]
-    for patcher in patchers:
-        patcher.start()
-    caplog.set_level(logging.DEBUG, logger=LOGGER)
-    try:
-        yield _Gateway(TestClient(app), events, metrics, caplog)
-    finally:
-        for patcher in reversed(patchers):
-            patcher.stop()
-        app.state.token_validator = saved_validator
-        if saved_routes is not None:
-            app.state.routes = saved_routes
-        app.dependency_overrides = {}
-
-
-class _Gateway:
-    def __init__(self, client: TestClient, events: list, metrics: list, caplog):
-        self.client = client
-        self._events = events
-        self.metrics = metrics
-        self.caplog = caplog
-        self.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
-
-    def post(self, path: str, replies: list[CannedResponse], **kwargs):
-        with ProviderRecorder(replies) as recorder:
-            response = self.client.post(path, headers=self.headers, **kwargs)
-        assert recorder.unused == 0, 'a canned reply was not asked for'
-        self.upstream = [r['url'] for r in recorder.requests]
-        return response
-
-    def chat(self, replies, route='chat', stream=False, text='Where is Paris?'):
-        return self.post(
-            '/v1/chat/completions',
-            replies,
-            json={
-                'model': f'proj/{route}',
-                'messages': [{'role': 'user', 'content': text}],
-                'stream': stream,
-            },
-        )
+    def chat(self, replies, route='chat', stream=False, text=None):
+        return super().chat(replies, route=route, text=text, stream=stream)
 
     def responses(self, replies, stream=False):
-        return self.post(
-            '/v1/responses',
-            replies,
-            json={'model': 'proj/chat', 'input': 'Where is Paris?', 'stream': stream},
-        )
-
-    def embed(self, replies):
-        return self.post(
-            '/v1/embeddings',
-            replies,
-            json={'model': 'proj/embed', 'input': ['one', 'two']},
-        )
-
-    def transcribe(self, replies, stream=False):
-        return self.post(
-            '/v1/audio/transcriptions',
-            replies,
-            data={'model': 'proj/audio', 'stream': str(stream).lower()},
-            files={'file': ('a.wav', WAV, 'audio/wav')},
-        )
-
-    def decide(self, replies):
-        return self.post(
-            '/v1/systemone',
-            replies,
-            json={
-                'model': 'proj/agent',
-                'state': {'ticket': 'printer on fire'},
-                'questions': {'urgent': {'type': 'noul', 'instructions': 'Urgent?'}},
-            },
-        )
+        return super().responses(replies, stream=stream)
 
     def events(self) -> list[tuple]:
         """Return the model events: type, model, model type, target, fallback,
@@ -378,7 +214,7 @@ class _Gateway:
                 e['IS_JUDGE'],
                 e['IS_ROUTING'],
             )
-            for e in self._events
+            for e in self.event_rows
             if e['EVENT_TYPE'] in MODEL_EVENTS
         ]
 
@@ -406,6 +242,14 @@ class _Gateway:
                 )
             )
         ]
+
+
+@pytest.fixture
+def gateway(caplog):
+    with open_gateway(
+        build_routes(CONFIG), caplog=caplog, metrics=METRICS, gateway_class=_Gateway
+    ) as gateway:
+        yield gateway
 
 
 def _openai_error(status: int, message: str = 'upstream says no') -> CannedResponse:
@@ -723,9 +567,13 @@ def _snapshot(gateway: _Gateway, response) -> dict:
     return {
         'status': response.status_code,
         'body': body,
-        'upstream': gateway.upstream,
+        'upstream': [r['url'] for r in gateway.upstream],
         'events': gateway.events(),
-        'metrics': gateway.metrics,
+        # A latency is a measure, not a golden value.
+        'metrics': [
+            (name, None if name == 'invocations_latency_histogram' else value, labels)
+            for name, value, labels in gateway.metrics
+        ],
         'logs': gateway.logs(),
     }
 
@@ -1125,6 +973,7 @@ EXPECTED = {
 
 
 @pytest.mark.parametrize('name', list(SCENARIOS))
+@pytest.mark.filterwarnings('ignore:Pydantic serializer warnings')  # broken chunks
 async def test_golden(gateway, name):
     response = SCENARIOS[name](gateway)
 

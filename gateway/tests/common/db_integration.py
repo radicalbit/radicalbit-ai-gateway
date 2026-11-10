@@ -3,7 +3,7 @@ import functools
 from typing import TypeVar
 import unittest
 
-from testcontainers.postgres import PostgresContainer
+from testcontainers.community.postgres import PostgresContainer
 
 from radicalbit_ai_gateway.db import database
 from radicalbit_ai_gateway.db.database import Database
@@ -42,6 +42,8 @@ class DatabaseIntegration(unittest.TestCase):
         database.BaseTable.metadata.drop_all(cls.db._engine)
         # Sanitize possible duplicated/reflected UNIQUE constraints left in metadata
         cls._sanitize_unique_constraints()
+        # Close the pooled connections: reset_connection only drops the engine.
+        cls.db._engine.dispose()
         cls.db.reset_connection()
 
     @classmethod

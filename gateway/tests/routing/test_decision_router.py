@@ -147,15 +147,6 @@ def _attributes(span) -> dict:
     return {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
 
 
-async def test_the_chosen_option_selects_its_model():
-    mock = _mock_typesafe({'option_1': 0.1, 'option_2': 0.85})
-
-    model = await _router().select_model([HumanMessage(content=USER_TEXT)])
-
-    assert model is GPT_5
-    assert mock.isdone()
-
-
 async def test_a_transient_error_is_retried_on_the_same_model():
     pook.post(TYPESAFE_URL).times(1).reply(503).json({'error': 'busy'})
     _mock_typesafe({'option_1': 0.9, 'option_2': 0.1})
@@ -285,69 +276,57 @@ async def test_no_text_uses_the_default_without_calling_typesafe(span, messages)
 
 
 @pytest.mark.parametrize(
-    ('confidence', 'expected'),
+    ('min_confidence', 'body', 'expected', 'reason'),
     [
-        pytest.param(0.59, MINI, id='below'),
-        pytest.param(0.6, GPT_5, id='equal passes'),
-        pytest.param(0.61, GPT_5, id='above'),
+        # Jev's confidence, not the option's probability, is compared.
+        pytest.param(
+            0.6,
+            _choice_answer({'option_1': 0.1, 'option_2': 0.9}, confidence=0.59),
+            MINI,
+            'low_confidence',
+            id='below',
+        ),
+        pytest.param(
+            0.6,
+            _choice_answer({'option_1': 0.1, 'option_2': 0.9}, confidence=0.6),
+            GPT_5,
+            None,
+            id='equal passes',
+        ),
+        pytest.param(
+            0.6,
+            _choice_answer({'option_1': 0.1, 'option_2': 0.9}, confidence=0.61),
+            GPT_5,
+            None,
+            id='above',
+        ),
+        pytest.param(
+            None,
+            _answer(choice='option_2'),
+            GPT_5,
+            None,
+            id='no confidence is enough without min_confidence',
+        ),
+        pytest.param(
+            0.5,
+            _answer(choice='option_2'),
+            MINI,
+            'unknown_option',
+            id='no confidence fails min_confidence',
+        ),
     ],
 )
-async def test_min_confidence_boundaries(confidence, expected):
-    # Jev's confidence, not the option's probability, is compared.
-    _mock_typesafe(
-        body=_choice_answer({'option_1': 0.1, 'option_2': 0.9}, confidence=confidence)
-    )
+async def test_min_confidence(span, min_confidence, body, expected, reason):
+    _mock_typesafe(body=body)
 
-    model = await _router(min_confidence=0.6).select_model(
+    model = await _router(min_confidence=min_confidence).select_model(
         [HumanMessage(content=USER_TEXT)]
     )
 
     assert model is expected
-
-
-async def test_an_answer_without_confidence_is_enough_without_min_confidence():
-    _mock_typesafe(body=_answer(choice='option_2'))
-
-    model = await _router().select_model([HumanMessage(content=USER_TEXT)])
-
-    assert model is GPT_5
-
-
-async def test_an_answer_without_confidence_fails_min_confidence(span):
-    _mock_typesafe(body=_answer(choice='option_2'))
-
-    model = await _router(min_confidence=0.5).select_model(
-        [HumanMessage(content=USER_TEXT)]
-    )
-
-    assert model is MINI
-    assert _attributes(span)['routing.decision.default_reason'] == 'unknown_option'
-
-
-async def test_low_confidence_is_the_default_reason(span):
-    _mock_typesafe({'option_1': 0.3, 'option_2': 0.4})
-
-    await _router(min_confidence=0.5).select_model([HumanMessage(content=USER_TEXT)])
-
     attributes = _attributes(span)
-    assert attributes['routing.decision.default_reason'] == 'low_confidence'
-    assert attributes['routing.decision.chosen_model_id'] == 'mini'
-
-
-async def test_history_last_sends_the_last_human_message():
-    mock = _mock_typesafe({'option_1': 0.9, 'option_2': 0.1}, state='second')
-
-    await _router().select_model(
-        [
-            SystemMessage(content='client system'),
-            HumanMessage(content='first'),
-            AIMessage(content='answer'),
-            HumanMessage(content='second'),
-            AIMessage(content='trailing'),
-        ]
-    )
-
-    assert mock.isdone()
+    assert attributes.get('routing.decision.default_reason') == reason
+    assert attributes['routing.decision.chosen_model_id'] == expected.model_id
 
 
 CONVERSATION = [
@@ -359,33 +338,44 @@ CONVERSATION = [
 ]
 
 
-async def test_history_all_sends_human_and_ai_messages_by_default():
-    mock = _mock_typesafe(
-        {'option_1': 0.9, 'option_2': 0.1}, state='first\nanswer\nsecond'
-    )
+@pytest.mark.parametrize(
+    ('overrides', 'messages', 'state'),
+    [
+        pytest.param(
+            {},
+            [*CONVERSATION[:3], CONVERSATION[4], AIMessage(content='trailing')],
+            'second',
+            id='last sends the last human message',
+        ),
+        pytest.param(
+            {'history': 'all'},
+            CONVERSATION,
+            'first\nanswer\nsecond',
+            id='all sends human and ai by default',
+        ),
+        pytest.param(
+            {'history': 'all', 'message_roles': ['user', 'system', 'tool']},
+            CONVERSATION,
+            'client system\nfirst\ntool output\nsecond',
+            id='all filters by message_roles',
+        ),
+    ],
+)
+async def test_history_sets_the_state_sent(overrides, messages, state):
+    mock = _mock_typesafe({'option_1': 0.9, 'option_2': 0.1}, state=state)
 
-    await _router(history='all').select_model(CONVERSATION)
+    await _router(**overrides).select_model(messages)
 
     assert mock.isdone()
 
 
-async def test_history_all_filters_by_message_roles():
-    mock = _mock_typesafe(
-        {'option_1': 0.9, 'option_2': 0.1},
-        state='client system\nfirst\ntool output\nsecond',
-    )
+async def test_the_chosen_option_selects_its_model_and_the_span_records_it(span):
+    mock = _mock_typesafe({'option_1': 0.1, 'option_2': 0.85})
 
-    router = _router(history='all', message_roles=['user', 'system', 'tool'])
-    await router.select_model(CONVERSATION)
+    model = await _router().select_model([HumanMessage(content=USER_TEXT)])
 
+    assert model is GPT_5
     assert mock.isdone()
-
-
-async def test_the_span_records_the_question_and_the_answer(span):
-    _mock_typesafe({'option_1': 0.1, 'option_2': 0.85})
-
-    await _router().select_model([HumanMessage(content=USER_TEXT)])
-
     attributes = _attributes(span)
     assert attributes['routing.decision.model_id'] == 'jev'
     assert attributes['routing.decision.fallback_used'] is False

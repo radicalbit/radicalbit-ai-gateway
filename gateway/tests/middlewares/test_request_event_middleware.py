@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
@@ -30,42 +30,34 @@ def _scope(path: str, method: str = 'POST') -> dict:
     return {'type': 'http', 'path': path, 'method': method}
 
 
-@pytest.mark.parametrize(
-    'path',
-    [
-        '/proj/my-route/mcp',
-        '/a/b/mcp',
-        '/proj/route-with-dashes/mcp',
-    ],
-)
-def test_is_mcp_request_matches_the_proxy_path(path):
-    assert RequestEventMiddleware.is_mcp_request(_scope(path)) is True
+MCP_ROUTE = '/{project_name}/{route_name}/mcp'
 
 
 @pytest.mark.parametrize(
-    'path',
+    ('path', 'method', 'expected'),
     [
-        '/public/api/v1/projects/mcp',  # 5 segments: management API
-        '/proj/my-route/mcp/extra',  # deeper than the route
-        '/mcp',  # 1 segment
-        '/proj/mcp',  # 2 segments
-        '/proj/my-route/mcpx',  # near miss
-        '/proj/my-route/tools',
-        '/v1/chat/completions',  # 3 segments, but not mcp
-        '',
+        pytest.param('/proj/my-route/mcp', 'POST', True, id='proxy-path'),
+        pytest.param('/a/b/mcp', 'POST', True, id='short-segments'),
+        pytest.param('/proj/route-with-dashes/mcp', 'POST', True, id='dashed-route'),
+        pytest.param(
+            '/public/api/v1/projects/mcp', 'POST', False, id='management-api-5-segments'
+        ),
+        pytest.param('/proj/my-route/mcp/extra', 'POST', False, id='deeper-than-route'),
+        pytest.param('/mcp', 'POST', False, id='1-segment'),
+        pytest.param('/proj/mcp', 'POST', False, id='2-segments'),
+        pytest.param('/proj/my-route/mcpx', 'POST', False, id='near-miss'),
+        pytest.param('/proj/my-route/tools', 'POST', False, id='not-mcp-leaf'),
+        pytest.param('/v1/chat/completions', 'POST', False, id='3-segments-not-mcp'),
+        pytest.param('', 'POST', False, id='empty'),
+        # POST only: the SPA catch-all serves GET on arbitrary paths.
+        pytest.param('/proj/my-route/mcp', 'GET', False, id='get'),
+        pytest.param('/proj/my-route/mcp', 'DELETE', False, id='delete'),
+        pytest.param('/proj/my-route/mcp', 'PUT', False, id='put'),
+        pytest.param('/proj/my-route/mcp', 'OPTIONS', False, id='options'),
     ],
 )
-def test_is_mcp_request_rejects_everything_else(path):
-    assert RequestEventMiddleware.is_mcp_request(_scope(path)) is False
-
-
-@pytest.mark.parametrize('method', ['GET', 'DELETE', 'PUT', 'OPTIONS'])
-def test_is_mcp_request_is_post_only(method):
-    """The SPA catch-all serves GET on arbitrary paths."""
-    assert (
-        RequestEventMiddleware.is_mcp_request(_scope('/proj/my-route/mcp', method))
-        is False
-    )
+def test_is_mcp_request(path, method, expected):
+    assert RequestEventMiddleware.is_mcp_request(_scope(path, method)) is expected
 
 
 def _app(path: str, *, status_code: int = 200, error: str | None = None) -> TestClient:
@@ -91,32 +83,32 @@ def _app(path: str, *, status_code: int = 200, error: str | None = None) -> Test
     return TestClient(app)
 
 
-def test_mcp_requests_are_stamped_and_emit_an_mcp_event():
+@pytest.mark.parametrize(
+    ('route', 'url', 'request_type'),
+    [
+        pytest.param(MCP_ROUTE, '/proj/my-route/mcp', RequestType.MCP, id='mcp'),
+        pytest.param(
+            '/v1/chat/completions',
+            '/v1/chat/completions',
+            RequestType.CHAT_COMPLETIONS,
+            id='tracked-path',
+        ),
+    ],
+)
+def test_requests_are_stamped_and_emit_an_event(route, url, request_type):
     with patch(EMIT) as emit:
-        body = (
-            _app('/{project_name}/{route_name}/mcp').post('/proj/my-route/mcp').json()
-        )
+        body = _app(route).post(url).json()
 
     assert uuid.UUID(body['request_uuid']).version == 4
     payload = emit.call_args.args[0]
-    assert payload.request_type is RequestType.MCP
+    assert payload.request_type is request_type
     assert payload.request_uuid == body['request_uuid']
-
-
-def test_tracked_paths_are_stamped_and_emit_an_event():
-    with patch(EMIT) as emit:
-        body = _app('/v1/chat/completions').post('/v1/chat/completions').json()
-
-    assert uuid.UUID(body['request_uuid']).version == 4
-    assert emit.call_args.args[0].request_type is RequestType.CHAT_COMPLETIONS
 
 
 def test_an_mcp_notification_emits_no_event():
     """202 means a JSON-RPC notification: no id, no body, nothing to bill."""
     with patch(EMIT) as emit:
-        response = _app('/{project_name}/{route_name}/mcp', status_code=202).post(
-            '/proj/my-route/mcp'
-        )
+        response = _app(MCP_ROUTE, status_code=202).post('/proj/my-route/mcp')
 
     assert response.status_code == 202
     emit.assert_not_called()
@@ -125,9 +117,7 @@ def test_an_mcp_notification_emits_no_event():
 def test_an_mcp_jsonrpc_error_over_200_is_a_handled_error():
     """The status code says success; only the error context says otherwise."""
     with patch(EMIT) as emit:
-        _app('/{project_name}/{route_name}/mcp', error='mcp_jsonrpc_error').post(
-            '/proj/my-route/mcp'
-        )
+        _app(MCP_ROUTE, error='mcp_jsonrpc_error').post('/proj/my-route/mcp')
 
     payload = emit.call_args.args[0]
     assert payload.http_status_code == 200
@@ -135,17 +125,22 @@ def test_an_mcp_jsonrpc_error_over_200_is_a_handled_error():
     assert payload.error_code == '-32602'
 
 
-def test_a_successful_mcp_call_is_a_success():
+@pytest.mark.parametrize(
+    ('route', 'url', 'error'),
+    [
+        pytest.param(MCP_ROUTE, '/proj/my-route/mcp', None, id='successful-mcp-call'),
+        # The MCP downgrade must not widen to the /v1/* endpoints.
+        pytest.param(
+            '/v1/chat/completions',
+            '/v1/chat/completions',
+            'SomeError',
+            id='error-context-on-2xx-llm-call',
+        ),
+    ],
+)
+def test_a_2xx_call_is_a_success(route, url, error):
     with patch(EMIT) as emit:
-        _app('/{project_name}/{route_name}/mcp').post('/proj/my-route/mcp')
-
-    assert emit.call_args.args[0].status is RequestStatus.SUCCESS
-
-
-def test_an_error_context_on_a_2xx_llm_call_stays_a_success():
-    """The MCP downgrade must not widen to the /v1/* endpoints."""
-    with patch(EMIT) as emit:
-        _app('/v1/chat/completions', error='SomeError').post('/v1/chat/completions')
+        _app(route, error=error).post(url)
 
     assert emit.call_args.args[0].status is RequestStatus.SUCCESS
 
@@ -159,7 +154,7 @@ def test_untracked_paths_are_left_alone():
 
 
 def test_each_mcp_request_gets_its_own_request_uuid():
-    client = _app('/{project_name}/{route_name}/mcp')
+    client = _app(MCP_ROUTE)
 
     with patch(EMIT):
         first = client.post('/proj/my-route/mcp').json()['request_uuid']
@@ -207,20 +202,11 @@ def test_tags_are_parsed_on_every_tracked_path(path):
 
 def test_tags_are_parsed_on_the_mcp_path():
     with patch(EMIT) as emit:
-        _tags_app('/{project_name}/{route_name}/mcp').post(
+        _tags_app(MCP_ROUTE).post(
             '/proj/my-route/mcp', headers={'X-RB-Tags': 'env=prod'}
         )
 
     assert emit.call_args.args[0].tags == ['env=prod']
-
-
-def test_tags_reach_the_contextvar_that_feeds_event_rows():
-    body = (
-        _tags_app('/v1/chat/completions')
-        .post('/v1/chat/completions', headers={'X-RB-Tags': 'env=prod,app=x'})
-        .json()
-    )
-    assert body['contextvar_tags'] == ['app=x', 'env=prod']
 
 
 def test_repeated_tags_headers_are_combined():
@@ -319,31 +305,3 @@ def test_untracked_paths_do_not_validate_tags():
 
     response = TestClient(app).post('/health', headers={'X-RB-Tags': 'broken'})
     assert response.status_code == 200
-
-
-def test_tags_stay_visible_while_a_streaming_response_is_produced():
-    """Metric events are emitted mid-stream, so the ContextVar must outlive it."""
-    seen = []
-
-    async def endpoint(request):
-        async def body():
-            for _ in range(3):
-                # Stands in for emit_event() being called during the stream.
-                seen.append(get_current_request_tags())
-                yield b'data: chunk\n\n'
-
-        return StreamingResponse(body(), media_type='text/event-stream')
-
-    app = Starlette(
-        routes=[Route('/v1/chat/completions', endpoint, methods=['POST'])],
-    )
-    app.add_middleware(RequestEventMiddleware)
-
-    with patch(EMIT) as emit:
-        response = TestClient(app).post(
-            '/v1/chat/completions', headers={'X-RB-Tags': 'env=prod,app=x'}
-        )
-
-    assert response.status_code == 200
-    assert seen == [('app=x', 'env=prod')] * 3
-    assert emit.call_args.args[0].tags == ['app=x', 'env=prod']

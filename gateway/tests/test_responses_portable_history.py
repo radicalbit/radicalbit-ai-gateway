@@ -7,6 +7,7 @@ each model gets them reduced to what it accepts.
 import copy
 
 from httpx_aiohttp import HttpxAiohttpClient
+import pytest
 
 from tests.test_responses_native import OPENCODE_TURN, FakeChatModel
 
@@ -126,246 +127,239 @@ def _without(item: dict, *keys: str) -> dict:
     return {k: v for k, v in item.items() if k not in keys}
 
 
-class TestOpenAITarget:
-    def setup_method(self):
-        self.model = _model('openai:gpt-6-luna')
+def _assert_adapted(model, items: list, expected: list) -> None:
+    """Assert the adapted input is ``expected`` and the items are not mutated."""
+    before = copy.deepcopy(items)
 
-    def test_own_reasoning_is_kept(self):
-        assert self.model.adapt_responses_input([OPENAI_REASONING]) == [
-            OPENAI_REASONING
-        ]
-
-    def test_own_reasoning_without_a_blob_is_kept(self):
-        stored = _without(OPENAI_REASONING, 'encrypted_content')
-
-        assert self.model.adapt_responses_input([stored]) == [stored]
-
-    def test_own_blob_without_an_id_is_kept(self):
-        blob_only = _without(OPENAI_REASONING, 'id')
-
-        assert self.model.adapt_responses_input([blob_only]) == [blob_only]
-
-    def test_deepseek_reasoning_is_dropped(self):
-        assert self.model.adapt_responses_input([USER, DEEPSEEK_REASONING]) == [USER]
-
-    def test_foreign_function_call_loses_id_and_status(self):
-        assert self.model.adapt_responses_input([DEEPSEEK_CALL]) == [
-            _without(DEEPSEEK_CALL, 'id', 'status')
-        ]
-
-    def test_foreign_message_loses_id_and_status(self):
-        assert self.model.adapt_responses_input([DEEPSEEK_MESSAGE]) == [
-            _without(DEEPSEEK_MESSAGE, 'id', 'status')
-        ]
-
-    def test_own_items_are_unchanged(self):
-        items = [USER, OPENAI_REASONING, OPENAI_CALL, CALL_OUTPUT, OPENAI_MESSAGE]
-
-        assert self.model.adapt_responses_input(items) == items
-
-    def test_an_openai_only_history_is_unchanged(self):
-        assert self.model.adapt_responses_input(OPENCODE_TURN) == OPENCODE_TURN
-
-    def test_non_dict_items_are_unchanged(self):
-        assert self.model.adapt_responses_input(['raw', USER]) == ['raw', USER]
-
-    def test_the_callers_items_are_not_mutated(self):
-        items = [USER, DEEPSEEK_REASONING, DEEPSEEK_CALL, CALL_OUTPUT, DEEPSEEK_MESSAGE]
-        before = copy.deepcopy(items)
-
-        self.model.adapt_responses_input(items)
-
-        assert items == before
-
-    def test_a_switch_mid_tool_loop_keeps_the_visible_history(self):
-        # OpenAI → DeepSeek, which calls a tool, then back to OpenAI.
-        items = [
-            USER,
-            OPENAI_REASONING,
-            OPENAI_MESSAGE,
-            USER,
-            DEEPSEEK_REASONING,
-            DEEPSEEK_CALL,
-            CALL_OUTPUT,
-        ]
-
-        assert self.model.adapt_responses_input(items) == [
-            USER,
-            OPENAI_REASONING,
-            OPENAI_MESSAGE,
-            USER,
-            _without(DEEPSEEK_CALL, 'id', 'status'),
-            CALL_OUTPUT,
-        ]
-
-    def test_openrouter_reasoning_is_dropped_even_with_an_openai_blob(self):
-        items = [
-            USER,
-            OPENROUTER_LUNA_REASONING,
-            OPENROUTER_DEEPSEEK_REASONING,
-            OPENROUTER_HAIKU_REASONING,
-        ]
-
-        assert self.model.adapt_responses_input(items) == [USER]
-
-    def test_openrouter_calls_and_messages_are_unchanged(self):
-        items = [USER, OPENROUTER_CALL, CALL_OUTPUT, OPENROUTER_MESSAGE]
-
-        assert self.model.adapt_responses_input(items) == items
+    assert model.adapt_responses_input(items) == expected
+    assert items == before
 
 
-def _compatible(base_url: str):
-    return init_chat_model(
-        'openai:openai/gpt-6-luna',
-        api_key='sk',
-        base_url=base_url,
-        http_async_client=HttpxAiohttpClient(),
-    )
+def _summarised(*texts: str) -> dict:
+    return {
+        **OPENAI_REASONING,
+        'summary': [{'type': 'summary_text', 'text': t} for t in texts],
+    }
+
+
+def _reasoning_text(text: str) -> dict:
+    return {
+        'type': 'reasoning',
+        'summary': [],
+        'content': [{'type': 'reasoning_text', 'text': text}],
+    }
+
+
+_SECOND_CALL = {**OPENAI_CALL, 'id': 'fc_2', 'call_id': 'call_2'}
+_SECOND_OUTPUT = {**CALL_OUTPUT, 'call_id': 'call_2'}
+
+
+def _same(items: list) -> tuple[list, list]:
+    return items, items
+
+
+@pytest.mark.parametrize(
+    ('items', 'expected'),
+    [
+        pytest.param(*_same([OPENAI_REASONING]), id='own-reasoning-kept'),
+        pytest.param(
+            *_same([_without(OPENAI_REASONING, 'encrypted_content')]),
+            id='own-reasoning-without-blob-kept',
+        ),
+        pytest.param(
+            *_same([_without(OPENAI_REASONING, 'id')]), id='own-blob-without-id-kept'
+        ),
+        pytest.param(
+            [USER, DEEPSEEK_REASONING], [USER], id='deepseek-reasoning-dropped'
+        ),
+        pytest.param(
+            [DEEPSEEK_CALL],
+            [_without(DEEPSEEK_CALL, 'id', 'status')],
+            id='foreign-call-loses-id-status',
+        ),
+        pytest.param(
+            [DEEPSEEK_MESSAGE],
+            [_without(DEEPSEEK_MESSAGE, 'id', 'status')],
+            id='foreign-message-loses-id-status',
+        ),
+        pytest.param(
+            *_same([USER, OPENAI_REASONING, OPENAI_CALL, CALL_OUTPUT, OPENAI_MESSAGE]),
+            id='own-items-unchanged',
+        ),
+        pytest.param(*_same(OPENCODE_TURN), id='openai-only-history-unchanged'),
+        pytest.param(*_same(['raw', USER]), id='non-dicts-unchanged'),
+        pytest.param(
+            [USER, DEEPSEEK_REASONING, DEEPSEEK_CALL, CALL_OUTPUT, DEEPSEEK_MESSAGE],
+            [
+                USER,
+                _without(DEEPSEEK_CALL, 'id', 'status'),
+                CALL_OUTPUT,
+                _without(DEEPSEEK_MESSAGE, 'id', 'status'),
+            ],
+            id='deepseek-turn',
+        ),
+        # OpenAI -> DeepSeek, which calls a tool, then back to OpenAI.
+        pytest.param(
+            [
+                USER,
+                OPENAI_REASONING,
+                OPENAI_MESSAGE,
+                USER,
+                DEEPSEEK_REASONING,
+                DEEPSEEK_CALL,
+                CALL_OUTPUT,
+            ],
+            [
+                USER,
+                OPENAI_REASONING,
+                OPENAI_MESSAGE,
+                USER,
+                _without(DEEPSEEK_CALL, 'id', 'status'),
+                CALL_OUTPUT,
+            ],
+            id='switch-mid-tool-loop-keeps-visible-history',
+        ),
+        pytest.param(
+            [
+                USER,
+                OPENROUTER_LUNA_REASONING,
+                OPENROUTER_DEEPSEEK_REASONING,
+                OPENROUTER_HAIKU_REASONING,
+            ],
+            [USER],
+            id='openrouter-reasoning-dropped-even-with-openai-blob',
+        ),
+        pytest.param(
+            *_same([USER, OPENROUTER_CALL, CALL_OUTPUT, OPENROUTER_MESSAGE]),
+            id='openrouter-calls-and-messages-unchanged',
+        ),
+    ],
+)
+def test_openai_target(items, expected):
+    _assert_adapted(_model('openai:gpt-6-luna'), items, expected)
 
 
 OPENROUTER = 'https://openrouter.ai/api/v1'
 
 
-class TestCompatibleTarget:
-    """An ``openai/`` model with a ``base_url``: any OpenAI-compatible endpoint."""
-
-    def setup_method(self):
-        self.model = _compatible(OPENROUTER)
-
-    def test_all_reasoning_is_dropped_its_own_too(self):
-        items = [
-            USER,
-            OPENAI_REASONING,
-            DEEPSEEK_REASONING,
-            OPENROUTER_LUNA_REASONING,
-            OPENROUTER_HAIKU_REASONING,
-        ]
-
-        assert self.model.adapt_responses_input(items) == [USER]
-
-    def test_every_item_loses_id_and_status(self):
-        items = [OPENAI_CALL, DEEPSEEK_CALL, OPENROUTER_CALL, OPENROUTER_MESSAGE]
-
-        assert self.model.adapt_responses_input(items) == [
-            _without(item, 'id', 'status') for item in items
-        ]
-
-    def test_items_without_ids_and_non_dicts_are_unchanged(self):
-        items = ['raw', USER, CALL_OUTPUT]
-
-        assert self.model.adapt_responses_input(items) == items
-
-    def test_the_callers_items_are_not_mutated(self):
-        items = [USER, OPENROUTER_LUNA_REASONING, OPENROUTER_CALL, CALL_OUTPUT]
-        before = copy.deepcopy(items)
-
-        self.model.adapt_responses_input(items)
-
-        assert items == before
-
-
-class TestDeepSeekTarget:
-    def setup_method(self):
-        self.model = _model('deepseek:deepseek-flash')
-
-    def test_own_reasoning_is_kept(self):
-        assert self.model.adapt_responses_input([DEEPSEEK_REASONING]) == [
-            DEEPSEEK_REASONING
-        ]
-
-    def test_openai_blob_without_summary_is_dropped(self):
-        assert self.model.adapt_responses_input([USER, OPENAI_REASONING]) == [USER]
-
-    def test_openai_blob_with_summary_becomes_reasoning_text(self):
-        summarised = {
-            **OPENAI_REASONING,
-            'summary': [
-                {'type': 'summary_text', 'text': 'Adding two numbers.'},
-                {'type': 'summary_text', 'text': 'Calling add.'},
+@pytest.mark.parametrize(
+    ('items', 'expected'),
+    [
+        pytest.param(
+            [
+                USER,
+                OPENAI_REASONING,
+                DEEPSEEK_REASONING,
+                OPENROUTER_LUNA_REASONING,
+                OPENROUTER_HAIKU_REASONING,
             ],
-        }
+            [USER],
+            id='all-reasoning-dropped-its-own-too',
+        ),
+        pytest.param(
+            [OPENAI_CALL, DEEPSEEK_CALL, OPENROUTER_CALL, OPENROUTER_MESSAGE],
+            [
+                _without(item, 'id', 'status')
+                for item in [
+                    OPENAI_CALL,
+                    DEEPSEEK_CALL,
+                    OPENROUTER_CALL,
+                    OPENROUTER_MESSAGE,
+                ]
+            ],
+            id='every-item-loses-id-and-status',
+        ),
+        pytest.param(
+            *_same(['raw', USER, CALL_OUTPUT]), id='items-without-ids-and-non-dicts'
+        ),
+    ],
+)
+def test_compatible_target(items, expected):
+    """An ``openai/`` model with a ``base_url``: any OpenAI-compatible endpoint."""
+    model = init_chat_model(
+        'openai:openai/gpt-6-luna',
+        api_key='sk',
+        base_url=OPENROUTER,
+        http_async_client=HttpxAiohttpClient(),
+    )
 
-        assert self.model.adapt_responses_input([summarised]) == [
-            {
-                'type': 'reasoning',
-                'summary': [],
-                'content': [
-                    {
-                        'type': 'reasoning_text',
-                        'text': 'Adding two numbers.\n\nCalling add.',
-                    }
-                ],
-            }
-        ]
-
-    def test_openai_messages_and_calls_are_unchanged(self):
-        items = [USER, OPENAI_CALL, CALL_OUTPUT, OPENAI_MESSAGE, USER]
-
-        assert self.model.adapt_responses_input(items) == items
-
-    def test_current_call_without_reasoning_gets_a_placeholder(self):
-        items = [USER, OPENAI_REASONING, OPENAI_CALL, CALL_OUTPUT]
-
-        assert self.model.adapt_responses_input(items) == [
-            USER,
-            PLACEHOLDER,
-            OPENAI_CALL,
-            CALL_OUTPUT,
-        ]
-
-    def test_each_round_of_the_current_turn_gets_one_placeholder(self):
-        second_call = {**OPENAI_CALL, 'id': 'fc_2', 'call_id': 'call_2'}
-        second_output = {**CALL_OUTPUT, 'call_id': 'call_2'}
-        items = [USER, OPENAI_CALL, second_call, CALL_OUTPUT, second_output]
-        items += [OPENAI_CALL, CALL_OUTPUT]
-
-        assert self.model.adapt_responses_input(items) == [
-            USER,
-            PLACEHOLDER,
-            OPENAI_CALL,
-            second_call,
-            CALL_OUTPUT,
-            second_output,
-            PLACEHOLDER,
-            OPENAI_CALL,
-            CALL_OUTPUT,
-        ]
-
-    def test_current_call_after_reasoning_gets_no_placeholder(self):
-        summarised = {
-            **OPENAI_REASONING,
-            'summary': [{'type': 'summary_text', 'text': 'Calling add.'}],
-        }
-        own = [USER, DEEPSEEK_REASONING, DEEPSEEK_CALL, CALL_OUTPUT]
-
-        assert self.model.adapt_responses_input(own) == own
-        assert PLACEHOLDER not in self.model.adapt_responses_input(
-            [USER, summarised, OPENAI_CALL, CALL_OUTPUT]
-        )
-
-    def test_the_callers_items_are_not_mutated(self):
-        items = [USER, OPENAI_REASONING, OPENAI_CALL, OPENAI_MESSAGE]
-        before = copy.deepcopy(items)
-
-        self.model.adapt_responses_input(items)
-
-        assert items == before
+    _assert_adapted(model, items, expected)
 
 
-class TestBaseClass:
-    def test_reasoning_is_dropped_and_the_rest_unchanged(self):
-        items = [
-            USER,
-            OPENAI_REASONING,
-            OPENAI_CALL,
-            DEEPSEEK_REASONING,
-            DEEPSEEK_MESSAGE,
-            'raw',
-        ]
+@pytest.mark.parametrize(
+    ('items', 'expected'),
+    [
+        pytest.param(*_same([DEEPSEEK_REASONING]), id='own-reasoning-kept'),
+        pytest.param(
+            [USER, OPENAI_REASONING], [USER], id='openai-blob-without-summary-dropped'
+        ),
+        pytest.param(
+            [_summarised('Adding two numbers.', 'Calling add.')],
+            [_reasoning_text('Adding two numbers.\n\nCalling add.')],
+            id='openai-blob-with-summary-becomes-reasoning-text',
+        ),
+        pytest.param(
+            *_same([USER, OPENAI_CALL, CALL_OUTPUT, OPENAI_MESSAGE, USER]),
+            id='openai-messages-and-calls-unchanged',
+        ),
+        pytest.param(
+            [USER, OPENAI_REASONING, OPENAI_CALL, CALL_OUTPUT],
+            [USER, PLACEHOLDER, OPENAI_CALL, CALL_OUTPUT],
+            id='current-call-without-reasoning-gets-placeholder',
+        ),
+        pytest.param(
+            [
+                USER,
+                OPENAI_CALL,
+                _SECOND_CALL,
+                CALL_OUTPUT,
+                _SECOND_OUTPUT,
+                OPENAI_CALL,
+                CALL_OUTPUT,
+            ],
+            [
+                USER,
+                PLACEHOLDER,
+                OPENAI_CALL,
+                _SECOND_CALL,
+                CALL_OUTPUT,
+                _SECOND_OUTPUT,
+                PLACEHOLDER,
+                OPENAI_CALL,
+                CALL_OUTPUT,
+            ],
+            id='each-round-of-current-turn-gets-one-placeholder',
+        ),
+        pytest.param(
+            *_same([USER, DEEPSEEK_REASONING, DEEPSEEK_CALL, CALL_OUTPUT]),
+            id='current-call-after-own-reasoning-no-placeholder',
+        ),
+        pytest.param(
+            [USER, _summarised('Calling add.'), OPENAI_CALL, CALL_OUTPUT],
+            [USER, _reasoning_text('Calling add.'), OPENAI_CALL, CALL_OUTPUT],
+            id='current-call-after-summary-no-placeholder',
+        ),
+        pytest.param(
+            [USER, OPENAI_REASONING, OPENAI_CALL, OPENAI_MESSAGE],
+            [USER, PLACEHOLDER, OPENAI_CALL, OPENAI_MESSAGE],
+            id='openai-turn-with-final-message',
+        ),
+    ],
+)
+def test_deepseek_target(items, expected):
+    _assert_adapted(_model('deepseek:deepseek-flash'), items, expected)
 
-        assert FakeChatModel().adapt_responses_input(items) == [
-            USER,
-            OPENAI_CALL,
-            DEEPSEEK_MESSAGE,
-            'raw',
-        ]
+
+def test_base_class_drops_reasoning_and_keeps_the_rest():
+    items = [
+        USER,
+        OPENAI_REASONING,
+        OPENAI_CALL,
+        DEEPSEEK_REASONING,
+        DEEPSEEK_MESSAGE,
+        'raw',
+    ]
+
+    _assert_adapted(
+        FakeChatModel(), items, [USER, OPENAI_CALL, DEEPSEEK_MESSAGE, 'raw']
+    )

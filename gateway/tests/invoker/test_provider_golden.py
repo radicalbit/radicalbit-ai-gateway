@@ -31,48 +31,29 @@ from decimal import Decimal
 import json
 import re
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import anthropic
-from fastapi.testclient import TestClient
 import openai
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel, Field
 import pytest
-from starlette.requests import Request
 
-from tests.common import db_mock, provider_responses as upstream
+from tests.common import provider_responses as upstream
+from tests.common.gateway_harness import Gateway, build_routes, open_gateway
 from tests.common.provider_recorder import CannedResponse, ProviderRecorder
 from tests.invoker.provider_golden_expected import EXPECTED, SCHEMAS
 
-from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.events import events_processor
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
-    DecisionJudgeEngine,
-)
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm import tracing
 from radicalbit_ai_gateway.llm.factory import init_chat_model
 from radicalbit_ai_gateway.llm.messages import HumanMessage
-from radicalbit_ai_gateway.metrics import define_metrics
 from radicalbit_ai_gateway.models.event_type import EventType
-from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.judge_result import JudgeResult
 from radicalbit_ai_gateway.models.routing import LLMRoutingConfig
-from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routing.llm_router import build_response_schema
-from radicalbit_ai_gateway.server import app, group_service, key_service
 from radicalbit_ai_gateway.services.config_generator_service import YamlOut
-from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-    initialize_async_routers,
-)
 
 MODEL_EVENTS = {
     EventType.MODEL_INVOCATION,
@@ -172,43 +153,6 @@ CONFIG = {
 }
 
 
-async def _build_routes() -> dict:
-    config = GatewayConfig.model_validate(CONFIG)
-    cost_service = CostService(
-        chat_models_by_id=config.chat_models_by_id,
-        embedding_models_by_id=config.embedding_models_by_id,
-        transcription_models_by_id=config.transcription_models_by_id,
-        decision_models_by_id=config.decision_models_by_id,
-    )
-    guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
-        cost_service=cost_service,
-        guardrails=config.guardrails,
-        chat_models_by_id=config.chat_models_by_id,
-        decision_judge_engine=DecisionJudgeEngine(
-            decision_models=config.decision_models, cost_service=cost_service
-        ),
-    )
-    routes = build_gateway_routes_from_config(
-        config,
-        guardrails,
-        redis_client=None,
-        cost_service=cost_service,
-        httpx_client=None,
-        project_uuid='',
-    )
-    await initialize_async_routers(routes)
-    for route in routes.values():
-        route.project_name = 'proj'
-    return {f'proj/{name}': route for name, route in routes.items()}
-
-
-def _mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
 def _no_retries() -> list:
     """Return patches that stop the SDKs' own retries (they ask for more replies)."""
     return [
@@ -231,43 +175,12 @@ def spans(monkeypatch) -> InMemorySpanExporter:
 
 
 @pytest.fixture
-async def gateway(spans):
-    routes = await _build_routes()
-    app.dependency_overrides[get_request_uuid] = _mock_request_uuid
-    saved_validator = app.state.token_validator
-    saved_routes = getattr(app.state, 'routes', None)
-    app.state.token_validator = ApiKeyValidator(key_service=key_service)
-    app.state.routes = routes
-    api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-    events: list = []
-    metrics: list = []
-    patchers = [
-        patch.object(key_service, 'get_key_by_hashed_key', return_value=api_key),
-        patch.object(group_service, 'check_key_uuid_for_route', return_value=True),
-        patch.object(events_processor._events_buffer, 'add', side_effect=events.append),
-        *_no_retries(),
-        *(
-            patch.object(
-                getattr(define_metrics, name),
-                method,
-                side_effect=lambda value, attributes, name=name: metrics.append(
-                    (name, value, dict(attributes))
-                ),
-            )
-            for name, method in METRICS
-        ),
-    ]
-    for patcher in patchers:
-        patcher.start()
-    try:
-        yield _Gateway(TestClient(app), events, metrics, spans)
-    finally:
-        for patcher in reversed(patchers):
-            patcher.stop()
-        app.state.token_validator = saved_validator
-        if saved_routes is not None:
-            app.state.routes = saved_routes
-        app.dependency_overrides = {}
+def gateway(spans):
+    with open_gateway(
+        build_routes(CONFIG), metrics=METRICS, gateway_class=_Gateway
+    ) as gateway:
+        gateway.exporter = spans
+        yield gateway
 
 
 def _scrub(value: Any) -> Any:
@@ -281,28 +194,7 @@ def _scrub(value: Any) -> Any:
     return value
 
 
-class _Gateway:
-    def __init__(self, client: TestClient, events: list, metrics: list, spans):
-        self.client = client
-        self._events = events
-        self.metrics = metrics
-        self._spans = spans
-        self.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
-
-    def chat(self, replies: list[CannedResponse], route: str, **body):
-        payload = {
-            'model': f'proj/{route}',
-            'messages': [{'role': 'user', 'content': 'Where is Paris?'}],
-            **body,
-        }
-        with ProviderRecorder(replies) as recorder:
-            response = self.client.post(
-                '/v1/chat/completions', headers=self.headers, json=payload
-            )
-        assert recorder.unused == 0, 'a canned reply was not asked for'
-        self.upstream = recorder.requests
-        return response
-
+class _Gateway(Gateway):
     def events(self) -> list[tuple]:
         """Return the model events: type, model, target, fallback, value, cost,
         cached, cache type, judge, routing.
@@ -320,7 +212,7 @@ class _Gateway:
                 e['IS_JUDGE'],
                 e['IS_ROUTING'],
             )
-            for e in self._events
+            for e in self.event_rows
             if e['EVENT_TYPE'] in MODEL_EVENTS
         ]
 
@@ -337,7 +229,7 @@ class _Gateway:
                     }
                 ),
             )
-            for span in self._spans.get_finished_spans()
+            for span in self.exporter.get_finished_spans()
             if span.name.endswith('.chat')
         ]
 

@@ -6,9 +6,9 @@ rules. The expected values below are literals; only the drivers (the
 functions that make the code under test produce them) may change.
 """
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
-from freezegun import freeze_time
 import pytest
 
 from radicalbit_ai_gateway.limiter import InMemoryStorage
@@ -37,7 +37,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
 P = '2f1c6d4e-0000-4000-8000-0000000000aa'  # project
 C = '7a3b9e10-0000-4000-8000-0000000000bb'  # credential
 ROUTE = 'my-route'
-NOW = '2026-01-01 00:00:30'  # 30s into the aligned hour: 3570s left of it
+NOW = 1767225630  # 2026-01-01 00:00:30 UTC: 30s into the aligned hour, 3570s left
 
 IDENTITY = RequestIdentity(
     request_uuid='req-1',
@@ -185,6 +185,20 @@ _FILL_AND_DEMAND = {
     'budget': (Usage(costs=(500_000_000,)), Demand(cost_room=True)),
     'audio_duration': (None, Demand(audio_seconds=1.0)),
 }
+
+
+@contextmanager
+def frozen_clock(now: int):
+    """Stop the clock the limiter reads at ``now``, in epoch seconds.
+
+    The limiter reads ``time.time`` and ``time.time_ns`` only. (freezegun
+    would scan every loaded module on each start: a quarter of a second.)
+    """
+    with (
+        patch('time.time', return_value=float(now)),
+        patch('time.time_ns', return_value=now * 1_000_000_000),
+    ):
+        yield
 
 
 async def block(scope: str, category: str) -> Exception:
@@ -431,7 +445,7 @@ BLOCKS = {
 @pytest.mark.parametrize(('scope', 'category'), list(BLOCKS))
 async def test_block(scope, category, events, metrics):
     error_type, message, log_message, event_type, metric = BLOCKS[(scope, category)]
-    with freeze_time(NOW):
+    with frozen_clock(NOW):
         error = await block(scope, category)
 
     assert type(error) is error_type

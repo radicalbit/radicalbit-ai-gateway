@@ -1,25 +1,21 @@
 """POST /v1/systemone: Jev proxied through the gateway, Typesafe mocked with pook."""
 
+from contextlib import nullcontext
 from dataclasses import replace
 import json
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
 import httpx
 import pook
 import pytest
-from starlette.requests import Request
 
 from tests.common import db_mock
+from tests.common.gateway_harness import build_routes, open_gateway
 
-from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
@@ -35,30 +31,20 @@ from radicalbit_ai_gateway.models.event_payload import (
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.request_event_type import RequestType
-from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import (
     app,
     group_service,
     key_service,
     project_budget_limit_dao,
 )
-from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import KeyNotFoundError
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-)
 
 ROUTE_KEY = 'proj/agent'
 TYPESAFE_KEY = 'ts-upstream-secret'
 TYPESAFE_URL = 'https://api.typesafe.ai/v1/systemone'
 
 MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
-REQUEST_EVENT_EMIT = (
-    'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
-)
 SPAN = 'radicalbit_ai_gateway.invocation.decision_model_invoker.trace.get_current_span'
-BACKOFF_SLEEP = 'radicalbit_ai_gateway.invocation.decision_model_invoker.asyncio.sleep'
 
 STATE = {'ticket': 'My card was charged twice', 'customer': {'tier': 'gold'}}
 QUESTIONS = {
@@ -88,18 +74,13 @@ TYPESAFE_BODY = {
 CLIENT_BODY = {**TYPESAFE_BODY, 'model': 'jev'}
 
 
-def _mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
 def _build_routes(
     *decision_models: dict,
     guardrails: list[dict] | None = None,
     top_level: dict | None = None,
     **route_config,
 ) -> dict:
-    config = GatewayConfig.model_validate(
+    return build_routes(
         {
             'decision_models': list(decision_models),
             'guardrails': guardrails,
@@ -113,24 +94,6 @@ def _build_routes(
             **(top_level or {}),
         }
     )
-    cost_service = CostService(decision_models_by_id=config.decision_models_by_id)
-    project_guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
-        cost_service=cost_service,
-        guardrails=config.guardrails,
-    )
-    routes = build_gateway_routes_from_config(
-        config,
-        project_guardrails,
-        redis_client=None,
-        cost_service=cost_service,
-        httpx_client=None,
-        project_uuid='',
-    )
-    route = routes['agent']
-    route.project_name = 'proj'
-    return {ROUTE_KEY: route}
 
 
 JEV = {
@@ -181,50 +144,29 @@ REDACT_EMAIL = {
 
 
 class TestDecisionModelEndpoint(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        app.dependency_overrides[get_request_uuid] = _mock_request_uuid
-        cls.client = TestClient(app)
-        cls.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
-
-    @classmethod
-    def tearDownClass(cls):
-        app.dependency_overrides = {}
-
     def setUp(self):
-        app.state.routes = _build_routes(JEV)
-        # Other test modules swap the validator: use the real one, which reads
-        # the credential's limits from the key.
-        self.addCleanup(
-            setattr, app.state, 'token_validator', app.state.token_validator
-        )
-        app.state.token_validator = ApiKeyValidator(key_service=key_service)
-        self.api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-        key_service.get_key_by_hashed_key = MagicMock(return_value=self.api_key)
-        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
-
         self.emitted = []
-        self.request_events = []
         self.guardrail_events = []
         self.cache_events = []
         self.span = MagicMock()
         self.span.is_recording.return_value = True
-        for patcher in (
-            patch(MODEL_INVOKER_EMIT, side_effect=self.emitted.append),
-            patch(REQUEST_EVENT_EMIT, side_effect=self.request_events.append),
-            patch(SPAN, return_value=self.span),
-            patch(BACKOFF_SLEEP, new=AsyncMock()),
-            patch(GUARDRAIL_EMIT, side_effect=self.guardrail_events.append),
-            patch(REDACT_EMIT, side_effect=self.guardrail_events.append),
-            patch(CACHE_EMIT, side_effect=self.cache_events.append),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        pook.on()
-        # The TestClient talks httpx too: let only its own host through.
-        pook.enable_network('testserver')
-        self.addCleanup(pook.off)
-        self.addCleanup(pook.disable_network)
+        gateway = self.enterContext(
+            open_gateway(
+                _build_routes(JEV),
+                use_pook=True,
+                patches=[
+                    patch(MODEL_INVOKER_EMIT, side_effect=self.emitted.append),
+                    patch(SPAN, return_value=self.span),
+                    patch(GUARDRAIL_EMIT, side_effect=self.guardrail_events.append),
+                    patch(REDACT_EMIT, side_effect=self.guardrail_events.append),
+                    patch(CACHE_EMIT, side_effect=self.cache_events.append),
+                ],
+            )
+        )
+        self.client = gateway.client
+        self.headers = gateway.headers
+        self.api_key = gateway.api_key
+        self.request_events = gateway.request_events
 
     def _post(self, model: str = ROUTE_KEY, headers: dict | None = None):
         return self.client.post(
@@ -243,7 +185,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         mock.reply(status).json(TYPESAFE_BODY if body is None else body)
         return mock
 
-    def test_success_body_reaches_the_client_with_the_model_id(self):
+    def test_success_reaches_the_client_and_is_recorded_billed_and_traced(self):
         self._mock_typesafe()
 
         response = self._post()
@@ -251,15 +193,39 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert response.status_code == 200
         assert response.json() == CLIENT_BODY
         assert pook.isdone()
-
-    def test_upstream_client_error_is_returned_unchanged(self):
-        error = {'detail': 'question intent: options must not be empty'}
-        self._mock_typesafe(status=422, body=error)
-
-        response = self._post()
-
-        assert response.status_code == 422
-        assert response.json() == error
+        assert [e.request_type for e in self.request_events] == [
+            RequestType.DECISION_MODEL
+        ]
+        # Cost: input tokens times the input price; output adds zero.
+        [invocation] = [
+            e for e in self.emitted if isinstance(e, ModelInvocationPayload)
+        ]
+        [input_tokens] = [
+            e for e in self.emitted if isinstance(e, InputTokenProcessedPayload)
+        ]
+        [output_tokens] = [
+            e for e in self.emitted if isinstance(e, OutputTokenProcessedPayload)
+        ]
+        assert (invocation.model_id, invocation.model_type) == ('jev', 'decision_model')
+        assert input_tokens.value == 312
+        assert input_tokens.cost == pytest.approx(312 * 0.042 / 1_000_000)
+        assert (output_tokens.value, output_tokens.cost) == (0, 0)
+        attributes = self._span_attributes()
+        assert json.loads(attributes['decision.request.state']) == STATE
+        assert json.loads(attributes['decision.request.questions']) == QUESTIONS
+        assert attributes['decision.request.model_id'] == 'jev'
+        assert (
+            json.loads(attributes['decision.response.answers'])
+            == TYPESAFE_BODY['answers']
+        )
+        assert (
+            json.loads(attributes['decision.response.usage']) == TYPESAFE_BODY['usage']
+        )
+        assert attributes['decision.response.model_id'] == 'jev'
+        # The trace shows all usage, though only input is billed.
+        assert attributes['gen_ai.usage.input_tokens'] == 312
+        assert attributes['gen_ai.usage.output_tokens'] == 20
+        assert attributes['gen_ai.usage.total_tokens'] == 332
 
     def test_base_url_overrides_the_typesafe_default(self):
         app.state.routes = _build_routes(
@@ -278,123 +244,6 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert response.status_code == 200
         assert pook.isdone()
 
-    def test_unknown_route_is_rejected(self):
-        response = self._post(model='proj/missing')
-
-        assert response.status_code == 400
-
-    def test_missing_credential_is_rejected(self):
-        response = self._post(headers={})
-
-        assert response.status_code == 401
-
-    def test_wrong_credential_is_rejected(self):
-        key_service.get_key_by_hashed_key = MagicMock(
-            side_effect=KeyNotFoundError('no such key')
-        )
-
-        response = self._post()
-
-        assert response.status_code == 401
-
-    def test_credential_not_belonging_to_the_route_is_rejected(self):
-        group_service.check_key_uuid_for_route = MagicMock(return_value=False)
-
-        response = self._post()
-
-        assert response.status_code == 401
-
-    def test_request_is_recorded_as_decision_model(self):
-        self._mock_typesafe()
-
-        self._post()
-
-        assert [e.request_type for e in self.request_events] == [
-            RequestType.DECISION_MODEL
-        ]
-
-    def test_cost_is_input_tokens_times_input_price_and_output_adds_zero(self):
-        self._mock_typesafe()
-
-        self._post()
-
-        [invocation] = [
-            e for e in self.emitted if isinstance(e, ModelInvocationPayload)
-        ]
-        [input_tokens] = [
-            e for e in self.emitted if isinstance(e, InputTokenProcessedPayload)
-        ]
-        [output_tokens] = [
-            e for e in self.emitted if isinstance(e, OutputTokenProcessedPayload)
-        ]
-        assert invocation.model_id == 'jev'
-        assert invocation.model_type == 'decision_model'
-        assert input_tokens.value == 312
-        assert input_tokens.cost == pytest.approx(312 * 0.042 / 1_000_000)
-        assert output_tokens.value == 0
-        assert output_tokens.cost == 0
-
-    def test_span_carries_decision_request_and_response(self):
-        self._mock_typesafe()
-
-        self._post()
-
-        attributes = {
-            c.args[0]: c.args[1] for c in self.span.set_attribute.call_args_list
-        }
-        assert json.loads(attributes['decision.request.state']) == STATE
-        assert json.loads(attributes['decision.request.questions']) == QUESTIONS
-        assert attributes['decision.request.model_id'] == 'jev'
-        assert (
-            json.loads(attributes['decision.response.answers'])
-            == TYPESAFE_BODY['answers']
-        )
-        assert (
-            json.loads(attributes['decision.response.usage']) == TYPESAFE_BODY['usage']
-        )
-        assert attributes['decision.response.model_id'] == 'jev'
-
-    def test_span_carries_the_token_usage_tracing_reads(self):
-        self._mock_typesafe()
-
-        self._post()
-
-        attributes = {
-            c.args[0]: c.args[1] for c in self.span.set_attribute.call_args_list
-        }
-        # The trace shows all usage, though only input is billed.
-        assert attributes['gen_ai.usage.input_tokens'] == 312
-        assert attributes['gen_ai.usage.output_tokens'] == 20
-        assert attributes['gen_ai.usage.total_tokens'] == 332
-
-    def test_server_error_is_retried_and_the_later_success_is_returned(self):
-        self._mock_typesafe(status=503, body={'detail': 'busy'})
-        self._mock_typesafe()
-
-        response = self._post()
-
-        assert response.status_code == 200
-        assert response.json() == CLIENT_BODY
-        assert pook.isdone()
-
-    def test_rate_limited_response_is_retried(self):
-        self._mock_typesafe(status=429, body={'detail': 'slow down'})
-        self._mock_typesafe()
-
-        response = self._post()
-
-        assert response.status_code == 200
-        assert pook.isdone()
-
-    def test_network_error_is_retried(self):
-        pook.post(TYPESAFE_URL).times(1).error(httpx.ConnectError('refused'))
-        self._mock_typesafe()
-
-        response = self._post()
-
-        assert response.status_code == 200
-        assert pook.isdone()
-
     def test_client_error_is_not_retried(self):
         error = {'detail': 'bad question'}
         self._mock_typesafe(status=400, body=error)
@@ -405,15 +254,6 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert response.status_code == 400
         assert response.json() == error
         assert not retry.isdone()
-
-    def test_timeout_is_retried(self):
-        pook.post(TYPESAFE_URL).times(1).error(httpx.ReadTimeout('too slow'))
-        self._mock_typesafe()
-
-        response = self._post()
-
-        assert response.status_code == 200
-        assert pook.isdone()
 
     def _route_with_fallback(self):
         app.state.routes = _build_routes(
@@ -437,6 +277,11 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         # The model that answered, not the target.
         assert response.json() == {**TYPESAFE_BODY, 'model': 'jev-eu'}
         assert pook.isdone()
+        attributes = self._span_attributes()
+        assert attributes['decision.response.fallback_triggered'] is True
+        assert attributes['decision.response.model_id'] == 'jev-eu'
+        [fallback] = [e for e in self.emitted if isinstance(e, FallbackEventPayload)]
+        assert (fallback.target, fallback.fallback) == ('jev', 'jev-eu')
 
     def test_client_error_does_not_fall_back(self):
         self._route_with_fallback()
@@ -463,6 +308,9 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert response.status_code == 429
         assert response.json() == {'detail': 'slow down'}
         assert pook.isdone()
+        attributes = self._span_attributes()
+        assert attributes['decision.response.fallback_triggered'] is True
+        assert attributes['decision.response.model_id'] == 'jev-eu'
 
     def test_exhausted_chain_with_no_upstream_response_returns_502(self):
         app.state.routes = _build_routes(
@@ -478,20 +326,6 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert response.status_code == 502
         assert pook.isdone()
 
-    def test_span_records_the_fallback_that_served_the_request(self):
-        self._route_with_fallback()
-        self._mock_typesafe(status=503, body={'detail': 'busy'})
-        self._mock_typesafe(status=503, body={'detail': 'busy'})
-        self._mock_typesafe(url=TYPESAFE_EU_URL)
-
-        self._post()
-
-        attributes = self._span_attributes()
-        assert attributes['decision.response.fallback_triggered'] is True
-        assert attributes['decision.response.model_id'] == 'jev-eu'
-        [fallback] = [e for e in self.emitted if isinstance(e, FallbackEventPayload)]
-        assert (fallback.target, fallback.fallback) == ('jev', 'jev-eu')
-
     def test_span_records_no_fallback_when_the_target_answers(self):
         self._route_with_fallback()
         self._mock_typesafe()
@@ -500,31 +334,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
 
         assert self._span_attributes()['decision.response.fallback_triggered'] is False
 
-    def test_span_records_the_fallback_on_an_exhausted_chain(self):
-        self._route_with_fallback()
-        self._mock_typesafe(status=503, body={'detail': 'busy'})
-        self._mock_typesafe(status=503, body={'detail': 'busy'})
-        self._mock_typesafe(url=TYPESAFE_EU_URL, status=503, body={'detail': 'busy'})
-
-        self._post()
-
-        attributes = self._span_attributes()
-        assert attributes['decision.response.fallback_triggered'] is True
-        assert attributes['decision.response.model_id'] == 'jev-eu'
-
     # Limits
-
-    def test_route_rate_limit_applies(self):
-        app.state.routes = _build_routes(
-            JEV, rate_limiting={'max_requests': 1, 'window_size': '1 minute'}
-        )
-        self._mock_typesafe()
-
-        first = self._post()
-        second = self._post()
-
-        assert first.status_code == 200
-        assert second.status_code == 429
 
     def _limit_credential(self, category: CredentialLimitCategory, value: float):
         # A plain record: the ORM `limits` relationship only takes KeyLimit rows.
@@ -541,15 +351,8 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         )
         key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
 
-    def test_credential_rate_limit_applies(self):
-        self._limit_credential(CredentialLimitCategory.RATE, 1)
-        self._mock_typesafe()
-
-        first = self._post()
-        second = self._post()
-
-        assert first.status_code == 200
-        assert second.status_code == 429
+    # 312 tokens at 1000 per million cost 0.312, over a 0.1 budget.
+    PRICEY_JEV = {**JEV, 'input_cost_per_million_tokens': 1000}
 
     def _assert_second_request_blocked_before_typesafe(self):
         # The first call passes though its 312 input tokens (or their cost)
@@ -563,48 +366,6 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert first.status_code == 200
         assert second.status_code == 429
         assert pook.isdone()
-
-    def test_route_input_token_limit_counts_usage_and_blocks_when_full(self):
-        app.state.routes = _build_routes(
-            JEV, token_limiting={'input': {'max_tokens': 100}}
-        )
-
-        self._assert_second_request_blocked_before_typesafe()
-
-    def test_credential_input_token_limit_counts_usage_and_blocks_when_full(self):
-        self._limit_credential(CredentialLimitCategory.TOKEN_INPUT, 100)
-
-        self._assert_second_request_blocked_before_typesafe()
-
-    # 312 tokens at 1000 per million cost 0.312, over a 0.1 budget.
-    PRICEY_JEV = {**JEV, 'input_cost_per_million_tokens': 1000}
-
-    def test_route_budget_counts_input_cost_and_blocks_when_spent(self):
-        app.state.routes = _build_routes(
-            self.PRICEY_JEV, budget_limiting={'max_budget': 0.1}
-        )
-
-        self._assert_second_request_blocked_before_typesafe()
-
-    def test_credential_budget_counts_input_cost_and_blocks_when_spent(self):
-        app.state.routes = _build_routes(self.PRICEY_JEV)
-        self._limit_credential(CredentialLimitCategory.BUDGET, 0.1)
-
-        self._assert_second_request_blocked_before_typesafe()
-
-    def test_project_budget_counts_input_cost_and_blocks_when_spent(self):
-        app.state.routes = _build_routes(self.PRICEY_JEV)
-        route = app.state.routes[ROUTE_KEY]
-        route.project_uuid = str(db_mock.RANDOM_UUID)
-        dao = MagicMock(
-            return_value=[
-                db_mock.get_sample_project_budget_limit(
-                    window_size='1 minute', max_value=0.1
-                )
-            ]
-        )
-        with patch.object(project_budget_limit_dao, 'get_by_project_uuid', dao):
-            self._assert_second_request_blocked_before_typesafe()
 
     def test_output_token_limits_get_nothing(self):
         # Typesafe's usage reports 20 output tokens. Counting them would fill
@@ -704,29 +465,6 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert response.status_code == 200
         assert pook.isdone()
 
-    def test_each_string_leaf_is_checked_as_one_text(self):
-        guardrail = {**_check_guardrail('block', 'refund'), 'type': 'starts_with'}
-        app.state.routes = _build_routes(JEV, guardrails=[guardrail])
-        typesafe = self._spy_on_typesafe()
-
-        # 'refund' starts only the second leaf, not the state as a whole.
-        response = self._post_state({'ticket': 'Hello', 'notes': ['refund now']})
-
-        assert response.status_code == 400
-        assert not typesafe.calls
-
-    def test_block_returns_400_without_calling_typesafe(self):
-        app.state.routes = _build_routes(
-            JEV, guardrails=[_check_guardrail('block', 'charged twice')]
-        )
-        typesafe = self._spy_on_typesafe()
-
-        response = self._post()
-
-        assert response.status_code == 400
-        assert response.json()['error']['message'] == 'block by policy'
-        assert not typesafe.calls
-
     def test_soft_block_returns_400_and_is_recorded_as_soft_block(self):
         app.state.routes = _build_routes(
             JEV, guardrails=[_check_guardrail('soft_block', 'charged twice')]
@@ -739,29 +477,6 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert response.json()['error']['message'] == 'soft_block by policy'
         assert not typesafe.calls
         assert [e.behavior for e in self.guardrail_events] == ['SOFT_BLOCK']
-
-    def test_questions_are_checked(self):
-        # 'customer want' is only in the question's instructions.
-        app.state.routes = _build_routes(
-            JEV, guardrails=[_check_guardrail('block', 'customer want')]
-        )
-        typesafe = self._spy_on_typesafe()
-
-        response = self._post()
-
-        assert response.status_code == 400
-        assert not typesafe.calls
-
-    def test_criterion_names_are_keys_and_never_checked(self):
-        app.state.routes = _build_routes(
-            JEV, guardrails=[_check_guardrail('block', 'refund')]
-        )
-        typesafe = self._spy_on_typesafe()
-
-        response = self._post_state({'ticket': 'Hello'})
-
-        assert response.status_code == 200
-        assert typesafe.calls == 1
 
     def test_body_with_no_string_leaves_is_forwarded_unchanged(self):
         app.state.routes = _build_routes(
@@ -786,19 +501,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
 
     # Exact cache
 
-    def test_identical_request_is_served_from_cache_without_calling_typesafe(self):
-        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
-        typesafe = self._spy_on_typesafe()
-
-        first = self._post()
-        second = self._post()
-
-        assert typesafe.calls == 1
-        assert second.status_code == 200
-        assert second.content == first.content
-        assert second.headers['content-type'] == first.headers['content-type']
-
-    def test_key_order_does_not_matter(self):
+    def test_same_request_in_any_key_order_is_served_from_cache(self):
         app.state.routes = _build_routes(JEV, **EXACT_CACHE)
         typesafe = self._spy_on_typesafe()
         reordered_state = dict(reversed(list(STATE.items())))
@@ -806,44 +509,13 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             'intent': dict(reversed(list(QUESTIONS['intent'].items())))
         }
 
-        self._post_state(STATE)
-        response = self._post_state(reordered_state, questions=reordered_questions)
+        first = self._post_state(STATE)
+        second = self._post_state(reordered_state, questions=reordered_questions)
 
-        assert response.status_code == 200
         assert typesafe.calls == 1
-
-    def _changed_question(self, field: str, value) -> dict:
-        return {'intent': {**QUESTIONS['intent'], field: value}}
-
-    def test_changed_instruction_misses(self):
-        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
-        typesafe = self._spy_on_typesafe().times(2)
-
-        self._post_state(STATE)
-        self._post_state(
-            STATE, questions=self._changed_question('instructions', 'Why?')
-        )
-
-        assert typesafe.calls == 2
-
-    def test_changed_criterion_misses(self):
-        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
-        typesafe = self._spy_on_typesafe().times(2)
-        criteria = {**QUESTIONS['intent']['criteria'], 'refund': 'Wants a refund'}
-
-        self._post_state(STATE)
-        self._post_state(STATE, questions=self._changed_question('criteria', criteria))
-
-        assert typesafe.calls == 2
-
-    def test_changed_state_misses(self):
-        app.state.routes = _build_routes(JEV, **EXACT_CACHE)
-        typesafe = self._spy_on_typesafe().times(2)
-
-        self._post_state(STATE)
-        self._post_state({**STATE, 'ticket': 'Where is my parcel?'})
-
-        assert typesafe.calls == 2
+        assert second.status_code == 200
+        assert second.content == first.content
+        assert second.headers['content-type'] == first.headers['content-type']
 
     def test_key_uses_the_outbound_state_after_redaction(self):
         app.state.routes = _build_routes(JEV, guardrails=[REDACT_EMAIL], **EXACT_CACHE)
@@ -942,3 +614,192 @@ class TestDecisionModelEndpoint(unittest.TestCase):
         assert typesafe.calls == 2
         semantic_cache.get.assert_not_called()
         semantic_cache.set.assert_not_called()
+
+
+@pytest.fixture
+def decision_case():
+    """Set up a TestDecisionModelEndpoint as for its own tests, for parametrized functions."""
+    case = TestDecisionModelEndpoint()
+    case.setUp()
+    yield case
+    case.doCleanups()
+
+
+LIMITS = {
+    'route-rate': {
+        'route': {'rate_limiting': {'max_requests': 1, 'window_size': '1 minute'}}
+    },
+    'credential-rate': {'credential': (CredentialLimitCategory.RATE, 1)},
+    'route-input-tokens': {'route': {'token_limiting': {'input': {'max_tokens': 100}}}},
+    'route-budget': {'pricey': True, 'route': {'budget_limiting': {'max_budget': 0.1}}},
+    'credential-input-tokens': {
+        'credential': (CredentialLimitCategory.TOKEN_INPUT, 100)
+    },
+    'credential-budget': {
+        'pricey': True,
+        'credential': (CredentialLimitCategory.BUDGET, 0.1),
+    },
+    'project-budget': {'pricey': True, 'project_budget': True},
+}
+
+
+@pytest.mark.parametrize('limit', LIMITS.values(), ids=LIMITS.keys())
+def test_usage_counts_against_the_limits_and_blocks_when_full(decision_case, limit):
+    pricey = decision_case.PRICEY_JEV if limit.get('pricey') else JEV
+    app.state.routes = _build_routes(pricey, **limit.get('route', {}))
+    if limit.get('credential'):
+        decision_case._limit_credential(*limit['credential'])
+    budgets = nullcontext()
+    if limit.get('project_budget'):
+        app.state.routes[ROUTE_KEY].project_uuid = str(db_mock.RANDOM_UUID)
+        budget = db_mock.get_sample_project_budget_limit(
+            window_size='1 minute', max_value=0.1
+        )
+        budgets = patch.object(
+            project_budget_limit_dao,
+            'get_by_project_uuid',
+            MagicMock(return_value=[budget]),
+        )
+
+    with budgets:
+        decision_case._assert_second_request_blocked_before_typesafe()
+
+
+def _reject_unknown_route():
+    return {'model': 'proj/missing'}
+
+
+def _reject_missing_credential():
+    return {'headers': {}}
+
+
+def _reject_wrong_credential():
+    key_service.get_key_by_hashed_key = MagicMock(
+        side_effect=KeyNotFoundError('no such key')
+    )
+    return {}
+
+
+def _reject_foreign_credential():
+    group_service.check_key_uuid_for_route = MagicMock(return_value=False)
+    return {}
+
+
+@pytest.mark.parametrize(
+    ('arrange', 'status'),
+    [
+        pytest.param(_reject_unknown_route, 400, id='unknown-route'),
+        pytest.param(_reject_missing_credential, 401, id='missing-credential'),
+        pytest.param(_reject_wrong_credential, 401, id='wrong-credential'),
+        pytest.param(_reject_foreign_credential, 401, id='credential-not-on-route'),
+    ],
+)
+def test_request_is_rejected(decision_case, arrange, status):
+    typesafe = decision_case._spy_on_typesafe()
+
+    response = decision_case._post(**arrange())
+
+    assert response.status_code == status
+    assert not typesafe.calls
+
+
+def _fail_with_status(status: int, detail: str):
+    return lambda case: case._mock_typesafe(status=status, body={'detail': detail})
+
+
+def _fail_with_error(error: Exception):
+    return lambda case: pook.post(TYPESAFE_URL).times(1).error(error)
+
+
+@pytest.mark.parametrize(
+    'fail_once',
+    [
+        pytest.param(_fail_with_status(503, 'busy'), id='server-error'),
+        pytest.param(_fail_with_status(429, 'slow down'), id='rate-limited'),
+        pytest.param(_fail_with_error(httpx.ConnectError('refused')), id='network'),
+        pytest.param(_fail_with_error(httpx.ReadTimeout('too slow')), id='timeout'),
+    ],
+)
+def test_transient_failure_is_retried_and_the_later_success_returned(
+    decision_case, fail_once
+):
+    fail_once(decision_case)
+    decision_case._mock_typesafe()
+
+    response = decision_case._post()
+
+    assert response.status_code == 200
+    assert response.json() == CLIENT_BODY
+    assert pook.isdone()
+
+
+@pytest.mark.parametrize(
+    ('guardrail', 'state', 'status'),
+    [
+        # 'charged twice' is in the state's ticket.
+        pytest.param(
+            _check_guardrail('block', 'charged twice'), STATE, 400, id='state-checked'
+        ),
+        # 'customer want' is only in the question's instructions.
+        pytest.param(
+            _check_guardrail('block', 'customer want'),
+            STATE,
+            400,
+            id='questions-checked',
+        ),
+        # 'refund' starts only the second leaf, not the state as a whole.
+        pytest.param(
+            {**_check_guardrail('block', 'refund'), 'type': 'starts_with'},
+            {'ticket': 'Hello', 'notes': ['refund now']},
+            400,
+            id='each-string-leaf-is-one-text',
+        ),
+        pytest.param(
+            _check_guardrail('block', 'refund'),
+            {'ticket': 'Hello'},
+            200,
+            id='criterion-names-are-keys-never-checked',
+        ),
+    ],
+)
+def test_block_guardrail_reads_state_and_questions(
+    decision_case, guardrail, state, status
+):
+    app.state.routes = _build_routes(JEV, guardrails=[guardrail])
+    typesafe = decision_case._spy_on_typesafe()
+
+    response = decision_case._post_state(state)
+
+    assert response.status_code == status
+    if status == 400:
+        assert response.json()['error']['message'] == 'block by policy'
+    assert typesafe.calls == (0 if status == 400 else 1)
+
+
+_CHANGED_CRITERIA = {**QUESTIONS['intent']['criteria'], 'refund': 'Wants a refund'}
+
+
+@pytest.mark.parametrize(
+    ('state', 'questions'),
+    [
+        pytest.param(
+            STATE,
+            {'intent': {**QUESTIONS['intent'], 'instructions': 'Why?'}},
+            id='instruction',
+        ),
+        pytest.param(
+            STATE,
+            {'intent': {**QUESTIONS['intent'], 'criteria': _CHANGED_CRITERIA}},
+            id='criterion',
+        ),
+        pytest.param({**STATE, 'ticket': 'Where is my parcel?'}, QUESTIONS, id='state'),
+    ],
+)
+def test_a_changed_request_misses_the_cache(decision_case, state, questions):
+    app.state.routes = _build_routes(JEV, **EXACT_CACHE)
+    typesafe = decision_case._spy_on_typesafe().times(2)
+
+    decision_case._post_state(STATE)
+    decision_case._post_state(state, questions=questions)
+
+    assert typesafe.calls == 2

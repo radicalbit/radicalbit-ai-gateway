@@ -44,61 +44,38 @@ AI = AIMessage(content=f'assistant says {BLOCKED_KEYWORD}')
 ALL_MESSAGES = [HUMAN, SYSTEM, TOOL, AI]
 
 
-class TestFilterMessagesByRoles:
-    def test_default_none_returns_all_messages(self):
-        """None (not configured) → no filtering, all messages returned."""
-        result = _filter_messages_by_roles(ALL_MESSAGES, None)
-        assert result == ALL_MESSAGES
+USER = GuardrailMessageRole.USER
+SYSTEM_ROLE = GuardrailMessageRole.SYSTEM
+TOOL_ROLE = GuardrailMessageRole.TOOL
+ASSISTANT = GuardrailMessageRole.ASSISTANT
 
-    def test_empty_list_returns_nothing(self):
-        """Explicit empty list → nothing passes through."""
-        result = _filter_messages_by_roles(ALL_MESSAGES, [])
-        assert result == []
 
-    def test_user_only(self):
-        result = _filter_messages_by_roles(ALL_MESSAGES, [GuardrailMessageRole.USER])
-        assert result == [HUMAN]
-
-    def test_system_only(self):
-        result = _filter_messages_by_roles(ALL_MESSAGES, [GuardrailMessageRole.SYSTEM])
-        assert result == [SYSTEM]
-
-    def test_tool_only(self):
-        result = _filter_messages_by_roles(ALL_MESSAGES, [GuardrailMessageRole.TOOL])
-        assert result == [TOOL]
-
-    def test_assistant_only(self):
-        result = _filter_messages_by_roles(
-            ALL_MESSAGES, [GuardrailMessageRole.ASSISTANT]
-        )
-        assert result == [AI]
-
-    def test_user_and_tool(self):
-        result = _filter_messages_by_roles(
-            ALL_MESSAGES, [GuardrailMessageRole.USER, GuardrailMessageRole.TOOL]
-        )
-        assert result == [HUMAN, TOOL]
-
-    def test_all_roles(self):
-        result = _filter_messages_by_roles(
+@pytest.mark.parametrize(
+    ('messages', 'roles', 'expected'),
+    [
+        # None (not configured) means no filtering.
+        pytest.param(ALL_MESSAGES, None, ALL_MESSAGES, id='default-none-returns-all'),
+        # An explicit empty list lets nothing through.
+        pytest.param(ALL_MESSAGES, [], [], id='empty-list-returns-nothing'),
+        pytest.param(ALL_MESSAGES, [USER], [HUMAN], id='user-only'),
+        pytest.param(ALL_MESSAGES, [SYSTEM_ROLE], [SYSTEM], id='system-only'),
+        pytest.param(ALL_MESSAGES, [TOOL_ROLE], [TOOL], id='tool-only'),
+        pytest.param(ALL_MESSAGES, [ASSISTANT], [AI], id='assistant-only'),
+        pytest.param(
+            ALL_MESSAGES, [USER, TOOL_ROLE], [HUMAN, TOOL], id='user-and-tool'
+        ),
+        pytest.param(
             ALL_MESSAGES,
-            [
-                GuardrailMessageRole.USER,
-                GuardrailMessageRole.SYSTEM,
-                GuardrailMessageRole.TOOL,
-                GuardrailMessageRole.ASSISTANT,
-            ],
-        )
-        assert result == ALL_MESSAGES
-
-    def test_empty_messages_returns_empty(self):
-        result = _filter_messages_by_roles([], [GuardrailMessageRole.USER])
-        assert result == []
-
-    def test_no_matching_messages_returns_empty(self):
-        """If none of the messages match the requested roles, return []."""
-        result = _filter_messages_by_roles([SYSTEM, AI], [GuardrailMessageRole.USER])
-        assert result == []
+            [USER, SYSTEM_ROLE, TOOL_ROLE, ASSISTANT],
+            ALL_MESSAGES,
+            id='all-roles',
+        ),
+        pytest.param([], [USER], [], id='empty-messages'),
+        pytest.param([SYSTEM, AI], [USER], [], id='no-matching-messages'),
+    ],
+)
+def test_filter_messages_by_roles(messages, roles, expected):
+    assert _filter_messages_by_roles(messages, roles) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -148,173 +125,79 @@ COMMON_KWARGS = {
 }
 
 
+_SAFE_HUMAN = HumanMessage(content=SAFE_CONTENT)
+_BLOCKED_TOOL = ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1')
+_BLOCKED_HUMAN = HumanMessage(content=f'user says {BLOCKED_KEYWORD}')
+
+
+async def _apply(roles, messages):
+    guardrail = _make_guardrail(roles, [BLOCKED_KEYWORD])
+    return await apply_check(
+        _make_check_engine(guardrail),
+        route_config=_make_route_config(),
+        messages=messages,
+        where=GuardrailWhereType.INPUT,
+        **COMMON_KWARGS,
+    )
+
+
 class TestApplyGuardrailsRoleFiltering:
     """apply_check must respect message_roles."""
 
-    @pytest.mark.asyncio
-    async def test_user_role_triggers_on_human_message(self):
-        """BLOCK guardrail with role=user raises when keyword is in user message."""
-        guardrail = _make_guardrail([GuardrailMessageRole.USER], [BLOCKED_KEYWORD])
-        engine = _make_check_engine(guardrail)
-        route = _make_route_config()
-        messages = [HumanMessage(content=f'Test {BLOCKED_KEYWORD} optics')]
+    @pytest.mark.parametrize(
+        ('roles', 'messages'),
+        [
+            pytest.param(
+                [USER],
+                [HumanMessage(content=f'Test {BLOCKED_KEYWORD} optics')],
+                id='user-role-on-human-message',
+            ),
+            pytest.param(
+                [TOOL_ROLE],
+                [_SAFE_HUMAN, _BLOCKED_TOOL],
+                id='tool-role-on-tool-message',
+            ),
+            pytest.param(
+                [SYSTEM_ROLE],
+                [
+                    SystemMessage(content=f'System prompt contains {BLOCKED_KEYWORD}'),
+                    _SAFE_HUMAN,
+                ],
+                id='system-role-on-system-message',
+            ),
+            pytest.param(
+                [USER, TOOL_ROLE],
+                [_SAFE_HUMAN, _BLOCKED_TOOL],
+                id='user-and-tool-on-tool-message',
+            ),
+            # Default None scans every message type (original gateway behaviour).
+            pytest.param(
+                None, [_SAFE_HUMAN, _BLOCKED_TOOL], id='default-none-on-tool-message'
+            ),
+            pytest.param(None, [_BLOCKED_HUMAN], id='default-none-on-user-message'),
+        ],
+    )
+    async def test_guardrail_blocks_keyword_in_a_scoped_role(self, roles, messages):
         with pytest.raises(GuardrailBadRequest):
-            await apply_check(
-                engine,
-                route_config=route,
-                messages=messages,
-                where=GuardrailWhereType.INPUT,
-                **COMMON_KWARGS,
-            )
+            await _apply(roles, messages)
 
-    @pytest.mark.asyncio
-    async def test_user_role_does_not_trigger_on_tool_message(self):
-        """Keyword only in tool message, guardrail scoped to user → must NOT trigger."""
-        guardrail = _make_guardrail([GuardrailMessageRole.USER], [BLOCKED_KEYWORD])
-        engine = _make_check_engine(guardrail)
-        route = _make_route_config()
-        messages = [
-            HumanMessage(content=SAFE_CONTENT),
-            ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
-        ]
-        result = await apply_check(
-            engine,
-            route_config=route,
-            messages=messages,
-            where=GuardrailWhereType.INPUT,
-            **COMMON_KWARGS,
-        )
-        assert result.soft_block is None  # not triggered
-
-    @pytest.mark.asyncio
-    async def test_tool_role_triggers_on_tool_message(self):
-        """BLOCK guardrail with role=tool raises when keyword is in tool message."""
-        guardrail = _make_guardrail([GuardrailMessageRole.TOOL], [BLOCKED_KEYWORD])
-        engine = _make_check_engine(guardrail)
-        route = _make_route_config()
-        messages = [
-            HumanMessage(content=SAFE_CONTENT),
-            ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
-        ]
-        with pytest.raises(GuardrailBadRequest):
-            await apply_check(
-                engine,
-                route_config=route,
-                messages=messages,
-                where=GuardrailWhereType.INPUT,
-                **COMMON_KWARGS,
-            )
-
-    @pytest.mark.asyncio
-    async def test_tool_role_does_not_trigger_on_human_message(self):
-        """Keyword only in user message, guardrail scoped to tool → must NOT trigger."""
-        guardrail = _make_guardrail([GuardrailMessageRole.TOOL], [BLOCKED_KEYWORD])
-        engine = _make_check_engine(guardrail)
-        route = _make_route_config()
-        messages = [
-            HumanMessage(content=f'user says {BLOCKED_KEYWORD}'),
-            ToolMessage(content=SAFE_CONTENT, tool_call_id='c1'),
-        ]
-        result = await apply_check(
-            engine,
-            route_config=route,
-            messages=messages,
-            where=GuardrailWhereType.INPUT,
-            **COMMON_KWARGS,
-        )
-        assert result.soft_block is None
-
-    @pytest.mark.asyncio
-    async def test_system_role_triggers_on_system_message(self):
-        """BLOCK guardrail with role=system raises when keyword is in system message."""
-        guardrail = _make_guardrail([GuardrailMessageRole.SYSTEM], [BLOCKED_KEYWORD])
-        engine = _make_check_engine(guardrail)
-        route = _make_route_config()
-        messages = [
-            SystemMessage(content=f'System prompt contains {BLOCKED_KEYWORD}'),
-            HumanMessage(content=SAFE_CONTENT),
-        ]
-        with pytest.raises(GuardrailBadRequest):
-            await apply_check(
-                engine,
-                route_config=route,
-                messages=messages,
-                where=GuardrailWhereType.INPUT,
-                **COMMON_KWARGS,
-            )
-
-    @pytest.mark.asyncio
-    async def test_multi_role_user_and_tool(self):
-        """BLOCK guardrail with roles=[user,tool] raises when keyword is in tool message."""
-        guardrail = _make_guardrail(
-            [GuardrailMessageRole.USER, GuardrailMessageRole.TOOL], [BLOCKED_KEYWORD]
-        )
-        engine = _make_check_engine(guardrail)
-        route = _make_route_config()
-        messages = [
-            HumanMessage(content=SAFE_CONTENT),
-            ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
-        ]
-        with pytest.raises(GuardrailBadRequest):
-            await apply_check(
-                engine,
-                route_config=route,
-                messages=messages,
-                where=GuardrailWhereType.INPUT,
-                **COMMON_KWARGS,
-            )
-
-    @pytest.mark.asyncio
-    async def test_default_none_scans_all_messages(self):
-        """Default (None) scans all message types — original gateway behavior."""
-        guardrail = _make_guardrail(None, [BLOCKED_KEYWORD])
-        engine = _make_check_engine(guardrail)
-        route = _make_route_config()
-        # keyword in tool message → MUST trigger because None = no filtering
-        messages = [
-            HumanMessage(content=SAFE_CONTENT),
-            ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
-        ]
-        with pytest.raises(GuardrailBadRequest):
-            await apply_check(
-                engine,
-                route_config=route,
-                messages=messages,
-                where=GuardrailWhereType.INPUT,
-                **COMMON_KWARGS,
-            )
-
-    @pytest.mark.asyncio
-    async def test_default_none_triggers_on_user_message(self):
-        """Default (None) also triggers when keyword is in user message."""
-        guardrail = _make_guardrail(None, [BLOCKED_KEYWORD])
-        engine = _make_check_engine(guardrail)
-        route = _make_route_config()
-        messages = [HumanMessage(content=f'user says {BLOCKED_KEYWORD}')]
-        with pytest.raises(GuardrailBadRequest):
-            await apply_check(
-                engine,
-                route_config=route,
-                messages=messages,
-                where=GuardrailWhereType.INPUT,
-                **COMMON_KWARGS,
-            )
-
-    @pytest.mark.asyncio
-    async def test_explicit_user_only_does_not_scan_tool(self):
-        """Explicit [USER] scope: keyword in tool message → must NOT trigger."""
-        guardrail = _make_guardrail([GuardrailMessageRole.USER], [BLOCKED_KEYWORD])
-        engine = _make_check_engine(guardrail)
-        route = _make_route_config()
-        messages = [
-            HumanMessage(content=SAFE_CONTENT),
-            ToolMessage(content=f'tool says {BLOCKED_KEYWORD}', tool_call_id='c1'),
-        ]
-        result = await apply_check(
-            engine,
-            route_config=route,
-            messages=messages,
-            where=GuardrailWhereType.INPUT,
-            **COMMON_KWARGS,
-        )
+    @pytest.mark.parametrize(
+        ('roles', 'messages'),
+        [
+            pytest.param(
+                [USER],
+                [_SAFE_HUMAN, _BLOCKED_TOOL],
+                id='user-role-ignores-tool-message',
+            ),
+            pytest.param(
+                [TOOL_ROLE],
+                [_BLOCKED_HUMAN, ToolMessage(content=SAFE_CONTENT, tool_call_id='c1')],
+                id='tool-role-ignores-human-message',
+            ),
+        ],
+    )
+    async def test_guardrail_ignores_keyword_outside_the_scoped_roles(
+        self, roles, messages
+    ):
+        result = await _apply(roles, messages)
         assert result.soft_block is None

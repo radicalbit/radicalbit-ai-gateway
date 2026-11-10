@@ -244,5 +244,7 @@ class TestRequestGuardrails:
         route = _route('warn_in')
         route.check.apply = AsyncMock(side_effect=RuntimeError('boom'))
 
-        with pytest.raises(GatewayInternalError, match='Error during guardrail'):
+        with pytest.raises(GatewayInternalError, match='Error during guardrail') as e:
             await _request(route).check_input(Texts(['hi']))
+
+        assert (e.value.status_code, e.value.code) == (500, 'gateway_internal_error')

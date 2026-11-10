@@ -5,42 +5,20 @@ Providers and the text classifier are mocked over HTTP with pook.
 
 import json
 import unittest
-from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
 import pook
-from starlette.requests import Request
 
-from tests.common import db_mock
+from tests.common.gateway_harness import build_routes, open_gateway
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
 
-from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import app, group_service, key_service
-from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-)
+from radicalbit_ai_gateway.server import app
 
 ROUTE_KEY = 'proj/support'
 OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
 CLASSIFIER_URL = 'http://text-classifier:8888'
-
-MODEL_INVOKER_EMIT = 'radicalbit_ai_gateway.invocation.recorder.emit_event'
-GATEWAY_EMIT = 'radicalbit_ai_gateway.pipeline.conversation.emit_event'
-GUARDRAIL_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'
-REDACT_EMIT = 'radicalbit_ai_gateway.guardrails.guardrail_redact.emit_event'
-REQUEST_EVENT_EMIT = (
-    'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
-)
 
 EMAIL = 'john.smithson.longaddress@verylongcompanydomain.example.com'
 USER_TEXT = f'Mail me at {EMAIL}'
@@ -93,13 +71,8 @@ TOKEN_LENGTH = {
 }
 
 
-def _mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
 def _build_routes(routing: dict, guardrails: list[dict] | None = None) -> dict:
-    config = GatewayConfig.model_validate(
+    return build_routes(
         {
             'chat_models': [BILLING, GENERAL],
             'guardrails': guardrails,
@@ -113,24 +86,6 @@ def _build_routes(routing: dict, guardrails: list[dict] | None = None) -> dict:
             },
         }
     )
-    cost_service = CostService()
-    project_guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
-        cost_service=cost_service,
-        guardrails=config.guardrails,
-    )
-    routes = build_gateway_routes_from_config(
-        config,
-        project_guardrails,
-        redis_client=None,
-        cost_service=cost_service,
-        httpx_client=None,
-        project_uuid='',
-    )
-    route = routes['support']
-    route.project_name = 'proj'
-    return {ROUTE_KEY: route}
 
 
 def _sent(mock) -> dict:
@@ -139,39 +94,10 @@ def _sent(mock) -> dict:
 
 
 class TestRedactBeforeRouting(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        app.dependency_overrides[get_request_uuid] = _mock_request_uuid
-        cls.client = TestClient(app)
-        cls.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
-
-    @classmethod
-    def tearDownClass(cls):
-        app.dependency_overrides = {}
-
     def setUp(self):
-        self.addCleanup(
-            setattr, app.state, 'token_validator', app.state.token_validator
-        )
-        app.state.token_validator = ApiKeyValidator(key_service=key_service)
-        api_key = db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-        key_service.get_key_by_hashed_key = MagicMock(return_value=api_key)
-        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
-
-        for patcher in (
-            patch(MODEL_INVOKER_EMIT),
-            patch(GATEWAY_EMIT),
-            patch(GUARDRAIL_EMIT),
-            patch(REDACT_EMIT),
-            patch(REQUEST_EVENT_EMIT),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        pook.on()
-        # The TestClient talks httpx too: let only its own host through.
-        pook.enable_network('testserver')
-        self.addCleanup(pook.off)
-        self.addCleanup(pook.disable_network)
+        self.gateway = self.enterContext(open_gateway(use_pook=True))
+        self.client = self.gateway.client
+        self.headers = self.gateway.headers
 
     def _chat(self, stream: bool = False):
         return self.client.post(

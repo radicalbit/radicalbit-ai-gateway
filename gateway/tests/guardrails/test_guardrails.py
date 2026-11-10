@@ -1,5 +1,4 @@
 import copy
-import unittest
 from unittest.mock import MagicMock, patch
 
 from azure.identity import ClientSecretCredential, EnvironmentCredential
@@ -13,591 +12,324 @@ from tests.common.mocked_gateway_config_openai import get_default_gateway_openai
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.llm.messages import HumanMessage
+from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage
 from radicalbit_ai_gateway.models.guardrails import (
     AhdsParams,
     CheckParameter,
     Guardrail,
     GuardrailBehaviorType,
+    GuardrailMessageRole,
     GuardrailType,
     GuardrailWhereType,
     RedactParameter,
 )
-from radicalbit_ai_gateway.models.soft_block_info import SoftBlock
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
 
+BLOCK = GuardrailBehaviorType.BLOCK
+WARN = GuardrailBehaviorType.WARN
+SOFT_BLOCK = GuardrailBehaviorType.SOFT_BLOCK
+INPUT = GuardrailWhereType.INPUT
+OUTPUT = GuardrailWhereType.OUTPUT
+IO = GuardrailWhereType.IO
+T = GuardrailType
 
-# Arrange
-@pytest.fixture
-def project_guardrails():
-    cost_service = MagicMock(spec_set=CostService)
-    prompt_manager = MagicMock(spec_set=PromptManager)
-    return Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=prompt_manager),
-        cost_service=cost_service,
+IBAN = 'IT60X0542811101000000123456'
+EMAIL = 'test@radicalbit.io'
+
+
+def _guardrail(name, kind, behavior, where, values=None, entities=None, **extra):
+    parameters = (
+        CheckParameter(values=values)
+        if values is not None
+        else RedactParameter(language='it', entities=entities)
+    )
+    return Guardrail(
+        name=name,
+        type=kind,
+        behavior=behavior,
+        where=where,
+        parameters=parameters,
+        **extra,
     )
 
 
-gateway_config = get_default_gateway_openai()
+BLOCKING = [
+    _guardrail('block_start_with_hello', T.STARTS_WITH, BLOCK, INPUT, ['Hello', 'Ciao']),
+    _guardrail('warn_end_with_world', T.ENDS_WITH, WARN, OUTPUT, ['World']),
+    _guardrail('block_contains_sensitive', T.CONTAINS, BLOCK, IO, ['sensitive']),
+    _guardrail('warn_regex_digits', T.REGEX, WARN, IO, [r'\d+']),
+    _guardrail('check_italian_iban', T.PRESIDIO_ANALYZER, BLOCK, INPUT, entities=['IBAN_CODE']),
+]  # fmt: skip
 
-mock_guardrails_check = [
-    Guardrail(
-        name='block_start_with_hello',
-        type=GuardrailType.STARTS_WITH,
-        behavior=GuardrailBehaviorType.BLOCK,
-        where=GuardrailWhereType.INPUT,
-        parameters=CheckParameter(values=['Hello', 'Ciao']),
-    ),
-    Guardrail(
-        name='warn_end_with_world',
-        type=GuardrailType.ENDS_WITH,
-        behavior=GuardrailBehaviorType.WARN,
-        where=GuardrailWhereType.OUTPUT,
-        parameters=CheckParameter(values=['World']),
-    ),
-    Guardrail(
-        name='block_contains_sensitive',
-        type=GuardrailType.CONTAINS,
-        behavior=GuardrailBehaviorType.BLOCK,
-        where=GuardrailWhereType.IO,
-        parameters=CheckParameter(values=['sensitive']),
-    ),
-    Guardrail(
-        name='warn_regex_digits',
-        type=GuardrailType.REGEX,
-        behavior=GuardrailBehaviorType.WARN,
-        where=GuardrailWhereType.IO,
-        parameters=CheckParameter(values=[r'\d+']),
-    ),
-    Guardrail(
-        name='check_italian_iban',
-        type=GuardrailType.PRESIDIO_ANALYZER,
-        behavior=GuardrailBehaviorType.BLOCK,
-        where=GuardrailWhereType.INPUT,
-        parameters=RedactParameter(language='it', entities=['IBAN_CODE']),
-    ),
-]
-
-route_config_check = copy.deepcopy(gateway_config.routes['rb-gateway'])
-route_config_check.guardrails = [g.name for g in mock_guardrails_check]
-
-mock_soft_block_guardrails = [
-    Guardrail(
-        name='soft_block_start_with_hello',
-        type=GuardrailType.STARTS_WITH,
-        behavior=GuardrailBehaviorType.SOFT_BLOCK,
-        where=GuardrailWhereType.INPUT,
-        parameters=CheckParameter(values=['Hello', 'Ciao']),
-    ),
-    Guardrail(
-        name='soft_block_contains_sensitive',
-        type=GuardrailType.CONTAINS,
-        behavior=GuardrailBehaviorType.SOFT_BLOCK,
-        where=GuardrailWhereType.OUTPUT,
-        parameters=CheckParameter(values=['sensitive']),
-    ),
-    Guardrail(
-        name='soft_block_regex_digits',
-        type=GuardrailType.REGEX,
-        behavior=GuardrailBehaviorType.SOFT_BLOCK,
-        where=GuardrailWhereType.IO,
-        parameters=CheckParameter(values=[r'\d+']),
-    ),
-]
-
-route_config_soft_block = copy.deepcopy(gateway_config.routes['rb-gateway'])
-route_config_soft_block.guardrails = [g.name for g in mock_soft_block_guardrails]
+SOFT_BLOCKING = [
+    _guardrail('soft_block_start_with_hello', T.STARTS_WITH, SOFT_BLOCK, INPUT, ['Hello', 'Ciao']),
+    _guardrail('soft_block_contains_sensitive', T.CONTAINS, SOFT_BLOCK, OUTPUT, ['sensitive']),
+    _guardrail('soft_block_regex_digits', T.REGEX, SOFT_BLOCK, IO, [r'\d+']),
+]  # fmt: skip
 
 
-class TestGuardrail(unittest.IsolatedAsyncioTestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.cost_service: CostService = MagicMock(spec_set=CostService)
-        cls.prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
-        cls.project_guardrails = Guardrails(
-            presidio_engine=PresidioEngine(),
-            judge_engine=JudgeEngine(prompt_manager=cls.prompt_manager),
-            cost_service=cls.cost_service,
-            guardrails=mock_guardrails_check + mock_soft_block_guardrails,
-        )
-        cls.emit_event_patcher = patch(
-            'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event',
-            autospec=True,
-        )
-        cls.emit_event_patcher.start()
-        cls.emit_event_patcher_redact = patch(
-            'radicalbit_ai_gateway.guardrails.guardrail_redact.emit_event',
-            autospec=True,
-        )
-        cls.emit_event_patcher_redact.start()
+@pytest.fixture(autouse=True)
+def redact_events():
+    with (
+        patch('radicalbit_ai_gateway.guardrails.guardrail_check.emit_event'),
+        patch('radicalbit_ai_gateway.guardrails.guardrail_redact.emit_event') as emit,
+    ):
+        yield emit
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.emit_event_patcher.stop()
-        cls.emit_event_patcher_redact.stop()
 
-    @pytest.mark.asyncio
-    async def test_apply_guardrails_no_trigger(self):
-        await apply_check(
-            self.project_guardrails,
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='fake-name',
-            messages=[HumanMessage(content='A normal message')],
-            route_config=route_config_soft_block,
-            where=GuardrailWhereType.INPUT,
-            group_name='test-group',
-        )
+def _project(guardrails):
+    return Guardrails(
+        presidio_engine=PresidioEngine(),
+        judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
+        cost_service=MagicMock(spec_set=CostService),
+        guardrails=guardrails,
+    )
 
-    @pytest.mark.asyncio
-    async def test_block_guardrail_triggered(self):
-        with pytest.raises(GuardrailBadRequest) as exc_info:
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='Hello there')],
-                route_config=route_config_check,
-                where=GuardrailWhereType.INPUT,
-                group_name='test-group',
-            )
-        msg = str(exc_info.value)
-        assert '[GUARDRAIL TRIGGERED]' in msg
-        assert '[route=rb-gateway]' in msg
-        assert '[where=INPUT]' in msg
-        assert '[name=block_start_with_hello]' in msg
-        assert '[type=STARTS_WITH]' in msg
-        assert '[behavior=BLOCK]' in msg
-        assert exc_info.value.guardrail.name == 'block_start_with_hello'
 
-        with pytest.raises(GuardrailBadRequest) as exc_info:
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='Ciao come stai?')],
-                route_config=route_config_check,
-                where=GuardrailWhereType.INPUT,
-                group_name='test-group',
-            )
-        msg = str(exc_info.value)
-        assert '[GUARDRAIL TRIGGERED]' in msg
-        assert '[route=rb-gateway]' in msg
-        assert '[where=INPUT]' in msg
-        assert '[name=block_start_with_hello]' in msg
-        assert '[type=STARTS_WITH]' in msg
-        assert '[behavior=BLOCK]' in msg
-        assert exc_info.value.guardrail.name == 'block_start_with_hello'
+def _route(guardrails):
+    route_config = copy.deepcopy(get_default_gateway_openai().routes['rb-gateway'])
+    route_config.guardrails = [g.name for g in guardrails]
+    return route_config
 
-    @pytest.mark.asyncio
-    async def test_start_with_hello_not_triggered_if_output(self):
-        await apply_check(
-            self.project_guardrails,
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='fake-name',
-            messages=[HumanMessage(content='Hello!')],
-            route_config=route_config_check,
-            where=GuardrailWhereType.OUTPUT,
-            group_name='test-group',
-        )
 
-    @pytest.mark.asyncio
-    async def test_io_guardrail_evaluated_input(self):
-        with pytest.raises(GuardrailBadRequest) as exc_info:
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='This contains sensitive info')],
-                route_config=route_config_check,
-                where=GuardrailWhereType.INPUT,
-                group_name='test-group',
-            )
+IDENTITY = {
+    'request_uuid': str(REQUEST_UUID),
+    'api_key_uuid': str(API_KEY_UUID),
+    'group_uuid': str(GROUP_UUID),
+    'api_key_name': 'fake-name',
+    'group_name': 'test-group',
+}
 
-        msg = str(exc_info.value)
-        assert '[GUARDRAIL TRIGGERED]' in msg
-        assert '[route=rb-gateway]' in msg
-        assert '[where=INPUT]' in msg
-        assert '[name=block_contains_sensitive]' in msg
-        assert '[type=CONTAINS]' in msg
-        assert '[behavior=BLOCK]' in msg
 
-        assert exc_info.value.guardrail.name == 'block_contains_sensitive'
+async def _check(guardrails, content, where):
+    return await apply_check(
+        _project(guardrails),
+        route_config=_route(guardrails),
+        messages=[HumanMessage(content=content)],
+        where=where,
+        **IDENTITY,
+    )
 
-    @pytest.mark.asyncio
-    async def test_io_guardrail_evaluated_output(self):
-        with pytest.raises(GuardrailBadRequest) as err:
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='This output has sensitive data')],
-                route_config=route_config_check,
-                where=GuardrailWhereType.OUTPUT,
-                group_name='test-group',
-            )
 
-        msg = str(err.value)
-        assert '[GUARDRAIL TRIGGERED]' in msg
-        assert '[route=rb-gateway]' in msg
-        assert '[where=OUTPUT]' in msg
-        assert '[name=block_contains_sensitive]' in msg
-        assert '[type=CONTAINS]' in msg
-        assert '[behavior=BLOCK]' in msg
+async def _redact(guardrails, messages, where):
+    return await apply_redact(
+        _project(guardrails),
+        route_config=_route(guardrails),
+        messages=messages,
+        where=where,
+        **IDENTITY,
+    )
 
-        assert err.value.guardrail.name == 'block_contains_sensitive'
 
-    @pytest.mark.asyncio
-    async def test_block_iban_triggered(self):
-        with pytest.raises(GuardrailBadRequest) as exc_info:
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[
-                    HumanMessage(content='This is my IBAN IT60X0542811101000000123456')
-                ],
-                route_config=route_config_check,
-                where=GuardrailWhereType.INPUT,
-                group_name='test-group',
-            )
+@pytest.mark.parametrize(
+    ('content', 'where', 'name', 'kind'),
+    [
+        ('Hello there', INPUT, 'block_start_with_hello', 'STARTS_WITH'),
+        ('Ciao come stai?', INPUT, 'block_start_with_hello', 'STARTS_WITH'),
+        ('This contains sensitive info', INPUT, 'block_contains_sensitive', 'CONTAINS'),
+        ('This has sensitive data', OUTPUT, 'block_contains_sensitive', 'CONTAINS'),
+        (f'This is my IBAN {IBAN}', INPUT, 'check_italian_iban', 'PRESIDIO_ANALYZER'),
+    ],
+    ids=[
+        'starts_with',
+        'starts_with_second_value',
+        'io_input',
+        'io_output',
+        'presidio',
+    ],
+)
+async def test_a_block_guardrail_raises_naming_itself(content, where, name, kind):
+    with pytest.raises(GuardrailBadRequest) as exc_info:
+        await _check(BLOCKING, content, where)
 
-        msg = str(exc_info.value)
-        assert '[GUARDRAIL TRIGGERED]' in msg
-        assert '[route=rb-gateway]' in msg
-        assert '[where=INPUT]' in msg
-        assert '[name=check_italian_iban]' in msg
-        assert '[behavior=BLOCK]' in msg
-        assert '[type=PRESIDIO_ANALYZER]' in msg
-        assert exc_info.value.guardrail.name == 'check_italian_iban'
+    message = str(exc_info.value)
+    for tag in (
+        '[GUARDRAIL TRIGGERED]',
+        '[route=rb-gateway]',
+        f'[where={where.name}]',
+        f'[name={name}]',
+        f'[type={kind}]',
+        '[behavior=BLOCK]',
+    ):
+        assert tag in message
+    assert exc_info.value.guardrail.name == name
 
-    @pytest.mark.asyncio
-    async def test_redact_input_iban_triggered(self):
-        presidio_guardrail = Guardrail(
-            name='redact_iban',
-            type=GuardrailType.PRESIDIO_ANONYMIZER,
-            behavior=GuardrailBehaviorType.BLOCK,
-            where=GuardrailWhereType.INPUT,
-            parameters=RedactParameter(language='it', entities=['IBAN_CODE']),
-        )
-        route_config_presidio = copy.deepcopy(gateway_config.routes['rb-gateway'])
-        route_config_presidio.guardrails = [presidio_guardrail.name]
 
-        project_guardrails = Guardrails(
-            presidio_engine=PresidioEngine(),
-            judge_engine=JudgeEngine(prompt_manager=self.prompt_manager),
-            cost_service=self.cost_service,
-            guardrails=[presidio_guardrail],
-        )
+@pytest.mark.parametrize(
+    ('content', 'where', 'name'),
+    [
+        ('A normal message', INPUT, None),
+        ('Hello there', OUTPUT, None),
+        ('Hello there', INPUT, 'soft_block_start_with_hello'),
+        ('This contains sensitive data', OUTPUT, 'soft_block_contains_sensitive'),
+        ('Text with 123 numbers', INPUT, 'soft_block_regex_digits'),
+        ('Response with 456 numbers', OUTPUT, 'soft_block_regex_digits'),
+    ],
+    ids=['no_match', 'wrong_phase', 'input', 'output', 'io_input', 'io_output'],
+)
+async def test_a_soft_block_answers_for_the_phase_it_matched(content, where, name):
+    soft_block = (await _check(SOFT_BLOCKING, content, where)).soft_block
 
-        redacted_message = await apply_redact(
-            project_guardrails,
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='fake-name',
-            route_config=route_config_presidio,
-            messages=[
-                HumanMessage(content='Yes sure here it is: IT60X0542811101000000123456')
-            ],
-            where=GuardrailWhereType.INPUT,
-            group_name='test-group',
-        )
+    if name is None:
+        assert soft_block is None
+        return
+    assert soft_block.guardrail.name == name
+    assert soft_block.where == where
+    expected = (
+        'I cannot process this request as it violates content policy'
+        if where == INPUT
+        else 'This response has been blocked due to policy violation'
+    )
+    assert soft_block.get_soft_block_message() == f'{expected}: {name}'
 
-        assert redacted_message[0].content == 'Yes sure here it is: <IBAN_CODE>'
 
-    @pytest.mark.asyncio
-    async def test_redact_output_email_triggered(self):
-        presidio_guardrail = Guardrail(
-            name='redact_email',
-            type=GuardrailType.PRESIDIO_ANONYMIZER,
-            behavior=GuardrailBehaviorType.BLOCK,
-            where=GuardrailWhereType.OUTPUT,
-            parameters=RedactParameter(language='it', entities=['EMAIL_ADDRESS']),
-        )
+async def test_a_soft_block_is_logged(caplog):
+    with caplog.at_level('INFO', logger='radicalbit-ai-gateway'):
+        await _check(SOFT_BLOCKING, 'Hello there', INPUT)
 
-        route_config_presidio = copy.deepcopy(gateway_config.routes['rb-gateway'])
-        route_config_presidio.guardrails = [presidio_guardrail.name]
+    assert '[where=INPUT]' in caplog.text
+    assert '[name=soft_block_start_with_hello]' in caplog.text
 
-        project_guardrails = Guardrails(
-            presidio_engine=PresidioEngine(),
-            judge_engine=JudgeEngine(prompt_manager=self.prompt_manager),
-            cost_service=self.cost_service,
-            guardrails=[presidio_guardrail],
-        )
 
-        redacted_message = await apply_redact(
-            project_guardrails,
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='fake-name',
-            route_config=route_config_presidio,
-            messages=[HumanMessage(content='This is my email test@radicalbit.io')],
-            where=GuardrailWhereType.OUTPUT,
-            group_name='test-group',
-        )
+async def test_a_soft_block_listed_first_wins_over_a_block():
+    mixed = [
+        _guardrail('soft_hello', T.STARTS_WITH, SOFT_BLOCK, INPUT, ['Hello']),
+        _guardrail('block_hello', T.CONTAINS, BLOCK, INPUT, ['Hello']),
+    ]
 
-        assert redacted_message[0].content == 'This is my email <EMAIL_ADDRESS>'
+    soft_block = (await _check(mixed, 'Hello there', INPUT)).soft_block
 
-    @pytest.mark.asyncio
-    async def test_redact_iban_and_email_triggered(self):
-        presidio_guardrail = Guardrail(
-            name='redact_email',
-            type=GuardrailType.PRESIDIO_ANONYMIZER,
-            behavior=GuardrailBehaviorType.BLOCK,
-            where=GuardrailWhereType.INPUT,
-            parameters=RedactParameter(
-                language='it', entities=['IBAN_CODE', 'EMAIL_ADDRESS']
-            ),
-        )
-        route_config_presidio = copy.deepcopy(gateway_config.routes['rb-gateway'])
-        route_config_presidio.guardrails = [presidio_guardrail.name]
+    assert soft_block.guardrail.name == 'soft_hello'
 
-        project_guardrails = Guardrails(
-            presidio_engine=PresidioEngine(),
-            judge_engine=JudgeEngine(prompt_manager=self.prompt_manager),
-            cost_service=self.cost_service,
-            guardrails=[presidio_guardrail],
-        )
 
-        redacted_message = await apply_redact(
-            project_guardrails,
-            request_uuid=str(REQUEST_UUID),
-            api_key_uuid=str(API_KEY_UUID),
-            group_uuid=str(GROUP_UUID),
-            api_key_name='fake-name',
-            route_config=route_config_presidio,
-            messages=[
-                HumanMessage(
-                    content='This is my email test@radicalbit.io and this is my IBAN IT60X0542811101000000123456'
+@pytest.mark.parametrize(
+    ('guardrails', 'content', 'where'),
+    [
+        (BLOCKING, 'Hello!', OUTPUT),
+        ([_guardrail('empty', T.CONTAINS, BLOCK, INPUT, [])], 'anything', INPUT),
+        ([_guardrail('pii', T.PRESIDIO_ANALYZER, BLOCK, INPUT, entities=['IBAN_CODE'])], '   ', INPUT),
+        (
+            [
+                _guardrail(
+                    'assistant_only', T.CONTAINS, BLOCK, INPUT, ['Hello'],
+                    message_roles=[GuardrailMessageRole.ASSISTANT],
                 )
             ],
-            where=GuardrailWhereType.INPUT,
-            group_name='test-group',
+            'Hello',
+            INPUT,
+        ),
+    ],
+    ids=['input_only_on_output', 'no_values', 'blank_text', 'no_message_selected'],
+)  # fmt: skip
+async def test_a_check_with_nothing_to_match_lets_the_message_through(
+    guardrails, content, where
+):
+    result = await _check(guardrails, content, where)
+
+    assert result.soft_block is None
+    assert not result.warned
+
+
+async def test_a_presidio_check_that_fails_to_analyze_does_not_block():
+    guardrail = _guardrail(
+        'pii', T.PRESIDIO_ANALYZER, BLOCK, INPUT, entities=['IBAN_CODE']
+    )
+
+    with patch.object(PresidioEngine, 'get_analyzer', side_effect=RuntimeError('down')):
+        result = await _check([guardrail], f'IBAN {IBAN}', INPUT)
+
+    assert result.soft_block is None
+
+
+def _anonymizer(where, entities, **extra):
+    return _guardrail(
+        'redact', T.PRESIDIO_ANONYMIZER, BLOCK, where, entities=entities, **extra
+    )
+
+
+@pytest.mark.parametrize(
+    ('where', 'entities', 'content', 'expected'),
+    [
+        (INPUT, ['IBAN_CODE'], f'Here it is: {IBAN}', 'Here it is: <IBAN_CODE>'),
+        (OUTPUT, ['EMAIL_ADDRESS'], f'My email {EMAIL}', 'My email <EMAIL_ADDRESS>'),
+        (
+            INPUT,
+            ['IBAN_CODE', 'EMAIL_ADDRESS'],
+            f'Email {EMAIL} and IBAN {IBAN}',
+            'Email <EMAIL_ADDRESS> and IBAN <IBAN_CODE>',
+        ),
+        (INPUT, ['EMAIL_ADDRESS'], '', ''),
+        (
+            INPUT,
+            ['EMAIL_ADDRESS'],
+            [
+                {'type': 'text', 'text': f'mail {EMAIL}'},
+                {'type': 'text', 'text': ''},
+                {'type': 'text'},
+                {'type': 'image_url', 'image_url': {'url': 'https://x/a.png'}},
+                'raw',
+            ],
+            [
+                {'type': 'text', 'text': 'mail <EMAIL_ADDRESS>'},
+                {'type': 'text', 'text': ''},
+                {'type': 'text'},
+                {'type': 'image_url', 'image_url': {'url': 'https://x/a.png'}},
+                'raw',
+            ],
+        ),
+    ],
+    ids=['iban_input', 'email_output', 'both', 'empty_text', 'only_text_parts'],
+)
+async def test_an_anonymizer_redacts_the_entities_it_names(
+    redact_events, where, entities, content, expected
+):
+    [redacted] = await _redact(
+        [_anonymizer(where, entities)], [HumanMessage(content=content)], where
+    )
+
+    assert redacted.content == expected
+    assert redact_events.called == (content != expected)
+
+
+async def test_an_anonymizer_that_selects_no_message_returns_them_as_they_are():
+    guardrail = _anonymizer(
+        INPUT, ['EMAIL_ADDRESS'], message_roles=[GuardrailMessageRole.USER]
+    )
+    messages = [AIMessage(content=f'mail {EMAIL}')]
+
+    assert await _redact([guardrail], messages, INPUT) == messages
+
+
+@pytest.mark.parametrize(
+    ('analyzer', 'error'),
+    [
+        ({'side_effect': RuntimeError('no model')}, RuntimeError),
+        (
+            {
+                'return_value': MagicMock(
+                    **{'analyze.side_effect': ValueError('entity')}
+                )
+            },
+            ValueError,
+        ),
+    ],
+    ids=['analyzer_init', 'unsupported_entity'],
+)
+async def test_an_anonymizer_failure_is_raised(analyzer, error):
+    with (
+        patch.object(PresidioEngine, 'get_analyzer', **analyzer),
+        pytest.raises(error),
+    ):
+        await _redact(
+            [_anonymizer(INPUT, ['EMAIL_ADDRESS'])],
+            [HumanMessage(content=f'mail {EMAIL}')],
+            INPUT,
         )
 
-        assert (
-            redacted_message[0].content
-            == 'This is my email <EMAIL_ADDRESS> and this is my IBAN <IBAN_CODE>'
-        )
 
-    @pytest.mark.asyncio
-    async def test_soft_block_input_guardrail_triggered(self):
-        """Test that SOFT_BLOCK guardrail returns SoftBlock for input."""
-        self.soft_block_info = (
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='Hello there')],
-                route_config=route_config_soft_block,
-                where=GuardrailWhereType.INPUT,
-                group_name='test-group',
-            )
-        ).soft_block
-
-        assert self.soft_block_info is not None
-        assert isinstance(self.soft_block_info, SoftBlock)
-        assert self.soft_block_info.guardrail.name == 'soft_block_start_with_hello'
-        assert self.soft_block_info.where == GuardrailWhereType.INPUT
-        assert (
-            self.soft_block_info.get_soft_block_message()
-            == 'I cannot process this request as it violates content policy: soft_block_start_with_hello'
-        )
-
-    @pytest.mark.asyncio
-    async def test_soft_block_output_guardrail_triggered(self):
-        """Test that SOFT_BLOCK guardrail returns SoftBlock for output."""
-        self.soft_block_info = (
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='This contains sensitive data')],
-                route_config=route_config_soft_block,
-                where=GuardrailWhereType.OUTPUT,
-                group_name='test-group',
-            )
-        ).soft_block
-
-        assert self.soft_block_info is not None
-        assert isinstance(self.soft_block_info, SoftBlock)
-        assert self.soft_block_info.guardrail.name == 'soft_block_contains_sensitive'
-        assert self.soft_block_info.where == GuardrailWhereType.OUTPUT
-        assert (
-            self.soft_block_info.get_soft_block_message()
-            == 'This response has been blocked due to policy violation: soft_block_contains_sensitive'
-        )
-
-    @pytest.mark.asyncio
-    async def test_soft_block_io_guardrail_input(self):
-        """Test that SOFT_BLOCK IO guardrail works for input."""
-        self.soft_block_info = (
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='Text with 123 numbers')],
-                route_config=route_config_soft_block,
-                where=GuardrailWhereType.INPUT,
-                group_name='test-group',
-            )
-        ).soft_block
-
-        assert self.soft_block_info is not None
-        assert isinstance(self.soft_block_info, SoftBlock)
-        assert self.soft_block_info.guardrail.name == 'soft_block_regex_digits'
-        assert self.soft_block_info.where == GuardrailWhereType.INPUT
-
-    @pytest.mark.asyncio
-    async def test_soft_block_io_guardrail_output(self):
-        """Test that SOFT_BLOCK IO guardrail works for output."""
-        self.soft_block_info = (
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='Response with 456 numbers')],
-                route_config=route_config_soft_block,
-                where=GuardrailWhereType.OUTPUT,
-                group_name='test-group',
-            )
-        ).soft_block
-
-        assert self.soft_block_info is not None
-        assert isinstance(self.soft_block_info, SoftBlock)
-        assert self.soft_block_info.guardrail.name == 'soft_block_regex_digits'
-        assert self.soft_block_info.where == GuardrailWhereType.OUTPUT
-
-    @pytest.mark.asyncio
-    async def test_soft_block_not_triggered(self):
-        """Test that SOFT_BLOCK guardrail returns None when not triggered."""
-        self.soft_block_info = (
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='Normal message without triggers')],
-                route_config=route_config_soft_block,
-                where=GuardrailWhereType.INPUT,
-                group_name='test-group',
-            )
-        ).soft_block
-
-        assert self.soft_block_info is None
-
-    @pytest.mark.asyncio
-    async def test_soft_block_wrong_where_not_triggered(self):
-        """Test that SOFT_BLOCK guardrail respects where conditions."""
-        # INPUT-only guardrail should not trigger on OUTPUT
-        self.soft_block_info = (
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='Hello there')],
-                route_config=route_config_soft_block,
-                where=GuardrailWhereType.OUTPUT,
-                group_name='test-group',
-            )
-        ).soft_block
-
-        assert self.soft_block_info is None
-
-    @pytest.mark.asyncio
-    async def test_soft_block_logs_info_message(self):
-        """Test that SOFT_BLOCK guardrail logs an info message using self.assertLogs."""
-        logger_name = 'radicalbit-ai-gateway'
-        expected_level = 'INFO'
-        with self.assertLogs(logger_name, level=expected_level) as cm:
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='Hello there')],
-                route_config=route_config_soft_block,
-                where=GuardrailWhereType.INPUT,
-                group_name='test-group',
-            )
-        log_output = '\n'.join(cm.output)
-        guardrail_name = 'soft_block_start_with_hello'
-        assert '[where=INPUT]' in log_output
-        assert f'[name={guardrail_name}]' in log_output
-
-    @pytest.mark.asyncio
-    async def test_mixed_behaviors_soft_block_first(self):
-        """Test that when both SOFT_BLOCK and BLOCK guardrails are triggered, SOFT_BLOCK is returned first."""
-        mixed_guardrails = [
-            Guardrail(
-                name='soft_block_start_with_hello',
-                type=GuardrailType.STARTS_WITH,
-                behavior=GuardrailBehaviorType.SOFT_BLOCK,
-                where=GuardrailWhereType.INPUT,
-                parameters=CheckParameter(values=['Hello']),
-            ),
-            Guardrail(
-                name='block_contains_hello',
-                type=GuardrailType.CONTAINS,
-                behavior=GuardrailBehaviorType.BLOCK,
-                where=GuardrailWhereType.INPUT,
-                parameters=CheckParameter(values=['Hello']),
-            ),
-        ]
-
-        route_config = copy.deepcopy(gateway_config.routes['rb-gateway'])
-        route_config.guardrails = [g.name for g in mixed_guardrails]
-
-        # Should return SoftBlock for the first triggered guardrail (soft block)
-        self.soft_block_info = (
-            await apply_check(
-                self.project_guardrails,
-                request_uuid=str(REQUEST_UUID),
-                api_key_uuid=str(API_KEY_UUID),
-                group_uuid=str(GROUP_UUID),
-                api_key_name='fake-name',
-                messages=[HumanMessage(content='Hello there')],
-                route_config=route_config,
-                where=GuardrailWhereType.INPUT,
-                group_name='test-group',
-            )
-        ).soft_block
-
-        assert self.soft_block_info is not None
-        assert self.soft_block_info.guardrail.name == 'soft_block_start_with_hello'
-
-
-class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
+class TestAhdsIntegration:
     """Tests for the Azure Health Data Services de-identification recognizer integration."""
 
     def test_local_analyzer_has_no_ahds_recognizer(self):
@@ -641,15 +373,18 @@ class TestAhdsIntegration(unittest.IsolatedAsyncioTestCase):
                 'https://test.api.deid.azure.com', '2024-11-15', None, None, None
             )
 
-    def test_credential_uses_client_secret_when_configured(self):
-        credential = PresidioEngine._build_ahds_credential(
-            'tenant-123', 'client-456', 'super-secret'
-        )
-        assert isinstance(credential, ClientSecretCredential)
-
-    def test_credential_falls_back_to_environment(self):
-        credential = PresidioEngine._build_ahds_credential(None, None, None)
-        assert isinstance(credential, EnvironmentCredential)
+    @pytest.mark.parametrize(
+        ('secret', 'expected'),
+        [
+            (('tenant-123', 'client-456', 'super-secret'), ClientSecretCredential),
+            ((None, None, None), EnvironmentCredential),
+        ],
+        ids=['client_secret', 'environment'],
+    )
+    def test_credential_uses_the_client_secret_or_the_environment(
+        self, secret, expected
+    ):
+        assert isinstance(PresidioEngine._build_ahds_credential(*secret), expected)
 
     def test_resolve_settings_from_ahds_params(self):
         engine = PresidioEngine()

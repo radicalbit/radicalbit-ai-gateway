@@ -13,201 +13,191 @@ from radicalbit_ai_gateway.models.chat_request import (
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
 
 
-def test_parse_tool_calls_ok():
-    tool_calls = [
-        {
-            'id': 'call_123',
-            'type': 'function',
-            'function': {
-                'name': 'get_weather',
-                'arguments': '{"location": "Roma"}',
-            },
-        },
-        {
-            'id': 'call_456',
-            'type': 'function',
-            'function': {
-                'name': 'get_news',
-                'arguments': '{"topic": "tech"}',
-            },
-        },
-    ]
-    expected = [
+def _call(id_, name=None, arguments=None):
+    function = {} if name is None else {'name': name}
+    if arguments is not None:
+        function['arguments'] = arguments
+    return {'id': id_, 'type': 'function', 'function': function}
+
+
+@pytest.mark.parametrize(
+    ('tool_calls', 'expected'),
+    [
+        (
+            [
+                _call('c1', 'get_weather', '{"location": "Roma"}'),
+                _call('c2', 'get_news', '{"topic": "tech"}'),
+            ],
+            [
+                {'name': 'get_weather', 'args': {'location': 'Roma'}, 'id': 'c1'},
+                {'name': 'get_news', 'args': {'topic': 'tech'}, 'id': 'c2'},
+            ],
+        ),
+        ([], []),
+        ([{'id': 'c3'}], [{'name': None, 'args': {}, 'id': 'c3'}]),
+        ([_call('c4', 'no_args')], [{'name': 'no_args', 'args': {}, 'id': 'c4'}]),
+    ],
+    ids=['two_calls', 'none', 'no_function', 'no_arguments'],
+)
+def test_tool_calls_are_parsed_into_name_args_and_id(tool_calls, expected):
+    assert parse_tool_calls(tool_calls) == expected
+
+
+@pytest.mark.parametrize(
+    ('message', 'kind', 'content'),
+    [
+        ({'role': 'system', 'content': 'Be brief'}, SystemMessage, 'Be brief'),
+        (
+            {'role': 'system', 'content': [{'type': 'text', 'text': 'Be brief'}]},
+            SystemMessage,
+            '[{"type": "text", "text": "Be brief"}]',
+        ),
+        ({'role': 'user', 'content': 'Ciao!'}, HumanMessage, 'Ciao!'),
+        ({'role': 'developer', 'content': 'Rules'}, HumanMessage, 'Rules'),
+        ({'role': 'assistant', 'content': 'Bene'}, AIMessage, 'Bene'),
+        (
+            {'role': 'tool', 'content': '{"t": "25C"}', 'tool_call_id': 'c1'},
+            ToolMessage,
+            '{"t": "25C"}',
+        ),
+    ],
+    ids=['system', 'system_parts', 'user', 'developer', 'assistant', 'tool'],
+)
+def test_each_role_becomes_its_message_with_text_content(message, kind, content):
+    [result] = convert_openai_messages([message])
+
+    assert type(result) is kind
+    assert result.content == content
+
+
+def test_an_assistant_message_keeps_its_tool_calls():
+    [result] = convert_openai_messages(
+        [
+            {
+                'role': 'assistant',
+                'content': 'Calling',
+                'tool_calls': [_call('c1', 'get_weather', '{"location": "Milano"}')],
+            }
+        ]
+    )
+
+    assert result.tool_calls == [
         {
             'name': 'get_weather',
-            'args': {'location': 'Roma'},
-            'id': 'call_123',
-        },
-        {
-            'name': 'get_news',
-            'args': {'topic': 'tech'},
-            'id': 'call_456',
-        },
-    ]
-    assert parse_tool_calls(tool_calls) == expected
-
-
-def test_parse_tool_calls_empty():
-    assert parse_tool_calls([]) == []
-
-
-def test_parse_tool_calls_invalid_input():
-    tool_calls = [{'id': 'call_789'}]
-    expected = [
-        {
-            'name': None,
-            'args': {},
-            'id': 'call_789',
+            'args': {'location': 'Milano'},
+            'id': 'c1',
+            'type': 'tool_call',
         }
     ]
-    assert parse_tool_calls(tool_calls) == expected
 
 
-def test_parse_tool_calls_con_invalid_args_or_empty():
-    tool_calls = [
-        {
-            'id': 'call_abc',
-            'type': 'function',
-            'function': {
-                'name': 'tool_wo_args',
-                'arguments': '{}',
-            },
-        },
-        {
-            'id': 'call_def',
-            'type': 'function',
-            'function': {'name': 'tool_w_args'},
-        },
-    ]
-    expected = [
-        {'name': 'tool_wo_args', 'args': {}, 'id': 'call_abc'},
-        {'name': 'tool_w_args', 'args': {}, 'id': 'call_def'},
-    ]
-    assert parse_tool_calls(tool_calls) == expected
+@pytest.mark.parametrize(
+    ('message', 'error'),
+    [
+        ({'role': 'tool', 'content': 'result'}, 'ToolMessage must have tool_call_id.'),
+        ({'role': 'robot', 'content': 'Test'}, 'Unsupported role: robot'),
+    ],
+    ids=['tool_without_call_id', 'unsupported_role'],
+)
+def test_an_invalid_message_is_a_bad_request(message, error):
+    with pytest.raises(GatewayBadRequest, match=error):
+        convert_openai_messages([message])
 
 
-def test_convert_message_system():
-    messages = [{'role': 'system', 'content': 'You are an helpful assistant'}]
-    result = convert_openai_messages(messages)
-    assert len(result) == 1
-    assert isinstance(result[0], SystemMessage)
-    assert result[0].content == 'You are an helpful assistant'
+@pytest.mark.parametrize(
+    ('message', 'expected'),
+    [
+        ({'role': 'assistant', 'content': 'Paris.', 'reasoning_content': 'Geo'}, 'Geo'),
+        ({'role': 'assistant', 'content': 'Hi'}, None),
+        ({'role': 'user', 'content': 'Hello', 'reasoning_content': 'Geo'}, None),
+    ],
+    ids=['assistant', 'assistant_without', 'user_ignored'],
+)
+def test_only_an_assistant_keeps_its_reasoning_content(message, expected):
+    [result] = convert_openai_messages([message])
+
+    assert (getattr(result, 'additional_kwargs', None) or {}).get(
+        'reasoning_content'
+    ) == expected
 
 
-def test_convert_message_human():
-    messages = [{'role': 'user', 'content': 'Ciao!'}]
-    result = convert_openai_messages(messages)
-    assert len(result) == 1
-    assert isinstance(result[0], HumanMessage)
-    assert result[0].content == 'Ciao!'
+def _image(mime, data):
+    return {'type': 'image', 'source_type': 'base64', 'data': data, 'mime_type': mime}
 
 
-def test_convert_messagges_assistant_tool_calls():
-    messages = [
-        {
-            'role': 'assistant',
-            'content': "Of course, I'll execute the func",
-            'tool_calls': [
-                {
-                    'id': 'call_123',
-                    'type': 'function',
-                    'function': {
-                        'name': 'get_weather',
-                        'arguments': '{"location": "Milano"}',
-                    },
-                }
-            ],
-        }
-    ]
-    result = convert_openai_messages(messages)
-    assert len(result) == 1
-    assert isinstance(result[0], AIMessage)
-    assert result[0].content == "Of course, I'll execute the func"
-    assert len(result[0].tool_calls) == 1
-    assert result[0].tool_calls[0] == {
-        'name': 'get_weather',
-        'args': {'location': 'Milano'},
-        'id': 'call_123',
-        'type': 'tool_call',
+def _file(mime, data, **extra):
+    return {
+        'type': 'file',
+        'source_type': 'base64',
+        'data': data,
+        'mime_type': mime,
+        **extra,
     }
 
 
-def test_convert_message_tool():
-    messages = [
-        {
-            'role': 'tool',
-            'content': '{"temperature": "25C"}',
-            'tool_call_id': 'call_123',
-        }
-    ]
-    result = convert_openai_messages(messages)
-    assert len(result) == 1
-    assert isinstance(result[0], ToolMessage)
-    assert result[0].content == '{"temperature": "25C"}'
-    assert result[0].tool_call_id == 'call_123'
+@pytest.mark.parametrize(
+    ('part', 'expected'),
+    [
+        ({'type': 'text', 'text': 'hi'}, [{'type': 'text', 'text': 'hi'}]),
+        ({'type': 'text'}, [{'type': 'text', 'text': ''}]),
+        (
+            {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AAA'}},
+            [_image('image/png', 'AAA')],
+        ),
+        (
+            {'type': 'image_url', 'image_url': {'url': 'https://x/a.png'}},
+            [{'type': 'image_url', 'image_url': {'url': 'https://x/a.png'}}],
+        ),
+        (
+            {'type': 'image_url', 'image_url': {'url': 'data:;base64,BBB'}},
+            [_file('application/octet-stream', 'BBB')],
+        ),
+        (
+            {
+                'type': 'file',
+                'file': {
+                    'file_data': 'data:application/pdf;base64,CCC',
+                    'filename': 'a.pdf',
+                },
+            },
+            [_file('application/pdf', 'CCC', filename='a.pdf')],
+        ),
+        (
+            {
+                'type': 'file',
+                'file': {'data': 'data:image/jpeg;base64,DDD', 'file_data': 'x'},
+            },
+            [_image('image/jpeg', 'DDD')],
+        ),
+        (
+            {'type': 'file', 'file_data': 'EEE'},
+            [_file('application/octet-stream', 'EEE')],
+        ),
+        (
+            {'type': 'file', 'data': 'FFF', 'file_data': 'x'},
+            [_file('application/octet-stream', 'FFF')],
+        ),
+        ({'type': 'file', 'file': {'filename': 'empty'}}, []),
+        (
+            {'type': 'input_audio', 'id': 1},
+            [{'type': 'text', 'text': "{'type': 'input_audio', 'id': 1}"}],
+        ),
+    ],
+    ids=[
+        'text',
+        'text_missing',
+        'image_data_url',
+        'image_http_url',
+        'data_url_without_mime',
+        'nested_file_data',
+        'nested_data_wins',
+        'flat_raw_base64',
+        'flat_data_wins',
+        'file_without_data_dropped',
+        'unknown_type_as_text',
+    ],
+)
+def test_user_parts_are_normalised_to_the_gateway_format(part, expected):
+    [result] = convert_openai_messages([{'role': 'user', 'content': [part]}])
 
-
-def test_error_no_tool_call_id():
-    messages = [{'role': 'tool', 'content': 'result tool'}]
-    with pytest.raises(GatewayBadRequest, match='ToolMessage must have tool_call_id.'):
-        convert_openai_messages(messages)
-
-
-def test_error_unsupported_role():
-    messages = [{'role': 'unsupported_role', 'content': 'Test'}]
-    with pytest.raises(GatewayBadRequest, match='Unsupported role: unsupported_role'):
-        convert_openai_messages(messages)
-
-
-def test_convert_messages():
-    messages = [
-        {'role': 'system', 'content': 'Inizia la conversazione.'},
-        {'role': 'user', 'content': 'Come stai?'},
-        {'role': 'assistant', 'content': 'Bene, grazie!'},
-    ]
-    result = convert_openai_messages(messages)
-    assert len(result) == 3
-    assert isinstance(result[0], SystemMessage)
-    assert isinstance(result[1], HumanMessage)
-    assert isinstance(result[2], AIMessage)
-
-
-def test_convert_openai_messages_assistant_with_reasoning_content():
-    messages = [
-        {'role': 'user', 'content': 'What is the capital of France?'},
-        {
-            'role': 'assistant',
-            'content': 'Paris.',
-            'reasoning_content': 'The user is asking a geography question...',
-        },
-    ]
-    result = convert_openai_messages(messages)
-    assert len(result) == 2
-    ai_msg = result[1]
-    assert isinstance(ai_msg, AIMessage)
-    assert ai_msg.content == 'Paris.'
-    assert ai_msg.additional_kwargs.get('reasoning_content') == (
-        'The user is asking a geography question...'
-    )
-
-
-def test_convert_openai_messages_assistant_without_reasoning_content():
-    messages = [
-        {'role': 'user', 'content': 'Hello'},
-        {'role': 'assistant', 'content': 'Hi there!'},
-    ]
-    result = convert_openai_messages(messages)
-    ai_msg = result[1]
-    assert isinstance(ai_msg, AIMessage)
-    assert 'reasoning_content' not in ai_msg.additional_kwargs
-
-
-def test_convert_openai_messages_reasoning_content_ignored_for_non_assistant():
-    messages = [
-        {'role': 'user', 'content': 'Hello', 'reasoning_content': 'should be ignored'},
-    ]
-    result = convert_openai_messages(messages)
-    assert isinstance(result[0], HumanMessage)
-    assert not hasattr(result[0], 'additional_kwargs') or 'reasoning_content' not in (
-        result[0].additional_kwargs or {}
-    )
+    assert result.content == expected

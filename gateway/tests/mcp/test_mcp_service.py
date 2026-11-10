@@ -29,21 +29,76 @@ GITHUB = McpHttpServer(alias='github', url='https://github.example.com/mcp/')
 JIRA = McpHttpServer(alias='jira', url='https://jira.example.com/mcp/')
 SERVERS = [GITHUB, JIRA]
 
+MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
+EVENTS_PROCESSOR = 'radicalbit_ai_gateway.events.events_processor'
+LIST_CACHE = 'radicalbit_ai_gateway.mcp_proxy.list_cache'
 
-def _tool(name: str, description: str = 'a tool') -> types.Tool:
+RESOURCE_A = 'https://github.example.com/a'
+RESOURCE_B = 'https://github.example.com/b'
+HEADERS = {'x-user-jwt': 'jwt-1'}
+
+
+def _tool(name: str) -> types.Tool:
     return types.Tool(
         name=name,
-        description=description,
+        description='a tool',
         inputSchema={'type': 'object', 'properties': {}},
     )
 
 
-def _prompt(name: str, description: str = 'a prompt') -> types.Prompt:
-    return types.Prompt(name=name, description=description)
+def _prompt(name: str) -> types.Prompt:
+    return types.Prompt(name=name, description='a prompt')
 
 
-def _resource(uri: str, name: str = 'a resource') -> types.Resource:
-    return types.Resource(uri=uri, name=name)
+def _resource(uri: str) -> types.Resource:
+    return types.Resource(uri=uri, name='a resource')
+
+
+# kind -> (upstream method, result type, item factory, id field, passthrough)
+LISTS = {
+    'tools': (
+        'list_tools',
+        types.ListToolsResult,
+        _tool,
+        'name',
+        {'description': 'a tool', 'inputSchema': {'type': 'object', 'properties': {}}},
+    ),
+    'prompts': (
+        'list_prompts',
+        types.ListPromptsResult,
+        _prompt,
+        'name',
+        {'description': 'a prompt'},
+    ),
+    'resources': (
+        'list_resources',
+        types.ListResourcesResult,
+        _resource,
+        'uri',
+        {'name': 'a resource'},
+    ),
+}
+KINDS = pytest.mark.parametrize('kind', list(LISTS))
+
+
+def _raw(kind: str, name: str) -> str:
+    """Return the upstream identifier: a name, or for resources a uri."""
+    return f'https://github.example.com/{name}' if kind == 'resources' else name
+
+
+def _exposed(kind: str, alias: str, name: str) -> str:
+    """Return the identifier the gateway exposes for an upstream item."""
+    raw = _raw(kind, name)
+    return encode_resource_uri(alias, raw) if kind == 'resources' else f'{alias}__{raw}'
+
+
+def _listing(kind: str, *names: str):
+    _, result_type, item, _, _ = LISTS[kind]
+    return result_type(**{kind: [item(_raw(kind, n)) for n in names]})
+
+
+def _ids(kind: str, payload: dict) -> list[str]:
+    return [item[LISTS[kind][3]] for item in payload['result'][kind]]
 
 
 def _service(upstream_client=None) -> McpService:
@@ -59,6 +114,14 @@ def _request(method: str, request_id=1, params=None) -> dict:
     if params is not None:
         body['params'] = params
     return body
+
+
+def _error(code: int, message: str, request_id=1) -> dict:
+    return {
+        'jsonrpc': '2.0',
+        'id': request_id,
+        'error': {'code': code, 'message': message},
+    }
 
 
 def _authorized(servers=None) -> McpAuthorizedRequest:
@@ -80,8 +143,12 @@ def _authorized(servers=None) -> McpAuthorizedRequest:
     )
 
 
-RESOURCE_A = 'https://github.example.com/a'
-RESOURCE_B = 'https://github.example.com/b'
+async def _dispatch(
+    body, servers=SERVERS, client=None, headers=None, cache=None, service=None
+):
+    return await (service or _service(client))._dispatch(
+        body, servers, headers, cache, authorized=_authorized()
+    )
 
 
 def _server(**kwargs) -> McpHttpServer:
@@ -91,24 +158,46 @@ def _server(**kwargs) -> McpHttpServer:
 
 
 def _list_client() -> MagicMock:
+    """Build an upstream advertising a, b and c for every list method."""
     client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        return_value=types.ListToolsResult(tools=[_tool('a'), _tool('b'), _tool('c')])
-    )
-    client.list_prompts = AsyncMock(
-        return_value=types.ListPromptsResult(
-            prompts=[_prompt('a'), _prompt('b'), _prompt('c')]
-        )
-    )
-    client.list_resources = AsyncMock(
-        return_value=types.ListResourcesResult(
-            resources=[_resource(RESOURCE_A), _resource(RESOURCE_B)]
-        )
-    )
+    for kind, (attr, *_) in LISTS.items():
+        setattr(client, attr, AsyncMock(return_value=_listing(kind, 'a', 'b', 'c')))
     return client
 
 
-EVENTS_PROCESSOR = 'radicalbit_ai_gateway.events.events_processor'
+def _invoking_client() -> MagicMock:
+    """Build an upstream that answers all three addressed methods."""
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
+    client.get_prompt = AsyncMock(return_value=types.GetPromptResult(messages=[]))
+    client.read_resource = AsyncMock(return_value=types.ReadResourceResult(contents=[]))
+    return client
+
+
+def _attrs(mock_set_attrs) -> dict:
+    """Every attribute dispatch set on the span, merged in call order."""
+    merged: dict = {}
+    for c in mock_set_attrs.call_args_list:
+        merged.update(c.kwargs)
+    return merged
+
+
+def _recording_span() -> MagicMock:
+    span = MagicMock()
+    span.is_recording.return_value = True
+    return span
+
+
+def _span_attrs(span: MagicMock) -> dict:
+    return {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
+
+
+def _fanout(total: int, failed: str, count: int) -> dict:
+    return {
+        'rb.gateway.mcp_upstream_total': total,
+        'rb.gateway.mcp_upstream_failed': failed,
+        'rb.gateway.mcp_result_count': count,
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -128,11 +217,18 @@ def recorded_events():
         yield recorded
 
 
-def _mcp_events(recorded: list[dict]) -> list[dict]:
-    """Return only the MCP invocation events out of everything recorded."""
-    return [
-        event for event in recorded if event['EVENT_TYPE'] is EventType.MCP_INVOCATION
-    ]
+@pytest.fixture(autouse=True)
+def emitted_cache_hits():
+    """Keep CACHE_HIT events out of the real buffer; assert on the mock instead.
+
+    Autouse so no unit test reaches the Celery event buffer, and named so the
+    tests that care about the event can request it.
+    """
+    with (
+        patch(f'{LIST_CACHE}.emit_event') as mock_emit,
+        patch(f'{LIST_CACHE}.cache_hit_counter'),
+    ):
+        yield mock_emit
 
 
 @pytest.fixture(autouse=True)
@@ -143,19 +239,39 @@ def _forget_unadvertised_warnings():
     _warned_unadvertised.clear()
 
 
+def _mcp_events(recorded: list[dict]) -> list[dict]:
+    """Return only the MCP invocation events out of everything recorded."""
+    return [
+        event for event in recorded if event['EVENT_TYPE'] is EventType.MCP_INVOCATION
+    ]
+
+
+def _invocation(recorded: list[dict]) -> tuple[str, str, str]:
+    """Return the single MCP invocation recorded, as (method, alias, target)."""
+    (event,) = _mcp_events(recorded)
+    return event['MCP_METHOD'], event['MCP_ALIAS'], event['MCP_TARGET']
+
+
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize('version', ['2025-06-18', '2025-11-25'])
-def test_negotiate_echoes_supported_version(version):
-    assert negotiate_protocol_version(version) == version
-
-
-@pytest.mark.parametrize('version', ['2024-11-05', '2025-03-26', None, 42])
-def test_negotiate_falls_back_to_latest(version):
-    assert negotiate_protocol_version(version) == LATEST_PROTOCOL_VERSION
+@pytest.mark.parametrize(
+    ('version', 'expected'),
+    [
+        ('2025-06-18', '2025-06-18'),
+        ('2025-11-25', '2025-11-25'),
+        ('2024-11-05', LATEST_PROTOCOL_VERSION),
+        ('2025-03-26', LATEST_PROTOCOL_VERSION),
+        (None, LATEST_PROTOCOL_VERSION),
+        (42, LATEST_PROTOCOL_VERSION),
+    ],
+)
+def test_negotiate_echoes_a_supported_version_or_falls_back_to_latest(
+    version, expected
+):
+    assert negotiate_protocol_version(version) == expected
 
 
 def test_split_alias_name():
@@ -167,14 +283,15 @@ def test_split_alias_name():
     assert split_alias_name('alias__') is None
 
 
-def test_resource_uri_round_trips():
-    encoded = encode_resource_uri('github', 'https://example.com/a/b?x=1')
-    assert decode_resource_uri(encoded) == ('github', 'https://example.com/a/b?x=1')
-
-
-def test_resource_uri_round_trips_reserved_characters():
-    encoded = encode_resource_uri('my alias/x', 'file:///etc/hosts#frag')
-    assert decode_resource_uri(encoded) == ('my alias/x', 'file:///etc/hosts#frag')
+@pytest.mark.parametrize(
+    ('alias', 'uri'),
+    [
+        ('github', 'https://example.com/a/b?x=1'),
+        ('my alias/x', 'file:///etc/hosts#frag'),  # reserved characters
+    ],
+)
+def test_resource_uri_round_trips(alias, uri):
+    assert decode_resource_uri(encode_resource_uri(alias, uri)) == (alias, uri)
 
 
 @pytest.mark.parametrize(
@@ -212,88 +329,126 @@ def test_strip_uri_credentials(uri, expected):
 # JSON-RPC envelope
 # ---------------------------------------------------------------------------
 
+BAD_ID = 'Invalid Request: id must be a string or integer'
+
 
 @pytest.mark.parametrize(
-    'body',
+    ('body', 'message', 'attrs'),
     [
-        'not a dict',
-        [{'jsonrpc': '2.0', 'id': 1, 'method': 'ping'}],  # batching unsupported
-        {'id': 1, 'method': 'ping'},  # missing jsonrpc
-        {'jsonrpc': '1.0', 'id': 1, 'method': 'ping'},
-        {'jsonrpc': '2.0', 'id': 1},  # missing method
-        {'jsonrpc': '2.0', 'id': 1, 'method': 7},
+        ('not a dict', 'Invalid Request', {}),
+        (
+            [{'jsonrpc': '2.0', 'id': 1, 'method': 'ping'}],  # batching unsupported
+            'Invalid Request',
+            {},
+        ),
+        ({'id': 1, 'method': 'tools/call'}, 'Invalid Request', {}),  # no jsonrpc
+        ({'jsonrpc': '1.0', 'id': 1, 'method': 'ping'}, 'Invalid Request', {}),
+        ({'jsonrpc': '2.0', 'id': 1}, 'Invalid Request', {}),  # missing method
+        ({'jsonrpc': '2.0', 'id': 1, 'method': 7}, 'Invalid Request', {}),
+        # an id the protocol does not allow: rejected before anything is addressed
+        *(
+            (
+                {'jsonrpc': '2.0', 'id': request_id, 'method': 'tools/call'},
+                BAD_ID,
+                {'method': 'tools/call'},
+            )
+            for request_id in (None, True, 1.5, {'x': 1})
+        ),
     ],
 )
-async def test_invalid_envelope_is_400_invalid_request(body):
-    result = await _service()._dispatch(body, SERVERS, None, authorized=_authorized())
-    assert result.status_code == 400
-    assert result.payload['error']['code'] == -32600
-    assert result.payload['id'] is None
+async def test_an_invalid_envelope_is_400_and_records_nothing(
+    recorded_events, body, message, attrs
+):
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        result = await _dispatch(body)
 
-
-@pytest.mark.parametrize('request_id', [None, True, 1.5, {'x': 1}])
-async def test_invalid_request_id_rejected(request_id):
-    result = await _service()._dispatch(
-        _request('ping', request_id=request_id), SERVERS, None, authorized=_authorized()
-    )
     assert result.status_code == 400
-    assert result.payload['error']['code'] == -32600
+    assert result.payload == _error(-32600, message, request_id=None)
+    assert _attrs(mock_set_attrs) == attrs
+    assert _mcp_events(recorded_events) == []
 
 
 @pytest.mark.parametrize('request_id', [0, 1, 'abc'])
 async def test_valid_request_ids_echoed(request_id):
-    result = await _service()._dispatch(
-        _request('ping', request_id=request_id), SERVERS, None, authorized=_authorized()
-    )
+    result = await _dispatch(_request('ping', request_id=request_id))
     assert result.status_code == 200
     assert result.payload == {'jsonrpc': '2.0', 'id': request_id, 'result': {}}
 
 
-async def test_notifications_get_202_and_no_body():
-    service = _service()
-    for method in ('notifications/initialized', 'notifications/cancelled'):
-        result = await service._dispatch(
-            {'jsonrpc': '2.0', 'method': method},
-            SERVERS,
-            None,
-            authorized=_authorized(),
+@pytest.mark.parametrize(
+    'method', ['notifications/initialized', 'notifications/cancelled']
+)
+async def test_a_notification_gets_202_no_body_and_is_still_traced(
+    recorded_events, method
+):
+    """Notifications return no body, but still belong in traces."""
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        result = await _dispatch({'jsonrpc': '2.0', 'method': method})
+
+    assert result.status_code == 202
+    assert result.payload is None
+    assert _attrs(mock_set_attrs) == {'method': method}
+    assert _mcp_events(recorded_events) == []
+
+
+@pytest.mark.parametrize(
+    'method', ['initialize', 'ping', 'tools/list', 'prompts/list', 'resources/list']
+)
+async def test_a_method_addressing_no_single_target_records_only_the_method(
+    recorded_events, method
+):
+    """target_attributes and invocation events only apply to the
+    object-addressing methods, even when params carry a name.
+    """
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        result = await _dispatch(
+            _request(method, params={'name': 'github__x'}), client=_list_client()
         )
-        assert result.status_code == 202
-        assert result.payload is None
 
-
-async def test_unknown_method_is_32601():
-    result = await _service()._dispatch(
-        _request('completion/complete'), SERVERS, None, authorized=_authorized()
-    )
     assert result.status_code == 200
-    assert result.payload['error']['code'] == -32601
-    assert 'completion/complete' in result.payload['error']['message']
+    assert 'result' in result.payload
+    assert _attrs(mock_set_attrs) == {'method': method}
+    assert _mcp_events(recorded_events) == []
 
 
-async def test_non_object_params_is_32602():
-    result = await _service()._dispatch(
-        _request('tools/call', params=[1, 2]), SERVERS, None, authorized=_authorized()
-    )
+async def test_an_unknown_method_is_32601_and_still_attributed(recorded_events):
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        result = await _dispatch(_request('completion/complete'))
+
     assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
+    assert result.payload == _error(-32601, 'Method not found: completion/complete')
+    assert _attrs(mock_set_attrs) == {'method': 'completion/complete'}
+    assert _mcp_events(recorded_events) == []
+
+
+@pytest.mark.parametrize('params', [[1, 2], 5])
+async def test_non_object_params_is_32602_and_addresses_nothing(
+    recorded_events, params
+):
+    result = await _dispatch(_request('tools/call', params=params))
+
+    assert result.status_code == 200
+    assert result.payload == _error(-32602, 'params must be an object')
+    assert _mcp_events(recorded_events) == []
 
 
 # ---------------------------------------------------------------------------
-# initialize / ping
+# initialize
 # ---------------------------------------------------------------------------
 
 
-async def test_initialize_advertises_capabilities():
-    result = await _service()._dispatch(
-        _request('initialize', params={'protocolVersion': '2025-06-18'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
+@pytest.mark.parametrize(
+    ('requested', 'negotiated'),
+    [('2025-06-18', '2025-06-18'), ('2024-11-05', LATEST_PROTOCOL_VERSION)],
+)
+async def test_initialize_negotiates_and_advertises_capabilities(requested, negotiated):
+    result = await _dispatch(
+        _request('initialize', params={'protocolVersion': requested})
     )
+
     assert result.status_code == 200
     payload_result = result.payload['result']
-    assert payload_result['protocolVersion'] == '2025-06-18'
+    assert payload_result['protocolVersion'] == negotiated
     # no listChanged on any of the three
     assert payload_result['capabilities'] == {
         'tools': {},
@@ -304,847 +459,86 @@ async def test_initialize_advertises_capabilities():
     assert payload_result['serverInfo']['version']
 
 
-async def test_initialize_negotiates_unsupported_version():
-    result = await _service()._dispatch(
-        _request('initialize', params={'protocolVersion': '2024-11-05'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['result']['protocolVersion'] == LATEST_PROTOCOL_VERSION
-
-
 # ---------------------------------------------------------------------------
-# tools/list
+# List methods
 # ---------------------------------------------------------------------------
 
 
-async def test_tools_list_fans_out_and_prefixes():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        side_effect=[
-            types.ListToolsResult(tools=[_tool('get_issue'), _tool('create_issue')]),
-            types.ListToolsResult(tools=[_tool('search')]),
-        ]
-    )
-    headers = {'x-user-jwt': 'jwt-1'}
-
-    result = await _service(client)._dispatch(
-        _request('tools/list'), SERVERS, headers, authorized=_authorized()
-    )
-
-    assert result.status_code == 200
-    tools = result.payload['result']['tools']
-    assert [t['name'] for t in tools] == [
-        'github__get_issue',
-        'github__create_issue',
-        'jira__search',
-    ]
-    # non-name fields pass through verbatim
-    assert tools[0]['description'] == 'a tool'
-    assert tools[0]['inputSchema'] == {'type': 'object', 'properties': {}}
-    for call, server in zip(client.list_tools.await_args_list, SERVERS, strict=True):
-        assert call.args == (server,)
-        assert call.kwargs['client_headers'] == headers
-
-
-async def test_tools_list_without_servers_is_empty():
-    result = await _service()._dispatch(
-        _request('tools/list'), [], None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert result.payload['result'] == {'tools': []}
-
-
-async def test_tools_list_tolerates_one_failing_upstream():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        side_effect=[
-            McpUpstreamError('github', 'boom'),
-            types.ListToolsResult(tools=[_tool('search')]),
-        ]
-    )
-    result = await _service(client)._dispatch(
-        _request('tools/list'), SERVERS, None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert [t['name'] for t in result.payload['result']['tools']] == ['jira__search']
-
-
-async def test_tools_list_all_upstreams_failing_is_32000():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(side_effect=McpUpstreamError('github', 'boom'))
-    result = await _service(client)._dispatch(
-        _request('tools/list'), SERVERS, None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32000
-    assert 'boom' not in result.payload['error']['message']
-
-
-# ---------------------------------------------------------------------------
-# tools/call
-# ---------------------------------------------------------------------------
-
-
-async def test_tools_call_forwards_and_passes_result_through():
-    result = types.CallToolResult(
-        content=[types.TextContent(type='text', text='issue #42')],
-        isError=False,
-    )
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock(return_value=result)
-    headers = {'x-user-jwt': 'jwt-1'}
-
-    dispatch_result = await _service(client)._dispatch(
-        _request(
-            'tools/call',
-            params={'name': 'github__get_issue', 'arguments': {'id': '42'}},
-        ),
-        SERVERS,
-        headers,
-        authorized=_authorized(),
-    )
-
-    assert dispatch_result.status_code == 200
-    assert dispatch_result.payload['result'] == {
-        'content': [{'type': 'text', 'text': 'issue #42'}],
-        'isError': False,
-        # Added by the SDK in mcp 2.x; always serialized, older peers ignore it.
-        'resultType': 'complete',
-    }
-    client.call_tool.assert_awaited_once_with(
-        GITHUB, 'get_issue', {'id': '42'}, client_headers=headers
-    )
-
-
-async def test_tools_call_is_error_result_passes_through():
-    result = types.CallToolResult(
-        content=[types.TextContent(type='text', text='rate limited')], isError=True
-    )
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock(return_value=result)
-
-    dispatch_result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__get_issue'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert dispatch_result.status_code == 200
-    assert dispatch_result.payload['result']['isError'] is True
-
-
-async def test_tools_call_splits_on_first_separator_only():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
-    await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__ns__tool'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert client.call_tool.await_args.args[1] == 'ns__tool'
-
-
-@pytest.mark.parametrize(
-    'name', ['unknown__tool', 'no_separator', 'github', '', 'confluence__x']
-)
-async def test_tools_call_unknown_tool_is_32602(name):
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock()
-    result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': name}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
-    client.call_tool.assert_not_awaited()
-
-
-async def test_tools_call_alias_outside_scope_is_32602():
-    """A top-level alias not exposed on this route is invisible."""
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock()
-    result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'jira__search'}),
-        [GITHUB],
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
-    client.call_tool.assert_not_awaited()
-
-
-@pytest.mark.parametrize(
-    'params',
-    [{}, {'name': 7}, {'name': 'github__x', 'arguments': 'not-a-dict'}],
-)
-async def test_tools_call_bad_params_is_32602(params):
-    result = await _service()._dispatch(
-        _request('tools/call', params=params), SERVERS, None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
-
-
-async def test_tools_call_upstream_error_maps_to_jsonrpc_error():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock(
-        side_effect=McpUpstreamError('github', "Upstream MCP server 'github' timed out")
-    )
-    result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__get_issue'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32000
-    assert 'timed out' in result.payload['error']['message']
-
-
-async def test_unexpected_exception_is_sanitized_internal_error():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock(side_effect=ValueError('secret detail'))
-    result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__get_issue'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32603
-    assert 'secret detail' not in result.payload['error']['message']
-
-
-# ---------------------------------------------------------------------------
-# prompts/list
-# ---------------------------------------------------------------------------
-
-
-async def test_prompts_list_fans_out_and_prefixes():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_prompts = AsyncMock(
-        side_effect=[
-            types.ListPromptsResult(
-                prompts=[_prompt('summarize'), _prompt('translate')]
-            ),
-            types.ListPromptsResult(prompts=[_prompt('search')]),
-        ]
-    )
-    headers = {'x-user-jwt': 'jwt-1'}
-
-    result = await _service(client)._dispatch(
-        _request('prompts/list'), SERVERS, headers, authorized=_authorized()
-    )
-
-    assert result.status_code == 200
-    prompts = result.payload['result']['prompts']
-    assert [p['name'] for p in prompts] == [
-        'github__summarize',
-        'github__translate',
-        'jira__search',
-    ]
-    assert prompts[0]['description'] == 'a prompt'
-    for call, server in zip(client.list_prompts.await_args_list, SERVERS, strict=True):
-        assert call.args == (server,)
-        assert call.kwargs['client_headers'] == headers
-
-
-async def test_prompts_list_without_servers_is_empty():
-    result = await _service()._dispatch(
-        _request('prompts/list'), [], None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert result.payload['result'] == {'prompts': []}
-
-
-async def test_prompts_list_tolerates_one_failing_upstream():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_prompts = AsyncMock(
-        side_effect=[
-            McpUpstreamError('github', 'boom'),
-            types.ListPromptsResult(prompts=[_prompt('search')]),
-        ]
-    )
-    result = await _service(client)._dispatch(
-        _request('prompts/list'), SERVERS, None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert [p['name'] for p in result.payload['result']['prompts']] == ['jira__search']
-
-
-async def test_prompts_list_all_upstreams_failing_is_32000():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_prompts = AsyncMock(side_effect=McpUpstreamError('github', 'boom'))
-    result = await _service(client)._dispatch(
-        _request('prompts/list'), SERVERS, None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32000
-
-
-# ---------------------------------------------------------------------------
-# prompts/get
-# ---------------------------------------------------------------------------
-
-
-async def test_prompts_get_forwards_and_passes_result_through():
-    result = types.GetPromptResult(
-        description='a rendered prompt',
-        messages=[
-            types.PromptMessage(
-                role='user', content=types.TextContent(type='text', text='hello')
-            )
-        ],
-    )
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.get_prompt = AsyncMock(return_value=result)
-    headers = {'x-user-jwt': 'jwt-1'}
-
-    dispatch_result = await _service(client)._dispatch(
-        _request(
-            'prompts/get',
-            params={'name': 'github__summarize', 'arguments': {'id': '42'}},
-        ),
-        SERVERS,
-        headers,
-        authorized=_authorized(),
-    )
-
-    assert dispatch_result.status_code == 200
-    assert dispatch_result.payload['result']['description'] == 'a rendered prompt'
-    client.get_prompt.assert_awaited_once_with(
-        GITHUB, 'summarize', {'id': '42'}, client_headers=headers
-    )
-
-
-async def test_prompts_get_splits_on_first_separator_only():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.get_prompt = AsyncMock(return_value=types.GetPromptResult(messages=[]))
-    await _service(client)._dispatch(
-        _request('prompts/get', params={'name': 'github__ns__prompt'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert client.get_prompt.await_args.args[1] == 'ns__prompt'
-
-
-@pytest.mark.parametrize(
-    'name', ['unknown__prompt', 'no_separator', 'github', '', 'confluence__x']
-)
-async def test_prompts_get_unknown_prompt_is_32602(name):
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.get_prompt = AsyncMock()
-    result = await _service(client)._dispatch(
-        _request('prompts/get', params={'name': name}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
-    client.get_prompt.assert_not_awaited()
-
-
-async def test_prompts_get_alias_outside_scope_is_32602():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.get_prompt = AsyncMock()
-    result = await _service(client)._dispatch(
-        _request('prompts/get', params={'name': 'jira__search'}),
-        [GITHUB],
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
-    client.get_prompt.assert_not_awaited()
-
-
-@pytest.mark.parametrize(
-    'params',
-    [{}, {'name': 7}, {'name': 'github__x', 'arguments': 'not-a-dict'}],
-)
-async def test_prompts_get_bad_params_is_32602(params):
-    result = await _service()._dispatch(
-        _request('prompts/get', params=params), SERVERS, None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
-
-
-async def test_prompts_get_upstream_error_maps_to_jsonrpc_error():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.get_prompt = AsyncMock(
-        side_effect=McpUpstreamError('github', "Upstream MCP server 'github' timed out")
-    )
-    result = await _service(client)._dispatch(
-        _request('prompts/get', params={'name': 'github__summarize'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32000
-    assert 'timed out' in result.payload['error']['message']
-
-
-# ---------------------------------------------------------------------------
-# resources/list
-# ---------------------------------------------------------------------------
-
-
-async def test_resources_list_fans_out_and_aliases_uris():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_resources = AsyncMock(
-        side_effect=[
-            types.ListResourcesResult(
-                resources=[_resource('https://github.example.com/readme')]
-            ),
-            types.ListResourcesResult(
-                resources=[_resource('https://jira.example.com/board')]
-            ),
-        ]
-    )
-    headers = {'x-user-jwt': 'jwt-1'}
-
-    result = await _service(client)._dispatch(
-        _request('resources/list'), SERVERS, headers, authorized=_authorized()
-    )
-
-    assert result.status_code == 200
-    resources = result.payload['result']['resources']
-    assert decode_resource_uri(resources[0]['uri']) == (
-        'github',
-        'https://github.example.com/readme',
-    )
-    assert decode_resource_uri(resources[1]['uri']) == (
-        'jira',
-        'https://jira.example.com/board',
-    )
-    assert resources[0]['name'] == 'a resource'
-    for call, server in zip(
-        client.list_resources.await_args_list, SERVERS, strict=True
-    ):
-        assert call.args == (server,)
-        assert call.kwargs['client_headers'] == headers
-
-
-async def test_resources_list_without_servers_is_empty():
-    result = await _service()._dispatch(
-        _request('resources/list'), [], None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert result.payload['result'] == {'resources': []}
-
-
-async def test_resources_list_tolerates_one_failing_upstream():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_resources = AsyncMock(
-        side_effect=[
-            McpUpstreamError('github', 'boom'),
-            types.ListResourcesResult(
-                resources=[_resource('https://jira.example.com/board')]
-            ),
-        ]
-    )
-    result = await _service(client)._dispatch(
-        _request('resources/list'), SERVERS, None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    resources = result.payload['result']['resources']
-    assert len(resources) == 1
-    assert decode_resource_uri(resources[0]['uri'])[0] == 'jira'
-
-
-async def test_resources_list_all_upstreams_failing_is_32000():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_resources = AsyncMock(side_effect=McpUpstreamError('github', 'boom'))
-    result = await _service(client)._dispatch(
-        _request('resources/list'), SERVERS, None, authorized=_authorized()
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32000
-
-
-# ---------------------------------------------------------------------------
-# resources/read
-# ---------------------------------------------------------------------------
-
-
-async def test_resources_read_forwards_and_realiases_result():
-    upstream_uri = 'https://github.example.com/readme'
-    result = types.ReadResourceResult(
-        contents=[
-            types.TextResourceContents(
-                uri=upstream_uri, text='hello', mimeType='text/plain'
-            )
-        ]
-    )
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.read_resource = AsyncMock(return_value=result)
-    headers = {'x-user-jwt': 'jwt-1'}
-    encoded = encode_resource_uri('github', upstream_uri)
-
-    dispatch_result = await _service(client)._dispatch(
-        _request('resources/read', params={'uri': encoded}),
-        SERVERS,
-        headers,
-        authorized=_authorized(),
-    )
-
-    assert dispatch_result.status_code == 200
-    contents = dispatch_result.payload['result']['contents']
-    assert contents[0]['text'] == 'hello'
-    assert decode_resource_uri(contents[0]['uri']) == ('github', upstream_uri)
-    client.read_resource.assert_awaited_once_with(
-        GITHUB, upstream_uri, client_headers=headers
-    )
-
-
-@pytest.mark.parametrize(
-    'params',
-    [
-        {},
-        {'uri': 7},
-        {'uri': ''},
-        {'uri': 'https://example.com/plain'},  # not one of our wrapped URIs
-        {'uri': encode_resource_uri('confluence', 'https://x')},  # out of scope
-    ],
-)
-async def test_resources_read_bad_or_unknown_uri_is_32602(params):
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.read_resource = AsyncMock()
-    result = await _service(client)._dispatch(
-        _request('resources/read', params=params),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
-    client.read_resource.assert_not_awaited()
-
-
-async def test_resources_read_alias_outside_scope_is_32602():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.read_resource = AsyncMock()
-    encoded = encode_resource_uri('jira', 'https://jira.example.com/board')
-    result = await _service(client)._dispatch(
-        _request('resources/read', params={'uri': encoded}),
-        [GITHUB],
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
-    client.read_resource.assert_not_awaited()
-
-
-async def test_resources_read_upstream_error_maps_to_jsonrpc_error():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.read_resource = AsyncMock(
-        side_effect=McpUpstreamError('github', "Upstream MCP server 'github' timed out")
-    )
-    encoded = encode_resource_uri('github', 'https://github.example.com/readme')
-    result = await _service(client)._dispatch(
-        _request('resources/read', params={'uri': encoded}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32000
-    assert 'timed out' in result.payload['error']['message']
-
-
-# ---------------------------------------------------------------------------
-# Telemetry
-# ---------------------------------------------------------------------------
-
-MCP_SERVICE = 'radicalbit_ai_gateway.services.mcp_service'
-
-
-def _recorded_methods(mock_set_attrs) -> list[str]:
-    return [
-        c.kwargs['method']
-        for c in mock_set_attrs.call_args_list
-        if c.kwargs.get('method') is not None
-    ]
-
-
-@pytest.mark.parametrize(
-    'method',
-    [
-        'initialize',
-        'ping',
-        'tools/list',
-        'tools/call',
-        'prompts/list',
-        'prompts/get',
-        'resources/list',
-        'resources/read',
-        'completion/complete',  # unsupported, still attributed
-    ],
-)
-async def test_dispatch_records_the_method_for_every_request(method):
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
-    client.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
-    client.list_resources = AsyncMock(
-        return_value=types.ListResourcesResult(resources=[])
-    )
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(
-            _request(method), SERVERS, None, authorized=_authorized()
-        )
-
-    assert _recorded_methods(mock_set_attrs) == [method]
-
-
-async def test_dispatch_records_the_method_for_notifications():
-    """Notifications return 202 with no body, but still belong in traces."""
-    body = {'jsonrpc': '2.0', 'method': 'notifications/initialized'}
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        result = await _service()._dispatch(
-            body, SERVERS, None, authorized=_authorized()
-        )
-
-    assert result.status_code == 202
-    assert _recorded_methods(mock_set_attrs) == ['notifications/initialized']
-
-
-async def test_dispatch_records_no_method_for_a_malformed_envelope():
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service()._dispatch(
-            {'jsonrpc': '1.0'}, SERVERS, None, authorized=_authorized()
-        )
-
-    assert _recorded_methods(mock_set_attrs) == []
-
-
-async def test_tools_call_records_alias_and_target():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(
-            _request('tools/call', params={'name': 'github__get_issue'}),
-            SERVERS,
-            None,
-            authorized=_authorized(),
-        )
-
-    mock_set_attrs.assert_any_call(alias='github', target='get_issue')
-
-
-async def test_prompts_get_records_alias_and_target():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.get_prompt = AsyncMock(return_value=types.GetPromptResult(messages=[]))
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(
-            _request('prompts/get', params={'name': 'github__review'}),
-            SERVERS,
-            None,
-            authorized=_authorized(),
-        )
-
-    mock_set_attrs.assert_any_call(alias='github', target='review')
-
-
-async def test_resources_read_records_alias_and_the_upstream_uri():
-    upstream_uri = 'https://github.example.com/readme'
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.read_resource = AsyncMock(return_value=types.ReadResourceResult(contents=[]))
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(
-            _request(
-                'resources/read',
-                params={'uri': encode_resource_uri('github', upstream_uri)},
-            ),
-            SERVERS,
-            None,
-            authorized=_authorized(),
-        )
-
-    # the decoded upstream URI, not the wrapped mcp-resource: form
-    mock_set_attrs.assert_any_call(alias='github', target=upstream_uri)
-
-
-async def test_a_target_naming_no_known_upstream_records_nothing():
-    """params.name is client-controlled: echoing it back is unbounded cardinality.
-
-    The name is still diagnosable from the span status description, which
-    _record_error_outcome sets from the JSON-RPC error message.
+@KINDS
+async def test_a_list_fans_out_prefixes_and_records_a_healthy_fanout(kind):
+    """The fan-out is always recorded, so a healthy one is distinguishable
+    from an absent one. Non-identifier fields pass through verbatim.
     """
+    attr, _, _, id_field, passthrough = LISTS[kind]
     client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock()
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        result = await _service(client)._dispatch(
-            _request('tools/call', params={'name': 'unknown__tool'}),
-            SERVERS,
-            None,
-            authorized=_authorized(),
-        )
-
-    assert result.payload['error']['code'] == -32602
-    assert 'unknown__tool' in result.payload['error']['message']
-    assert all(c.kwargs.get('alias') is None for c in mock_set_attrs.call_args_list)
-    assert all(c.kwargs.get('target') is None for c in mock_set_attrs.call_args_list)
-
-
-async def test_a_resource_uris_credentials_are_stripped_before_reaching_a_span():
-    """Signed-URL tokens live in the query; the path is the resource identity."""
-    upstream_uri = 'https://user:pw@github.example.com/readme?token=s3cret#frag'
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.read_resource = AsyncMock(return_value=types.ReadResourceResult(contents=[]))
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(
-            _request(
-                'resources/read',
-                params={'uri': encode_resource_uri('github', upstream_uri)},
-            ),
-            SERVERS,
-            None,
-            authorized=_authorized(),
-        )
-
-    mock_set_attrs.assert_any_call(
-        alias='github', target='https://github.example.com/readme'
-    )
-    # only the span attribute is redacted; the upstream still gets the URI whole
-    assert client.read_resource.await_args.args[1] == upstream_uri
-
-
-@pytest.mark.parametrize(
-    'params',
-    [
-        {'name': 'no_separator'},  # unsplittable
-        {'name': 7},  # not a string
-        {},  # absent
-    ],
-)
-async def test_an_unsplittable_target_records_nothing(params):
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock()
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(
-            _request('tools/call', params=params),
-            SERVERS,
-            None,
-            authorized=_authorized(),
-        )
-
-    assert all(c.kwargs.get('alias') is None for c in mock_set_attrs.call_args_list)
-
-
-@pytest.mark.parametrize(
-    'method', ['initialize', 'ping', 'tools/list', 'prompts/list', 'resources/list']
-)
-async def test_methods_without_a_single_target_record_none(method):
-    """target_attributes only applies to the object-addressing methods."""
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
-    client.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
-    client.list_resources = AsyncMock(
-        return_value=types.ListResourcesResult(resources=[])
-    )
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(
-            _request(method, params={'name': 'github__x'}),
-            SERVERS,
-            None,
-            authorized=_authorized(),
-        )
-
-    assert all(c.kwargs.get('target') is None for c in mock_set_attrs.call_args_list)
-
-
-def _recording_span() -> MagicMock:
-    span = MagicMock()
-    span.is_recording.return_value = True
-    return span
-
-
-def _span_attrs(span: MagicMock) -> dict:
-    return {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
-
-
-async def test_tools_list_records_fanout_on_a_partial_failure():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        side_effect=[
-            McpUpstreamError('github', 'boom'),
-            types.ListToolsResult(tools=[_tool('search')]),
-        ]
+    setattr(
+        client,
+        attr,
+        AsyncMock(
+            side_effect=[_listing(kind, 'get', 'create'), _listing(kind, 'search')]
+        ),
     )
     span = _recording_span()
 
     with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await _service(client)._dispatch(
-            _request('tools/list'), SERVERS, None, authorized=_authorized()
+        result = await _dispatch(
+            _request(f'{kind}/list'), client=client, headers=HEADERS
         )
 
-    assert _span_attrs(span) == {
-        'rb.gateway.mcp_upstream_total': 2,
-        'rb.gateway.mcp_upstream_failed': 'github',
-        'rb.gateway.mcp_result_count': 1,
-    }
+    assert result.status_code == 200
+    assert _ids(kind, result.payload) == [
+        _exposed(kind, 'github', 'get'),
+        _exposed(kind, 'github', 'create'),
+        _exposed(kind, 'jira', 'search'),
+    ]
+    first = result.payload['result'][kind][0]
+    assert {k: first[k] for k in passthrough} == passthrough
+    calls = getattr(client, attr).await_args_list
+    assert [c.args for c in calls] == [(server,) for server in SERVERS]
+    assert all(c.kwargs['client_headers'] == HEADERS for c in calls)
+    assert _span_attrs(span) == _fanout(2, '', 3)
 
 
-async def test_list_records_fanout_on_full_success():
-    """Always recorded, so a healthy fan-out is distinguishable from an absent one."""
+@KINDS
+async def test_a_list_without_servers_is_empty(kind):
+    result = await _dispatch(_request(f'{kind}/list'), servers=[])
+    assert result.status_code == 200
+    assert result.payload['result'] == {kind: []}
+
+
+@KINDS
+async def test_a_list_tolerates_one_failing_upstream_and_records_it(kind):
+    attr = LISTS[kind][0]
     client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_prompts = AsyncMock(
-        side_effect=[
-            types.ListPromptsResult(prompts=[_prompt('a'), _prompt('b')]),
-            types.ListPromptsResult(prompts=[_prompt('c')]),
-        ]
+    setattr(
+        client,
+        attr,
+        AsyncMock(
+            side_effect=[McpUpstreamError('github', 'boom'), _listing(kind, 'search')]
+        ),
     )
     span = _recording_span()
 
     with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await _service(client)._dispatch(
-            _request('prompts/list'), SERVERS, None, authorized=_authorized()
-        )
+        result = await _dispatch(_request(f'{kind}/list'), client=client)
 
-    assert _span_attrs(span) == {
-        'rb.gateway.mcp_upstream_total': 2,
-        'rb.gateway.mcp_upstream_failed': '',
-        'rb.gateway.mcp_result_count': 3,
-    }
+    assert result.status_code == 200
+    assert _ids(kind, result.payload) == [_exposed(kind, 'jira', 'search')]
+    assert _span_attrs(span) == _fanout(2, 'github', 1)
 
 
-async def test_resources_list_records_fanout():
+@KINDS
+async def test_a_list_with_every_upstream_failing_is_32000(kind):
+    """The upstream's own message never reaches the client."""
     client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_resources = AsyncMock(
-        side_effect=[
-            types.ListResourcesResult(resources=[_resource('https://a.example/1')]),
-            McpUpstreamError('jira', 'boom'),
-        ]
+    setattr(
+        client, LISTS[kind][0], AsyncMock(side_effect=McpUpstreamError('x', 'boom'))
     )
-    span = _recording_span()
 
-    with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await _service(client)._dispatch(
-            _request('resources/list'), SERVERS, None, authorized=_authorized()
-        )
+    result = await _dispatch(_request(f'{kind}/list'), client=client)
 
-    assert _span_attrs(span)['rb.gateway.mcp_upstream_failed'] == 'jira'
+    assert result.status_code == 200
+    assert result.payload == _error(-32000, 'All upstream MCP servers failed')
 
 
 async def test_fanout_is_not_recorded_on_a_non_recording_span():
@@ -1154,742 +548,481 @@ async def test_fanout_is_not_recorded_on_a_non_recording_span():
     span.is_recording.return_value = False
 
     with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await _service(client)._dispatch(
-            _request('tools/list'), SERVERS, None, authorized=_authorized()
-        )
+        await _dispatch(_request('tools/list'), client=client)
 
     span.set_attribute.assert_not_called()
 
 
-async def test_tools_list_exposes_only_the_allowlisted_tools():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('tools/list'),
-        [_server(allowed_tools=['a', 'b'])],
-        None,
-        authorized=_authorized(),
-    )
-    assert [t['name'] for t in result.payload['result']['tools']] == [
-        'github__a',
-        'github__b',
-    ]
+def _gated(kind: str, allow: list[str] | None, alias: str = 'github'):
+    url = f'https://{alias}.example.com/mcp/'
+    if allow is None:
+        return McpHttpServer(alias=alias, url=url)
+    entries = [_raw(kind, n) for n in allow]
+    return McpHttpServer(alias=alias, url=url, **{f'allowed_{kind}': entries})
 
 
-async def test_tools_list_with_no_allowlist_exposes_everything():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('tools/list'), [_server()], None, authorized=_authorized()
-    )
-    assert [t['name'] for t in result.payload['result']['tools']] == [
-        'github__a',
-        'github__b',
-        'github__c',
-    ]
-
-
-async def test_tools_list_with_an_empty_allowlist_exposes_nothing():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('tools/list'),
-        [_server(allowed_tools=[])],
-        None,
-        authorized=_authorized(),
-    )
-    assert result.payload['result']['tools'] == []
-
-
-async def test_an_empty_tool_allowlist_skips_the_upstream_entirely():
-    """Nothing can come back, so the round trip is pure cost."""
-    client = _list_client()
-    await _service(client)._dispatch(
-        _request('tools/list'),
-        [_server(allowed_tools=[])],
-        None,
-        authorized=_authorized(),
-    )
-    client.list_tools.assert_not_awaited()
-
-
-async def test_an_allowlist_entry_the_upstream_never_advertises_is_inert():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('tools/list'),
-        [_server(allowed_tools=['a', 'nonexistent'])],
-        None,
-        authorized=_authorized(),
-    )
-    assert [t['name'] for t in result.payload['result']['tools']] == ['github__a']
-
-
-async def test_tools_call_forwards_an_allowlisted_tool():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
-    result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__a'}),
-        [_server(allowed_tools=['a'])],
-        None,
-        authorized=_authorized(),
-    )
-    assert 'error' not in result.payload
-    assert client.call_tool.await_args.args[1] == 'a'
-
-
-@pytest.mark.parametrize('allowed_tools', [['b'], []])
-async def test_tools_call_rejects_a_tool_outside_the_allowlist(allowed_tools):
-    """Never listed is no defense: a cached tools/list will still call it."""
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock()
-    result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__a'}),
-        [_server(allowed_tools=allowed_tools)],
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 200
-    assert result.payload['error']['code'] == -32602
-    # indistinguishable from a tool that does not exist: the allowlist does not
-    # confirm what it hides
-    assert result.payload['error']['message'] == 'Unknown tool: github__a'
-    client.call_tool.assert_not_awaited()
-
-
-async def test_prompts_list_exposes_only_the_allowlisted_prompts():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('prompts/list'),
-        [_server(allowed_prompts=['b'])],
-        None,
-        authorized=_authorized(),
-    )
-    assert [p['name'] for p in result.payload['result']['prompts']] == ['github__b']
-
-
-async def test_prompts_list_with_an_empty_allowlist_exposes_nothing():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('prompts/list'),
-        [_server(allowed_prompts=[])],
-        None,
-        authorized=_authorized(),
-    )
-    assert result.payload['result']['prompts'] == []
-    client.list_prompts.assert_not_awaited()
-
-
-async def test_prompts_list_with_no_allowlist_exposes_everything():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('prompts/list'), [_server()], None, authorized=_authorized()
-    )
-    assert len(result.payload['result']['prompts']) == 3
-
-
-@pytest.mark.parametrize('allowed_prompts', [['b'], []])
-async def test_prompts_get_rejects_a_prompt_outside_the_allowlist(allowed_prompts):
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.get_prompt = AsyncMock()
-    result = await _service(client)._dispatch(
-        _request('prompts/get', params={'name': 'github__a'}),
-        [_server(allowed_prompts=allowed_prompts)],
-        None,
-        authorized=_authorized(),
-    )
-    assert result.payload['error']['code'] == -32602
-    assert result.payload['error']['message'] == 'Unknown prompt: github__a'
-    client.get_prompt.assert_not_awaited()
-
-
-async def test_prompts_get_forwards_an_allowlisted_prompt():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.get_prompt = AsyncMock(return_value=types.GetPromptResult(messages=[]))
-    result = await _service(client)._dispatch(
-        _request('prompts/get', params={'name': 'github__a'}),
-        [_server(allowed_prompts=['a'])],
-        None,
-        authorized=_authorized(),
-    )
-    assert 'error' not in result.payload
-
-
-async def test_resources_list_exposes_only_the_allowlisted_uris():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('resources/list'),
-        [_server(allowed_resources=[RESOURCE_B])],
-        None,
-        authorized=_authorized(),
-    )
-    uris = [r['uri'] for r in result.payload['result']['resources']]
-    assert uris == [encode_resource_uri('github', RESOURCE_B)]
-
-
-async def test_resources_list_with_an_empty_allowlist_exposes_nothing():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('resources/list'),
-        [_server(allowed_resources=[])],
-        None,
-        authorized=_authorized(),
-    )
-    assert result.payload['result']['resources'] == []
-    client.list_resources.assert_not_awaited()
-
-
-async def test_resources_list_with_no_allowlist_exposes_everything():
-    client = _list_client()
-    result = await _service(client)._dispatch(
-        _request('resources/list'), [_server()], None, authorized=_authorized()
-    )
-    assert len(result.payload['result']['resources']) == 2
-
-
-@pytest.mark.parametrize('allowed_resources', [[RESOURCE_B], []])
-async def test_resources_read_rejects_a_uri_outside_the_allowlist(allowed_resources):
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.read_resource = AsyncMock()
-    wrapped = encode_resource_uri('github', RESOURCE_A)
-    result = await _service(client)._dispatch(
-        _request('resources/read', params={'uri': wrapped}),
-        [_server(allowed_resources=allowed_resources)],
-        None,
-        authorized=_authorized(),
-    )
-    assert result.payload['error']['code'] == -32602
-    assert result.payload['error']['message'] == f'Unknown resource: {wrapped}'
-    client.read_resource.assert_not_awaited()
-
-
-async def test_resources_read_forwards_an_allowlisted_uri():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.read_resource = AsyncMock(return_value=types.ReadResourceResult(contents=[]))
-    result = await _service(client)._dispatch(
-        _request(
-            'resources/read',
-            params={'uri': encode_resource_uri('github', RESOURCE_A)},
+@pytest.mark.parametrize(
+    ('kind', 'servers', 'exposed', 'contacted', 'unadvertised'),
+    [
+        ('tools', [_gated('tools', ['a', 'b'])], ['a', 'b'], ['github'], None),
+        ('tools', [_gated('tools', None)], ['a', 'b', 'c'], ['github'], None),
+        # Nothing can come back, so the round trip is pure cost.
+        ('tools', [_gated('tools', [])], [], [], None),
+        # An entry the upstream never advertises is inert, and warned about:
+        # the upstream is unreachable at config load, so this is the only place.
+        (
+            'tools',
+            [_gated('tools', ['a', 'nonexistent'])],
+            ['a'],
+            ['github'],
+            'nonexistent',
         ),
-        [_server(allowed_resources=[RESOURCE_A])],
-        None,
-        authorized=_authorized(),
-    )
-    assert 'error' not in result.payload
-    assert client.read_resource.await_args.args[1] == RESOURCE_A
-
-
-async def test_allowlists_are_scoped_to_their_own_server():
+        ('prompts', [_gated('prompts', ['b'])], ['b'], ['github'], None),
+        ('prompts', [_gated('prompts', None)], ['a', 'b', 'c'], ['github'], None),
+        ('prompts', [_gated('prompts', [])], [], [], None),
+        ('resources', [_gated('resources', ['b'])], ['b'], ['github'], None),
+        ('resources', [_gated('resources', None)], ['a', 'b', 'c'], ['github'], None),
+        ('resources', [_gated('resources', [])], [], [], None),
+        # An allowlist is scoped to its own server.
+        (
+            'tools',
+            [_gated('tools', ['a']), _gated('tools', None, 'jira')],
+            ['a', 'jira:a', 'jira:b', 'jira:c'],
+            ['github', 'jira'],
+            None,
+        ),
+        # A fully gated server is skipped, and does not read as a failed one.
+        (
+            'tools',
+            [_gated('tools', []), _gated('tools', None, 'jira')],
+            ['jira:a', 'jira:b', 'jira:c'],
+            ['jira'],
+            None,
+        ),
+    ],
+)
+async def test_a_list_exposes_only_what_the_allowlist_permits(
+    kind, servers, exposed, contacted, unadvertised
+):
+    """No allowlist exposes everything, an empty one exposes nothing."""
     client = _list_client()
-    servers = [
-        _server(allowed_tools=['a']),
-        McpHttpServer(alias='jira', url='https://jira.example.com/mcp/'),
+    span = _recording_span()
+
+    with (
+        patch(f'{MCP_SERVICE}.get_current_span', return_value=span),
+        patch(f'{MCP_SERVICE}.logger') as mock_logger,
+    ):
+        result = await _dispatch(_request(f'{kind}/list'), servers, client)
+
+    assert _ids(kind, result.payload) == [
+        _exposed(kind, *(e.split(':') if ':' in e else ('github', e))) for e in exposed
     ]
-    result = await _service(client)._dispatch(
-        _request('tools/list'), servers, None, authorized=_authorized()
+    assert [
+        c.args[0].alias for c in getattr(client, LISTS[kind][0]).await_args_list
+    ] == (contacted)
+    assert _span_attrs(span) == _fanout(len(servers), '', len(exposed))
+    assert [c.args[1:] for c in mock_logger.warning.call_args_list] == (
+        [('github', kind, unadvertised)] if unadvertised else []
     )
-    assert [t['name'] for t in result.payload['result']['tools']] == [
-        'github__a',
-        'jira__a',
-        'jira__b',
-        'jira__c',
-    ]
 
 
-async def test_a_fully_gated_server_does_not_count_as_a_failed_upstream():
-    """Skipping an empty allowlist must not read as a degraded fan-out."""
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        return_value=types.ListToolsResult(tools=[_tool('a')])
-    )
-    servers = [
-        _server(allowed_tools=[]),
-        McpHttpServer(alias='jira', url='https://jira.example.com/mcp/'),
+@pytest.mark.parametrize(
+    ('kind', 'entry'),
+    [
+        ('tools', 'nonexistent'),
+        ('prompts', 'nonexistent'),
+        ('resources', 'https://nowhere.example/x'),
+    ],
+)
+async def test_an_unadvertised_entry_is_warned_about_only_once(kind, entry):
+    """Once per process, not once per request: this is a config typo, not news."""
+    client = _list_client()
+    servers = [_server(**{f'allowed_{kind}': [entry]})]
+
+    with patch(f'{MCP_SERVICE}.logger') as mock_logger:
+        for _ in range(3):
+            await _dispatch(_request(f'{kind}/list'), servers, client)
+
+    assert [c.args[1:] for c in mock_logger.warning.call_args_list] == [
+        ('github', kind, entry)
     ]
-    result = await _service(client)._dispatch(
-        _request('tools/list'), servers, None, authorized=_authorized()
-    )
-    assert [t['name'] for t in result.payload['result']['tools']] == ['jira__a']
 
 
 async def test_every_contacted_upstream_failing_still_raises_when_one_is_gated():
     client = MagicMock(spec_set=McpUpstreamClient)
     client.list_tools = AsyncMock(side_effect=McpUpstreamError('jira', 'boom'))
-    servers = [
-        _server(allowed_tools=[]),
-        McpHttpServer(alias='jira', url='https://jira.example.com/mcp/'),
-    ]
-    result = await _service(client)._dispatch(
-        _request('tools/list'), servers, None, authorized=_authorized()
-    )
-    assert result.payload['error']['code'] == -32000
 
-
-async def test_an_allowlist_rejection_is_attributable_in_traces():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock()
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(
-            _request('tools/call', params={'name': 'github__a'}),
-            [_server(allowed_tools=[])],
-            None,
-            authorized=_authorized(),
-        )
-
-    mock_set_attrs.assert_any_call(denied='allowlist')
-
-
-async def test_an_unknown_alias_is_not_attributed_to_the_allowlist():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock()
-
-    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
-        await _service(client)._dispatch(
-            _request('tools/call', params={'name': 'nope__a'}),
-            SERVERS,
-            None,
-            authorized=_authorized(),
-        )
-
-    assert all(c.kwargs.get('denied') is None for c in mock_set_attrs.call_args_list)
-
-
-UNADVERTISED = [
-    ('tools', 'allowed_tools', 'nonexistent'),
-    ('prompts', 'allowed_prompts', 'nonexistent'),
-    ('resources', 'allowed_resources', 'https://nowhere.example/x'),
-]
-
-
-@pytest.mark.parametrize(('kind', 'field', 'entry'), UNADVERTISED)
-async def test_an_unadvertised_allowlist_entry_is_warned_about_at_runtime(
-    kind, field, entry
-):
-    """The upstream is unreachable at config load, so this is the only place."""
-    client = _list_client()
-    with patch(f'{MCP_SERVICE}.logger') as mock_logger:
-        await _service(client)._dispatch(
-            _request(f'{kind}/list'),
-            [_server(**{field: [entry]})],
-            None,
-            authorized=_authorized(),
-        )
-    warnings = [c.args for c in mock_logger.warning.call_args_list]
-    assert any(entry in args for args in warnings), warnings
-
-
-@pytest.mark.parametrize(('kind', 'field', 'entry'), UNADVERTISED)
-async def test_an_unadvertised_entry_is_warned_about_only_once(kind, field, entry):
-    """Once per process, not once per request: this is a config typo, not news."""
-    client = _list_client()
-    servers = [_server(**{field: [entry]})]
-    with patch(f'{MCP_SERVICE}.logger') as mock_logger:
-        for _ in range(3):
-            await _service(client)._dispatch(
-                _request(f'{kind}/list'), servers, None, authorized=_authorized()
-            )
-    assert mock_logger.warning.call_count == 1
-
-
-@pytest.mark.parametrize(('kind', 'field', 'entry'), UNADVERTISED)
-async def test_a_fully_advertised_allowlist_warns_about_nothing(kind, field, entry):
-    advertised = {'tools': 'a', 'prompts': 'a', 'resources': RESOURCE_A}[kind]
-    client = _list_client()
-    with patch(f'{MCP_SERVICE}.logger') as mock_logger:
-        await _service(client)._dispatch(
-            _request(f'{kind}/list'),
-            [_server(**{field: [advertised]})],
-            None,
-            authorized=_authorized(),
-        )
-    mock_logger.warning.assert_not_called()
-
-
-LIST_CACHE = 'radicalbit_ai_gateway.mcp_proxy.list_cache'
-
-
-@pytest.fixture(autouse=True)
-def emitted_cache_hits():
-    """Keep CACHE_HIT events out of the real buffer; assert on the mock instead.
-
-    Autouse so no unit test reaches the Celery event buffer, and named so the
-    tests that care about the event can request it.
-    """
-    with (
-        patch(f'{LIST_CACHE}.emit_event') as mock_emit,
-        patch(f'{LIST_CACHE}.cache_hit_counter'),
-    ):
-        yield mock_emit
-
-
-def _list_cache(servers=SERVERS) -> McpListCache:
-    """Build a real in-memory cache, wired as the endpoint wires it.
-
-    for_route returns None for a route that must not be cached; these tests all
-    use cacheable routes, so the assert both narrows the type and fails loudly
-    if a guard ever starts firing on one of them.
-    """
-    cache = McpListCache.for_route(
-        gateway_cache=GatewayCache(CacheToolsInMemory()),
-        ttl=None,
-        authorized=_authorized(servers),
-    )
-    assert cache is not None, 'expected these servers to be cacheable'
-    return cache
-
-
-async def test_a_second_tools_list_is_served_from_cache():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        side_effect=[
-            types.ListToolsResult(tools=[_tool('get_issue')]),
-            types.ListToolsResult(tools=[_tool('search')]),
-        ]
-    )
-    service, cache = _service(client), _list_cache()
-
-    first = await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-    second = await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
+    result = await _dispatch(
+        _request('tools/list'), [_server(allowed_tools=[]), JIRA], client
     )
 
-    assert second.payload['result'] == first.payload['result']
-    assert [t['name'] for t in second.payload['result']['tools']] == [
-        'github__get_issue',
-        'jira__search',
-    ]
-    # one fan-out for the two requests, not one per server per request
-    assert client.list_tools.await_count == len(SERVERS)
-
-
-async def test_prompts_list_and_resources_list_are_cached_too():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_prompts = AsyncMock(
-        return_value=types.ListPromptsResult(prompts=[_prompt('summarize')])
-    )
-    client.list_resources = AsyncMock(
-        return_value=types.ListResourcesResult(
-            resources=[_resource('https://a.example/1')]
-        )
-    )
-    service, cache = _service(client), _list_cache()
-
-    for method in ('prompts/list', 'resources/list'):
-        first = await service._dispatch(
-            _request(method), SERVERS, None, cache, authorized=_authorized()
-        )
-        second = await service._dispatch(
-            _request(method), SERVERS, None, cache, authorized=_authorized()
-        )
-        assert second.payload['result'] == first.payload['result']
-
-    assert client.list_prompts.await_count == len(SERVERS)
-    assert client.list_resources.await_count == len(SERVERS)
-    # the wrapped uri survives the round trip through the cache
-    assert all(
-        uri.startswith('mcp-resource:')
-        for uri in [r['uri'] for r in second.payload['result']['resources']]
-    )
-
-
-async def test_one_cached_method_never_answers_another():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
-    client.list_prompts = AsyncMock(
-        return_value=types.ListPromptsResult(prompts=[_prompt('summarize')])
-    )
-    service, cache = _service(client), _list_cache()
-
-    await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-    result = await service._dispatch(
-        _request('prompts/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-
-    assert [p['name'] for p in result.payload['result']['prompts']] == [
-        'github__summarize',
-        'jira__summarize',
-    ]
-
-
-async def test_a_partial_fanout_is_never_cached():
-    """A transient outage must not pin a truncated list for the whole TTL."""
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        side_effect=[
-            McpUpstreamError('github', 'boom'),
-            types.ListToolsResult(tools=[_tool('search')]),
-            types.ListToolsResult(tools=[_tool('get_issue')]),
-            types.ListToolsResult(tools=[_tool('search')]),
-        ]
-    )
-    service, cache = _service(client), _list_cache()
-
-    degraded = await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-    recovered = await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-
-    assert [t['name'] for t in degraded.payload['result']['tools']] == ['jira__search']
-    assert [t['name'] for t in recovered.payload['result']['tools']] == [
-        'github__get_issue',
-        'jira__search',
-    ]
-    assert client.list_tools.await_count == 2 * len(SERVERS)
-
-
-async def test_a_fully_failed_fanout_is_never_cached():
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        side_effect=[
-            McpUpstreamError('github', 'boom'),
-            McpUpstreamError('jira', 'boom'),
-            types.ListToolsResult(tools=[_tool('get_issue')]),
-            types.ListToolsResult(tools=[_tool('search')]),
-        ]
-    )
-    service, cache = _service(client), _list_cache()
-
-    failed = await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-    recovered = await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-
-    assert failed.payload['error']['code'] == -32000
-    assert len(recovered.payload['result']['tools']) == 2
-
-
-async def test_a_cache_hit_is_marked_on_the_span():
-    """A hit contacted no upstream, so it records no fan-out counts."""
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        return_value=types.ListToolsResult(tools=[_tool('get_issue')])
-    )
-    service, cache = _service(client), _list_cache()
-    await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-    span = _recording_span()
-
-    with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
-        await service._dispatch(
-            _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-        )
-
-    assert _span_attrs(span) == {
-        'rb.gateway.mcp_cache_hit': True,
-        'rb.gateway.mcp_result_count': 2,
-    }
-
-
-async def test_a_cache_hit_emits_a_cache_hit_event(emitted_cache_hits):
-    """A hit reaches the usage view and alert rules, not just the trace."""
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
-    service, cache = _service(client), _list_cache()
-
-    await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-    assert emitted_cache_hits.call_count == 0  # the miss that populated it
-
-    await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-
-    event = emitted_cache_hits.call_args.args[0]
-    assert event.event_type is EventType.CACHE_HIT
-    assert event.route_name == 'my-route'
-    assert event.api_key_uuid == 'key-uuid'
-    assert emitted_cache_hits.call_count == 1
-
-
-async def test_a_degraded_fanout_emits_no_hit_because_it_was_never_cached(
-    emitted_cache_hits,
-):
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.list_tools = AsyncMock(
-        side_effect=[
-            McpUpstreamError('github', 'boom'),
-            types.ListToolsResult(tools=[_tool('search')]),
-            McpUpstreamError('github', 'boom'),
-            types.ListToolsResult(tools=[_tool('search')]),
-        ]
-    )
-    service, cache = _service(client), _list_cache()
-
-    await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-    await service._dispatch(
-        _request('tools/list'), SERVERS, None, cache, authorized=_authorized()
-    )
-
-    emitted_cache_hits.assert_not_called()
+    assert result.payload == _error(-32000, 'All upstream MCP servers failed')
 
 
 # ---------------------------------------------------------------------------
-# MCP invocation events
+# Addressed calls: tools/call, prompts/get, resources/read
 # ---------------------------------------------------------------------------
 
-
-def _invoking_client() -> MagicMock:
-    """Build an upstream that answers all three addressed methods."""
-    client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
-    client.get_prompt = AsyncMock(return_value=types.GetPromptResult(messages=[]))
-    client.read_resource = AsyncMock(return_value=types.ReadResourceResult(contents=[]))
-    return client
-
-
-ADDRESSED = [
-    ('tools/call', {'name': 'github__get_issue'}),
-    ('prompts/get', {'name': 'github__summarize'}),
-    ('resources/read', {'uri': encode_resource_uri('github', RESOURCE_A)}),
-]
-
-
-@pytest.mark.parametrize(('method', 'params'), ADDRESSED)
-async def test_an_addressed_invocation_is_recorded(recorded_events, method, params):
-    await _service(_invoking_client())._dispatch(
-        _request(method, params=params), SERVERS, None, authorized=_authorized()
-    )
-
-    (event,) = _mcp_events(recorded_events)
-    assert event['MCP_METHOD'] == method
-    assert event['MCP_ALIAS'] == 'github'
-    # one per event, so a count and a sum of values agree
-    assert event['VALUE'] == 1.0
+README = 'https://github.example.com/readme'
+# Signed-URL tokens live in the query; the path is the resource identity.
+SIGNED_README = 'https://user:pw@github.example.com/readme?token=s3cret#frag'
+ARGS = {'id': '42'}
 
 
 @pytest.mark.parametrize(
-    ('method', 'params', 'target'),
+    ('method', 'params', 'upstream', 'returned', 'forwarded', 'target', 'expected'),
     [
-        ('tools/call', {'name': 'github__get_issue'}, 'get_issue'),
-        ('prompts/get', {'name': 'github__summarize'}, 'summarize'),
+        (
+            'tools/call',
+            # only the first '__' separates alias and name
+            {'name': 'github__ns__get_issue', 'arguments': ARGS},
+            'call_tool',
+            types.CallToolResult(
+                content=[types.TextContent(type='text', text='issue #42')],
+                isError=False,
+            ),
+            (GITHUB, 'ns__get_issue', ARGS),
+            'ns__get_issue',
+            {
+                'content': [{'type': 'text', 'text': 'issue #42'}],
+                'isError': False,
+                # Added by the SDK in mcp 2.x; always serialized, older peers
+                # ignore it.
+                'resultType': 'complete',
+            },
+        ),
+        (
+            'prompts/get',
+            {'name': 'github__ns__summarize', 'arguments': ARGS},
+            'get_prompt',
+            types.GetPromptResult(
+                description='a rendered prompt',
+                messages=[
+                    types.PromptMessage(
+                        role='user', content=types.TextContent(type='text', text='hi')
+                    )
+                ],
+            ),
+            (GITHUB, 'ns__summarize', ARGS),
+            'ns__summarize',
+            {
+                'description': 'a rendered prompt',
+                'messages': [
+                    {'role': 'user', 'content': {'type': 'text', 'text': 'hi'}}
+                ],
+                'resultType': 'complete',
+            },
+        ),
         (
             'resources/read',
-            {'uri': encode_resource_uri('github', RESOURCE_A)},
-            strip_uri_credentials(RESOURCE_A),
+            {'uri': encode_resource_uri('github', SIGNED_README)},
+            'read_resource',
+            types.ReadResourceResult(
+                contents=[
+                    types.TextResourceContents(
+                        uri=README, text='hello', mimeType='text/plain'
+                    )
+                ]
+            ),
+            # the upstream still gets the URI whole ...
+            (GITHUB, SIGNED_README),
+            # ... only the span attribute and the event are redacted
+            README,
+            {
+                'ttlMs': 0,
+                'cacheScope': 'private',
+                'contents': [
+                    {
+                        'uri': encode_resource_uri('github', README),
+                        'mimeType': 'text/plain',
+                        'text': 'hello',
+                    }
+                ],
+                'resultType': 'complete',
+            },
         ),
     ],
 )
-async def test_an_addressed_invocation_records_its_target(
-    recorded_events, method, params, target
+async def test_an_addressed_call_is_forwarded_traced_and_recorded(
+    recorded_events, method, params, upstream, returned, forwarded, target, expected
 ):
-    """The tool, prompt or resource, without the alias prefix. Same value the
-    trace carries as ``rb.gateway.mcp_target``.
+    """The result passes through, re-aliased where it carries a uri. The
+    target is the tool, prompt or resource without the alias prefix: the
+    same value on the span and on the invocation event, one per call so a
+    count and a sum of values agree.
     """
-    await _service(_invoking_client())._dispatch(
-        _request(method, params=params), SERVERS, None, authorized=_authorized()
-    )
+    client = MagicMock(spec_set=McpUpstreamClient)
+    setattr(client, upstream, AsyncMock(return_value=returned))
 
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        result = await _dispatch(
+            _request(method, params=params), client=client, headers=HEADERS
+        )
+
+    assert result.status_code == 200
+    assert result.payload == {'jsonrpc': '2.0', 'id': 1, 'result': expected}
+    getattr(client, upstream).assert_awaited_once_with(
+        *forwarded, client_headers=HEADERS
+    )
+    assert _attrs(mock_set_attrs) == {
+        'method': method,
+        'alias': 'github',
+        'target': target,
+    }
+    assert _invocation(recorded_events) == (method, 'github', target)
     (event,) = _mcp_events(recorded_events)
-    assert event['MCP_TARGET'] == target
+    assert event['VALUE'] == 1.0
+
+
+async def test_tools_call_is_error_result_passes_through():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.call_tool = AsyncMock(
+        return_value=types.CallToolResult(
+            content=[types.TextContent(type='text', text='rate limited')], isError=True
+        )
+    )
+
+    result = await _dispatch(
+        _request('tools/call', params={'name': 'github__get_issue'}), client=client
+    )
+
+    assert result.status_code == 200
+    assert result.payload['result']['isError'] is True
+
+
+def _rejections(method: str, noun: str, field: str) -> list:
+    requires = f'{method} requires a string params.{field}'
+    return [
+        *(
+            (method, {'name': n}, SERVERS, f'Unknown {noun}: {n}', {})
+            for n in ('unknown__x', 'no_separator', 'github', 'confluence__x')
+        ),
+        (method, {'name': ''}, SERVERS, requires, {}),
+        (method, {}, SERVERS, requires, {}),
+        (method, {'name': 7}, SERVERS, requires, {}),
+        (
+            method,
+            {'name': 'github__x', 'arguments': 'not-a-dict'},
+            SERVERS,
+            'params.arguments must be an object',
+            {'alias': 'github', 'target': 'x'},
+        ),
+        # A top-level alias not exposed on this route is invisible.
+        (
+            method,
+            {'name': 'jira__search'},
+            [GITHUB],
+            f'Unknown {noun}: jira__search',
+            {},
+        ),
+    ]
+
+
+ENCODED_FOREIGN = encode_resource_uri('confluence', 'https://x')
+ENCODED_JIRA = encode_resource_uri('jira', 'https://jira.example.com/board')
 
 
 @pytest.mark.parametrize(
-    'method',
-    ['initialize', 'ping', 'tools/list', 'prompts/list', 'resources/list'],
-)
-async def test_handshake_and_list_methods_record_nothing(recorded_events, method):
-    await _service(_list_client())._dispatch(
-        _request(method), SERVERS, None, authorized=_authorized()
-    )
-    assert _mcp_events(recorded_events) == []
-
-
-async def test_a_notification_records_nothing(recorded_events):
-    result = await _service()._dispatch(
-        {'jsonrpc': '2.0', 'method': 'notifications/initialized'},
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
-    assert result.status_code == 202
-    assert _mcp_events(recorded_events) == []
-
-
-@pytest.mark.parametrize(
-    'body',
+    ('method', 'params', 'servers', 'message', 'attributed'),
     [
-        'not a dict',
-        {'id': 1, 'method': 'tools/call'},  # missing jsonrpc
-        {'jsonrpc': '2.0', 'id': 1},  # missing method
+        *_rejections('tools/call', 'tool', 'name'),
+        *_rejections('prompts/get', 'prompt', 'name'),
+        *(
+            ('resources/read', params, SERVERS, message, {})
+            for params, message in (
+                ({}, 'resources/read requires a string params.uri'),
+                ({'uri': 7}, 'resources/read requires a string params.uri'),
+                ({'uri': ''}, 'resources/read requires a string params.uri'),
+                # not one of our wrapped URIs
+                (
+                    {'uri': 'https://example.com/plain'},
+                    'Unknown resource: https://example.com/plain',
+                ),
+                ({'uri': ENCODED_FOREIGN}, f'Unknown resource: {ENCODED_FOREIGN}'),
+            )
+        ),
+        (
+            'resources/read',
+            {'uri': ENCODED_JIRA},
+            [GITHUB],
+            f'Unknown resource: {ENCODED_JIRA}',
+            {},
+        ),
     ],
 )
-async def test_a_malformed_envelope_records_nothing(recorded_events, body):
-    await _service()._dispatch(body, SERVERS, None, authorized=_authorized())
-    assert _mcp_events(recorded_events) == []
+async def test_a_call_naming_nothing_on_the_route_is_32602_and_never_forwarded(
+    recorded_events, method, params, servers, message, attributed
+):
+    """Params is client-controlled, so a name resolving to no configured
+    server is never echoed into a span attribute or the event (unbounded
+    cardinality); it stays diagnosable from the error message, which becomes
+    the span status description. It is not blamed on an allowlist either.
+    Misdirected traffic is still counted, without an alias, so the totals
+    stay comparable.
+    """
+    client = _invoking_client()
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        result = await _dispatch(_request(method, params=params), servers, client)
+
+    assert result.status_code == 200
+    assert result.payload == _error(-32602, message)
+    client.call_tool.assert_not_awaited()
+    client.get_prompt.assert_not_awaited()
+    client.read_resource.assert_not_awaited()
+    assert _attrs(mock_set_attrs) == {'method': method, **attributed}
+    assert _invocation(recorded_events) == (
+        method,
+        attributed.get('alias', ''),
+        attributed.get('target', ''),
+    )
 
 
-async def test_a_failed_call_is_still_recorded(recorded_events):
+TIMED_OUT = "Upstream MCP server 'github' timed out"
+
+
+@pytest.mark.parametrize(
+    ('method', 'params', 'upstream'),
+    [
+        ('tools/call', {'name': 'github__get_issue'}, 'call_tool'),
+        ('prompts/get', {'name': 'github__summarize'}, 'get_prompt'),
+        (
+            'resources/read',
+            {'uri': encode_resource_uri('github', README)},
+            'read_resource',
+        ),
+    ],
+)
+async def test_an_upstream_error_maps_to_32000_and_is_still_recorded(
+    recorded_events, method, params, upstream
+):
     """An operator needs to see a key that keeps failing, not lose it."""
     client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock(side_effect=McpUpstreamError('github', 'timed out'))
-
-    result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__get_issue'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
+    setattr(
+        client, upstream, AsyncMock(side_effect=McpUpstreamError('github', TIMED_OUT))
     )
 
-    assert result.payload['error']['code'] == -32000
-    (event,) = _mcp_events(recorded_events)
-    assert event['MCP_METHOD'] == 'tools/call'
-    assert event['MCP_ALIAS'] == 'github'
+    result = await _dispatch(_request(method, params=params), client=client)
+
+    assert result.status_code == 200
+    assert result.payload == _error(-32000, TIMED_OUT)
+    assert _invocation(recorded_events)[:2] == (method, 'github')
 
 
-async def test_a_call_denied_by_an_allowlist_is_still_recorded(recorded_events):
+async def test_unexpected_exception_is_sanitized_internal_error():
     client = MagicMock(spec_set=McpUpstreamClient)
-    client.call_tool = AsyncMock()
-    servers = [_server(allowed_tools=['other'])]
+    client.call_tool = AsyncMock(side_effect=ValueError('secret detail'))
 
-    result = await _service(client)._dispatch(
-        _request('tools/call', params={'name': 'github__get_issue'}),
-        servers,
-        None,
-        authorized=_authorized(servers),
+    result = await _dispatch(
+        _request('tools/call', params={'name': 'github__get_issue'}), client=client
     )
 
-    assert result.payload['error']['code'] == -32602
-    client.call_tool.assert_not_awaited()
-    (event,) = _mcp_events(recorded_events)
-    assert event['MCP_ALIAS'] == 'github'
-    assert event['MCP_TARGET'] == 'get_issue'
+    assert result.status_code == 200
+    assert result.payload == _error(-32603, 'Internal error')
 
 
-async def test_a_call_naming_an_unconfigured_server_is_recorded_without_an_alias(
-    recorded_events,
+WRAPPED_A = encode_resource_uri('github', RESOURCE_A)
+
+
+@pytest.mark.parametrize(
+    ('method', 'params', 'upstream', 'allowlist', 'target', 'denied_message'),
+    [
+        (
+            'tools/call',
+            {'name': 'github__a'},
+            'call_tool',
+            {'allowed_tools': ['a']},
+            'a',
+            None,
+        ),
+        *(
+            (
+                'tools/call',
+                {'name': 'github__a'},
+                'call_tool',
+                {'allowed_tools': allow},
+                'a',
+                'Unknown tool: github__a',
+            )
+            for allow in (['b'], [])
+        ),
+        (
+            'prompts/get',
+            {'name': 'github__a'},
+            'get_prompt',
+            {'allowed_prompts': ['a']},
+            'a',
+            None,
+        ),
+        *(
+            (
+                'prompts/get',
+                {'name': 'github__a'},
+                'get_prompt',
+                {'allowed_prompts': allow},
+                'a',
+                'Unknown prompt: github__a',
+            )
+            for allow in (['b'], [])
+        ),
+        (
+            'resources/read',
+            {'uri': WRAPPED_A},
+            'read_resource',
+            {'allowed_resources': [RESOURCE_A]},
+            RESOURCE_A,
+            None,
+        ),
+        *(
+            (
+                'resources/read',
+                {'uri': WRAPPED_A},
+                'read_resource',
+                {'allowed_resources': allow},
+                RESOURCE_A,
+                f'Unknown resource: {WRAPPED_A}',
+            )
+            for allow in ([RESOURCE_B], [])
+        ),
+    ],
+)
+async def test_a_call_outside_the_allowlist_is_rejected_attributably(
+    recorded_events, method, params, upstream, allowlist, target, denied_message
 ):
-    """Misdirected traffic stays visible, and the totals stay comparable."""
-    await _service()._dispatch(
-        _request('tools/call', params={'name': 'confluence__x'}),
-        SERVERS,
-        None,
-        authorized=_authorized(),
-    )
+    """Never listed is no defense: a cached list will still call it.
 
-    (event,) = _mcp_events(recorded_events)
-    assert event['MCP_METHOD'] == 'tools/call'
-    assert event['MCP_ALIAS'] == ''
-    # The name after an unknown alias is never written. Anyone could mint it.
-    assert event['MCP_TARGET'] == ''
+    A denial is indistinguishable from a target that does not exist, so the
+    allowlist does not confirm what it hides; the ``denied`` span attribute
+    is what tells a policy rejection from a typo. A denied call is still an
+    invocation.
+    """
+    client = _invoking_client()
+
+    with patch(f'{MCP_SERVICE}.set_mcp_attributes') as mock_set_attrs:
+        result = await _dispatch(
+            _request(method, params=params), [_server(**allowlist)], client
+        )
+
+    forwarded = getattr(client, upstream)
+    expected_attrs = {'method': method, 'alias': 'github', 'target': target}
+    if denied_message is None:
+        assert 'error' not in result.payload
+        assert forwarded.await_args.args[1] == target
+        assert _attrs(mock_set_attrs) == expected_attrs
+    else:
+        assert result.status_code == 200
+        assert result.payload == _error(-32602, denied_message)
+        forwarded.assert_not_awaited()
+        assert _attrs(mock_set_attrs) == {**expected_attrs, 'denied': 'allowlist'}
+    assert _invocation(recorded_events) == (method, 'github', target)
 
 
 async def test_an_invocation_carries_the_request_envelope(recorded_events):
     set_current_request_tags(('env=prod', 'team=retail'))
     try:
-        await _service(_invoking_client())._dispatch(
+        await _dispatch(
             _request('tools/call', params={'name': 'github__get_issue'}),
-            SERVERS,
-            None,
-            authorized=_authorized(),
+            client=_invoking_client(),
         )
     finally:
         set_current_request_tags(())
@@ -1910,11 +1043,9 @@ async def test_recording_never_fails_the_call():
     """Observability must not be able to take the proxy down."""
     client = _invoking_client()
     with patch(f'{MCP_SERVICE}.emit_event', side_effect=RuntimeError('broker down')):
-        result = await _service(client)._dispatch(
+        result = await _dispatch(
             _request('tools/call', params={'name': 'github__get_issue'}),
-            SERVERS,
-            None,
-            authorized=_authorized(),
+            client=client,
         )
 
     assert result.status_code == 200
@@ -1922,22 +1053,120 @@ async def test_recording_never_fails_the_call():
     client.call_tool.assert_awaited_once()
 
 
+# ---------------------------------------------------------------------------
+# List cache
+# ---------------------------------------------------------------------------
+
+
+def _list_cache(servers=SERVERS) -> McpListCache:
+    """Build a real in-memory cache, wired as the endpoint wires it.
+
+    for_route returns None for a route that must not be cached; these tests all
+    use cacheable routes, so the assert both narrows the type and fails loudly
+    if a guard ever starts firing on one of them.
+    """
+    cache = McpListCache.for_route(
+        gateway_cache=GatewayCache(CacheToolsInMemory()),
+        ttl=None,
+        authorized=_authorized(servers),
+    )
+    assert cache is not None, 'expected these servers to be cacheable'
+    return cache
+
+
+@KINDS
+async def test_a_second_list_is_served_from_cache_and_reported(
+    emitted_cache_hits, kind
+):
+    """One fan-out for the two requests, not one per server per request. A
+    hit contacted no upstream, so its span records no fan-out counts, and it
+    reaches the usage view and alert rules as a CACHE_HIT event.
+    """
+    attr = LISTS[kind][0]
+    client = MagicMock(spec_set=McpUpstreamClient)
+    setattr(
+        client,
+        attr,
+        AsyncMock(side_effect=[_listing(kind, 'get'), _listing(kind, 'search')]),
+    )
+    service, cache = _service(client), _list_cache()
+    request = _request(f'{kind}/list')
+
+    first = await _dispatch(request, cache=cache, service=service)
+    assert emitted_cache_hits.call_count == 0  # the miss that populated it
+    span = _recording_span()
+    with patch(f'{MCP_SERVICE}.get_current_span', return_value=span):
+        second = await _dispatch(request, cache=cache, service=service)
+
+    assert second.payload['result'] == first.payload['result']
+    # the wrapped uri survives the round trip through the cache
+    assert _ids(kind, second.payload) == [
+        _exposed(kind, 'github', 'get'),
+        _exposed(kind, 'jira', 'search'),
+    ]
+    assert getattr(client, attr).await_count == len(SERVERS)
+    assert _span_attrs(span) == {
+        'rb.gateway.mcp_cache_hit': True,
+        'rb.gateway.mcp_result_count': 2,
+    }
+    event = emitted_cache_hits.call_args.args[0]
+    assert event.event_type is EventType.CACHE_HIT
+    assert event.route_name == 'my-route'
+    assert event.api_key_uuid == 'key-uuid'
+    assert emitted_cache_hits.call_count == 1
+
+
+async def test_one_cached_method_never_answers_another():
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    client.list_prompts = AsyncMock(return_value=_listing('prompts', 'summarize'))
+    service, cache = _service(client), _list_cache()
+
+    await _dispatch(_request('tools/list'), cache=cache, service=service)
+    result = await _dispatch(_request('prompts/list'), cache=cache, service=service)
+
+    assert _ids('prompts', result.payload) == [
+        'github__summarize',
+        'jira__summarize',
+    ]
+
+
 @pytest.mark.parametrize(
-    'body',
+    ('first_answers', 'degraded_ids'),
     [
-        # params that are not an object: nothing was addressed
-        {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': 5},
-        # an id the protocol does not allow: rejected like a bad envelope
-        {'jsonrpc': '2.0', 'id': 1.5, 'method': 'tools/call'},
+        pytest.param(
+            [McpUpstreamError('github', 'boom'), _listing('tools', 'search')],
+            ['jira__search'],
+            id='partial',
+        ),
+        pytest.param(
+            [McpUpstreamError('github', 'boom'), McpUpstreamError('jira', 'boom')],
+            None,
+            id='failed',
+        ),
     ],
 )
-async def test_a_call_rejected_before_it_addressed_anything_records_nothing(
-    recorded_events, body
+async def test_a_degraded_fanout_is_never_cached(
+    emitted_cache_hits, first_answers, degraded_ids
 ):
-    """The line is "a well-formed addressed call", not "any tools/call".
+    """A transient outage must not pin a truncated list for the whole TTL."""
+    client = MagicMock(spec_set=McpUpstreamClient)
+    client.list_tools = AsyncMock(
+        side_effect=[
+            *first_answers,
+            _listing('tools', 'get_issue'),
+            _listing('tools', 'search'),
+        ]
+    )
+    service, cache = _service(client), _list_cache()
 
-    Both of these are rejected before a target can be resolved, so counting
-    them would mean counting requests that never named a server.
-    """
-    await _service()._dispatch(body, SERVERS, None, authorized=_authorized())
-    assert _mcp_events(recorded_events) == []
+    degraded = await _dispatch(_request('tools/list'), cache=cache, service=service)
+    recovered = await _dispatch(_request('tools/list'), cache=cache, service=service)
+
+    if degraded_ids is None:
+        assert degraded.payload == _error(-32000, 'All upstream MCP servers failed')
+    else:
+        assert _ids('tools', degraded.payload) == degraded_ids
+    assert _ids('tools', recovered.payload) == ['github__get_issue', 'jira__search']
+    assert client.list_tools.await_count == 2 * len(SERVERS)
+    emitted_cache_hits.assert_not_called()

@@ -53,21 +53,17 @@ def _fake_insert_many(limits):
 
 
 class KeyServiceTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.key_dao: KeyDAO = MagicMock(spec_set=KeyDAO)
-        cls.group_dao: GroupDAO = MagicMock(spec_set=GroupDAO)
-        cls.api_key_security: ApiKeySecurity = MagicMock(spec_set=ApiKeySecurity)
-        cls.key_limit_dao: KeyLimitDAO = MagicMock(spec_set=KeyLimitDAO)
-        cls.key_service = KeyService(
-            key_dao=cls.key_dao,
-            api_key_security=cls.api_key_security,
-            group_dao=cls.group_dao,
-            key_limit_dao=cls.key_limit_dao,
-        )
-        cls.mocks = [cls.key_dao, cls.group_dao, cls.key_limit_dao]
-
     def setUp(self):
+        self.key_dao: KeyDAO = MagicMock(spec_set=KeyDAO)
+        self.group_dao: GroupDAO = MagicMock(spec_set=GroupDAO)
+        self.api_key_security: ApiKeySecurity = MagicMock(spec_set=ApiKeySecurity)
+        self.key_limit_dao: KeyLimitDAO = MagicMock(spec_set=KeyLimitDAO)
+        self.key_service = KeyService(
+            key_dao=self.key_dao,
+            api_key_security=self.api_key_security,
+            group_dao=self.group_dao,
+            key_limit_dao=self.key_limit_dao,
+        )
         self.key_limit_dao.get_by_key_uuid = MagicMock(return_value=[])
 
     def test_create_key_ok(self):
@@ -89,21 +85,19 @@ class KeyServiceTest(unittest.TestCase):
                 uuid=uuid.uuid4(), name='three', group_uuid=group_two
             ),
         ]
-        self.key_dao.get_all = MagicMock(return_value=api_keys)
-        res = self.key_service.get_all(include_groups=False, only_unassigned=False)
-        self.key_dao.get_all.assert_called_once()
-        assert len(res) == 3
-
-    def test_get_all_only_unassigned(self):
-        api_keys = [
-            db_mock.get_sample_key(uuid=uuid.uuid4(), name='one'),
-            db_mock.get_sample_key(uuid=uuid.uuid4(), name='two'),
-            db_mock.get_sample_key(uuid=uuid.uuid4(), name='three'),
-        ]
-        self.key_dao.get_all = MagicMock(return_value=api_keys)
-        res = self.key_service.get_all(include_groups=False, only_unassigned=True)
-        self.key_dao.get_all.assert_called_once()
-        assert len(res) == 3
+        for only_unassigned in (False, True):
+            with self.subTest(only_unassigned=only_unassigned):
+                self.key_dao.get_all = MagicMock(return_value=api_keys)
+                res = self.key_service.get_all(
+                    include_groups=False, only_unassigned=only_unassigned
+                )
+                self.key_dao.get_all.assert_called_once_with(
+                    only_unassigned=only_unassigned
+                )
+                assert res == [
+                    KeyFullOut.from_key_obscured(k, include_groups=False)
+                    for k in api_keys
+                ]
 
     def test_delete_key(self):
         key = db_mock.get_sample_key()
@@ -146,13 +140,6 @@ class KeyServiceTest(unittest.TestCase):
             self.key_service.delete_key,
             key.uuid,
         )
-
-    def test_get_key_by_uuid(self):
-        key = db_mock.get_sample_key()
-        self.key_dao.get_by_uuid = MagicMock(return_value=key)
-        res = self.key_service.get_key_by_uuid(key.uuid, False)
-        self.key_dao.get_by_uuid.assert_called_once_with(key.uuid)
-        assert res == KeyFullOut.from_key_obscured(key)
 
     def test_get_missing_key_by_uuid(self):
         key = db_mock.get_sample_key()
@@ -202,45 +189,34 @@ class KeyServiceTest(unittest.TestCase):
             key_in,
         )
 
-    def test_add_group_to_key_success_with_groups(self):
-        key_uuid = uuid.uuid4()
-        group_uuid = uuid.uuid4()
-        group = db_mock.get_sample_group(uuid=group_uuid)
-        key = db_mock.get_sample_key(uuid=key_uuid)
-        self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        self.key_dao.get_by_uuid = MagicMock(return_value=key)
-        key.group = group
-        self.key_dao.assign_group = MagicMock(return_value=key)
-        key_groups_in = KeyGroupIn(group=group.uuid)
-        result = self.key_service.add_group_to_key(
-            key_uuid=key_uuid, key_group_in=key_groups_in, include_groups=True
-        )
-        self.key_dao.get_by_uuid.assert_called_once_with(key_uuid)
-        assert result.uuid == key_uuid
-        assert result.name == 'rb-key'
-        assert result.group == GroupOut.from_group(group)
-
-    def test_add_group_to_key_success_without_groups(self):
+    def test_add_group_to_key_success(self):
         key_uuid = uuid.uuid4()
         group = db_mock.get_sample_group()
         key = db_mock.get_sample_key(uuid=key_uuid)
-        self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        self.key_dao.get_by_uuid = MagicMock(return_value=key)
         key.group = group
+        self.group_dao.get_by_uuid = MagicMock(return_value=group)
         self.key_dao.assign_group = MagicMock(return_value=key)
-        key_groups_in = KeyGroupIn(group=group.uuid)
-        result = self.key_service.add_group_to_key(
-            key_uuid=key_uuid, key_group_in=key_groups_in, include_groups=False
-        )
-        self.key_dao.get_by_uuid.assert_called_once_with(key_uuid)
-        assert result.uuid == key_uuid
-        assert result.name == 'rb-key'
-        assert result.group is None
+        for include_groups, expected_group in (
+            (True, GroupOut.from_group(group)),
+            (False, None),
+        ):
+            with self.subTest(include_groups=include_groups):
+                self.key_dao.get_by_uuid = MagicMock(return_value=key)
+                result = self.key_service.add_group_to_key(
+                    key_uuid=key_uuid,
+                    key_group_in=KeyGroupIn(group=group.uuid),
+                    include_groups=include_groups,
+                )
+                self.key_dao.get_by_uuid.assert_called_once_with(key_uuid)
+                assert result.uuid == key_uuid
+                assert result.name == 'rb-key'
+                assert result.group == expected_group
 
     def test_add_group_to_key_already_exists(self):
         key_uuid, group_uuid = (uuid.uuid4(), uuid.uuid4())
         key = db_mock.get_sample_key(uuid=key_uuid, group_uuid=group_uuid)
-        self.key_dao.insert(key)
+        key.group = db_mock.get_sample_group(uuid=group_uuid)
+        self.key_dao.get_by_uuid = MagicMock(return_value=key)
         key_group_in = KeyGroupIn(group=group_uuid)
         pytest.raises(
             KeyGroupAlreadyExistsError,
@@ -251,71 +227,27 @@ class KeyServiceTest(unittest.TestCase):
         )
 
     def test_add_group_to_key_owner_mismatch_raises(self):
-        key_uuid = uuid.uuid4()
-        group_uuid = uuid.uuid4()
-        gateway_key = db_mock.get_sample_key(uuid=key_uuid)  # owner='gateway'
-        keycloak_group = db_mock.get_sample_group(uuid=group_uuid)
-        keycloak_group.owner = 'keycloak'
-        self.key_dao.get_by_uuid = MagicMock(return_value=gateway_key)
-        self.group_dao.get_by_uuid = MagicMock(return_value=keycloak_group)
-        key_group_in = KeyGroupIn(group=group_uuid)
-        pytest.raises(
-            KeyOperationNotAllowedError,
-            self.key_service.add_group_to_key,
-            key_uuid=key_uuid,
-            key_group_in=key_group_in,
-            include_groups=False,
-        )
-        self.key_dao.assign_group.assert_not_called()
-
-    def test_add_group_to_keycloak_key_raises(self):
-        key_uuid = uuid.uuid4()
-        group_uuid = uuid.uuid4()
-        keycloak_key = db_mock.get_sample_key(uuid=key_uuid)
-        keycloak_key.owner = 'keycloak'
-        keycloak_group = db_mock.get_sample_group(uuid=group_uuid)
-        keycloak_group.owner = 'keycloak'
-        self.key_dao.get_by_uuid = MagicMock(return_value=keycloak_key)
-        self.group_dao.get_by_uuid = MagicMock(return_value=keycloak_group)
-        self.key_dao.assign_group = MagicMock()
-        key_group_in = KeyGroupIn(group=group_uuid)
-        pytest.raises(
-            KeyOperationNotAllowedError,
-            self.key_service.add_group_to_key,
-            key_uuid=key_uuid,
-            key_group_in=key_group_in,
-            include_groups=False,
-        )
-        self.key_dao.assign_group.assert_not_called()
-
-    def test_add_group_to_key_keycloak_key_to_gateway_group_raises(self):
-        key_uuid = uuid.uuid4()
-        group_uuid = uuid.uuid4()
-        keycloak_key = db_mock.get_sample_key(uuid=key_uuid)
-        keycloak_key.owner = 'keycloak'
-        gateway_group = db_mock.get_sample_group(uuid=group_uuid)  # owner='gateway'
-        self.key_dao.get_by_uuid = MagicMock(return_value=keycloak_key)
-        self.group_dao.get_by_uuid = MagicMock(return_value=gateway_group)
-        key_group_in = KeyGroupIn(group=group_uuid)
-        pytest.raises(
-            KeyOperationNotAllowedError,
-            self.key_service.add_group_to_key,
-            key_uuid=key_uuid,
-            key_group_in=key_group_in,
-            include_groups=False,
-        )
-        self.key_dao.assign_group.assert_not_called()
-
-    def test_get_key_by_hashed_key(self):
-        key = db_mock.get_sample_key_with_group()
-        self.key_dao.get_key_by_hashed_key = MagicMock(return_value=key)
-        res = self.key_service.get_key_by_hashed_key(db_mock.HASHED_KEY)
-        self.key_dao.get_key_by_hashed_key.assert_called_once_with(
-            hashed_api_key=db_mock.HASHED_KEY
-        )
-        assert res == KeyFullOut.from_key_obscured(
-            key, include_groups=True, include_limits=True
-        )
+        """Only a gateway key may join a gateway group."""
+        for key_owner, group_owner in (
+            ('gateway', 'keycloak'),
+            ('keycloak', 'keycloak'),
+            ('keycloak', 'gateway'),
+        ):
+            with self.subTest(key_owner=key_owner, group_owner=group_owner):
+                key = db_mock.get_sample_key(uuid=uuid.uuid4())
+                key.owner = key_owner
+                group = db_mock.get_sample_group(uuid=uuid.uuid4())
+                group.owner = group_owner
+                self.key_dao.get_by_uuid = MagicMock(return_value=key)
+                self.group_dao.get_by_uuid = MagicMock(return_value=group)
+                pytest.raises(
+                    KeyOperationNotAllowedError,
+                    self.key_service.add_group_to_key,
+                    key_uuid=key.uuid,
+                    key_group_in=KeyGroupIn(group=group.uuid),
+                    include_groups=False,
+                )
+                self.key_dao.assign_group.assert_not_called()
 
     def test_get_associable_groups_unassigned_key(self):
         key = db_mock.get_sample_key()

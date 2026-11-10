@@ -7,6 +7,7 @@ from httpx_aiohttp import HttpxAiohttpClient
 import openai
 from pydantic import BaseModel
 import pytest
+import tiktoken
 
 # Loads the scenario registry before the OpenAI scenarios module it imports.
 from tests.common import provider_responses as canned
@@ -113,6 +114,75 @@ def test_stream_usage_defaults_on_only_for_the_official_endpoint():
         ChatOpenAI(model='gpt-4o', api_key='sk', base_url='http://x/v1').stream_usage
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ('cls', 'kwargs', 'error'),
+    [
+        (ChatOpenAI, {'n': 0}, 'at least 1'),
+        (ChatOpenAI, {'n': 2, 'streaming': True}, 'must be 1 when streaming'),
+        (ChatOpenAI, {'foo': 1, 'model_kwargs': {'foo': 2}}, 'supplied twice'),
+        (
+            ChatOpenAI,
+            {'openai_proxy': 'http://p', 'http_async_client': HttpxAiohttpClient()},
+            'openai_proxy',
+        ),
+        (AzureChatOpenAI, {**AZURE, 'base_url': 'https://r.com'}, 'azure_endpoint'),
+        (
+            AzureChatOpenAI,
+            {**AZURE, 'base_url': 'https://r.com/openai', 'azure_deployment': 'd'},
+            'azure_deployment',
+        ),
+        (OpenAIEmbeddings, {'openai_api_type': 'azure'}, 'AzureOpenAIEmbeddings'),
+        (
+            OpenAIEmbeddings,
+            {'openai_proxy': 'http://p', 'http_async_client': HttpxAiohttpClient()},
+            'openai_proxy',
+        ),
+        (
+            AzureOpenAIEmbeddings,
+            {**AZURE, 'base_url': 'https://r.com'},
+            'azure_endpoint',
+        ),
+        (
+            AzureOpenAIEmbeddings,
+            {**AZURE, 'base_url': 'https://r.com/openai', 'azure_deployment': 'd'},
+            'azure_deployment',
+        ),
+    ],
+    ids=[
+        'n_zero',
+        'n_streaming',
+        'kwarg_twice',
+        'proxy_and_client',
+        'azure_base_url',
+        'azure_deployment_and_base_url',
+        'embeddings_azure_type',
+        'embeddings_proxy_and_client',
+        'azure_embeddings_base_url',
+        'azure_embeddings_deployment_and_base_url',
+    ],
+)
+def test_conflicting_settings_are_rejected(cls, kwargs, error):
+    kwargs = {'api_key': 'sk', 'model': 'm', **kwargs}
+    with pytest.raises(ValueError, match=error):
+        cls(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ('env', 'expected'),
+    [(None, 120.0), ('5', 5.0), ('slow', 120.0), ('-1', 120.0)],
+    ids=['default', 'from_env', 'not_a_number', 'negative'],
+)
+def test_a_negative_chunk_timeout_falls_back_to_the_env_default(
+    monkeypatch, env, expected
+):
+    if env is None:
+        monkeypatch.delenv('LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S', raising=False)
+    else:
+        monkeypatch.setenv('LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S', env)
+
+    assert model(stream_chunk_timeout=-1).stream_chunk_timeout == expected
 
 
 # ── Chat Completions requests ────────────────────────────────────────────────
@@ -263,16 +333,60 @@ async def test_multimodal_user_content():
     ]
 
 
-async def test_provider_errors_propagate():
-    with pytest.raises(openai.BadRequestError):
-        await invoke(model(), [canned.error(400, 'bad request')])
-    with pytest.raises(openai.BadRequestError):
-        await stream(model(), [canned.error(400, 'bad request')])
+@pytest.mark.parametrize(
+    ('status', 'message', 'error', 'traced_as'),
+    [
+        (400, 'bad request', openai.BadRequestError, 'OpenAIInvalidRequestError'),
+        (400, 'prompt is too long', openai.BadRequestError, 'OpenAIContextOverflowError'),
+        (401, 'no key', openai.AuthenticationError, 'OpenAIAuthenticationError'),
+        (403, 'denied', openai.PermissionDeniedError, 'OpenAIPermissionDeniedError'),
+        (404, 'no model', openai.NotFoundError, 'OpenAIModelNotFoundError'),
+        (429, 'slow down', openai.RateLimitError, 'OpenAIRateLimitError'),
+        (500, 'exploded', openai.InternalServerError, 'OpenAIAPIError'),
+        (
+            500,
+            'input exceeds the context window',
+            openai.InternalServerError,
+            'OpenAIAPIContextOverflowError',
+        ),
+        (409, 'conflict', openai.ConflictError, 'ConflictError'),
+    ],
+    ids=[
+        'bad_request',
+        'context_overflow',
+        'auth',
+        'permission',
+        'not_found',
+        'rate_limit',
+        'server',
+        'api_context_overflow',
+        'unmapped',
+    ],
+)  # fmt: skip
+async def test_provider_errors_propagate_and_are_traced_by_langchain_name(
+    status, message, error, traced_as
+):
+    chat_model = model(max_retries=0)
+    with pytest.raises(error) as raised:
+        await invoke(chat_model, [canned.error(status, message)])
+    with pytest.raises(error):
+        await stream(chat_model, [canned.error(status, message)])
+
+    assert chat_model._error_type(raised.value) == traced_as
 
 
-async def test_null_choices_is_an_error():
-    with pytest.raises(TypeError, match="null value for 'choices'"):
-        await invoke(model(), [CannedResponse(json_body={'choices': None})])
+@pytest.mark.parametrize(
+    ('body', 'error', 'match'),
+    [
+        ({'choices': None}, TypeError, "null value for 'choices'"),
+        ({'error': 'quota'}, ValueError, 'quota'),
+        ('<html>' + 'x' * 300, ValueError, r'got str: .*\.\.\.$'),
+    ],
+    ids=['null_choices', 'error_field', 'not_json'],
+)
+async def test_a_malformed_reply_is_an_error(body, error, match):
+    with pytest.raises(error, match=match):
+        await invoke(model(), [CannedResponse(json_body=body)])
 
 
 # ── Streaming ────────────────────────────────────────────────────────────────
@@ -453,8 +567,12 @@ async def test_reasoning_kwarg_switches_to_the_responses_api_stream():
 
 
 async def test_azure_deployment_url_and_content_filter():
-    chat_model = init_chat_model('azure_openai:dep', max_tokens=5, **AZURE)
-    result, requests = await invoke(chat_model, [canned.openai_completion()])
+    chat_model = init_chat_model(
+        'azure_openai:dep', max_tokens=5, model_version='0613', **AZURE
+    )
+    result, requests = await invoke(
+        chat_model, [canned.openai_completion_with(prompt_filter_results=[])]
+    )
     assert (
         requests[0]['url']
         == 'https://res.openai.azure.com/openai/deployments/dep/chat/completions'
@@ -463,6 +581,8 @@ async def test_azure_deployment_url_and_content_filter():
     assert requests[0]['headers']['api-key'] == 'sk'
     assert requests[0]['body']['max_completion_tokens'] == 5
     assert result.response_metadata['content_filter_results'] == {}
+    assert result.response_metadata['prompt_filter_results'] == []
+    assert result.response_metadata['model_name'] == 'gpt-4o-mini-2024-07-18-0613'
 
     with pytest.raises(ValueError, match='content filter'):
         await invoke(
@@ -483,13 +603,6 @@ async def test_azure_function_calling_drops_parallel_tool_calls():
         structured, [canned.openai_completion(None, tool_calls=[tool_call])]
     )
     assert 'parallel_tool_calls' not in requests[0]['body']
-
-
-def test_azure_base_url_must_point_to_openai_path():
-    with pytest.raises(ValueError, match='azure_endpoint'):
-        AzureChatOpenAI(
-            model='dep', api_key='sk', api_version='v', base_url='https://res.com'
-        )
 
 
 # ── Embeddings ───────────────────────────────────────────────────────────────
@@ -538,6 +651,39 @@ async def test_embeddings_without_ctx_check_send_raw_text():
     assert recorder.requests[0]['body']['input'] == ['hello']
     assert recorder.requests[0]['body']['dimensions'] == 4
     assert vector == [0.1, 0.11, 0.12, 0.13]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'kwargs', 'text', 'sent'),
+    [
+        ('my-embedder', {}, 'a\nb', 'a\nb'),
+        ('my-embedder-001', {}, 'a\nb', 'a b'),
+        ('my-embedder', {'allowed_special': 'all'}, '<|endoftext|>', '<|endoftext|>'),
+    ],
+    ids=['unknown_model_uses_cl100k', 'first_generation_drops_newlines', 'special'],
+)
+async def test_embeddings_tokenize_with_the_models_encoding(
+    model_name, kwargs, text, sent
+):
+    embeddings = init_embeddings(model_name, provider='openai', api_key='sk', **kwargs)
+    with ProviderRecorder([canned.openai_embeddings(count=1)]) as recorder:
+        await embeddings.aembed_query(text)
+
+    encoding = tiktoken.get_encoding('cl100k_base')
+    assert recorder.requests[0]['body']['input'] == [
+        encoding.encode(sent, allowed_special='all')
+    ]
+
+
+async def test_embeddings_without_tiktoken_cannot_check_the_length():
+    embeddings = init_embeddings(
+        'text-embedding-3-small',
+        provider='openai',
+        api_key='sk',
+        tiktoken_enabled=False,
+    )
+    with pytest.raises(ValueError, match='transformers'):
+        await embeddings.aembed_query('hello')
 
 
 # ── Chat Completions message conversion ──────────────────────────────────────

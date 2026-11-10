@@ -504,7 +504,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         # already consumed the body stream by the time validation fails.
         body = ''
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         # exc.errors() can contain raw exception objects (e.g. the ctx.error of
         # a model_validator that raised ValueError), which plain json.dumps
         # cannot serialize — jsonable_encoder handles those.

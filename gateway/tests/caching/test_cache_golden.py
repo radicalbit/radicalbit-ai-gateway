@@ -12,45 +12,20 @@ send the requests and read the store) may change.
 from dataclasses import replace
 from decimal import Decimal
 import json
-import logging
-from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
 import numpy as np
-import openai
-from opentelemetry import trace
-from opentelemetry.sdk.trace import SpanProcessor
 import pytest
-from starlette.requests import Request
 import tiktoken
-from traceloop.sdk import Traceloop
-from traceloop.sdk.tracing.tracing import TracerWrapper
 
 from tests.common import db_mock, provider_responses as upstream
 from tests.common.audio import make_wav_bytes
-from tests.common.provider_recorder import CannedResponse, ProviderRecorder
+from tests.common.gateway_harness import Gateway, build_routes, open_gateway
+from tests.common.provider_recorder import CannedResponse
 
-from radicalbit_ai_gateway import server
-from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
-from radicalbit_ai_gateway.events import events_processor
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.metrics import define_metrics
 from radicalbit_ai_gateway.models.event_type import EventType
-from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import app, group_service, key_service
-from radicalbit_ai_gateway.services.cost_service import CostService
-from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_gateway_routes_from_config,
-)
 
-LOGGER = get_app_config().log_config.logger_name
 CACHE_EVENTS = {
     EventType.CACHE_HIT,
     EventType.CACHE_INPUT_TOKENS,
@@ -59,7 +34,6 @@ CACHE_EVENTS = {
 MODEL_EVENTS = {EventType.MODEL_INVOCATION, EventType.INPUT_TOKEN_PROCESSED}
 METRICS = ('cache_hit_counter', 'cache_input_tokens', 'cache_output_tokens')
 CREDENTIALS = {'api_key': 'sk-test'}
-WAV = make_wav_bytes(1.0)
 API_KEY = str(db_mock.API_KEY_UUID)
 PROJECT = '11111111-1111-1111-1111-111111111111'
 CACHE_HIT = 'X-RB-AIGATEWAY-CACHE-HIT'
@@ -244,35 +218,15 @@ class FakeSemanticIndex(SemanticCache):
 
 
 def _build_routes() -> dict:
-    config = GatewayConfig.model_validate(CONFIG)
-    cost_service = CostService(
-        chat_models_by_id=config.chat_models_by_id,
-        embedding_models_by_id=config.embedding_models_by_id,
-        transcription_models_by_id=config.transcription_models_by_id,
-        decision_models_by_id=config.decision_models_by_id,
-    )
-    guardrails = Guardrails(
-        presidio_engine=PresidioEngine(),
-        judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
-        cost_service=cost_service,
-        guardrails=config.guardrails,
-        chat_models_by_id=config.chat_models_by_id,
-    )
-    routes = build_gateway_routes_from_config(
-        config,
-        guardrails,
-        redis_client=None,
-        cost_service=cost_service,
-        httpx_client=None,
-        project_uuid=PROJECT,
-    )
-    for route in routes.values():
-        route.project_name = 'proj'
-    _use_semantic_index(routes['semantic'], FakeSemanticIndex())
-    _use_semantic_index(routes['semantic_redacted'], FakeSemanticIndex())
-    _use_semantic_index(routes['semantic_limited'], FakeSemanticIndex())
-    _use_semantic_index(routes['semantic_fallback'], FakeSemanticIndex())
-    return {f'proj/{name}': route for name, route in routes.items()}
+    routes = build_routes(CONFIG, project_uuid=PROJECT)
+    for name in (
+        'semantic',
+        'semantic_redacted',
+        'semantic_limited',
+        'semantic_fallback',
+    ):
+        _use_semantic_index(routes[f'proj/{name}'], FakeSemanticIndex())
+    return routes
 
 
 def _use_semantic_index(route, index: FakeSemanticIndex) -> None:
@@ -298,120 +252,23 @@ def _plant(route, key: str, raw: str) -> None:
     )
 
 
-def _mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
 @pytest.fixture
 def gateway(caplog):
-    routes = _build_routes()
-    app.dependency_overrides[get_request_uuid] = _mock_request_uuid
-    saved_validator = app.state.token_validator
-    saved_routes = getattr(app.state, 'routes', None)
-    app.state.token_validator = ApiKeyValidator(key_service=key_service)
-    app.state.routes = routes
     api_key = db_mock.get_sample_key_with_group(
         uuid=db_mock.API_KEY_UUID, group_uuid=db_mock.GROUP_UUID
     )
-    events: list = []
-    metrics: list = []
-    patchers = [
-        patch.object(key_service, 'get_key_by_hashed_key', return_value=api_key),
-        patch.object(group_service, 'check_key_uuid_for_route', return_value=True),
-        patch.object(
-            server.project_budget_limit_dao, 'get_by_project_uuid', return_value=[]
-        ),
-        patch.object(events_processor._events_buffer, 'add', side_effect=events.append),
-        patch.object(
-            openai._base_client.BaseClient, '_should_retry', return_value=False
-        ),
-        *(
-            patch.object(
-                getattr(define_metrics, name),
-                'add',
-                side_effect=lambda value, attributes, name=name: metrics.append(
-                    (name, value, dict(attributes))
-                ),
-            )
-            for name in METRICS
-        ),
-    ]
-    for patcher in patchers:
-        patcher.start()
-    caplog.set_level(logging.DEBUG, logger=LOGGER)
-    try:
-        yield _Gateway(TestClient(app), routes, events, metrics)
-    finally:
-        for patcher in reversed(patchers):
-            patcher.stop()
-        app.state.token_validator = saved_validator
-        if saved_routes is not None:
-            app.state.routes = saved_routes
-        app.dependency_overrides = {}
+    with open_gateway(
+        _build_routes(),
+        caplog=caplog,
+        metrics=[(name, 'add') for name in METRICS],
+        api_key=api_key,
+        gateway_class=_Gateway,
+    ) as gateway:
+        yield gateway
 
 
-class _Gateway:
-    def __init__(self, client: TestClient, routes: dict, events: list, metrics):
-        self.client = client
-        self.routes = routes
-        self._events = events
-        self.metrics = metrics
-        self.headers = {'Authorization': f'Bearer {db_mock.PLAIN_KEY}'}
-        self.upstream: list[dict] = []
-
-    def post(self, path: str, replies: list[CannedResponse], **kwargs):
-        self._events.clear()
-        self.metrics.clear()
-        with ProviderRecorder(replies) as recorder:
-            response = self.client.post(path, headers=self.headers, **kwargs)
-        assert recorder.unused == 0, 'a canned reply was not asked for'
-        self.upstream = recorder.requests
-        return response
-
-    def chat(self, replies, route='chat', text='Where is Paris?', **params):
-        return self.post(
-            '/v1/chat/completions',
-            replies,
-            json={
-                'model': f'proj/{route}',
-                'messages': [{'role': 'user', 'content': text}],
-                **params,
-            },
-        )
-
-    def responses(self, replies, route='chat', text='Where is Paris?', **params):
-        return self.post(
-            '/v1/responses',
-            replies,
-            json={'model': f'proj/{route}', 'input': text, **params},
-        )
-
-    def embed(self, replies, texts=('one', 'two')):
-        return self.post(
-            '/v1/embeddings',
-            replies,
-            json={'model': 'proj/embed', 'input': list(texts)},
-        )
-
-    def transcribe(self, replies, stream=False, route='audio', audio=WAV):
-        return self.post(
-            '/v1/audio/transcriptions',
-            replies,
-            data={'model': f'proj/{route}', 'stream': str(stream).lower()},
-            files={'file': ('a.wav', audio, 'audio/wav')},
-        )
-
-    def decide(self, replies):
-        return self.post(
-            '/v1/systemone',
-            replies,
-            json={
-                'model': 'proj/agent',
-                'state': {'ticket': 'printer on fire'},
-                'questions': {'urgent': {'type': 'noul', 'instructions': 'Urgent?'}},
-            },
-        )
+class _Gateway(Gateway):
+    embed_texts = ('one', 'two')
 
     def stored(self, route: str) -> dict[str, str]:
         return _stored(self.routes[f'proj/{route}'])
@@ -426,7 +283,7 @@ class _Gateway:
                 e['CACHE_TYPE'],
                 e['MODEL_ID'],
             )
-            for e in self._events
+            for e in self.event_rows
             if e['EVENT_TYPE'] in CACHE_EVENTS
         ]
 
@@ -440,7 +297,7 @@ class _Gateway:
                 e['CACHE_TYPE'],
                 e['VALUE'],
             )
-            for e in self._events
+            for e in self.event_rows
             if e['EVENT_TYPE'] in MODEL_EVENTS
         ]
 
@@ -1185,42 +1042,6 @@ CACHE_SPANS = {
     'set_in_memory_cache',
 }
 CATEGORY = 'traceloop.association.properties.rb.gateway.operation_category'
-
-
-class _SpanCollector(SpanProcessor):
-    """Keeps the spans that end while it is on."""
-
-    def __init__(self):
-        self.on = False
-        self.spans: list = []
-
-    def on_end(self, span) -> None:
-        if self.on:
-            self.spans.append(span)
-
-
-@pytest.fixture(scope='module')
-def span_collector():
-    collector = _SpanCollector()
-    initialized = hasattr(TracerWrapper, 'instance')
-    if initialized:
-        trace.get_tracer_provider().add_span_processor(collector)
-    else:
-        Traceloop.init(
-            app_name='test-gateway',
-            telemetry_enabled=False,
-            disable_batch=True,
-            processor=collector,
-            instruments=set(),
-        )
-    TracerWrapper.set_disabled(False)
-    yield collector
-    # Traceloop's provider cannot be uninstalled: switch the decorators off
-    # again, as the rest of the suite runs them, and let a later
-    # Traceloop.init add its own processor.
-    TracerWrapper.set_disabled(True)
-    if not initialized:
-        del TracerWrapper.instance
 
 
 @pytest.fixture

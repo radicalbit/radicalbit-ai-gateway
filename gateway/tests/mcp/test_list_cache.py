@@ -86,34 +86,42 @@ def _cache(**kwargs) -> McpListCache:
     return cache
 
 
-def test_a_route_without_caching_gets_no_cache():
-    assert McpListCache.for_route(None, None, _authorized()) is None
+def _http(alias='github', url='https://github.example.com/mcp/', **kwargs):
+    return McpHttpServer(alias=alias, url=url, **kwargs)
 
 
-def test_a_route_without_servers_gets_no_cache():
-    assert _for_route(servers=[]) is None
+def _stdio(**kwargs):
+    return McpStdioServer(alias='local', command='python', **kwargs)
 
 
-def test_the_semantic_cache_is_excluded():
-    """A list method has no query text to embed, so similarity search is moot."""
-    semantic = GatewayCache(MagicMock(spec_set=SemanticCache))
-    assert _for_route(gateway_cache=semantic) is None
+PER_CALLER = _http(forward_headers=['authorization'])
 
 
-def test_forward_headers_disables_caching_for_the_whole_route():
-    """The list may legitimately differ per caller, so no entry is shareable."""
-    per_caller = McpHttpServer(
-        alias='github',
-        url='https://github.example.com/mcp/',
-        forward_headers=['authorization'],
-    )
-    assert _for_route(servers=[per_caller, JIRA]) is None
-    assert _for_route(servers=[JIRA, per_caller]) is None
-
-
-def test_stdio_servers_never_carry_forward_headers():
-    stdio = McpStdioServer(alias='local', command='python', args=['-m', 'server'])
-    assert _for_route(servers=[stdio]) is not None
+@pytest.mark.parametrize(
+    'make',
+    [
+        pytest.param(
+            lambda: McpListCache.for_route(None, None, _authorized()), id='no-caching'
+        ),
+        pytest.param(lambda: _for_route(servers=[]), id='no-servers'),
+        # A list method has no query text to embed, so similarity search is moot.
+        pytest.param(
+            lambda: _for_route(
+                gateway_cache=GatewayCache(MagicMock(spec_set=SemanticCache))
+            ),
+            id='semantic-cache',
+        ),
+        # The list may legitimately differ per caller, so no entry is shareable.
+        pytest.param(
+            lambda: _for_route(servers=[PER_CALLER, JIRA]), id='forward-headers-first'
+        ),
+        pytest.param(
+            lambda: _for_route(servers=[JIRA, PER_CALLER]), id='forward-headers-last'
+        ),
+    ],
+)
+def test_a_route_that_cannot_share_a_list_gets_no_cache(make):
+    assert make() is None
 
 
 def test_each_list_method_has_its_own_key():
@@ -121,104 +129,81 @@ def test_each_list_method_has_its_own_key():
     assert len(keys) == 3
 
 
+TENANT_A = _http(headers={'authorization': 'Bearer tenant-a'})
+
+
 @pytest.mark.parametrize(
-    'other',
+    ('one', 'other', 'same'),
     [
-        {'key_uuid': 'another-key'},
-        {'route_name': 'other-route'},
-        {'project_uuid': 'other-project'},
+        # Entries are scoped like every other cached response.
+        pytest.param({}, {'key_uuid': 'another-key'}, False, id='another-key'),
+        pytest.param({}, {'route_name': 'other-route'}, False, id='another-route'),
+        pytest.param(
+            {}, {'project_uuid': 'other-project'}, False, id='another-project'
+        ),
+        pytest.param(
+            {'servers': [GITHUB, JIRA]},
+            {'servers': [JIRA, GITHUB]},
+            True,
+            id='reordered-servers',
+        ),
+        # Same alias, different upstream: the old server's tools must not survive.
+        pytest.param(
+            {'servers': [GITHUB]},
+            {'servers': [_http(url='https://elsewhere.example.com/mcp/')]},
+            False,
+            id='repointed-alias',
+        ),
+        pytest.param(
+            {'servers': [GITHUB]}, {'servers': SERVERS}, False, id='added-server'
+        ),
+        pytest.param(
+            {'servers': [_stdio(args=['-m', 'a'])]},
+            {'servers': [_stdio(args=['-m', 'b'])]},
+            False,
+            id='stdio-command-line',
+        ),
+        # The credential selects which tools the upstream exposes, so it is
+        # identity: another tenant's token, or a token where there was none.
+        pytest.param(
+            {'servers': [TENANT_A]},
+            {'servers': [_http(headers={'authorization': 'Bearer tenant-b'})]},
+            False,
+            id='rotated-static-header',
+        ),
+        pytest.param(
+            {'servers': [TENANT_A]}, {'servers': [GITHUB]}, False, id='added-credential'
+        ),
+        pytest.param(
+            {'servers': [_stdio(env={'TOKEN': 'a'})]},
+            {'servers': [_stdio(env={'TOKEN': 'b'})]},
+            False,
+            id='stdio-env',
+        ),
+        # The signature keys on the credential set, not on dict insertion order.
+        pytest.param(
+            {
+                'servers': [
+                    _http(headers={'authorization': 'Bearer t', 'x-tenant': 'a'})
+                ]
+            },
+            {
+                'servers': [
+                    _http(headers={'x-tenant': 'a', 'authorization': 'Bearer t'})
+                ]
+            },
+            True,
+            id='reordered-headers',
+        ),
     ],
 )
-def test_entries_are_scoped_like_every_other_cached_response(other):
-    assert _cache()._key(TOOLS_LIST) != _cache(**other)._key(TOOLS_LIST)
-
-
-def test_reordering_the_same_servers_still_hits():
-    assert _cache(servers=[GITHUB, JIRA])._key(TOOLS_LIST) == _cache(
-        servers=[JIRA, GITHUB]
-    )._key(TOOLS_LIST)
-
-
-def test_repointing_an_alias_invalidates_the_entry():
-    """Same alias, different upstream: the old server's tools must not survive."""
-    moved = McpHttpServer(alias='github', url='https://elsewhere.example.com/mcp/')
-    assert _cache(servers=[GITHUB])._key(TOOLS_LIST) != _cache(servers=[moved])._key(
-        TOOLS_LIST
-    )
-
-
-def test_adding_a_server_invalidates_the_entry():
-    assert _cache(servers=[GITHUB])._key(TOOLS_LIST) != _cache(servers=SERVERS)._key(
-        TOOLS_LIST
-    )
-
-
-def test_a_stdio_server_is_identified_by_its_command_line():
-    base = McpStdioServer(alias='local', command='python', args=['-m', 'a'])
-    other_args = McpStdioServer(alias='local', command='python', args=['-m', 'b'])
-    assert _cache(servers=[base])._key(TOOLS_LIST) != _cache(servers=[other_args])._key(
-        TOOLS_LIST
-    )
-
-
-def test_rotating_a_static_header_invalidates_the_entry():
-    """The credential selects which tools the upstream exposes, so it is identity.
-
-    Same alias, same url, a token for a different scope or tenant: the
-    previous token's tools must not keep being served.
-    """
-    one = McpHttpServer(
-        alias='github',
-        url='https://github.example.com/mcp/',
-        headers={'authorization': 'Bearer tenant-a'},
-    )
-    other = McpHttpServer(
-        alias='github',
-        url='https://github.example.com/mcp/',
-        headers={'authorization': 'Bearer tenant-b'},
-    )
-    assert _cache(servers=[one])._key(TOOLS_LIST) != _cache(servers=[other])._key(
-        TOOLS_LIST
-    )
-    # and adding a credential where there was none is also a change of identity
-    assert _cache(servers=[one])._key(TOOLS_LIST) != _cache(servers=[GITHUB])._key(
-        TOOLS_LIST
-    )
-
-
-def test_changing_a_stdio_env_invalidates_the_entry():
-    one = McpStdioServer(alias='local', command='python', env={'TOKEN': 'a'})
-    other = McpStdioServer(alias='local', command='python', env={'TOKEN': 'b'})
-    assert _cache(servers=[one])._key(TOOLS_LIST) != _cache(servers=[other])._key(
-        TOOLS_LIST
-    )
-
-
-def test_reordering_the_same_headers_still_hits():
-    """The signature must key on the credential set, not on dict insertion order."""
-    one = McpHttpServer(
-        alias='github',
-        url='https://github.example.com/mcp/',
-        headers={'authorization': 'Bearer t', 'x-tenant': 'a'},
-    )
-    other = McpHttpServer(
-        alias='github',
-        url='https://github.example.com/mcp/',
-        headers={'x-tenant': 'a', 'authorization': 'Bearer t'},
-    )
-    assert _cache(servers=[one])._key(TOOLS_LIST) == _cache(servers=[other])._key(
-        TOOLS_LIST
-    )
+def test_the_entry_key_follows_scope_and_upstream_identity(one, other, same):
+    assert (_cache(**one)._key(TOOLS_LIST) == _cache(**other)._key(TOOLS_LIST)) is same
 
 
 def test_a_credential_never_reaches_the_signature_in_the_clear():
     secret = 'Bearer super-secret'
-    server = McpHttpServer(
-        alias='github',
-        url='https://github.example.com/mcp/',
-        headers={'authorization': secret},
-    )
-    assert secret not in servers_signature([server])
+    assert secret not in servers_signature([_http(headers={'authorization': secret})])
 
 
 async def test_a_stored_result_round_trips():
@@ -229,19 +214,17 @@ async def test_a_stored_result_round_trips():
     assert await cache.get(PROMPTS_LIST) is None
 
 
-async def test_the_ttl_from_the_caching_block_is_passed_through():
-    client = MagicMock(spec_set=CacheToolsInMemory)
-    cache = _cache(gateway_cache=GatewayCache(client), ttl=30)
-    await cache.set(TOOLS_LIST, {'tools': []})
-    assert client.set.await_args.args[2] == 30
-
-
-@pytest.mark.parametrize('ttl', [None, 0])
-async def test_a_list_entry_always_expires(ttl):
+@pytest.mark.parametrize(
+    ('ttl', 'expected'),
+    [(30, 30), (None, DEFAULT_LIST_TTL_SECONDS), (0, DEFAULT_LIST_TTL_SECONDS)],
+)
+async def test_the_caching_ttl_is_passed_through_and_an_entry_always_expires(
+    ttl, expected
+):
     client = MagicMock(spec_set=CacheToolsInMemory)
     cache = _cache(gateway_cache=GatewayCache(client), ttl=ttl)
     await cache.set(TOOLS_LIST, {'tools': []})
-    assert client.set.await_args.args[2] == DEFAULT_LIST_TTL_SECONDS
+    assert client.set.await_args.args[2] == expected
 
 
 @pytest.mark.parametrize(
@@ -268,13 +251,26 @@ async def test_an_unusable_entry_is_a_miss_not_an_error(stored):
 # ---------------------------------------------------------------------------
 
 
-def test_a_hit_emits_a_cache_hit_event_under_the_callers_identity():
-    """The same event /v1 emits, so MCP hits reach the usage view and alerts."""
+@pytest.mark.parametrize(
+    ('gateway_cache', 'method', 'cache_type'),
+    [
+        # in-memory stands in for redis when the project has no cache: block
+        (None, TOOLS_LIST, 'in-memory'),
+        (GatewayCache(MagicMock(spec_set=RedisCache)), RESOURCES_LIST, 'exact'),
+    ],
+)
+def test_a_hit_emits_a_cache_hit_event_under_the_callers_identity(
+    gateway_cache, method, cache_type
+):
+    """The same event /v1 emits, so MCP hits reach the usage view and alerts.
+
+    A list method invokes no model, so the event claims no model and no saving.
+    """
     with (
         patch(f'{LIST_CACHE}.emit_event') as mock_emit,
         patch(f'{LIST_CACHE}.cache_hit_counter') as mock_counter,
     ):
-        _cache().record_hit(TOOLS_LIST)
+        _cache(gateway_cache=gateway_cache).record_hit(method)
 
     event = mock_emit.call_args.args[0]
     assert event.event_type is EventType.CACHE_HIT
@@ -285,34 +281,10 @@ def test_a_hit_emits_a_cache_hit_event_under_the_callers_identity():
     assert event.api_key_name == 'my-key'
     assert event.group_uuid == 'group-uuid'
     assert event.request_uuid == 'request-uuid'
-    # in-memory stands in for redis when the project has no cache: block
-    assert event.cache_type == 'in-memory'
-    mock_counter.add.assert_called_once_with(1, {'route_name': ROUTE})
-
-
-def test_the_event_claims_no_model_and_no_saving():
-    """A list method invokes no model, so it prices nothing."""
-    with (
-        patch(f'{LIST_CACHE}.emit_event') as mock_emit,
-        patch(f'{LIST_CACHE}.cache_hit_counter'),
-    ):
-        _cache().record_hit(PROMPTS_LIST)
-
-    event = mock_emit.call_args.args[0]
+    assert event.cache_type == cache_type
     assert event.model_id == ''
-    # nothing is claimed against the cache-savings columns either
     assert event.cost == 0.0
-
-
-def test_an_exact_cache_reports_its_own_type():
-    exact = GatewayCache(MagicMock(spec_set=RedisCache))
-    with (
-        patch(f'{LIST_CACHE}.emit_event') as mock_emit,
-        patch(f'{LIST_CACHE}.cache_hit_counter'),
-    ):
-        _cache(gateway_cache=exact).record_hit(RESOURCES_LIST)
-
-    assert mock_emit.call_args.args[0].cache_type == 'exact'
+    mock_counter.add.assert_called_once_with(1, {'route_name': ROUTE})
 
 
 @pytest.mark.parametrize('method', ['tools/call', 'initialize'])

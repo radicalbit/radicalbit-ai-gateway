@@ -6,8 +6,14 @@ What the endpoints do with it is pinned in ``test_cache_golden.py``.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription_verbose import TranscriptionVerbose
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,
+    Function,
+)
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
+import pytest
 
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
@@ -184,11 +190,9 @@ async def test_a_stream_misses_a_reply_with_tool_calls(emit):
     route = _route()
     reply = to_mock_openai_chat_completion(content=None)
     reply.choices[0].message.tool_calls = [
-        {
-            'id': 'call_1',
-            'type': 'function',
-            'function': {'name': 'f', 'arguments': '{}'},
-        }
+        ChatCompletionMessageFunctionToolCall(
+            id='call_1', type='function', function=Function(name='f', arguments='{}')
+        )
     ]
     turn = [HumanMessage(content='Hi')]
     await (await _request(route).lookup(ChatEntry(turn))).store(reply)
@@ -269,12 +273,26 @@ async def test_the_semantic_embedding_is_charged_to_the_request():
     assert semantic.get.call_args.kwargs['user_content'] == 'Hi'
 
 
+@pytest.mark.parametrize(
+    ('response_format', 'reply'),
+    [
+        ('json', Transcription(text='hello')),
+        (
+            'verbose_json',
+            TranscriptionVerbose(
+                text='hello', language='english', duration=1.5, segments=[]
+            ),
+        ),
+    ],
+)
 @patch(EMIT)
-async def test_a_transcription_hit_is_parsed_in_its_response_format(emit):
+async def test_a_transcription_hit_is_parsed_in_its_response_format(
+    emit, response_format, reply
+):
     route = _route()
-    entry = TranscriptionEntry(b'audio', 't1', 'json')
-    await (await _request(route).lookup(entry)).store(Transcription(text='hello'))
+    entry = TranscriptionEntry(b'audio', 't1', response_format)
+    await (await _request(route).lookup(entry)).store(reply)
 
     hit = await _request(route).lookup(entry)
 
-    assert hit.value == Transcription(text='hello')
+    assert hit.value == reply
