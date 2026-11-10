@@ -7,11 +7,13 @@ from radicalbit_ai_gateway.limiter import (
     ScenarioType,
     WindowConfig,
 )
+from radicalbit_ai_gateway.limiter.storage import Storage
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
 from radicalbit_ai_gateway.limiting.limit_event import (
     consume_and_emit_thresholds,
     limit_fields,
 )
+from radicalbit_ai_gateway.limiting.window_progress import window_progress_bar
 from radicalbit_ai_gateway.metrics.define_metrics import (
     rate_limiting_counter,
     token_input_limiting_counter,
@@ -21,6 +23,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
 )
+from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
@@ -81,6 +84,7 @@ class CredentialLimiter:
         credential_uuid: str,
         credential_name: str,
         limits: list[CredentialLimitOut],
+        storage: Storage | None = None,
     ):
         self.credential_uuid = credential_uuid
         self.credential_name = credential_name
@@ -88,9 +92,11 @@ class CredentialLimiter:
         if not limits:
             return
 
-        if app_config.redis_config.redis_url:
+        # A caller reading many limiters at once (the consumption streams)
+        # passes one shared storage, and closes it.
+        if storage is None and app_config.redis_config.redis_url:
             storage = RedisStorage(uri=app_config.redis_config.redis_url)
-        else:
+        elif storage is None:
             storage = InMemoryStorage()
         for limit in limits:
             self._entries.setdefault(limit.category, []).append(
@@ -99,6 +105,21 @@ class CredentialLimiter:
 
     def has_category(self, category: CredentialLimitCategory) -> bool:
         return category in self._entries
+
+    async def consumption(self) -> dict[str, WindowProgressBarDTO]:
+        """How much of each limit's current window is used, keyed by limit uuid.
+
+        Reads the counters requests write, without consuming them.
+        """
+        return {
+            str(entry.limit_out.uuid): await window_progress_bar(
+                entry.limiter,
+                entry.window,
+                is_budget=category == CredentialLimitCategory.BUDGET,
+            )
+            for category, entries in self._entries.items()
+            for entry in entries
+        }
 
     def _build_entry(self, limit: CredentialLimitOut, storage) -> _LimitEntry:
         limiter_cls = (

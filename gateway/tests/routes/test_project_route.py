@@ -1,15 +1,18 @@
+import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 import uuid
 
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
+import pytest
 from starlette.testclient import TestClient
 
 from tests.common import db_mock
 
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitConflictsOut,
     ProjectBudgetLimitDraftConflictOut,
@@ -18,7 +21,7 @@ from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitValueIn,
 )
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
-from radicalbit_ai_gateway.routes.project_route import ProjectRoute
+from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
 from radicalbit_ai_gateway.services.config_generator_service import (
     ConfigGeneratorService,
 )
@@ -647,3 +650,55 @@ class TestProjectRoute(unittest.TestCase):
             assert meta.get('entity_uuid_param') == 'project_uuid', (
                 f'{path_suffix} missing entity_uuid_param'
             )
+
+
+class TestBudgetLimitsConsumptionStream:
+    @pytest.mark.asyncio
+    async def test_streams_only_the_projects_the_filter_keeps(self):
+        member_of = uuid.uuid4()
+        not_member_of = uuid.uuid4()
+        limit_uuid = str(uuid.uuid4())
+        project_service = MagicMock(spec_set=ProjectService)
+        project_service.get_budget_limits_consumption = AsyncMock(
+            return_value={
+                limit_uuid: WindowProgressBarDTO(
+                    window_length=86400,
+                    window_start_time=1_700_000_000,
+                    window_end_time=1_700_086_400,
+                    window_size=40.0,
+                    window_filled_size=38.0,
+                    window_filled_percentage=95.0,
+                )
+            }
+        )
+        router = ProjectRoute.get_project_router(
+            project_service,
+            MagicMock(spec_set=GroupService),
+            config=ProjectRouteConfig(
+                filter_project_uuids_fn=lambda _request, uuids: [
+                    u for u in uuids if u == member_of
+                ]
+            ),
+        )
+        endpoint = next(
+            route.endpoint
+            for route in router.routes
+            if route.path == '/projects/budget-limits/stream'
+        )
+
+        stream = endpoint(request=MagicMock(), projects=[member_of, not_member_of])
+        data = await anext(stream)
+        await stream.aclose()
+
+        project_service.get_budget_limits_consumption.assert_awaited_with([member_of])
+        assert json.loads(json.dumps(data)) == {
+            limit_uuid: {
+                'windowLength': 86400,
+                'windowStartTime': 1_700_000_000,
+                'windowEndTime': 1_700_086_400,
+                'windowSize': 40.0,
+                'windowFilledSize': 38.0,
+                'windowFilledPercentage': 95.0,
+                'windowStatus': 'critical',
+            }
+        }

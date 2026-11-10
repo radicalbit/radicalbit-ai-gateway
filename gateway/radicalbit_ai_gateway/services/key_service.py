@@ -10,11 +10,15 @@ from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
-from radicalbit_ai_gateway.limiting.credential_limiter import clear_limit_counter
+from radicalbit_ai_gateway.limiting.credential_limiter import (
+    CredentialLimiter,
+    clear_limit_counter,
+)
 from radicalbit_ai_gateway.limiting.route_limit_consistency import (
     LimitMax,
     route_limit_warnings,
 )
+from radicalbit_ai_gateway.limiting.window_progress import shared_limiter_storage
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     KeyCreateIn,
@@ -42,6 +46,7 @@ from radicalbit_ai_gateway.models.credential_rotation import (
     get_grace_end,
     previous_value_authenticates,
 )
+from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.group_limiting import (
     GroupLimitOutcome,
@@ -591,6 +596,27 @@ class KeyService:
                 in added
             ],
         )
+
+    async def get_limits_consumption(
+        self, key_uuids: list[UUID]
+    ) -> dict[str, WindowProgressBarDTO]:
+        """Consumption of every limit of *key_uuids*, keyed by limit uuid."""
+        limits_by_key: dict[UUID, list[CredentialLimitOut]] = {}
+        for row in self.key_limit_dao.get_all_by_key_uuids(key_uuids):
+            limits_by_key.setdefault(row.key_uuid, []).append(
+                CredentialLimitOut.from_key_limit(row)
+            )
+        consumption: dict[str, WindowProgressBarDTO] = {}
+        async with shared_limiter_storage() as storage:
+            for key_uuid, limits in limits_by_key.items():
+                limiter = CredentialLimiter(
+                    credential_uuid=str(key_uuid),
+                    credential_name='',
+                    limits=limits,
+                    storage=storage,
+                )
+                consumption.update(await limiter.consumption())
+        return consumption
 
     def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:
         key = self.key_dao.get_by_uuid(key_uuid)

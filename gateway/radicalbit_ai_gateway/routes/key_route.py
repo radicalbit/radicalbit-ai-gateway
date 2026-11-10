@@ -1,8 +1,12 @@
+import asyncio
 import logging
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import RequestValidationError
+from fastapi.sse import EventSourceResponse
+from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -56,6 +60,22 @@ class KeyRoute:
             return key_service.get_all(
                 include_groups, only_unassigned, include_limits, route_configs
             )
+
+        @router.get(
+            '/keys/limits/stream',
+            status_code=200,
+            response_class=EventSourceResponse,
+        )
+        async def stream_limits_consumption(
+            keys: Annotated[list[UUID] | None, Query()] = None,
+        ) -> StreamingResponse:
+            while True:
+                consumption = await key_service.get_limits_consumption(keys or [])
+                yield {
+                    limit_uuid: bar.model_dump(by_alias=True)
+                    for limit_uuid, bar in consumption.items()
+                }
+                await asyncio.sleep(10)
 
         @router.get('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
         def get_key_by_uuid(

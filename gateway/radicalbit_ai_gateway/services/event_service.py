@@ -15,6 +15,7 @@ from radicalbit_ai_gateway.db.models.event import (
     LastEventGuardrail,
     TokensCounter,
 )
+from radicalbit_ai_gateway.limiting.window_progress import window_progress_bar
 from radicalbit_ai_gateway.models.event_dto import (
     CacheHitEventDetailDTO,
     ChartDataSeriesDTO,
@@ -50,7 +51,6 @@ from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.gateway_route_out import GatewayRouteOut
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
-from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.chart_utils import (
     calculate_increment_percentage,
@@ -1223,24 +1223,7 @@ class EventService:
     ) -> WindowProgressBarDTO | None:
         if limiter is None or item is None:
             return None
-        stats = await limiter.get_window_stats(item)
-        limit = item.limit
-        filled = limit - stats.remaining
-        if is_budget:
-            window_size = limit / BUDGET_MULTIPLIER
-            window_filled = filled / BUDGET_MULTIPLIER
-        else:
-            window_size = float(limit)
-            window_filled = float(max(0, filled))
-        pct = (window_filled / window_size * 100) if window_size > 0 else 0.0
-        return WindowProgressBarDTO(
-            window_length=item.window_seconds,
-            window_start_time=stats.reset_time - item.window_seconds,
-            window_end_time=stats.reset_time,
-            window_size=window_size,
-            window_filled_size=window_filled,
-            window_filled_percentage=pct,
-        )
+        return await window_progress_bar(limiter, item, is_budget=is_budget)
 
     async def get_route_limits_progress(
         self,

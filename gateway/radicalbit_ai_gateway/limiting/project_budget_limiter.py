@@ -10,11 +10,14 @@ from radicalbit_ai_gateway.limiter import (
     ScenarioType,
     WindowConfig,
 )
+from radicalbit_ai_gateway.limiter.storage import Storage
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
 from radicalbit_ai_gateway.limiting.limit_event import (
     consume_and_emit_thresholds,
     limit_fields,
 )
+from radicalbit_ai_gateway.limiting.window_progress import window_progress_bar
+from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
@@ -67,6 +70,7 @@ class ProjectBudgetLimiter:
         project_uuid: str,
         project_name: str,
         limits: list[ProjectBudgetLimitOut],
+        storage: Storage | None = None,
     ):
         self.project_uuid = project_uuid
         self.project_name = project_name
@@ -75,12 +79,26 @@ class ProjectBudgetLimiter:
         if not limits:
             return
 
-        if app_config.redis_config.redis_url:
+        # A caller reading many limiters at once (the consumption streams)
+        # passes one shared storage, and closes it.
+        if storage is None and app_config.redis_config.redis_url:
             storage = RedisStorage(uri=app_config.redis_config.redis_url)
-        else:
+        elif storage is None:
             storage = InMemoryStorage()
         for limit in limits:
             self._entries.append(self._build_entry(limit, storage))
+
+    async def consumption(self) -> dict[str, WindowProgressBarDTO]:
+        """How much of each budget's current window is spent, keyed by limit uuid.
+
+        Reads the counters requests write, without consuming them.
+        """
+        return {
+            str(entry.limit_out.uuid): await window_progress_bar(
+                entry.limiter, entry.window, is_budget=True
+            )
+            for entry in self._entries
+        }
 
     def _build_entry(self, limit: ProjectBudgetLimitOut, storage) -> _LimitEntry:
         limiter_cls = (

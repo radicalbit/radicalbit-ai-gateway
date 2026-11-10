@@ -15,10 +15,13 @@ from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.limiting.project_budget_limiter import (
+    ProjectBudgetLimiter,
     clear_project_budget_limit_counter,
 )
+from radicalbit_ai_gateway.limiting.window_progress import shared_limiter_storage
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitConflictsOut,
     ProjectBudgetLimitDraftConflictOut,
@@ -424,6 +427,29 @@ class ProjectService:
             ProjectBudgetLimitOut.from_project_budget_limit(limit)
             for limit in self.project_budget_limit_dao.get_by_project_uuid(project_uuid)
         ]
+
+    async def get_budget_limits_consumption(
+        self, project_uuids: list[UUID]
+    ) -> dict[str, WindowProgressBarDTO]:
+        """Consumption of every budget of *project_uuids*, keyed by limit uuid."""
+        limits_by_project: dict[UUID, list[ProjectBudgetLimitOut]] = {}
+        for row in self.project_budget_limit_dao.get_all_by_project_uuids(
+            project_uuids
+        ):
+            limits_by_project.setdefault(row.project_uuid, []).append(
+                ProjectBudgetLimitOut.from_project_budget_limit(row)
+            )
+        consumption: dict[str, WindowProgressBarDTO] = {}
+        async with shared_limiter_storage() as storage:
+            for project_uuid, limits in limits_by_project.items():
+                limiter = ProjectBudgetLimiter(
+                    project_uuid=str(project_uuid),
+                    project_name='',
+                    limits=limits,
+                    storage=storage,
+                )
+                consumption.update(await limiter.consumption())
+        return consumption
 
     def update_budget_limit_value(
         self,

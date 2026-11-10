@@ -1,10 +1,13 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import logging
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, File, Query, Request, Response, UploadFile
+from fastapi.sse import EventSourceResponse
+from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -48,6 +51,8 @@ _ALLOWED_IMPORT_SUFFIXES = ('.yaml', '.yml')
 class ProjectRouteConfig:
     get_projects_fn: Callable[[Request, ProjectFilter | None, bool], Any] | None = None
     get_project_fn: Callable[[Request, UUID, bool], Any] | None = None
+    # The projects among the requested ones the caller may read consumption of
+    filter_project_uuids_fn: Callable[[Request, list[UUID]], list[UUID]] | None = None
     list_response_model: type = field(default_factory=lambda: list[ProjectOut])
     item_response_model: type = field(default_factory=lambda: ProjectOut)
 
@@ -71,6 +76,9 @@ class ProjectRoute:
         )
         get_project_fn = config.get_project_fn or (
             lambda _, u, include_limits: project_service.get_by_uuid(u, include_limits)
+        )
+        filter_project_uuids_fn = config.filter_project_uuids_fn or (
+            lambda _, uuids: uuids
         )
         router = APIRouter(tags=['project_api'])
 
@@ -309,6 +317,26 @@ class ProjectRoute:
             return group_service.get_associable_groups_for_project_route(
                 project.name, route_name, include_routes, include_keys
             )
+
+        @router.get(
+            '/projects/budget-limits/stream',
+            status_code=200,
+            response_class=EventSourceResponse,
+        )
+        async def stream_budget_limits_consumption(
+            request: Request,
+            projects: Annotated[list[UUID] | None, Query()] = None,
+        ) -> StreamingResponse:
+            while True:
+                visible = filter_project_uuids_fn(request, projects or [])
+                consumption = await project_service.get_budget_limits_consumption(
+                    visible
+                )
+                yield {
+                    limit_uuid: bar.model_dump(by_alias=True)
+                    for limit_uuid, bar in consumption.items()
+                }
+                await asyncio.sleep(10)
 
         @router.post(
             '/projects/{project_uuid}/budget-limits',

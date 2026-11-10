@@ -1,4 +1,5 @@
 import datetime
+import time
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from radicalbit_ai_gateway.limiting.project_budget_limiter import (
     clear_project_budget_limit_counter,
     load_project_budget_limiter,
 )
+from radicalbit_ai_gateway.models.event_dto import WindowStatus
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitOut
 from radicalbit_ai_gateway.utils.exceptions import BudgetLimitExceededError
@@ -280,3 +282,40 @@ class TestEditingAMax:
 
         with pytest.raises(BudgetLimitExceededError):
             await after.check_budget(**_CALL_ARGS)
+
+
+class TestConsumption:
+    @pytest.mark.asyncio
+    async def test_reports_what_requests_spent_keyed_by_limit_uuid(self):
+        daily = _limit(
+            40.0,
+            window_size='1 day',
+            algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
+        )
+        hourly = _limit(5.0, window_size='1 hour')
+        serving = _limiter([daily, hourly])
+        await serving.count_input(1000, 0.002, identity=IDENTITY)
+        await serving.count_output(1000, 0.002, identity=IDENTITY)
+
+        reading = _limiter([daily, hourly])
+        _share_storage(serving, reading)
+        consumption = await reading.consumption()
+
+        assert set(consumption) == {str(daily.uuid), str(hourly.uuid)}
+
+        daily_bar = consumption[str(daily.uuid)]
+        assert daily_bar.window_size == pytest.approx(40.0)
+        assert daily_bar.window_filled_size == pytest.approx(4.0)
+        assert daily_bar.window_filled_percentage == pytest.approx(10.0)
+        assert daily_bar.window_status == WindowStatus.OK
+        next_midnight = (int(time.time()) // 86400 + 1) * 86400
+        assert daily_bar.window_end_time == next_midnight
+
+        hourly_bar = consumption[str(hourly.uuid)]
+        assert hourly_bar.window_filled_size == pytest.approx(4.0)
+        assert hourly_bar.window_filled_percentage == pytest.approx(80.0)
+        assert hourly_bar.window_status == WindowStatus.WARNING
+
+    @pytest.mark.asyncio
+    async def test_no_budget_reports_nothing(self):
+        assert await _limiter([]).consumption() == {}
