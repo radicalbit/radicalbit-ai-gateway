@@ -1,6 +1,10 @@
 import pytest
 
-from radicalbit_ai_gateway.llm.usage import CacheTokens, cache_tokens
+from radicalbit_ai_gateway.llm.usage import (
+    CacheTokens,
+    cache_tokens,
+    messages_token_counts,
+)
 
 LEGACY = {'token_usage': {'prompt_tokens_details': {'cached_tokens': 50}}}
 
@@ -45,3 +49,33 @@ def test_cache_tokens(details, response_metadata, expected):
     usage = None if details is None else {'input_token_details': details}
 
     assert cache_tokens(usage, response_metadata) == expected
+
+
+@pytest.mark.parametrize(
+    ('usage', 'expected'),
+    [
+        pytest.param(None, (0, 0), id='no_usage'),
+        pytest.param({'input_tokens': 21, 'output_tokens': 7}, (21, 7), id='uncached'),
+        pytest.param(
+            {
+                'input_tokens': 21,
+                'output_tokens': 7,
+                'cache_read_input_tokens': 4,
+                'cache_creation_input_tokens': 9,
+                'cache_creation': {
+                    'ephemeral_5m_input_tokens': 5,
+                    'ephemeral_1h_input_tokens': 4,
+                },
+            },
+            (34, 7),
+            id='ttl_breakdown_counted_once',
+        ),
+        pytest.param(
+            {'input_tokens': 21, 'cache_creation_input_tokens': 9},
+            (30, 0),
+            id='write_without_ttl',
+        ),
+    ],
+)
+def test_messages_token_counts_include_the_cache(usage, expected):
+    assert messages_token_counts(usage) == expected

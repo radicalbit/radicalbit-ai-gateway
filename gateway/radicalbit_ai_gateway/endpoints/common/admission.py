@@ -1,6 +1,6 @@
 """Admission: what every proxy endpoint does before it serves a request."""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 import logging
 from uuid import UUID
 
@@ -34,6 +34,9 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
 )
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
+
+# Reads the caller's credential from a request to a project's route.
+Authenticate = Callable[[Request, str, str], Awaitable[KeyDetails]]
 
 
 @task(name='auth_api_key')
@@ -99,10 +102,12 @@ class Admission:
         *,
         streaming: bool = False,
         announce: Callable[[str], None] | None = None,
+        authenticate: Authenticate | None = None,
     ) -> RequestScope:
         """Return the scope of a request the gateway serves, or raise the
         error that refuses it. ``announce`` logs the request once its caller
-        is known.
+        is known. ``authenticate`` reads the caller's credential: by default,
+        its bearer token.
         """
         route = routes.get(route_key)
         set_early_project_trace_attributes(request, route_key, route)
@@ -128,7 +133,7 @@ class Admission:
         ctx.is_streaming = streaming
 
         set_operation_category(OperationCategory.AUTH)
-        key_details = await set_api_key_uuid(
+        key_details = await (authenticate or set_api_key_uuid)(
             request, route.project_uuid, route.project_name
         )
         set_trace_attributes(

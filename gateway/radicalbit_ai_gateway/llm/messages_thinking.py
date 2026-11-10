@@ -11,26 +11,21 @@ from __future__ import annotations
 
 from typing import Any
 
-import anthropic
+from radicalbit_ai_gateway.llm.errors import provider_status
 
 THINKING_BLOCK_TYPES = ('thinking', 'redacted_thinking')
 
 
-def _error_message(error: anthropic.APIStatusError) -> str:
-    """Return the message of an upstream Messages API error."""
-    body = error.body
-    if isinstance(body, dict):
-        detail = body.get('error')
-        if isinstance(detail, dict) and isinstance(detail.get('message'), str):
-            return detail['message']
-    return error.message or ''
-
-
-def is_invalid_thinking_signature(error: Exception) -> bool:
+def is_invalid_thinking_signature(error: BaseException) -> bool:
     """Whether the upstream refused the signature of a thinking block."""
-    if not isinstance(error, anthropic.APIStatusError) or error.status_code != 400:
+    refusal = provider_status(error)
+    if refusal is None or refusal[0] != 400:
         return False
-    message = _error_message(error).lower()
+    _, message, body = refusal
+    detail = body.get('error') if isinstance(body, dict) else None
+    if isinstance(detail, dict) and isinstance(detail.get('message'), str):
+        message = detail['message']
+    message = (message or '').lower()
     return 'signature' in message and 'thinking' in message
 
 

@@ -3,7 +3,8 @@ route's policies.
 
 The policies read the request's texts as chat messages (see
 ``MessagesRequest``); what they change is written back into the body that
-goes upstream.
+goes upstream. The input and output guardrails and the cache do not apply to
+the Messages API yet (AG-1132).
 """
 
 from collections.abc import AsyncIterator
@@ -11,11 +12,15 @@ from dataclasses import dataclass
 
 from radicalbit_ai_gateway.endpoints.common.conversation import (
     apply_config_prompt,
+    check_chat_limits,
     route_chat,
 )
 from radicalbit_ai_gateway.endpoints.common.scope import RequestScope
 from radicalbit_ai_gateway.endpoints.messages.events import relay_frame
 from radicalbit_ai_gateway.endpoints.messages.request import MessagesRequest
+from radicalbit_ai_gateway.limiting.limits import Usage
+from radicalbit_ai_gateway.llm.messages_stream import stream_usage
+from radicalbit_ai_gateway.llm.usage import messages_token_counts
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
@@ -27,10 +32,9 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
 
 
 @dataclass
-class MessagesPrepared:
-    """A Messages API request after the gateway's policies, before the model
-    call: the body and the client's ``anthropic-*`` headers to forward
-    upstream, and the model routing selected.
+class _Prepared:
+    """A request after its input policies, before the model call: the body
+    and the client's ``anthropic-*`` headers to forward upstream.
     """
 
     body: dict
@@ -38,10 +42,32 @@ class MessagesPrepared:
     model: Model
 
 
-async def prepare(
+async def respond(scope: RequestScope, body: dict, headers: dict[str, str]) -> dict:
+    """Answer a Messages API request with one message object."""
+    prepared = await _prepare(scope, body, headers)
+    set_operation_category(OperationCategory.INVOCATION)
+    message, _ = await scope.route.chat_invoker.complete_messages(
+        **_call(scope, prepared)
+    )
+    await _count(scope, prepared, message.get('usage'))
+    return {**message, 'model': scope.route.gateway_route_config.route_name}
+
+
+async def stream(
     scope: RequestScope, body: dict, headers: dict[str, str]
-) -> MessagesPrepared:
-    """Apply the route's policies to a Messages API request."""
+) -> AsyncIterator[str]:
+    """Answer a Messages API request with SSE frames: the upstream's events,
+    relayed as they come.
+
+    The input policies run before this returns, so a request they refuse
+    gets an HTTP error.
+    """
+    return _live(scope, await _prepare(scope, body, headers))
+
+
+async def _prepare(
+    scope: RequestScope, body: dict, headers: dict[str, str]
+) -> _Prepared:
     route = scope.route
     config = route.gateway_route_config
     route_name = config.route_name
@@ -49,10 +75,12 @@ async def prepare(
         raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
 
     request = MessagesRequest(body)
+    # Limits come first, before anything that spends (routing, the model),
+    # as on chat.
+    await check_chat_limits(scope, request.messages())
+
     set_operation_category(OperationCategory.PREPROCESSING)
     messages = await run_preprocessing(request.messages(), config.plugins)
-    # Input guardrails (redact before routing, check, soft block) go here,
-    # as on the Responses API: AG-1132.
     model = await route_chat(scope, messages)
     if not route.chat_invoker.supports_messages(model.model_id):
         raise GatewayBadRequest(
@@ -63,17 +91,14 @@ async def prepare(
     added = apply_config_prompt(messages, model)
     request.write_back(messages[added:])
     if added:
-        # A deliberate choice, as on the Responses API: the configured
-        # prompt goes first in ``system``. It changes the prefix the
-        # client's prompt cache sees.
+        # A deliberate choice, as on the Responses API: the configured prompt
+        # goes first in ``system``. It changes the prefix the client's prompt
+        # cache sees.
         request.insert_system_prompt(messages[0])
-
-    # The cache lookup and the limits go here, as on the Responses API:
-    # AG-1132.
-    return MessagesPrepared(request.body, headers, model)
+    return _Prepared(request.body, headers, model)
 
 
-def _call(scope: RequestScope, prepared: MessagesPrepared) -> dict:
+def _call(scope: RequestScope, prepared: _Prepared) -> dict:
     """Return the arguments of the invoker's call for a prepared request."""
     return {
         'identity': scope.identity,
@@ -83,23 +108,23 @@ def _call(scope: RequestScope, prepared: MessagesPrepared) -> dict:
     }
 
 
-async def respond(scope: RequestScope, prepared: MessagesPrepared) -> dict:
-    """Answer a prepared Messages API request; return the message object."""
-    set_operation_category(OperationCategory.INVOCATION)
-    message, _ = await scope.route.chat_invoker.complete_messages(
-        **_call(scope, prepared)
-    )
-    # Output guardrails and usage accounting go here: AG-1132.
-    return {**message, 'model': scope.route.gateway_route_config.route_name}
-
-
-async def stream(scope: RequestScope, prepared: MessagesPrepared) -> AsyncIterator[str]:
-    """Relay a prepared Messages API request's upstream events as SSE frames."""
+async def _live(scope: RequestScope, prepared: _Prepared) -> AsyncIterator[str]:
+    """Relay the upstream's events, then count the reply on the limits."""
     set_streaming()
     set_operation_category(OperationCategory.INVOCATION)
     route_name = scope.route.gateway_route_config.route_name
+    usage: dict = {}
     async for event, data in scope.route.chat_invoker.stream_messages(
         **_call(scope, prepared)
     ):
+        usage = stream_usage(event, data, usage)
         yield relay_frame(event, data, route_name)
-    # Buffered mode, for output guardrails and the cache: AG-1132.
+    await _count(scope, prepared, usage)
+
+
+async def _count(scope: RequestScope, prepared: _Prepared, usage: dict | None) -> None:
+    """Count a model's reply against the limits."""
+    if not usage:
+        return
+    input_tokens, output_tokens = messages_token_counts(usage)
+    await scope.limits.count(Usage.priced(prepared.model, input_tokens, output_tokens))

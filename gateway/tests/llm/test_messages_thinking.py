@@ -78,8 +78,11 @@ def test_a_body_without_messages_is_returned_as_it_is():
 
 
 def _bad_request(body: object, message: str) -> anthropic.APIStatusError:
+    """Return the SDK's error for a 400 whose JSON body is ``body``."""
     response = httpx.Response(
-        400, request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
+        400,
+        request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        **({} if body is None else {'json': body}),
     )
     return anthropic.APIStatusError(message, response=response, body=body)
 

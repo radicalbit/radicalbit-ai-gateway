@@ -118,3 +118,24 @@ def responses_token_counts(usage: dict | None) -> tuple[int, int, int]:
         return 0, 0, 0
     cached = (usage.get('input_tokens_details') or {}).get('cached_tokens') or 0
     return usage.get('input_tokens') or 0, cached, usage.get('output_tokens') or 0
+
+
+def messages_token_counts(usage: dict | None) -> tuple[int, int]:
+    """Return ``(input, output)`` tokens of a Messages API usage.
+
+    The input includes the cache reads and writes, as a chat reply's does:
+    Anthropic's ``input_tokens`` leaves them out. A write counts once, by its
+    TTL breakdown when there is one.
+    """
+    if not usage:
+        return 0, 0
+    breakdown = usage.get('cache_creation') or {}
+    cache_writes = (breakdown.get('ephemeral_5m_input_tokens') or 0) + (
+        breakdown.get('ephemeral_1h_input_tokens') or 0
+    )
+    input_tokens = (
+        (usage.get('input_tokens') or 0)
+        + (usage.get('cache_read_input_tokens') or 0)
+        + (cache_writes or usage.get('cache_creation_input_tokens') or 0)
+    )
+    return input_tokens, usage.get('output_tokens') or 0

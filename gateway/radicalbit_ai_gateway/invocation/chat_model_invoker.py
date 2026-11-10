@@ -443,7 +443,8 @@ class ChatModelInvoker(ModelInvoker):
                 recorder=self.recorder,
                 record=record,
                 on_failure=_log_messages_failure,
-                # A refusal of the request itself, raised as the client gets it.
+                # A refusal of the request itself (``final_messages_refusal``),
+                # raised as the client gets it: another model would refuse it too.
                 final=lambda error: isinstance(error, ModelInvokerUpstreamError),
                 on_exhausted=on_exhausted,
             ),
@@ -523,7 +524,9 @@ class ChatModelInvoker(ModelInvoker):
                     candidate.model, candidate.client, body, headers
                 )
             except Exception as error:
-                raise _final_or(error) from error
+                if refusal := final_messages_refusal(error):
+                    raise refusal from error
+                raise
             # A reply without usage is recorded too: {} is not None.
             return Reply((result, candidate.model), usage=result.get('usage') or {})
 
@@ -556,9 +559,9 @@ class ChatModelInvoker(ModelInvoker):
                     started = True
                     yield event, data
             except Exception as error:
-                if started:
-                    raise
-                raise _final_or(error) from error
+                if not started and (refusal := final_messages_refusal(error)):
+                    raise refusal from error
+                raise
 
         async for event in chain.stream(stream):
             yield event
@@ -568,13 +571,6 @@ def _log_responses_failure(candidate: Candidate, error: BaseException) -> None:
     logger.warning(
         'Responses model %s failed: %s', candidate.model.model_id, str(error)
     )
-
-
-def _final_or(error: Exception) -> Exception:
-    """Return the refusal a Messages client gets for ``error`` when no other
-    model would serve the request, else ``error`` itself.
-    """
-    return final_messages_refusal(error) or error
 
 
 def _messages_tokens(usage: dict | None) -> Tokens:

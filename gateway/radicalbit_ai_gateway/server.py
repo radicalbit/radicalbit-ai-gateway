@@ -525,9 +525,7 @@ app.include_router(ChatCompletionsRoute.get_chat_completions_router(admission))
 app.include_router(EmbeddingsRoute.get_embeddings_router(admission))
 app.include_router(TranscriptionsRoute.get_transcriptions_router(admission))
 app.include_router(ResponsesRoute.get_responses_router(admission))
-app.include_router(
-    MessagesRoute.get_messages_router(group_service, project_budget_limit_dao)
-)
+app.include_router(MessagesRoute.get_messages_router(admission))
 
 
 # mount static files application (https://fastapi.tiangolo.com/tutorial/static-files/)

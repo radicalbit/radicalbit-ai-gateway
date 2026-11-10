@@ -6,7 +6,6 @@ from collections.abc import AsyncIterator, Mapping
 import json
 import logging
 
-import anthropic
 from fastapi import status
 
 from radicalbit_ai_gateway.endpoints.messages.errors import (
@@ -14,6 +13,7 @@ from radicalbit_ai_gateway.endpoints.messages.errors import (
     messages_error,
 )
 from radicalbit_ai_gateway.endpoints.messages.events import sse
+from radicalbit_ai_gateway.llm.errors import provider_status
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import AppError, ModelInvokerUpstreamError
 
@@ -40,7 +40,7 @@ def _error_body(exc: Exception) -> tuple[dict, int]:
     return messages_error(code, 'Unhandled error during streaming'), code
 
 
-async def serve_messages_stream(
+async def serve_stream(
     frames: AsyncIterator[str],
 ) -> AsyncIterator[str | tuple[str, int]]:
     """Send a Messages stream to the client.
@@ -74,9 +74,13 @@ def _error_event_body(exc: Exception) -> dict:
     An upstream Messages API error keeps its own type and message. Any other
     error is an ``api_error`` that says nothing of the gateway's internals.
     """
-    upstream = (anthropic.APIStatusError, ModelInvokerUpstreamError)
-    if isinstance(exc, upstream) and is_messages_error_body(exc.body):
-        return exc.body
+    if isinstance(exc, ModelInvokerUpstreamError):
+        body = exc.body
+    else:
+        refusal = provider_status(exc)
+        body = refusal[2] if refusal else None
+    if is_messages_error_body(body):
+        return body
     return messages_error(
         status.HTTP_500_INTERNAL_SERVER_ERROR, 'Internal server error'
     )

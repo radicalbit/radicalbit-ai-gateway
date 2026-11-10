@@ -3,7 +3,7 @@ import json
 import anthropic
 import httpx
 
-from radicalbit_ai_gateway.endpoints.messages.serving import serve_messages_stream
+from radicalbit_ai_gateway.endpoints.messages.serving import serve_stream
 from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
     ModelInvokerUpstreamError,
@@ -25,7 +25,7 @@ async def _frames(*items):
 
 
 async def _served(*items) -> list:
-    return [item async for item in serve_messages_stream(_frames(*items))]
+    return [item async for item in serve_stream(_frames(*items))]
 
 
 def _error_event(item: str) -> dict:
@@ -35,8 +35,11 @@ def _error_event(item: str) -> dict:
 
 
 def _api_status_error(body: dict) -> anthropic.APIStatusError:
+    """Return the SDK's error for a 529 whose JSON body is ``body``."""
     response = httpx.Response(
-        529, request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
+        529,
+        request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        json=body,
     )
     return anthropic.APIStatusError('Overloaded', response=response, body=body)
 

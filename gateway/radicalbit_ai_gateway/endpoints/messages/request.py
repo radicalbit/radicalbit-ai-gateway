@@ -1,7 +1,7 @@
 """An Anthropic Messages API request as the gateway's policies see it.
 
 The request goes upstream as the client sent it. The gateway's policies
-(preprocessing plugins, routing, and later guardrails, limits and cache) read
+(preprocessing plugins, routing, limits, and later guardrails and cache) read
 chat messages, so ``MessagesRequest`` shows the request's texts as messages and
 writes the texts they change back into the body. Blocks without text (images,
 documents, tool use, thinking...) are never touched.
@@ -12,8 +12,6 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 from typing import Any
-
-from typing_extensions import Required, TypedDict
 
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
@@ -28,29 +26,6 @@ _MESSAGE_TYPES: dict[str, type[BaseMessage]] = {
     'user': HumanMessage,
     'assistant': AIMessage,
 }
-
-
-class MessageCreateParams(TypedDict, total=False):
-    """The shape of a Messages request the gateway needs.
-
-    It only validates the request: the body goes upstream with every field the
-    client sent.
-    """
-
-    model: Required[str]
-    """Gateway route name used to select the backend model."""
-
-    messages: Required[list[dict[str, Any]]]
-    """The conversation, as Anthropic's message objects."""
-
-    max_tokens: Required[int]
-    """The most tokens the model may generate."""
-
-    system: str | list[dict[str, Any]] | None
-    """The system prompt, a string or a list of text blocks."""
-
-    stream: bool | None
-    """Whether to stream the response."""
 
 
 @dataclass
