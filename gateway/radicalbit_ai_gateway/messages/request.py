@@ -19,6 +19,7 @@ from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     BaseMessage,
     HumanMessage,
+    MessageContent,
     SystemMessage,
 )
 from radicalbit_ai_gateway.utils.exceptions import GatewayInternalError
@@ -100,13 +101,11 @@ def _content_texts(container: dict, key: str) -> list[_Text]:
     return []
 
 
-def _texts_of(content: Any) -> list[str]:
+def _texts_of(content: MessageContent) -> list[str]:
     """Return the texts of a chat message's content."""
     if isinstance(content, str):
         return [content]
-    if isinstance(content, list):
-        return [block['text'] for block in content if _is_text_block(block)]
-    return []
+    return [block['text'] for block in content if _is_text_block(block)]
 
 
 def _all_message_texts(body: dict) -> list[_MessageTexts]:
