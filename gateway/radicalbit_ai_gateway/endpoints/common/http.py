@@ -83,16 +83,26 @@ def otel_metrics_decorator(func):
     return wrapper
 
 
-def endpoint(name: str):
-    """Decorate a proxy endpoint: its HTTP metrics, its trace (a workflow
-    span named ``name``, marked ENDPOINT), and the route context cleared when
-    the request is done.
+def traced_endpoint(name: str):
+    """Decorate a proxy endpoint: its trace (a workflow span named ``name``,
+    marked ENDPOINT), and the route context cleared when the request is done.
     """
 
     def decorate(handler):
-        return otel_metrics_decorator(
-            workflow(name=name)(ensure_endpoint_category(reset_route_context(handler)))
+        return workflow(name=name)(
+            ensure_endpoint_category(reset_route_context(handler))
         )
+
+    return decorate
+
+
+def endpoint(name: str):
+    """Decorate a proxy endpoint: its HTTP metrics, and its trace and route
+    context (see ``traced_endpoint``).
+    """
+
+    def decorate(handler):
+        return otel_metrics_decorator(traced_endpoint(name)(handler))
 
     return decorate
 

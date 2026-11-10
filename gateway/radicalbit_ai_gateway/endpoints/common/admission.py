@@ -172,17 +172,34 @@ class Admission:
             route.project_uuid, self._project_budget_limit_dao
         )
         return shared_limits.resolve(
-            RequestIdentity(
-                request_uuid=request_uuid,
-                route_name=route.gateway_route_config.route_name,
-                api_key_uuid=key_details.api_key_uuid,
-                api_key_name=key_details.api_key_name,
-                group_uuid=key_details.group_uuid,
-                group_name=key_details.group_name,
-                project_uuid=route.project_uuid,
-                project_name=route.project_name,
+            caller_identity(
+                request_uuid,
+                route.gateway_route_config.route_name,
+                route.project_uuid,
+                route.project_name,
+                key_details,
             ),
             route.route_limits,
             key_details.limits,
             project_limits,
         )
+
+
+def caller_identity(
+    request_uuid: str,
+    route_name: str,
+    project_uuid: str,
+    project_name: str,
+    key_details: KeyDetails,
+) -> RequestIdentity:
+    """Return who made a request to a project's route, once authenticated."""
+    return RequestIdentity(
+        request_uuid=request_uuid,
+        route_name=route_name,
+        api_key_uuid=key_details.api_key_uuid,
+        api_key_name=key_details.api_key_name,
+        group_uuid=key_details.group_uuid,
+        group_name=key_details.group_name,
+        project_uuid=project_uuid,
+        project_name=project_name,
+    )

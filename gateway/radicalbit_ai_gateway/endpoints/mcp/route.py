@@ -1,18 +1,16 @@
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
-from traceloop.sdk.decorators import workflow
 
+from radicalbit_ai_gateway.endpoints.common.admission import caller_identity
+from radicalbit_ai_gateway.endpoints.common.http import traced_endpoint
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.limiting.limits import ADMISSION, shared_limits
 from radicalbit_ai_gateway.mcp_proxy.list_cache import McpListCache
-from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.routes.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
 from radicalbit_ai_gateway.services.mcp_service import McpService
-from radicalbit_ai_gateway.utils.request_context import reset_route_context
-from radicalbit_ai_gateway.utils.trace_attributes import ensure_endpoint_category
 
 
 class McpRoute:
@@ -21,12 +19,10 @@ class McpRoute:
         router = APIRouter(tags=['mcp'])
 
         # The root span for the whole request, so it covers the rate-limit
-        # check as well as the dispatch; ensure_endpoint_category sits inside
-        # it to reset the category a rejection leaves behind.
+        # check as well as the dispatch. Not @endpoint: MCP records no HTTP
+        # request metrics.
         @router.post('/{project_name}/{route_name}/mcp')
-        @workflow(name='mcp_request')
-        @ensure_endpoint_category
-        @reset_route_context
+        @traced_endpoint('mcp_request')
         async def mcp_post(
             request: Request,
             project_name: str,
@@ -57,15 +53,12 @@ class McpRoute:
             if route is not None:
                 key_details = authorized.key_details
                 request_limits = shared_limits.resolve(
-                    RequestIdentity(
-                        request_uuid=request_uuid,
-                        route_name=authorized.route_name,
-                        api_key_uuid=key_details.api_key_uuid,
-                        api_key_name=key_details.api_key_name,
-                        group_uuid=key_details.group_uuid,
-                        group_name=key_details.group_name,
-                        project_uuid=authorized.project_uuid,
-                        project_name=authorized.project_name,
+                    caller_identity(
+                        request_uuid,
+                        authorized.route_name,
+                        authorized.project_uuid,
+                        authorized.project_name,
+                        key_details,
                     ),
                     route.route_limits,
                     key_details.limits,
