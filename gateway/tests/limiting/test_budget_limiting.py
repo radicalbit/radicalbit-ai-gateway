@@ -88,6 +88,7 @@ class TestBudgetLimiter:
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[BUDGET LIMIT]' in msg
+        assert exc.value.limit_scope == 'route'
         assert '[route=rb-gateway]' in msg
         assert '[kind=BUDGET]' in msg
         assert '[attempted=1]' in msg

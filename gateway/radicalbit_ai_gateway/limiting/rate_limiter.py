@@ -145,6 +145,7 @@ class RequestRateLimiter:
                 message=user_message,
                 log_message=log_message,
                 route_name=self.route_name,
+                limit_scope=LimitScope.ROUTE,
             )
 
         logger.debug(

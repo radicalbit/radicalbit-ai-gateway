@@ -29,6 +29,7 @@ from radicalbit_ai_gateway.db.models.event import (
     TokensCounter,
 )
 from radicalbit_ai_gateway.db.tables.event_table import Event
+from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENT_TYPES
 from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
@@ -45,6 +46,16 @@ MCP_ENTITY_COLUMNS: dict[str, McpEntityColumn] = {
     'groups': 'GROUP_UUID',
     'keys': 'API_KEY_UUID',
 }
+
+
+# The ATTRIBUTES a limit event records to name the limit that fired.
+LIMIT_ATTRIBUTES = (
+    'limit_scope',
+    'category',
+    'window_seconds',
+    'maximum',
+    'consumption',
+)
 
 
 class EventDAO:
@@ -537,15 +548,13 @@ class EventDAO:
             'where',
             'parameters',
             'behavior',
+            *LIMIT_ATTRIBUTES,
         ]
         event_types = [
             'FALLBACK',
             'GUARDRAIL',
-            'RATE_LIMIT',
-            'TOKEN_INPUT_LIMIT',
-            'TOKEN_OUTPUT_LIMIT',
-            'AUDIO_DURATION_LIMIT',
             'CACHE_HIT',
+            *LIMIT_BLOCK_EVENT_TYPES,
         ]
         row_number_col = (
             F.row_number()
@@ -565,6 +574,13 @@ class EventDAO:
             self.T.c['GUARDRAIL_WHERE'].label('where'),
             self.T.c['GUARDRAIL_PARAMS'].label('parameters'),
             self.T.c['GUARDRAIL_BEHAVIOR'].label('behavior'),
+            *(
+                # A missing map key reads as '', so it becomes NULL.
+                F.nullIf(F.arrayElement(self.ATTRIBUTES, attribute), '').label(
+                    attribute
+                )
+                for attribute in LIMIT_ATTRIBUTES
+            ),
             row_number_col,
         ]
 
@@ -594,6 +610,7 @@ class EventDAO:
             subquery_stmt.c['where'],
             subquery_stmt.c['parameters'],
             subquery_stmt.c['behavior'],
+            *(subquery_stmt.c[attribute] for attribute in LIMIT_ATTRIBUTES),
         ]
 
         final_stmt = (

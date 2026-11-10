@@ -87,6 +87,7 @@ class TestBudgetLimiting:
         with pytest.raises(BudgetLimitExceededError) as exc:
             await limiter.check_budget(**_CALL_ARGS)
         assert 'my-project' in str(exc.value)
+        assert exc.value.limit_scope == 'project'
 
     @pytest.mark.asyncio
     async def test_message_shows_the_amount_in_usd(self):

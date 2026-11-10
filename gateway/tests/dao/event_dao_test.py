@@ -7,6 +7,7 @@ from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.models.event import (
     Counters,
+    EventDetails,
     LastEventFallback,
     LastEventGuardrail,
     MostExpensiveChartData,
@@ -414,6 +415,100 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
                     2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
                 ),
                 route_name='route-A',
+                event_type='RATE_LIMIT',
+                api_key_name='fake',
+            ),
+        ]
+
+    def test_get_latest_n_per_event_type_reads_limit_blocks(self):
+        def at(hour: int) -> datetime.datetime:
+            return datetime.datetime(2025, 10, 13, hour, tzinfo=datetime.timezone.utc)
+
+        def limit_attributes(scope: str, category: str) -> dict[str, str]:
+            return {
+                'limit_scope': scope,
+                'category': category,
+                'window_seconds': '3600',
+                'maximum': '10.0',
+                'consumption': '10.5',
+            }
+
+        key = uuid.UUID(int=7)
+        self.insert(
+            [
+                db_mock.get_sample_event(
+                    event_type='BUDGET_LIMIT',
+                    route_name='route-limits',
+                    timestamp=at(10),
+                    api_key_uuid=key,
+                    **limit_attributes('route', 'budget'),
+                ),
+                db_mock.get_sample_event(
+                    event_type='CREDENTIAL_RATE_LIMIT',
+                    route_name='route-limits',
+                    timestamp=at(11),
+                    api_key_uuid=key,
+                    **limit_attributes('credential', 'request_rate'),
+                ),
+                db_mock.get_sample_event(
+                    event_type='PROJECT_BUDGET_LIMIT',
+                    route_name='route-limits',
+                    timestamp=at(12),
+                    api_key_uuid=key,
+                    **limit_attributes('project', 'budget'),
+                ),
+                db_mock.get_sample_event(
+                    event_type='LIMIT_THRESHOLD',
+                    route_name='route-limits',
+                    timestamp=at(13),
+                    api_key_uuid=key,
+                    threshold_percentage='80',
+                    **limit_attributes('credential', 'budget'),
+                ),
+                db_mock.get_sample_event(
+                    event_type='RATE_LIMIT',
+                    route_name='route-limits',
+                    timestamp=at(14),
+                    api_key_uuid=key,
+                ),
+            ]
+        )
+
+        res = self.event_dao.get_latest_n_per_event_type(
+            None, 'route-limits', 10, at(0), at(23)
+        )
+
+        def block(
+            event_type: str, hour: int, scope: str, category: str
+        ) -> EventDetails:
+            return EventDetails(
+                timestamp=at(hour),
+                api_key_uuid=key,
+                route_name='route-limits',
+                event_type=event_type,
+                target='',
+                fallback='',
+                name='',
+                type='',
+                where='',
+                parameters='',
+                behavior='',
+                api_key_name='fake',
+                limit_scope=scope,
+                category=category,
+                window_seconds=3600,
+                maximum=10.0,
+                consumption=10.5,
+            )
+
+        assert res == [
+            block('BUDGET_LIMIT', 10, 'route', 'budget'),
+            block('CREDENTIAL_RATE_LIMIT', 11, 'credential', 'request_rate'),
+            block('PROJECT_BUDGET_LIMIT', 12, 'project', 'budget'),
+            db_mock.get_event_detail(
+                timestamp=at(14),
+                api_key_uuid=key,
+                route_name='route-limits',
                 event_type='RATE_LIMIT',
                 api_key_name='fake',
             ),

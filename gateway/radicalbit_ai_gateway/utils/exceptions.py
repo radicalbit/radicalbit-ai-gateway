@@ -374,14 +374,25 @@ def _guardrail_param_payload(guardrail: Any) -> Any:
     return payload or fallback
 
 
+LIMIT_SCOPE_HEADER = 'X-RB-AIGATEWAY-LIMIT-SCOPE'
+
+
 class TokenLimitExceeded(AppError):
-    def __init__(self, message: str, code: str, *, log_message: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        code: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: str | None = None,
+    ):
         super().__init__(
             client_message=message,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             log_message=log_message,
             code=code,
         )
+        self.limit_scope = limit_scope
 
 
 class RBRateLimitExceeded(AppError):
@@ -392,6 +403,7 @@ class RBRateLimitExceeded(AppError):
         *,
         log_message: str | None = None,
         param: Any = None,
+        limit_scope: str | None = None,
     ):
         super().__init__(
             client_message=message,
@@ -400,6 +412,7 @@ class RBRateLimitExceeded(AppError):
             code=code,
             param=param,
         )
+        self.limit_scope = limit_scope
 
 
 class RequestRateLimitExceeded(RBRateLimitExceeded):
@@ -409,12 +422,14 @@ class RequestRateLimitExceeded(RBRateLimitExceeded):
         *,
         log_message: str | None = None,
         route_name: str | None = None,
+        limit_scope: str | None = None,
     ):
         super().__init__(
             message,
             'request_rate_limited',
             log_message=log_message,
             param=route_name,
+            limit_scope=limit_scope,
         )
 
 
@@ -425,23 +440,47 @@ class AudioDurationLimitExceeded(RBRateLimitExceeded):
         *,
         log_message: str | None = None,
         route_name: str | None = None,
+        limit_scope: str | None = None,
     ):
         super().__init__(
             message,
             'audio_duration_rate_limited',
             log_message=log_message,
             param=route_name,
+            limit_scope=limit_scope,
         )
 
 
 class InputTokenLimitExceeded(TokenLimitExceeded):
-    def __init__(self, message: str, *, log_message: str | None = None):
-        super().__init__(message, 'token_limit_rate_limited', log_message=log_message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: str | None = None,
+    ):
+        super().__init__(
+            message,
+            'token_limit_rate_limited',
+            log_message=log_message,
+            limit_scope=limit_scope,
+        )
 
 
 class OutputTokenLimitExceeded(TokenLimitExceeded):
-    def __init__(self, message: str, *, log_message: str | None = None):
-        super().__init__(message, 'token_limit_rate_limited', log_message=log_message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: str | None = None,
+    ):
+        super().__init__(
+            message,
+            'token_limit_rate_limited',
+            log_message=log_message,
+            limit_scope=limit_scope,
+        )
 
 
 class ModelInvokerError(AppError):
@@ -777,18 +816,37 @@ class SecretsBackendError(AppError):
 
 
 class BudgetLimitExceeded(AppError):
-    def __init__(self, message: str, code: str, *, log_message: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        code: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: str | None = None,
+    ):
         super().__init__(
             client_message=message,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             log_message=log_message,
             code=code,
         )
+        self.limit_scope = limit_scope
 
 
 class BudgetLimitExceededError(BudgetLimitExceeded):
-    def __init__(self, message: str, *, log_message: str | None = None):
-        super().__init__(message, 'budget_limit_rate_limited', log_message=log_message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_message: str | None = None,
+        limit_scope: str | None = None,
+    ):
+        super().__init__(
+            message,
+            'budget_limit_rate_limited',
+            log_message=log_message,
+            limit_scope=limit_scope,
+        )
 
 
 def _log_and_json_response(
@@ -848,9 +906,20 @@ def guardrail_exception_handler(request: Request, err: GuardrailError):
     return response
 
 
+def _limit_response(
+    err: TokenLimitExceeded | RBRateLimitExceeded | BudgetLimitExceeded,
+    error_type: str,
+) -> JSONResponse:
+    """Build a limit's 429, naming the scope that blocked it when known."""
+    response = _log_and_json_response(err, error_type)
+    if err.limit_scope is not None:
+        response.headers[LIMIT_SCOPE_HEADER] = str(err.limit_scope)
+    return response
+
+
 def token_limiter_exception_handler(request: Request, err: TokenLimitExceeded):
     set_request_error_info(request, err)
-    return _log_and_json_response(err, 'rate_limit_error')
+    return _limit_response(err, 'rate_limit_error')
 
 
 def model_invoker_exception_handler(request: Request, err: ModelInvokerError):
@@ -935,14 +1004,14 @@ def alert_rule_exception_handler(request: Request, err: AppError):
 
 async def rate_limit_exceeded_handler(request: Request, exc: RequestRateLimitExceeded):
     set_request_error_info(request, exc)
-    return _log_and_json_response(exc, 'rate_limit_error')
+    return _limit_response(exc, 'rate_limit_error')
 
 
 async def audio_duration_limit_exceeded_handler(
     request: Request, exc: AudioDurationLimitExceeded
 ):
     set_request_error_info(request, exc)
-    return _log_and_json_response(exc, 'rate_limit_error')
+    return _limit_response(exc, 'rate_limit_error')
 
 
 def secrets_backend_exception_handler(request: Request, err: SecretsBackendError):
@@ -952,7 +1021,7 @@ def secrets_backend_exception_handler(request: Request, err: SecretsBackendError
 
 def budget_limiter_exception_handler(request: Request, err: BudgetLimitExceeded):
     set_request_error_info(request, err)
-    return _log_and_json_response(err, 'budget_limit_error')
+    return _limit_response(err, 'budget_limit_error')
 
 
 async def unhandled_exception_handler(request: Request, err: Exception):

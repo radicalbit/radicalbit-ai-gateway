@@ -32,6 +32,7 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.event_dto import WindowStatus
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import (
     app,
@@ -42,6 +43,7 @@ from radicalbit_ai_gateway.server import (
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.dependencies import get_request_uuid
 from radicalbit_ai_gateway.utils.exceptions import (
+    BudgetLimitExceededError,
     GatewayBadRequest,
     GatewayInternalError,
     InputTokenLimitExceeded,
@@ -256,6 +258,51 @@ class TestServer(unittest.TestCase):
             '/v1/chat/completions', json=request_data, headers=self.headers
         )
         assert response.status_code == 429
+
+    def _post_blocked_by(self, error):
+        key_service.get_key_by_hashed_key = MagicMock(
+            return_value=db_mock.get_sample_key_with_group(
+                group_uuid=db_mock.GROUP_UUID
+            )
+        )
+        group_service.check_key_uuid_for_route = MagicMock(return_value=True)
+        self.gateways_mock['rb-gateway'].invoke.side_effect = error
+        request_data = {
+            'model': 'rb-gateway',
+            'messages': [{'role': 'user', 'content': 'Hello!'}],
+        }
+        return self.client.post(
+            '/v1/chat/completions', json=request_data, headers=self.headers
+        )
+
+    def test_429_names_the_route_scope(self):
+        response = self._post_blocked_by(
+            InputTokenLimitExceeded('blocked', limit_scope=LimitScope.ROUTE)
+        )
+        assert response.status_code == 429
+        assert response.headers['X-RB-AIGATEWAY-LIMIT-SCOPE'] == 'route'
+        assert response.json()['error']['code'] == 'token_limit_rate_limited'
+
+    def test_429_names_the_credential_scope(self):
+        response = self._post_blocked_by(
+            RequestRateLimitExceeded('blocked', limit_scope=LimitScope.CREDENTIAL)
+        )
+        assert response.status_code == 429
+        assert response.headers['X-RB-AIGATEWAY-LIMIT-SCOPE'] == 'credential'
+        assert response.json()['error']['code'] == 'request_rate_limited'
+
+    def test_429_names_the_project_scope(self):
+        response = self._post_blocked_by(
+            BudgetLimitExceededError('blocked', limit_scope=LimitScope.PROJECT)
+        )
+        assert response.status_code == 429
+        assert response.headers['X-RB-AIGATEWAY-LIMIT-SCOPE'] == 'project'
+        assert response.json()['error']['code'] == 'budget_limit_rate_limited'
+
+    def test_429_without_scope_has_no_scope_header(self):
+        response = self._post_blocked_by(OutputTokenLimitExceeded('blocked'))
+        assert response.status_code == 429
+        assert 'X-RB-AIGATEWAY-LIMIT-SCOPE' not in response.headers
 
     def test_runtime_error_on_routing_select_model(self):
         key_service.get_key_by_hashed_key = MagicMock(

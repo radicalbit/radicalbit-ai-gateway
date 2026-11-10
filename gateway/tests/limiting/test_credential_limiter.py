@@ -100,6 +100,7 @@ class TestRateLimiting:
             await limiter.check_and_count_request(**_CALL_ARGS)
         assert 'my-cred' in str(exc.value)
         mock_emit_event.assert_called_once()
+        assert exc.value.limit_scope == 'credential'
 
     @pytest.mark.asyncio
     async def test_and_semantics_across_multiple_windows(self):
@@ -144,11 +145,12 @@ class TestTokenInputLimiting:
                 'radicalbit_ai_gateway.limiting.credential_limiter.count_tokens',
                 return_value=150,
             ),
-            pytest.raises(InputTokenLimitExceeded),
+            pytest.raises(InputTokenLimitExceeded) as exc,
         ):
             await limiter.check_input_tokens(
                 text='hello', model_string=TEST_MODEL, **_CALL_ARGS
             )
+        assert exc.value.limit_scope == 'credential'
 
         await limiter.count_input_tokens(30, identity=IDENTITY)
         entry = limiter._entries[CredentialLimitCategory.TOKEN_INPUT][0]
@@ -162,8 +164,9 @@ class TestTokenOutputLimiting:
         limiter = _limiter([_limit(CredentialLimitCategory.TOKEN_OUTPUT, 10)])
         await limiter.check_output_tokens(**_CALL_ARGS)
         await limiter.count_output_tokens(10, identity=IDENTITY)
-        with pytest.raises(OutputTokenLimitExceeded):
+        with pytest.raises(OutputTokenLimitExceeded) as exc:
             await limiter.check_output_tokens(**_CALL_ARGS)
+        assert exc.value.limit_scope == 'credential'
 
 
 class TestBudgetLimiting:
@@ -173,9 +176,10 @@ class TestBudgetLimiting:
         await limiter.count_budget_input(
             token_count=1000, input_cost_per_token=0.001, identity=IDENTITY
         )
-        with pytest.raises(BudgetLimitExceededError):
+        with pytest.raises(BudgetLimitExceededError) as exc:
             await limiter.check_budget(**_CALL_ARGS)
         mock_emit_event.assert_called_once()
+        assert exc.value.limit_scope == 'credential'
 
     @pytest.mark.asyncio
     async def test_count_budget_output_and_duration_consume_same_window(self):

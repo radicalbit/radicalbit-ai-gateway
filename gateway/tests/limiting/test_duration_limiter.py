@@ -127,6 +127,7 @@ class TestDurationLimiter:
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[DURATION LIMIT]' in msg
+        assert exc.value.limit_scope == 'route'
         assert '[route=rb-gateway]' in msg
         assert '[kind=AUDIO_DURATION]' in msg
         assert '[limit=15.0]' in msg

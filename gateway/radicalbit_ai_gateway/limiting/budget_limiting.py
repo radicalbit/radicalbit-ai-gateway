@@ -178,6 +178,7 @@ class BudgetLimiter:
             raise BudgetLimitExceededError(
                 user_message,
                 log_message=log_message,
+                limit_scope=LimitScope.ROUTE,
             )
 
         logger.debug(

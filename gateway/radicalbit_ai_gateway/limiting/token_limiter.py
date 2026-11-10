@@ -226,6 +226,7 @@ class TokenLimiter:
             raise InputTokenLimitExceeded(
                 message=user_message,
                 log_message=log_message,
+                limit_scope=LimitScope.ROUTE,
             )
 
         logger.debug(
@@ -345,6 +346,7 @@ class TokenLimiter:
             raise OutputTokenLimitExceeded(
                 message=user_message,
                 log_message=log_message,
+                limit_scope=LimitScope.ROUTE,
             )
 
         logger.debug(

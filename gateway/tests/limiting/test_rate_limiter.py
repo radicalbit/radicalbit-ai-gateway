@@ -139,6 +139,7 @@ class TestRequestRateLimiter:
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[RATE LIMIT]' in msg
+        assert exc.value.limit_scope == 'route'
         assert '[route=rb-gateway]' in msg
         assert '[kind=REQUEST]' in msg
         assert '[limit=2]' in msg

@@ -184,6 +184,7 @@ class TestTokenLimiter:
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[TOKEN LIMIT]' in msg
+        assert exc.value.limit_scope == 'route'
         assert '[route=rb-gateway]' in msg
         assert '[kind=TOKEN]' in msg
         assert '[direction=INPUT]' in msg
@@ -330,6 +331,7 @@ class TestTokenLimiter:
 
         msg = getattr(exc.value, 'log_message', str(exc.value))
         assert '[TOKEN LIMIT]' in msg
+        assert exc.value.limit_scope == 'route'
         assert '[route=rb-gateway]' in msg
         assert '[kind=TOKEN]' in msg
         assert '[direction=OUTPUT]' in msg

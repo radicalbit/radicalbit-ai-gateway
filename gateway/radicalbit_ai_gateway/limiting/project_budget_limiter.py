@@ -180,6 +180,7 @@ class ProjectBudgetLimiter:
                     f'[window={entry.limit_out.window_size}] '
                     f'[reset_s={stats.remaining_time}] [action=BLOCK]'
                 ),
+                limit_scope=LimitScope.PROJECT,
             )
 
     async def count_input(

@@ -236,6 +236,7 @@ class CredentialLimiter:
                     '[action=BLOCK]'
                 ),
                 route_name=route_name,
+                limit_scope=LimitScope.CREDENTIAL,
             )
         await self._hit(
             CredentialLimitCategory.RATE,
@@ -349,6 +350,7 @@ class CredentialLimiter:
                     f'[window={entry.limit_out.window_size}] '
                     f'[reset_s={stats.remaining_time}] [action=BLOCK]'
                 ),
+                limit_scope=LimitScope.CREDENTIAL,
             )
 
     async def count_input_tokens(self, tokens: int, identity: RequestIdentity) -> None:
@@ -404,6 +406,7 @@ class CredentialLimiter:
                     f'[window={entry.limit_out.window_size}] '
                     f'[reset_s={stats.remaining_time}] [action=BLOCK]'
                 ),
+                limit_scope=LimitScope.CREDENTIAL,
             )
 
     async def count_output_tokens(self, tokens: int, identity: RequestIdentity) -> None:
@@ -452,6 +455,7 @@ class CredentialLimiter:
                     f'[window={entry.limit_out.window_size}] '
                     f'[reset_s={stats.remaining_time}] [action=BLOCK]'
                 ),
+                limit_scope=LimitScope.CREDENTIAL,
             )
 
     async def count_budget_input(

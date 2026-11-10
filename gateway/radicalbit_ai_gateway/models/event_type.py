@@ -24,3 +24,19 @@ class EventType(str, Enum):
     CACHE_OUTPUT_TOKENS = 'CACHE_OUTPUT_TOKENS'
     MCP_INVOCATION = 'MCP_INVOCATION'
     REQUEST = 'REQUEST'
+
+
+# The events a limit records when it blocks a request, whatever its scope.
+# LIMIT_THRESHOLD is not one: it warns, it does not block.
+LIMIT_BLOCK_EVENT_TYPES: tuple[EventType, ...] = (
+    EventType.RATE_LIMIT,
+    EventType.TOKEN_INPUT_LIMIT,
+    EventType.TOKEN_OUTPUT_LIMIT,
+    EventType.AUDIO_DURATION_LIMIT,
+    EventType.BUDGET_LIMIT,
+    EventType.CREDENTIAL_RATE_LIMIT,
+    EventType.CREDENTIAL_TOKEN_INPUT_LIMIT,
+    EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT,
+    EventType.CREDENTIAL_BUDGET_LIMIT,
+    EventType.PROJECT_BUDGET_LIMIT,
+)
