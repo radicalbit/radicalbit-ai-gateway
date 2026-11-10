@@ -1,6 +1,6 @@
 from typing import Annotated, Union
 
-from pydantic import ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic.alias_generators import to_camel
 
 from radicalbit_ai_gateway.models.caching import Caching, SemanticCaching
@@ -270,14 +270,26 @@ AnyMcpServerOut = Annotated[
 ]
 
 
+class UsedModelsOut(BaseModel):
+    """Every model a route uses, per category: its own lists plus the models
+    its guardrails and routing call.
+    """
+
+    chat: list[ModelOut] = []
+    embedding: list[ModelOut] = []
+    transcription: list[ModelOut] = []
+    decision: list[ModelOut] = []
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
+    )
+
+
 class GatewayRouteConfigOut(GatewayRouteConfig):
     chat_models: list[ModelOut] | None
     embedding_models: list[ModelOut] | None
     transcription_models: list[ModelOut] | None
     decision_models: list[ModelOut] | None
-    # Every decision model the route calls: served, decision judges, decision
-    # routing. decision_models stays the served ones only (decision cURL).
-    all_decision_models: list[ModelOut] | None = None
     rate_limiting: RateLimitingOut | None
     token_limiting: TokenLimitingOut | None
     duration_limiting: DurationLimitingOut | None
@@ -286,6 +298,7 @@ class GatewayRouteConfigOut(GatewayRouteConfig):
     caching: AnyCachingOut | None
     routing: AnyRoutingConfigOut | None
     mcp_servers: list[AnyMcpServerOut] | None
+    used_models: UsedModelsOut | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()

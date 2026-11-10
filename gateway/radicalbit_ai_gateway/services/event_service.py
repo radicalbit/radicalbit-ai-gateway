@@ -606,12 +606,6 @@ class EventService:
                 resolved_decision.append(decision_model.model_dump())
             route_dict['decision_models'] = resolved_decision
 
-        route_dict['all_decision_models'] = [
-            decision_by_id[mid].model_dump()
-            for mid in config.route_decision_model_ids(route_config)
-            if mid in decision_by_id
-        ]
-
         routing_name: str | None = route_dict.get('routing')
         if routing_name:
             routing_config = config.routing_by_name.get(routing_name)
@@ -629,6 +623,20 @@ class EventService:
                 server.model_dump()
                 for server in config.get_route_mcp_servers(route_config.route_name)
             ]
+
+        # Every model the route uses, own lists plus guardrails and routing,
+        # with names: the route Models popover lists these.
+        used_ids = config.route_model_ids(route_config)
+
+        def resolve(ids: list[str], by_id: dict) -> list[dict]:
+            return [by_id[mid].model_dump() for mid in ids if mid in by_id]
+
+        route_dict['used_models'] = {
+            'chat': resolve(used_ids.chat, chat_by_id),
+            'embedding': resolve(used_ids.embedding, embed_by_id),
+            'transcription': resolve(used_ids.transcription, transcription_by_id),
+            'decision': resolve(used_ids.decision, decision_by_id),
+        }
 
         return GatewayRouteConfigOut(**route_dict)
 
