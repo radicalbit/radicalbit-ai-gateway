@@ -82,8 +82,12 @@ def set_early_project_trace_attributes(
 class AdmissionRules:
     """What admission does where endpoints differ: what it records before the
     route is known, and how it refuses an unknown route and a caller who is
-    not a member of the route. The defaults are the /v1 endpoints'.
+    not a member of the route, and whether the request's limits include its
+    project's budget limits. The defaults are the /v1 endpoints'.
     """
+
+    #: Read the project's budget limits on every request, for its limits.
+    project_limits = True
 
     def opened(
         self,
@@ -191,19 +195,30 @@ class Admission:
 
         ctx.project_uuid = route.project_uuid
         ctx.project_name = route.project_name
-        limits = await self._resolve_limits(route, key_details, request_uuid)
+        limits = await self._resolve_limits(
+            route, key_details, request_uuid, project_limits=rules.project_limits
+        )
         # Request limits first, before anything is processed or spent.
         await limits.check(ADMISSION)
         return route.for_request(limits.identity, limits)
 
     async def _resolve_limits(
-        self, route: GatewayRoute, key_details: KeyDetails, request_uuid: str
+        self,
+        route: GatewayRoute,
+        key_details: KeyDetails,
+        request_uuid: str,
+        *,
+        project_limits: bool,
     ) -> RequestLimits:
-        """Return the limits of a request: its route's, its credential's and
-        its project's, read as they are now.
+        """Return the limits of a request: its route's, its credential's and,
+        with ``project_limits``, its project's, read as they are now.
         """
-        project_limits = await load_project_limits(
-            route.project_uuid, self._project_budget_limit_dao
+        budgets = (
+            await load_project_limits(
+                route.project_uuid, self._project_budget_limit_dao
+            )
+            if project_limits
+            else []
         )
         return shared_limits.resolve(
             caller_identity(
@@ -215,7 +230,7 @@ class Admission:
             ),
             route.route_limits,
             key_details.limits,
-            project_limits,
+            budgets,
         )
 
 

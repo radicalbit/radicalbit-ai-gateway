@@ -12,7 +12,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from tests.common.gateway_harness import build_routes
-from tests.common.limits import project_limit
 
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
@@ -109,6 +108,7 @@ def _make_client(
     with_project: bool = True,
     my_route: dict | None = None,
     request_uuid: str | None = REQUEST_UUID,
+    project_budget_limit_dao=None,
 ) -> tuple[TestClient, MagicMock]:
     """Serve the MCP endpoint for project ``proj``: its config, and its routes
     built from it as the gateway registers them. ``my_route`` adds to
@@ -119,8 +119,9 @@ def _make_client(
     app = FastAPI(title='AI Gateway', debug=True)
     group_service = MagicMock()
     group_service.check_key_uuid_for_route.return_value = key_bound
-    project_budget_limit_dao = MagicMock()
-    project_budget_limit_dao.get_by_project_uuid.return_value = []
+    if project_budget_limit_dao is None:
+        project_budget_limit_dao = MagicMock()
+        project_budget_limit_dao.get_by_project_uuid.return_value = []
     service = McpService(
         upstream_client=upstream_client or MagicMock(spec_set=McpUpstreamClient),
         allowed_origins=[ALLOWED_ORIGIN],
@@ -761,22 +762,20 @@ def test_protocol_traffic_over_http_records_no_invocation(recorded_events):
 PROJECT_LIMITS = 'radicalbit_ai_gateway.endpoints.common.admission.load_project_limits'
 
 
-def test_the_request_limits_carry_the_project_budget():
-    """The project's budget limits are read and resolved with the route's and
-    the credential's, as on /v1. They bound cost, which an MCP call does not
-    spend: the admission check counts the request only.
+def test_an_mcp_request_reads_no_project_budget():
+    """Project budgets cap cost, which an MCP call does not spend: its
+    admission resolves the route's and the credential's limits only, with no
+    read of the project's budget limits.
     """
-    client, _ = _make_client()
+    dao = MagicMock()
+    dao.get_by_project_uuid.return_value = []
+    client, _ = _make_client(project_budget_limit_dao=dao)
 
-    with (
-        patch(PROJECT_LIMITS, return_value=[project_limit(10)]) as load,
-        patch.object(RequestLimits, 'check', autospec=True) as check,
-    ):
+    with patch.object(RequestLimits, 'check', autospec=True) as check:
         assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
 
-    load.assert_awaited_once()
-    assert load.await_args.args[0] == str(PROJECT_UUID)
-    assert check.await_args.args[0].applies(Demand(cost_room=True))
+    dao.get_by_project_uuid.assert_not_called()
+    assert not check.await_args.args[0].applies(Demand(cost_room=True))
 
 
 def test_the_request_is_recorded_in_the_http_metrics():

@@ -28,6 +28,10 @@ class McpAdmissionRules(AdmissionRules):
     then the bearer token. It keeps the caller's key, for the dispatch.
     """
 
+    # Project budgets cap cost, which an MCP call does not spend: reading them
+    # on every call would change nothing it is allowed.
+    project_limits = False
+
     def __init__(self, service: McpService, project_name: str, route_name: str):
         self._service = service
         self.project_name = project_name
