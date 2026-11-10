@@ -14,6 +14,7 @@ from traceloop.sdk.decorators import workflow
 from radicalbit_ai_gateway.endpoints.chat_like.limits import check_chat_limits
 from radicalbit_ai_gateway.endpoints.chat_like.model_selection import route_chat
 from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config_prompt
+from radicalbit_ai_gateway.endpoints.common.streams import stream_of
 from radicalbit_ai_gateway.endpoints.responses.cache import ResponsesEntry
 from radicalbit_ai_gateway.endpoints.responses.events import response_events
 from radicalbit_ai_gateway.endpoints.responses.guardrails import ResponsesReply
@@ -70,7 +71,7 @@ async def stream(scope: RequestScope, body: dict) -> AsyncIterator[str]:
     """
     prepared = await _prepare(scope, body)
     if prepared.soft_block or scope.cached.hit or scope.route.guardrails.has_output:
-        return _aiter(await _buffered(scope, prepared))
+        return stream_of(await _buffered(scope, prepared))
     return _live(scope, prepared)
 
 
@@ -239,8 +240,3 @@ async def _store(scope: RequestScope, prepared: _Prepared, response: dict) -> No
     """Cache a model's screened response, when it completed."""
     if response.get('status') == 'completed':
         await scope.cached.store({**response, 'model': prepared.model.model_id})
-
-
-async def _aiter(items: list) -> AsyncIterator:
-    for item in items:
-        yield item

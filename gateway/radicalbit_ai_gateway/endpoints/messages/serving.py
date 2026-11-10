@@ -8,6 +8,7 @@ import logging
 
 from fastapi import status
 
+from radicalbit_ai_gateway.endpoints.common import streams
 from radicalbit_ai_gateway.endpoints.messages.errors import (
     is_messages_error_body,
     messages_error,
@@ -40,32 +41,23 @@ def _error_body(exc: Exception) -> tuple[dict, int]:
     return messages_error(code, 'Unhandled error during streaming'), code
 
 
-async def serve_stream(
+def serve_stream(
     frames: AsyncIterator[str],
 ) -> AsyncIterator[str | tuple[str, int]]:
-    """Send a Messages stream to the client.
-
-    Nothing is sent before the first frame arrives, so a call that fails before
-    streaming gets an HTTP error status (a ``(body, status)`` item, see
-    ``StreamingResponseWithStatusCode``). After that, an error ends the stream
-    with an ``error`` event.
+    """Send a Messages stream to the client (see ``streams.serve_stream``):
+    an error after the first frame ends the stream with an ``error`` event.
     """
-    try:
-        first = await anext(frames)
-    except StopAsyncIteration:
-        return
-    except Exception as exc:
-        body, status_code = _error_body(exc)
-        yield json.dumps(body), status_code
-        return
+    return streams.serve_stream(frames, refusal=_refusal, stream_error=_stream_error)
 
-    try:
-        yield first
-        async for frame in frames:
-            yield frame
-    except Exception as exc:
-        logger.warning('Messages stream failed after it started', exc_info=exc)
-        yield sse('error', json.dumps(_error_event_body(exc)))
+
+def _refusal(exc: Exception) -> tuple[str, int]:
+    body, status_code = _error_body(exc)
+    return json.dumps(body), status_code
+
+
+def _stream_error(exc: Exception) -> str:
+    logger.warning('Messages stream failed after it started', exc_info=exc)
+    return sse('error', json.dumps(_error_event_body(exc)))
 
 
 def _error_event_body(exc: Exception) -> dict:

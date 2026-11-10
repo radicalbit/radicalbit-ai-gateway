@@ -25,6 +25,7 @@ from radicalbit_ai_gateway.endpoints.chat_like.openai_messages import (
     convert_openai_messages,
 )
 from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config_prompt
+from radicalbit_ai_gateway.endpoints.common.streams import stream_of
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation
 from radicalbit_ai_gateway.limiting.limits import Usage
@@ -129,7 +130,7 @@ async def stream(
     """
     prepared = await _prepare(scope, chat)
     if scope.route.guardrails.has_output:
-        return _aiter(await _buffered(scope, chat, prepared))
+        return stream_of(await _buffered(scope, chat, prepared))
     return _live(scope, chat, prepared)
 
 
@@ -255,49 +256,80 @@ async def _live(
         return
 
     set_operation_category(OperationCategory.INVOCATION)
-    full_content_text = ''
-    final_usage = None
-    received: list[AIMessageChunk] = []
-    async for chunk in scope.route.chat_invoker.stream(
-        identity=scope.identity,
-        messages=prepared.messages,
-        model_id=prepared.model.model_id,
-        tools=chat.tools,
-        tool_choice=chat.tool_choice,
-        **params,
+    received = _Received()
+    async for chunk in received.take(
+        _model_stream(scope, chat, prepared, params), warn_unexpected=True
     ):
-        if isinstance(chunk, AIMessageChunk):
-            received.append(chunk)
-            result = StreamingUtils.accumulate_chunk_content(chunk, full_content_text)
-            full_content_text = result.text
-            if result.usage_metadata:
-                final_usage = result.usage_metadata
-            yield StreamingUtils.to_openai_chat_completion_chunk(
-                chunk, model_id_invoked=route_name
-            )
-        else:
-            logger.warning('Unexpected chunk type during stream: %s', type(chunk))
-
-    if final_usage:
-        await scope.limits.count(
-            Usage.priced(
-                prepared.model,
-                final_usage.get('input_tokens', 0),
-                final_usage.get('output_tokens', 0),
-            )
+        yield StreamingUtils.to_openai_chat_completion_chunk(
+            chunk, model_id_invoked=route_name
         )
-    if final_usage and _wants_usage(user_stream_options):
+
+    await received.count(scope, prepared.model)
+    if received.usage and _wants_usage(user_stream_options):
         yield StreamingUtils.build_usage_chunk(
-            final_usage=final_usage,
+            final_usage=received.usage,
             model_id_invoked=route_name,
             request_id=scope.identity.request_uuid,
         )
     # A live stream's route has no output guardrails: its text is the
     # screened text.
     if reply := _streamed_reply(
-        received, full_content_text, final_usage, prepared.model.model_id
+        received.chunks, received.text, received.usage, prepared.model.model_id
     ):
         await scope.cached.store(reply)
+
+
+def _model_stream(
+    scope: RequestScope, chat: ChatRequest, prepared: _Prepared, params: dict
+) -> AsyncIterator:
+    """Return the model's stream of a request."""
+    return scope.route.chat_invoker.stream(
+        identity=scope.identity,
+        messages=prepared.messages,
+        model_id=prepared.model.model_id,
+        tools=chat.tools,
+        tool_choice=chat.tool_choice,
+        **params,
+    )
+
+
+class _Received:
+    """What a model's stream sent, as it comes: its chunks, their text and
+    the usage it reports.
+    """
+
+    def __init__(self) -> None:
+        self.chunks: list[AIMessageChunk] = []
+        self.text = ''
+        self.usage: dict | None = None
+
+    async def take(
+        self, stream: AsyncIterator, *, warn_unexpected: bool = False
+    ) -> AsyncIterator[AIMessageChunk]:
+        """Take in the model's chunks, and pass them on. Anything else the
+        stream sends is dropped; ``warn_unexpected`` logs it.
+        """
+        async for chunk in stream:
+            if isinstance(chunk, AIMessageChunk):
+                self.chunks.append(chunk)
+                result = StreamingUtils.accumulate_chunk_content(chunk, self.text)
+                self.text = result.text
+                if result.usage_metadata:
+                    self.usage = result.usage_metadata
+                yield chunk
+            elif warn_unexpected:
+                logger.warning('Unexpected chunk type during stream: %s', type(chunk))
+
+    async def count(self, scope: RequestScope, model: Model) -> None:
+        """Count the usage the stream reported on the request's limits."""
+        if self.usage:
+            await scope.limits.count(
+                Usage.priced(
+                    model,
+                    self.usage.get('input_tokens', 0),
+                    self.usage.get('output_tokens', 0),
+                )
+            )
 
 
 async def _buffered(
@@ -345,36 +377,18 @@ async def _stream_whole(
     """Stream the model's reply whole, so the output guardrails can read it."""
     route_name = scope.route.gateway_route_config.route_name
     model_id = prepared.model.model_id
-    full_content_text = ''
-    final_usage = None
-    buffered_chunks = []
 
     set_operation_category(OperationCategory.INVOCATION)
-    async for chunk in scope.route.chat_invoker.stream(
-        identity=scope.identity,
-        messages=prepared.messages,
-        model_id=model_id,
-        tools=chat.tools,
-        tool_choice=chat.tool_choice,
-        **params,
-    ):
-        if isinstance(chunk, AIMessageChunk):
-            buffered_chunks.append(chunk)
-            result = StreamingUtils.accumulate_chunk_content(chunk, full_content_text)
-            full_content_text = result.text
-            if result.usage_metadata:
-                final_usage = result.usage_metadata
+    received = _Received()
+    async for _ in received.take(_model_stream(scope, chat, prepared, params)):
+        pass
+    buffered_chunks = received.chunks
+    full_content_text = received.text
+    final_usage = received.usage
 
     # The model was paid for: count it before the output guardrails, which
     # may refuse the reply (ADR 0006).
-    if final_usage:
-        await scope.limits.count(
-            Usage.priced(
-                prepared.model,
-                final_usage.get('input_tokens', 0),
-                final_usage.get('output_tokens', 0),
-            )
-        )
+    await received.count(scope, prepared.model)
 
     # Output guardrails read the whole reply: redact, then check.
     text = await _screen_streamed(scope, full_content_text, usage=final_usage)
@@ -431,11 +445,6 @@ def _wants_usage(stream_options) -> bool:
         and isinstance(stream_options, dict)
         and stream_options.get('include_usage')
     )
-
-
-async def _aiter(items: list) -> AsyncIterator:
-    for item in items:
-        yield item
 
 
 def _streamed_reply(

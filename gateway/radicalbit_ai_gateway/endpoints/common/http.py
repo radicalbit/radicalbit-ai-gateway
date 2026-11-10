@@ -15,6 +15,7 @@ from traceloop.sdk.decorators import workflow
 from radicalbit_ai_gateway.endpoints.common.streaming_response import (
     StreamingResponseWithStatusCode,
 )
+from radicalbit_ai_gateway.endpoints.common.streams import serve_stream
 from radicalbit_ai_gateway.metrics.define_metrics import (
     request_latency_histogram,
     total_requests_counter,
@@ -111,36 +112,34 @@ def sse_response(
     streams one: ``data: {"error": ...}`` and no ``[DONE]``.
     """
 
-    async def events():
-        started = False
+    async def frames() -> AsyncIterator[str]:
+        async for item in items:
+            data = item.model_dump_json(exclude_none=True)
+            logger.debug(item_log, data)
+            yield f'data: {data}\n\n'
+        logger.debug(done_log)
+        yield 'data: [DONE]\n\n'
 
-        def failed(body: str, code: int):
-            return f'data: {body}\n\n' if started else (body, code)
-
-        try:
-            async for item in items:
-                data = item.model_dump_json(exclude_none=True)
-                logger.debug(item_log, data)
-                started = True
-                yield f'data: {data}\n\n'
-            logger.debug(done_log)
-            yield 'data: [DONE]\n\n'
-        except ModelInvokerUpstreamError as exc:
+    def refusal(exc: Exception) -> tuple[str, int]:
+        if isinstance(exc, ModelInvokerUpstreamError):
             # The provider's refusal, as the provider sent it.
-            yield failed(json.dumps(exc.body), exc.status_code)
-        except AppError as exc:
-            yield failed(
-                *_error(exc.client_message, 'model_invoker_error', exc.status_code)
-            )
-        except Exception:
-            logger.exception(error_log)
-            yield failed(
-                *_error('Unhandled error during streaming', 'internal_error', 500)
-            )
+            return json.dumps(exc.body), exc.status_code
+        if isinstance(exc, AppError):
+            return _error(exc.client_message, 'model_invoker_error', exc.status_code)
+        logger.error(error_log, exc_info=exc)
+        return _error('Unhandled error during streaming', 'internal_error', 500)
+
+    def stream_error(exc: Exception) -> str:
+        body, _ = refusal(exc)
+        return f'data: {body}\n\n'
 
     set_operation_category(OperationCategory.ENDPOINT)
     return StreamingResponseWithStatusCode(
-        in_request_trace(events()), media_type='text/event-stream', headers=headers
+        in_request_trace(
+            serve_stream(frames(), refusal=refusal, stream_error=stream_error)
+        ),
+        media_type='text/event-stream',
+        headers=headers,
     )
 
 

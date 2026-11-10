@@ -7,6 +7,7 @@ import json
 import logging
 import re
 
+from radicalbit_ai_gateway.endpoints.common import streams
 from radicalbit_ai_gateway.endpoints.responses.events import sse
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import AppError, ModelInvokerUpstreamError
@@ -60,30 +61,25 @@ def _next_sequence_number(frame: str, current: int) -> int:
     return int(numbers[-1]) + 1 if numbers else current
 
 
-async def serve_stream(
+def serve_stream(
     frames: AsyncIterator[str],
 ) -> AsyncIterator[str | tuple[str, int]]:
-    """Send a Responses stream to the client.
-
-    Nothing is sent before the first frame arrives, so a call that fails before
-    streaming gets an HTTP error status (a ``(body, status)`` item, see
-    ``StreamingResponseWithStatusCode``). After that, an error ends the stream
-    with an ``error`` event.
+    """Send a Responses stream to the client (see ``streams.serve_stream``):
+    an error after the first frame ends the stream with an ``error`` event
+    that follows the last frame's sequence number.
     """
-    try:
-        first = await anext(frames)
-    except StopAsyncIteration:
-        return
-    except Exception as exc:
-        yield _error_body(exc)
-        return
+    sequence_number = 0
 
-    sequence_number = _next_sequence_number(first, 0)
-    try:
-        yield first
+    async def numbered() -> AsyncIterator[str]:
+        nonlocal sequence_number
         async for frame in frames:
             sequence_number = _next_sequence_number(frame, sequence_number)
             yield frame
-    except Exception as exc:
+
+    def stream_error(exc: Exception) -> str:
         logger.warning('Responses stream failed after it started: %s', exc)
-        yield _error_event(exc, sequence_number)
+        return _error_event(exc, sequence_number)
+
+    return streams.serve_stream(
+        numbered(), refusal=_error_body, stream_error=stream_error
+    )
