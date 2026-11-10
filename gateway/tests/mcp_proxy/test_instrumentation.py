@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.services.mcp_service import McpService
@@ -79,15 +80,13 @@ def test_upstream_calls_are_instrumented(method, span):
 def test_the_endpoint_is_the_root_workflow():
     """The span must cover the endpoint, not just the service's dispatch.
 
-    Rate limiting runs in the endpoint, between authorize and dispatch, so a
+    Rate limiting runs in the endpoint, in admission before the dispatch, so a
     429 belongs inside ``mcp_request`` — as it would not if the decorator sat
     on a service method the endpoint calls.
     """
     router = McpRoute.get_mcp_router(
-        McpService(
-            upstream_client=MagicMock(spec_set=McpUpstreamClient),
-            group_service=MagicMock(),
-        )
+        McpService(upstream_client=MagicMock(spec_set=McpUpstreamClient)),
+        MagicMock(spec_set=Admission),
     )
     (route,) = router.routes
     assert hasattr(route.endpoint, '__wrapped__')

@@ -104,7 +104,6 @@ def _ids(kind: str, payload: dict) -> list[str]:
 def _service(upstream_client=None) -> McpService:
     return McpService(
         upstream_client=upstream_client or MagicMock(spec_set=McpUpstreamClient),
-        group_service=MagicMock(),
         allowed_origins=['http://localhost:5173'],
     )
 

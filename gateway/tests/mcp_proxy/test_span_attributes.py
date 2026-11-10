@@ -31,10 +31,10 @@ from starlette.testclient import TestClient
 from traceloop.sdk import Traceloop
 from traceloop.sdk.tracing.tracing import TracerWrapper
 
-from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
-from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
+from tests.common.gateway_harness import build_routes
+
+from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
-from radicalbit_ai_gateway.limiting.limits import RouteLimits
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
@@ -103,14 +103,30 @@ def upstream() -> MagicMock:
     return client
 
 
-@pytest.fixture
-def client(exporter, upstream) -> TestClient:
-    exporter.clear()
-    config = GatewayConfig.model_validate(
+def _config(caching: dict | None = None) -> GatewayConfig:
+    """Return the project's config; ``caching`` is my-route's ``caching:`` block
+    (the routes then cache in memory: the tests build no Redis client).
+    """
+    return GatewayConfig.model_validate(
         {
-            'chat_models': [{'model_id': 'm1', 'model': 'openai/gpt-4o'}],
+            'chat_models': [
+                {
+                    'model_id': 'm1',
+                    'model': 'openai/gpt-4o',
+                    'credentials': {'api_key': 'sk-test'},
+                }
+            ],
+            **(
+                {'cache': {'redis_host': 'localhost', 'redis_port': 6379}}
+                if caching
+                else {}
+            ),
             'routes': {
-                'my-route': {'chat_models': ['m1'], 'mcp_servers': ['github', 'jira']}
+                'my-route': {
+                    'chat_models': ['m1'],
+                    'mcp_servers': ['github', 'jira'],
+                    **({'caching': caching} if caching else {}),
+                }
             },
             'mcp_servers': [
                 {
@@ -126,8 +142,16 @@ def client(exporter, upstream) -> TestClient:
             ],
         }
     )
+
+
+@pytest.fixture
+def client(exporter, upstream) -> TestClient:
+    exporter.clear()
+    config = _config()
     group_service = MagicMock()
     group_service.check_key_uuid_for_route.return_value = True
+    project_budget_limit_dao = MagicMock()
+    project_budget_limit_dao.get_by_project_uuid.return_value = []
 
     # Its own app, not open_gateway: the McpService under test takes a mocked
     # upstream client the server builds at import.
@@ -137,20 +161,16 @@ def client(exporter, upstream) -> TestClient:
     app.add_middleware(RequestEventMiddleware)
     app.include_router(
         McpRoute.get_mcp_router(
-            McpService(
-                upstream_client=upstream,
-                group_service=group_service,
-                allowed_origins=['*'],
-            )
+            McpService(upstream_client=upstream, allowed_origins=['*']),
+            Admission(group_service, project_budget_limit_dao),
         )
     )
     app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
     app.add_exception_handler(ApiKeyError, api_key_exception_handler)
-    app.state.project_configs = {'proj': ProjectEntry(uuid=uuid.uuid4(), config=config)}
-    # The endpoint resolves the route registry through get_gateway_routes,
-    # which 503s when it is absent. This route declares no rate_limiting, so
-    # an empty registry leaves every assertion below unchanged.
-    app.state.routes = {}
+    project_uuid = uuid.uuid4()
+    app.state.project_configs = {'proj': ProjectEntry(uuid=project_uuid, config=config)}
+    # The project's routes, built from its config as the gateway registers them.
+    app.state.routes = build_routes(config, project_uuid=str(project_uuid))
     app.state.token_validator = SimpleNamespace(
         validate_token=AsyncMock(
             return_value=KeyDetails(
@@ -169,16 +189,14 @@ def client(exporter, upstream) -> TestClient:
 def cached_client(client) -> Iterator[TestClient]:
     """Return the same app, with the route declaring a ``caching:`` block.
 
-    The base fixture leaves ``app.state.routes`` empty, which the endpoint
-    reads as "no route-level features", so no list cache is built at all.
+    The base fixture's route declares none, so no list cache is built at all.
     """
-    client.app.state.routes = {
-        'proj/my-route': SimpleNamespace(
-            route_limits=RouteLimits(),
-            gateway_cache=GatewayCache(CacheToolsInMemory()),
-            cache=SimpleNamespace(ttl=60),
-        )
-    }
+    entry = client.app.state.project_configs['proj']
+    config = _config(caching={'type': 'exact', 'ttl': 60})
+    client.app.state.project_configs['proj'] = ProjectEntry(
+        uuid=entry.uuid, config=config
+    )
+    client.app.state.routes = build_routes(config, project_uuid=str(entry.uuid))
     # A hit reports itself to the events pipeline; that is asserted in
     # test_list_cache.py and only noise here.
     with (
@@ -396,7 +414,13 @@ def gated_client(client) -> TestClient:
     """Rebuild the same wiring with github's allowlists opened for nothing."""
     config = GatewayConfig.model_validate(
         {
-            'chat_models': [{'model_id': 'm1', 'model': 'openai/gpt-4o'}],
+            'chat_models': [
+                {
+                    'model_id': 'm1',
+                    'model': 'openai/gpt-4o',
+                    'credentials': {'api_key': 'sk-test'},
+                }
+            ],
             'routes': {'my-route': {'chat_models': ['m1'], 'mcp_servers': ['github']}},
             'mcp_servers': [
                 {

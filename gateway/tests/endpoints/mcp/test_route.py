@@ -11,15 +11,17 @@ from mcp.server.transport_security import TransportSecuritySettings
 import pytest
 from starlette.testclient import TestClient
 
-from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
-from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
+from tests.common.gateway_harness import build_routes
+from tests.common.limits import project_limit
+
+from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
-from radicalbit_ai_gateway.limiting.limits import RequestLimits, RouteLimits
+from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
+from radicalbit_ai_gateway.metrics.define_metrics import total_requests_counter
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -31,6 +33,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     mcp_transport_exception_handler,
     rate_limit_exceeded_handler,
 )
+from radicalbit_ai_gateway.utils.request_context import current_route_config_ctx
 
 KEY_DETAILS = KeyDetails(
     api_key_uuid=str(uuid.uuid4()),
@@ -49,12 +52,25 @@ ALLOWED_ORIGIN = 'http://localhost:5173'
 PATH = '/proj/my-route/mcp'
 
 
-def _gateway_config() -> GatewayConfig:
+def _gateway_config(my_route: dict | None = None) -> GatewayConfig:
+    """Return the project's config; ``my_route`` adds to my-route's."""
     return GatewayConfig.model_validate(
         {
-            'chat_models': [{'model_id': 'm1', 'model': 'openai/gpt-4o'}],
+            'chat_models': [
+                {
+                    'model_id': 'm1',
+                    'model': 'openai/gpt-4o',
+                    'credentials': {'api_key': 'sk-test'},
+                }
+            ],
+            # The routes cache in memory: the tests build no Redis client.
+            'cache': {'redis_host': 'localhost', 'redis_port': 6379},
             'routes': {
-                'my-route': {'chat_models': ['m1'], 'mcp_servers': ['github']},
+                'my-route': {
+                    'chat_models': ['m1'],
+                    'mcp_servers': ['github'],
+                    **(my_route or {}),
+                },
                 'other-route': {'chat_models': ['m1'], 'mcp_servers': ['jira']},
                 'bare-route': {'chat_models': ['m1']},
             },
@@ -91,39 +107,39 @@ def _make_client(
     *,
     key_bound: bool = True,
     with_project: bool = True,
-    route_limits: RouteLimits = RouteLimits(),
-    gateway_cache=None,
-    ttl: int | None = None,
+    my_route: dict | None = None,
     request_uuid: str | None = REQUEST_UUID,
 ) -> tuple[TestClient, MagicMock]:
+    """Serve the MCP endpoint for project ``proj``: its config, and its routes
+    built from it as the gateway registers them. ``my_route`` adds to
+    my-route's config (its rate limiting, its caching).
+    """
     # Its own app, not open_gateway: the McpService under test takes a mocked
     # upstream client and Origin allowlist the server builds at import.
     app = FastAPI(title='AI Gateway', debug=True)
     group_service = MagicMock()
     group_service.check_key_uuid_for_route.return_value = key_bound
+    project_budget_limit_dao = MagicMock()
+    project_budget_limit_dao.get_by_project_uuid.return_value = []
     service = McpService(
         upstream_client=upstream_client or MagicMock(spec_set=McpUpstreamClient),
-        group_service=group_service,
         allowed_origins=[ALLOWED_ORIGIN],
     )
-    app.include_router(McpRoute.get_mcp_router(service))
+    app.include_router(
+        McpRoute.get_mcp_router(
+            service, Admission(group_service, project_budget_limit_dao)
+        )
+    )
     app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
     app.add_exception_handler(ApiKeyError, api_key_exception_handler)
     app.add_exception_handler(RequestRateLimitExceeded, rate_limit_exceeded_handler)
+    config = _gateway_config(my_route)
     app.state.project_configs = (
-        {'proj': ProjectEntry(uuid=PROJECT_UUID, config=_gateway_config())}
-        if with_project
-        else {}
+        {'proj': ProjectEntry(uuid=PROJECT_UUID, config=config)} if with_project else {}
     )
-    # Mirrors what the route factory registers: the built GatewayRoute carrying
-    # the route's live feature instances, keyed '{project}/{route}'.
-    app.state.routes = {
-        'proj/my-route': SimpleNamespace(
-            route_limits=route_limits,
-            gateway_cache=gateway_cache,
-            cache=SimpleNamespace(ttl=ttl),
-        )
-    }
+    app.state.routes = (
+        build_routes(config, project_uuid=str(PROJECT_UUID)) if with_project else {}
+    )
     app.state.token_validator = SimpleNamespace(
         validate_token=AsyncMock(return_value=KEY_DETAILS)
     )
@@ -512,15 +528,11 @@ def test_a_rejected_origin_still_reports_the_route_it_targeted():
 
 
 def _rate_limited_client(max_requests: int, upstream=None) -> TestClient:
-    config = GatewayRouteConfig.model_validate(
-        {
-            'route_name': 'my-route',
-            'chat_models': ['m'],
-            'rate_limiting': {'max_requests': max_requests, 'window_size': '1 minute'},
-        }
-    )
     client, _ = _make_client(
-        upstream, route_limits=RouteLimits.from_config(config, str(PROJECT_UUID))
+        upstream,
+        my_route={
+            'rate_limiting': {'max_requests': max_requests, 'window_size': '1 minute'}
+        },
     )
     return client
 
@@ -649,7 +661,7 @@ def test_a_route_with_caching_serves_repeated_lists_without_the_upstreams(
     """The caching: block the /v1 endpoints already honour, with no new YAML."""
     upstream = _echoing_upstream()
     client, _ = _make_client(
-        upstream, gateway_cache=GatewayCache(CacheToolsInMemory()), ttl=60
+        upstream, my_route={'caching': {'type': 'exact', 'ttl': 60}}
     )
 
     first = client.post(PATH, json=_tools_list(1), headers=AUTH)
@@ -685,7 +697,7 @@ def test_only_the_list_methods_are_cached():
     """tools/call is side-effecting: it must reach the upstream every time."""
     upstream = _echoing_upstream()
     upstream.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
-    client, _ = _make_client(upstream, gateway_cache=GatewayCache(CacheToolsInMemory()))
+    client, _ = _make_client(upstream, my_route={'caching': {'type': 'exact'}})
     call = {
         'jsonrpc': '2.0',
         'id': 1,
@@ -740,3 +752,185 @@ def test_protocol_traffic_over_http_records_no_invocation(recorded_events):
     assert client.post(PATH, json=_tools_list(2), headers=AUTH).status_code == 200
 
     assert _mcp_events(recorded_events) == []
+
+
+# ---------------------------------------------------------------------------
+# Admission shared with the /v1 endpoints
+# ---------------------------------------------------------------------------
+
+PROJECT_LIMITS = 'radicalbit_ai_gateway.endpoints.common.admission.load_project_limits'
+
+
+def test_the_request_limits_carry_the_project_budget():
+    """The project's budget limits are read and resolved with the route's and
+    the credential's, as on /v1. They bound cost, which an MCP call does not
+    spend: the admission check counts the request only.
+    """
+    client, _ = _make_client()
+
+    with (
+        patch(PROJECT_LIMITS, return_value=[project_limit(10)]) as load,
+        patch.object(RequestLimits, 'check', autospec=True) as check,
+    ):
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+    load.assert_awaited_once()
+    assert load.await_args.args[0] == str(PROJECT_UUID)
+    assert check.await_args.args[0].applies(Demand(cost_room=True))
+
+
+def test_the_request_is_recorded_in_the_http_metrics():
+    client, _ = _make_client()
+
+    with patch.object(total_requests_counter, 'add') as add:
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+    assert [c.kwargs['attributes'] for c in add.call_args_list] == [
+        {
+            'http.method': 'POST',
+            'http.route': PATH,
+            'http.status_code': 200,
+            'route.name': 'my-route',
+            'model_name': None,
+        }
+    ]
+
+
+def test_the_route_context_is_set_while_the_request_is_served():
+    """The per-route log filter reads it: MCP log lines carry their route."""
+    seen = []
+
+    def list_tools(*args, **kwargs):
+        config = current_route_config_ctx.get()
+        seen.append(config.route_name if config is not None else None)
+        return types.ListToolsResult(tools=[])
+
+    upstream = MagicMock(spec_set=McpUpstreamClient)
+    upstream.list_tools = AsyncMock(side_effect=list_tools)
+    client, _ = _make_client(upstream)
+
+    assert client.post(PATH, json=_tools_list(), headers=AUTH).status_code == 200
+
+    assert seen == ['my-route']
+    assert current_route_config_ctx.get() is None
+
+
+def test_authentication_runs_in_the_auth_api_key_span(span_collector):
+    client, _ = _make_client()
+    span_collector.spans.clear()
+    span_collector.on = True
+    try:
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+    finally:
+        span_collector.on = False
+
+    names = {span.context.span_id: span.name for span in span_collector.spans}
+    tree = [
+        (span.name, names.get(span.parent.span_id) if span.parent else None)
+        for span in span_collector.spans
+    ]
+    assert ('auth_api_key.task', 'mcp_request.workflow') in tree
+
+
+def test_a_configured_route_that_is_not_built_is_not_served():
+    """The built routes decide what is served: a route only in the config is
+    unknown, answered after auth as today, and never reaches an upstream
+    (it used to be served with no limit checked).
+    """
+    upstream = _echoing_upstream()
+    client, _ = _make_client(upstream)
+    del client.app.state.routes['proj/my-route']
+
+    assert client.post(PATH, json=_tools_list()).status_code == 401
+    res = client.post(PATH, json=_tools_list(), headers=AUTH)
+
+    assert res.status_code == 404
+    assert res.json()['error']['code'] == 'mcp_route_not_found'
+    upstream.list_tools.assert_not_awaited()
+
+
+def test_a_built_route_missing_from_the_config_is_served():
+    client, _ = _make_client()
+    client.app.state.project_configs.clear()
+
+    assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# What MCP's admission keeps of its own on the shared path
+# ---------------------------------------------------------------------------
+
+
+def test_an_unknown_route_is_told_only_to_an_authenticated_caller():
+    client, _ = _make_client()
+
+    assert client.post('/proj/nope/mcp', json=_ping()).status_code == 401
+
+
+def test_an_unknown_route_answers_with_its_own_error():
+    client, _ = _make_client()
+
+    res = client.post('/proj/nope/mcp', json=_ping(), headers=AUTH)
+
+    assert res.status_code == 404
+    error = res.json()['error']
+    assert error['message'] == "Unknown project or route: 'proj/nope'"
+    assert error['code'] == 'mcp_route_not_found'
+
+
+def test_the_origin_is_checked_before_the_credential():
+    client, _ = _make_client()
+
+    res = client.post(PATH, json=_ping(), headers={'Origin': 'http://evil.example'})
+
+    assert res.status_code == 403
+    assert res.json()['error']['code'] == 'mcp_origin_forbidden'
+
+
+def test_only_a_bearer_token_authenticates():
+    """The x-api-key header the Messages endpoint also reads is not one."""
+    client, _ = _make_client()
+
+    assert (
+        client.post(PATH, json=_ping(), headers={'x-api-key': 'sk-rb-abc'}).status_code
+        == 401
+    )
+
+
+def test_an_unbound_key_answers_with_its_own_error():
+    client, _ = _make_client(key_bound=False)
+
+    res = client.post(PATH, json=_ping(), headers=AUTH)
+
+    assert res.status_code == 403
+    error = res.json()['error']
+    assert error['message'] == 'API Key not associated with route my-route'
+    assert error['code'] == 'mcp_key_not_bound'
+
+
+def test_a_rejected_origin_is_attributed_to_its_route_and_project():
+    """The request is attributed before any check can reject it."""
+    client, _ = _make_client()
+
+    with patch(f'{MCP_SERVICE}.set_trace_attributes') as mock_set_attrs:
+        res = client.post(
+            PATH, json=_ping(), headers={**AUTH, 'Origin': 'http://evil.example'}
+        )
+
+    assert res.status_code == 403
+    assert mock_set_attrs.call_args_list[0].kwargs == {
+        'request_uuid': REQUEST_UUID,
+        'project_uuid': str(PROJECT_UUID),
+        'project_name': 'proj',
+        'route_name': 'my-route',
+        'tags': [],
+    }
+
+
+def test_no_route_announcement_is_logged(caplog):
+    client, _ = _make_client()
+
+    with caplog.at_level('DEBUG'):
+        assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
+
+    assert not [r for r in caplog.records if 'Invoked route name' in r.getMessage()]

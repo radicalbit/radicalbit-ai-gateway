@@ -195,10 +195,7 @@ tracing_service = TracingService(
     key_service=key_service,
     group_service=group_service,
 )
-mcp_service = McpService(
-    upstream_client=McpUpstreamClient(),
-    group_service=group_service,
-)
+mcp_service = McpService(upstream_client=McpUpstreamClient())
 mcp_usage_service = McpUsageService(
     event_dao=event_dao,
     key_service=key_service,
@@ -448,7 +445,7 @@ app.include_router(
     AlertRuleRoute.get_alert_rule_router(alert_rule_service), prefix=prefix
 )
 # Root-level like /v1/... (NOT under /public/api/v1): inbound MCP proxy.
-app.include_router(McpRoute.get_mcp_router(mcp_service))
+app.include_router(McpRoute.get_mcp_router(mcp_service, admission))
 # Root-level like /v1/...: Typesafe's decision endpoint, passed through.
 app.include_router(DecisionRoute.get_decision_router(admission))
 app.include_router(
