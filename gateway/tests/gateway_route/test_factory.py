@@ -25,9 +25,11 @@ from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
-from tests.common.pipeline import InvokeResponse, invoke
+from tests.common.scope import scope_of
 
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
+from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
+from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import ChatRequest
 from radicalbit_ai_gateway.gateway_route.factory import (
     build_gateway_routes_from_config,
     build_project_route_registrar,
@@ -343,23 +345,25 @@ async def test_project_route_full_pipeline(mock_emit_event, fake_redis_client):
         response_json=mocked_response.model_dump_json(),
     )
 
-    invoke_response = await invoke(
-        app_routes[full_route_name],
-        limits=request_limits(app_routes[full_route_name]),
+    route = app_routes[full_route_name]
+    scope = scope_of(
+        route,
+        request_limits(route),
         request_uuid=str(REQUEST_UUID),
         api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',
-        messages=[HumanMessage(content='What is the capital of Italy?')],
-        route_name='my-route',
-        tools=[],
-        tool_choice=None,
         group_uuid=str(GROUP_UUID),
         group_name='test-group',
     )
+    reply = await chat_pipeline.complete(
+        scope,
+        ChatRequest(
+            messages=[HumanMessage(content='What is the capital of Italy?')], tools=[]
+        ),
+    )
 
-    assert isinstance(invoke_response, InvokeResponse)
-    assert isinstance(invoke_response.content, ChatCompletion)
-    assert invoke_response.content.choices[0].message.content == 'Rome'
+    assert isinstance(reply, ChatCompletion)
+    assert reply.choices[0].message.content == 'Rome'
 
     pook.disable_network()
 

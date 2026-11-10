@@ -16,13 +16,16 @@ from tests.common.limits import (
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
-from tests.common.pipeline import invoke, stream
+from tests.common.scope import scope_of
 
+from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
+from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import ChatRequest
 from radicalbit_ai_gateway.gateway_route.factory import (
     build_gateway_routes_from_config,
     initialize_async_routers,
 )
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
+from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
@@ -163,19 +166,26 @@ async def _route(config: GatewayConfig) -> GatewayRoute:
     return route
 
 
-def _request(route: GatewayRoute, limits: RequestLimits | None = None) -> dict:
-    return {
-        'limits': limits or request_limits(route),
-        'request_uuid': str(REQUEST_UUID),
-        'api_key_uuid': str(API_KEY_UUID),
-        'api_key_name': 'rb-key',
-        'group_uuid': str(GROUP_UUID),
-        'group_name': 'test-group',
-        'route_name': ROUTE,
-        'messages': [HumanMessage(content=QUESTION)],
-        'tools': [],
-        'tool_choice': None,
-    }
+def _scope(route: GatewayRoute, limits: RequestLimits | None = None) -> RequestScope:
+    return scope_of(
+        route,
+        limits or request_limits(route),
+        request_uuid=str(REQUEST_UUID),
+        api_key_uuid=str(API_KEY_UUID),
+        api_key_name='rb-key',
+        group_uuid=str(GROUP_UUID),
+        group_name='test-group',
+    )
+
+
+def _chat(**params) -> ChatRequest:
+    return ChatRequest(
+        messages=[HumanMessage(content=QUESTION)], tools=[], params=params
+    )
+
+
+async def _complete(route: GatewayRoute, limits: RequestLimits | None = None):
+    return await chat_pipeline.complete(_scope(route, limits), _chat())
 
 
 def _emitted(emit) -> list:
@@ -188,7 +198,7 @@ async def test_semantic_routing_embedding_emits_a_routing_cost_event():
     _mock_providers()
     with patch(MODEL_INVOKER_EMIT) as emit:
         route = await _route(_config())
-        await invoke(route, **_request(route))
+        await _complete(route)
 
     routing_inputs = [
         e
@@ -218,7 +228,8 @@ async def test_a_streamed_request_is_charged_for_routing_too():
     with patch(MODEL_INVOKER_EMIT) as emit:
         route = await _route(_config())
         route.chat_invoker.stream = _no_chunks
-        await stream(route, **_request(route))
+        chunks = await chat_pipeline.stream(_scope(route), _chat(stream=True))
+        assert [chunk async for chunk in chunks] == []
 
     assert [
         e.value
@@ -265,7 +276,7 @@ async def test_semantic_routing_embedding_consumes_route_credential_and_project_
     _mock_providers()
     with patch(MODEL_INVOKER_EMIT):
         route = await _route(_config(**ROUTE_LIMITS))
-        await invoke(route, **_request(route, _limited(route)))
+        await _complete(route, _limited(route))
 
     assert await _consumption(route) == [
         QUESTION_TOKENS,
@@ -303,9 +314,9 @@ async def test_semantic_routing_spend_is_charged_to_the_next_request():
     with patch(MODEL_INVOKER_EMIT), patch(LIMITS_EMIT):
         route = await _route(_config(token_limiting=INPUT_LIMIT))
 
-        await invoke(route, **_request(route))
+        await _complete(route)
         with pytest.raises(InputTokenLimitExceeded):
-            await invoke(route, **_request(route))
+            await _complete(route)
 
 
 @pook.activate
@@ -319,8 +330,8 @@ async def test_a_failing_routing_spend_count_does_not_fail_the_request():
         ) as count,
     ):
         route = await _route(_config(**ROUTE_LIMITS))
-        response = await invoke(route, **_request(route, _limited(route)))
+        response = await _complete(route, _limited(route))
 
     # Routing never fails a request: it is still served.
     count.assert_awaited_once()
-    assert response.content.choices[0].message.content == 'Paris'
+    assert response.choices[0].message.content == 'Paris'

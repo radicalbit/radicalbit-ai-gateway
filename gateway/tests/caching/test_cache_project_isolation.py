@@ -20,11 +20,13 @@ from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
-from tests.common.pipeline import invoke
 from tests.common.resolve_route_models import resolve_route_models
+from tests.common.scope import scope_of
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
+from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
+from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import ChatRequest
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
@@ -83,20 +85,26 @@ def _build_route(gateway_cache: GatewayCache, project_uuid: str) -> GatewayRoute
     )
 
 
-async def _invoke(route: GatewayRoute, request_uuid: str):
-    return await invoke(
+async def _invoke(route: GatewayRoute, request_uuid: str) -> dict[str, str]:
+    """Answer a chat request to ``route``; return the gateway's headers."""
+    scope = scope_of(
         route,
-        limits=request_limits(route),
+        request_limits(route),
         request_uuid=request_uuid,
         api_key_uuid=str(API_KEY_UUID),
         api_key_name='rb-key',
         group_uuid=str(GROUP_UUID),
         group_name='test-group',
-        messages=[HumanMessage(content='What is the capital of France?')],
-        route_name=ROUTE_NAME,
-        tools=[],
-        tool_choice='auto',
     )
+    await chat_pipeline.complete(
+        scope,
+        ChatRequest(
+            messages=[HumanMessage(content='What is the capital of France?')],
+            tools=[],
+            tool_choice='auto',
+        ),
+    )
+    return scope.headers()
 
 
 @patch('radicalbit_ai_gateway.invocation.chat_model_invoker.ChatModelInvoker.complete')
@@ -123,18 +131,15 @@ async def test_exact_cache_does_not_leak_across_projects(
     route_a = _build_route(shared_cache, str(TEST_PROJECT_UUID))
     route_b = _build_route(shared_cache, str(SAMPLE_PROJECT_UUID))
 
-    response_a = await _invoke(route_a, 'req-1')
-    assert response_a.headers == {}
+    assert await _invoke(route_a, 'req-1') == {}
     assert mock_complete.call_count == 1
 
     # Project B must not be served project A's completion.
-    response_b = await _invoke(route_b, 'req-2')
-    assert response_b.headers == {}
+    assert await _invoke(route_b, 'req-2') == {}
     assert mock_complete.call_count == 2
 
     # Project A still reads its own entry.
-    response_a_again = await _invoke(route_a, 'req-3')
-    assert response_a_again.headers == {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
+    assert await _invoke(route_a, 'req-3') == {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
     assert mock_complete.call_count == 2
 
 

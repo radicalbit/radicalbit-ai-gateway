@@ -16,9 +16,12 @@ from tests.common.limits import (
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
-from tests.common.pipeline import invoke, invoke_embeddings
 from tests.common.resolve_route_models import resolve_route_models
+from tests.common.scope import scope_of
 
+from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
+from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import ChatRequest
+from radicalbit_ai_gateway.endpoints.embeddings import pipeline as embeddings_pipeline
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
@@ -144,8 +147,11 @@ def _caller() -> dict:
         'api_key_name': 'rb-key',
         'group_uuid': str(GROUP_UUID),
         'group_name': 'test-group',
-        'route_name': ROUTE,
     }
+
+
+def _chat(question: str = 'What is the capital of France?') -> ChatRequest:
+    return ChatRequest(messages=[HumanMessage(content=question)], tools=[])
 
 
 # Limits well above what one request uses: they only count here.
@@ -233,13 +239,8 @@ async def test_chat_judge_call_consumes_route_credential_and_project_limits(
     )
     gateway = _limited_gateway(where, **ROUTE_LIMITS)
 
-    await invoke(
-        gateway,
-        **_caller(),
-        limits=_limits(gateway),
-        messages=[HumanMessage(content='What is the capital of France?')],
-        tools=[],
-        tool_choice=None,
+    await chat_pipeline.complete(
+        scope_of(gateway, _limits(gateway), **_caller()), _chat()
     )
 
     assert await _consumption(gateway) == JUDGE_COUNTED
@@ -261,20 +262,14 @@ async def test_warn_judge_is_called_and_charged_once(where, judge):
         'radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model',
         return_value=judge_llm,
     ):
-        result = await invoke(
-            gateway,
-            **_caller(),
-            limits=_limits(gateway),
-            messages=[HumanMessage(content='What is the capital of France?')],
-            tools=[],
-            tool_choice=None,
-        )
+        scope = scope_of(gateway, _limits(gateway), **_caller())
+        await chat_pipeline.complete(scope, _chat())
 
     assert judge_llm.with_structured_output.return_value.ainvoke.await_count == 1
     # The main reply carries no usage: the one count is the judge's.
     assert (await _consumption(gateway))['credential input'] == JUDGE_IN
-    assert result.headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] == 'true'
-    assert result.headers[f'X-RB-AIGATEWAY-GUARDRAILS-{where.upper()}-WARN'] == 'true'
+    assert scope.headers()['X-RB-AIGATEWAY-GUARDRAILS-WARN'] == 'true'
+    assert scope.headers()[f'X-RB-AIGATEWAY-GUARDRAILS-{where.upper()}-WARN'] == 'true'
 
 
 @pook.activate
@@ -297,8 +292,8 @@ async def test_embedding_call_and_its_judge_consume_route_credential_and_project
     )
     gateway = _limited_gateway('input', **ROUTE_LIMITS)
 
-    await invoke_embeddings(
-        gateway, **_caller(), limits=_limits(gateway), input_texts=['hello world']
+    await embeddings_pipeline.embed(
+        scope_of(gateway, _limits(gateway), **_caller()), ['hello world']
     )
 
     embedding_cost = int(EMBEDDING_TOKENS * EMBEDDING_PRICE * 1_000_000_000)
@@ -344,16 +339,13 @@ async def test_chat_judge_spend_is_charged_to_the_next_request(judge_calls):
         response_json=to_mock_openai_chat_completion('Paris').model_dump_json(),
     )
     gateway = _limited_gateway('input', token_limiting=INPUT_LIMIT)
-    request = {
-        **_caller(),
-        'messages': [HumanMessage(content='Capital of France?')],
-        'tools': [],
-        'tool_choice': None,
-    }
 
-    await invoke(gateway, **request, limits=request_limits(gateway))
+    def scope():
+        return scope_of(gateway, request_limits(gateway), **_caller())
+
+    await chat_pipeline.complete(scope(), _chat('Capital of France?'))
     with pytest.raises(InputTokenLimitExceeded):
-        await invoke(gateway, **request, limits=request_limits(gateway))
+        await chat_pipeline.complete(scope(), _chat('Capital of France?'))
 
     assert len(judge_calls) == 1
 
@@ -372,10 +364,12 @@ async def test_embedding_judge_spend_is_charged_to_the_next_request(judge_calls)
         },
     )
     gateway = _limited_gateway('input', token_limiting=INPUT_LIMIT)
-    request = {**_caller(), 'input_texts': ['hello world']}
 
-    await invoke_embeddings(gateway, **request, limits=request_limits(gateway))
+    def scope():
+        return scope_of(gateway, request_limits(gateway), **_caller())
+
+    await embeddings_pipeline.embed(scope(), ['hello world'])
     with pytest.raises(InputTokenLimitExceeded):
-        await invoke_embeddings(gateway, **request, limits=request_limits(gateway))
+        await embeddings_pipeline.embed(scope(), ['hello world'])
 
     assert len(judge_calls) == 1

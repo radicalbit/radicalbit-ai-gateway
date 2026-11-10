@@ -17,7 +17,7 @@ from starlette.requests import Request
 
 from tests.common import db_mock
 from tests.common.limits import project_limit
-from tests.common.pipeline import scope_of
+from tests.common.scope import scope_of
 from tests.endpoints.responses.test_native import (
     OPENCODE_TURN,
     FakeChatModel,

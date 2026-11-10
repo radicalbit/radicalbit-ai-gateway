@@ -12,12 +12,14 @@ from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
-from tests.common.pipeline import invoke
 from tests.common.resolve_route_models import resolve_route_models
+from tests.common.scope import scope_of
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.route_cache import RouteCache
+from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
+from radicalbit_ai_gateway.endpoints.chat_completions.pipeline import ChatRequest
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
@@ -127,35 +129,35 @@ async def test_exact_cache_hit_with_different_history(
         ]
 
         # First invocation => populate cache
-        await invoke(
+        scope = scope_of(
             ai_gateway,
-            limits=request_limits(ai_gateway),
+            request_limits(ai_gateway),
             request_uuid='req-1',
             api_key_uuid='key-1',
             api_key_name='rb-key',
-            group_name='test-group',
-            messages=messages_a,
-            route_name='rb-gateway',
-            tools=[],
-            tool_choice='auto',
             group_uuid=str(GROUP_UUID),
+            group_name='test-group',
+        )
+        await chat_pipeline.complete(
+            scope,
+            ChatRequest(messages=messages_a, tools=[], tool_choice='auto'),
         )
 
         # Second invocation with different history, same last user => should be a cache hit
-        invoke_response_cached = await invoke(
+        scope = scope_of(
             ai_gateway,
-            limits=request_limits(ai_gateway),
+            request_limits(ai_gateway),
             request_uuid='req-2',
             api_key_uuid='key-1',
             api_key_name='rb-key',
-            messages=messages_b,
-            route_name='rb-gateway',
-            tools=[],
-            tool_choice='auto',
             group_uuid=str(GROUP_UUID),
             group_name='test-group',
         )
-        assert invoke_response_cached.headers == {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
+        await chat_pipeline.complete(
+            scope,
+            ChatRequest(messages=messages_b, tools=[], tool_choice='auto'),
+        )
+        assert scope.headers() == {'X-RB-AIGATEWAY-CACHE-HIT': 'true'}
         # Ensure the model was called only once (second call served from cache)
         assert mock_complete.call_count == 1
 
@@ -252,18 +254,18 @@ async def test_semantic_cache_uses_only_last_user_for_key_and_embedding():
         'radicalbit_ai_gateway.invocation.chat_model_invoker.ChatModelInvoker.complete',
         AsyncMock(return_value=to_mock_openai_chat_completion(content='Paris')),
     ):
-        await invoke(
+        scope = scope_of(
             ai_gateway,
-            limits=request_limits(ai_gateway),
+            request_limits(ai_gateway),
             request_uuid='req-1',
             api_key_uuid='key-1',
             api_key_name='rb-key',
-            group_name='test-group',
-            route_name='rb-gateway',
-            messages=messages,
-            tools=[],
-            tool_choice='auto',
             group_uuid=str(GROUP_UUID),
+            group_name='test-group',
+        )
+        await chat_pipeline.complete(
+            scope,
+            ChatRequest(messages=messages, tools=[], tool_choice='auto'),
         )
 
     # Only the last human message keys the entry and is embedded.
