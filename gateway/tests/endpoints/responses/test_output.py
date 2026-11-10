@@ -3,6 +3,8 @@ import json
 from openai.types.responses import Response, ResponseStreamEvent
 from pydantic import TypeAdapter
 
+from tests.common.responses_api import events_of
+
 from radicalbit_ai_gateway.endpoints.responses.events import response_events
 from radicalbit_ai_gateway.endpoints.responses.output import (
     ResponsesOutput,
@@ -17,17 +19,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
 )
 
 EVENT_ADAPTER = TypeAdapter(ResponseStreamEvent)
-
-
-def events_of(frames: list[str]) -> list[dict]:
-    """Parse SSE frames, checking each one's ``event:`` line matches its type."""
-    events = []
-    for frame in frames:
-        event_line, data_line = frame.strip('\n').split('\n')
-        event = json.loads(data_line.removeprefix('data: '))
-        assert event_line == f'event: {event["type"]}'
-        events.append(event)
-    return events
 
 
 def _response(output: list) -> dict:

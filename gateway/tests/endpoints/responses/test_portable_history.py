@@ -9,7 +9,7 @@ import copy
 from httpx_aiohttp import HttpxAiohttpClient
 import pytest
 
-from tests.endpoints.responses.test_native import OPENCODE_TURN, FakeChatModel
+from tests.common.responses_api import OPENCODE_TURN, FakeChatModel
 
 from radicalbit_ai_gateway.llm.factory import init_chat_model
 from radicalbit_ai_gateway.llm.providers.deepseek import REASONING_PLACEHOLDER

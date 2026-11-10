@@ -129,6 +129,8 @@ def client(exporter, upstream) -> TestClient:
     group_service = MagicMock()
     group_service.check_key_uuid_for_route.return_value = True
 
+    # Its own app, not open_gateway: the McpService under test takes a mocked
+    # upstream client the server builds at import.
     app = FastAPI()
     # request_uuid is stamped here in production, so the test app must have it
     # too — otherwise the root span's request_uuid assertion proves nothing.

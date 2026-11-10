@@ -30,6 +30,7 @@ def _client(items_before_error: int, error: Exception) -> TestClient:
             yield _Item(text=f'part {i}')
         raise error
 
+    # Its own app: sse_response is driven with items no endpoint sends.
     app = FastAPI()
 
     @app.get('/stream')

@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from tests.endpoints.responses.test_native import OPENCODE_TURN
+from tests.common.responses_api import OPENCODE_TURN
 
 from radicalbit_ai_gateway.endpoints.responses.request import (
     ResponsesRequest,

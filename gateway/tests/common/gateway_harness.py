@@ -267,8 +267,8 @@ def open_gateway(
         saved_routes = getattr(app.state, 'routes', None)
         stack.callback(setattr, app, 'dependency_overrides', saved_overrides)
         stack.callback(setattr, app.state, 'token_validator', saved_validator)
-        if saved_routes is not None:
-            stack.callback(setattr, app.state, 'routes', saved_routes)
+        # A test may set the routes inside the block: put back what was there.
+        stack.callback(setattr, app.state, 'routes', saved_routes)
         app.dependency_overrides[get_request_uuid] = _mock_request_uuid
         app.state.token_validator = ApiKeyValidator(key_service=key_service)
         if routes is not None:

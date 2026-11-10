@@ -8,29 +8,26 @@ import copy
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi.testclient import TestClient
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
 from openai.types.responses import Response
 import pytest
-from starlette.requests import Request
 
-from tests.common import db_mock
+from tests.common.gateway_harness import open_gateway
 from tests.common.limits import project_limit
-from tests.common.scope import scope_of
-from tests.endpoints.responses.test_native import (
+from tests.common.responses_api import (
     OPENCODE_TURN,
     FakeChatModel,
-    _openai,
-    _status_error,
+    events_of,
+    openai_model,
+    status_error,
 )
-from tests.endpoints.responses.test_output import events_of
+from tests.common.scope import scope_of
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.route_cache import RouteCache
 from radicalbit_ai_gateway.endpoints.chat_completions.cache import ChatEntry
-from radicalbit_ai_gateway.endpoints.common.dependencies import get_request_uuid
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
@@ -52,7 +49,7 @@ from radicalbit_ai_gateway.models.guardrails import (
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.responses import ResponsesSettings
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.server import app, group_service, key_service
+from radicalbit_ai_gateway.server import app
 from radicalbit_ai_gateway.services.cost_service import CostService
 
 PROJECT_LIMITS = 'radicalbit_ai_gateway.endpoints.common.admission.load_project_limits'
@@ -172,7 +169,12 @@ def build_route(
     responses: ResponsesSettings | None = None,
     prompt: str | None = None,
 ) -> GatewayRoute:
-    """Build a route over ``models``: the first is the primary, the others its fallbacks."""
+    """Build a route over ``models``: the first is the primary, the others its fallbacks.
+
+    Not ``build_routes``: the models are faked as model objects, whose
+    mid-stream failures (``fail_after``) and sent bodies the transport fakes
+    of the harness cannot express.
+    """
     model_ids = list(models)
     registry = [
         Model(
@@ -217,37 +219,22 @@ def build_route(
     return route
 
 
-def mock_request_uuid(request: Request):
-    request.state.request_uuid = str(db_mock.REQUEST_UUID)
-    return str(db_mock.REQUEST_UUID)
-
-
 @pytest.fixture
 def post():
-    """Send a Responses request to a route."""
-    key_service.get_key_by_hashed_key = MagicMock(
-        return_value=db_mock.get_sample_key_with_group(group_uuid=db_mock.GROUP_UUID)
-    )
-    group_service.check_key_uuid_for_route = MagicMock(return_value=True)
-    previous_routes = getattr(app.state, 'routes', None)
-    app.dependency_overrides[get_request_uuid] = mock_request_uuid
-    client = TestClient(app)
+    """Send a Responses request to a route, through the app (see ``open_gateway``)."""
+    with open_gateway(
+        patches=[
+            patch(
+                'radicalbit_ai_gateway.endpoints.chat_like.model_selection.emit_event'
+            )
+        ]
+    ) as gateway:
 
-    def _post(route: GatewayRoute, **body):
-        app.state.routes = {ROUTE: route}
-        return client.post(
-            '/v1/responses',
-            json={'model': ROUTE, **body},
-            headers={'Authorization': f'Bearer {db_mock.PLAIN_KEY}'},
-        )
+        def _post(route: GatewayRoute, **body):
+            app.state.routes = {ROUTE: route}
+            return gateway.post('/v1/responses', json={'model': ROUTE, **body})
 
-    with (
-        patch('radicalbit_ai_gateway.events.buffer.celery_app.send_task'),
-        patch('radicalbit_ai_gateway.endpoints.chat_like.model_selection.emit_event'),
-    ):
         yield _post
-    app.state.routes = previous_routes
-    app.dependency_overrides = {}
 
 
 def stream_events(response) -> list[dict]:
@@ -272,7 +259,7 @@ OPENCODE_REQUEST = {
 def test_request_goes_upstream_as_sent(post):
     model = FakeChatModel(events=upstream_events())
     # An OpenAI upstream gets its own history back unchanged.
-    model.adapt_responses_input = _openai().adapt_responses_input
+    model.adapt_responses_input = openai_model().adapt_responses_input
     route = build_route({'openai': model})
 
     with patch.object(RequestLimits, 'count', autospec=True) as count:
@@ -360,7 +347,8 @@ def test_background_mode_is_refused(post):
     ],
 )
 def test_endpoints_not_served_say_so(method, path):
-    response = getattr(TestClient(app), method)(path)
+    with open_gateway() as gateway:
+        response = getattr(gateway.client, method)(path)
 
     assert response.status_code == 404
     error = response.json()['error']
@@ -382,7 +370,7 @@ def test_model_without_responses_api_is_refused(post):
 
 def test_upstream_refusal_reaches_the_client_as_sent(post):
     body = {'error': {'message': 'context_length_exceeded', 'type': 'x'}}
-    route = build_route({'openai': FakeChatModel(error=_status_error(400, body))})
+    route = build_route({'openai': FakeChatModel(error=status_error(400, body))})
 
     response = post(route, input='Hi')
     streamed = post(route, input='Hi', stream=True)

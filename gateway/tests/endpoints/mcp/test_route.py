@@ -96,6 +96,8 @@ def _make_client(
     ttl: int | None = None,
     request_uuid: str | None = REQUEST_UUID,
 ) -> tuple[TestClient, MagicMock]:
+    # Its own app, not open_gateway: the McpService under test takes a mocked
+    # upstream client and Origin allowlist the server builds at import.
     app = FastAPI(title='AI Gateway', debug=True)
     group_service = MagicMock()
     group_service.check_key_uuid_for_route.return_value = key_bound

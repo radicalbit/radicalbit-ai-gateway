@@ -15,11 +15,16 @@ import pytest
 
 from tests.common.provider_recorder import CannedResponse, ProviderRecorder
 from tests.common.request_identity import with_identity
+from tests.common.responses_api import (
+    OPENCODE_TURN,
+    FakeChatModel,
+    openai_model,
+    status_error,
+)
 
 from radicalbit_ai_gateway.endpoints.chat_completions import streaming
 from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.invocation.recorder import Recorder
-from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.factory import init_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessageChunk
 from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
@@ -30,46 +35,6 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerInternalError,
     ModelInvokerUpstreamError,
 )
-
-# A turn as opencode sends it back: reasoning only the model can resume, a
-# commentary message, two parallel calls and their outputs.
-OPENCODE_TURN = [
-    {
-        'type': 'message',
-        'role': 'user',
-        'content': [{'type': 'input_text', 'text': 'Implement the task'}],
-    },
-    {
-        'type': 'reasoning',
-        'id': 'rs_0095a',
-        'summary': [],
-        'encrypted_content': 'gAAAAABq301x',
-    },
-    {
-        'type': 'message',
-        'id': 'msg_0095a',
-        'role': 'assistant',
-        'status': 'completed',
-        'content': [{'type': 'output_text', 'text': 'I will read the files first.'}],
-        'phase': 'commentary',
-    },
-    {
-        'type': 'function_call',
-        'id': 'fc_0095a',
-        'call_id': 'call_A',
-        'name': 'read',
-        'arguments': '{"path":"a.py"}',
-    },
-    {
-        'type': 'function_call',
-        'id': 'fc_0095b',
-        'call_id': 'call_B',
-        'name': 'glob',
-        'arguments': '{"pattern":"**/*.py"}',
-    },
-    {'type': 'function_call_output', 'call_id': 'call_A', 'output': 'print(1)'},
-    {'type': 'function_call_output', 'call_id': 'call_B', 'output': 'a.py'},
-]
 
 UPSTREAM_EVENTS = [
     {
@@ -110,19 +75,10 @@ async def _collect(source):
 # ── Provider ──────────────────────────────────────────────────────────────
 
 
-def _openai(**kwargs):
-    return init_chat_model(
-        'openai:gpt-6-luna',
-        api_key='sk',
-        http_async_client=HttpxAiohttpClient(),
-        **kwargs,
-    )
-
-
 class TestOpenAIResponses:
     def test_serves_responses_with_or_without_a_base_url(self):
-        assert _openai().supports_native_responses()
-        assert _openai(base_url='http://vllm:8000/v1').supports_native_responses()
+        assert openai_model().supports_native_responses()
+        assert openai_model(base_url='http://vllm:8000/v1').supports_native_responses()
 
     def test_deepseek_serves_responses(self):
         deepseek = init_chat_model(
@@ -147,7 +103,7 @@ class TestOpenAIResponses:
         assert not anthropic.supports_native_responses()
 
     async def test_stream_forwards_the_body_and_relays_events(self):
-        chat_model = _openai(temperature=0.2, reasoning_effort='low')
+        chat_model = openai_model(temperature=0.2, reasoning_effort='low')
         body = {
             'model': 'my-route',
             'input': OPENCODE_TURN,
@@ -179,7 +135,7 @@ class TestOpenAIResponses:
         upstream = UPSTREAM_EVENTS[2]['response']
 
         with ProviderRecorder([CannedResponse(json_body=upstream)]) as recorder:
-            result = await _openai().ainvoke_native_responses({'input': 'Hi'})
+            result = await openai_model().ainvoke_native_responses({'input': 'Hi'})
 
         assert result == upstream
         assert recorder.requests[0]['body'] == {'input': 'Hi', 'model': 'gpt-6-luna'}
@@ -235,40 +191,6 @@ def test_native_event_reports_the_route_as_model():
 # ── Invoker ───────────────────────────────────────────────────────────────
 
 
-class FakeChatModel(ChatModel):
-    def __init__(self, native=True, events=(), error=None, fail_after=None):
-        self.native = native
-        self.events = events
-        self.error = error
-        self.fail_after = fail_after
-        self.bodies = []
-
-    def supports_native_responses(self):
-        return self.native
-
-    async def _astream_native_responses(self, body):
-        self.bodies.append(body)
-        if self.error:
-            raise self.error
-        for i, event in enumerate(self.events):
-            if i == self.fail_after:
-                raise RuntimeError('connection reset')
-            yield event['type'], json.dumps(event)
-
-    async def _ainvoke_native_responses(self, body):
-        self.bodies.append(body)
-        if self.error:
-            raise self.error
-        return self.events[-1]['response']
-
-    async def _agenerate(self, messages, **kwargs):
-        raise NotImplementedError
-
-    async def _astream(self, messages, **kwargs):
-        raise NotImplementedError
-        yield
-
-
 def _invoker(primary, *fallbacks) -> ChatModelInvoker:
     invoker = ChatModelInvoker.__new__(ChatModelInvoker)
     models = [
@@ -295,12 +217,6 @@ CALL = with_identity(
 
 async def _stream(invoker, body, **kwargs):
     return await _collect(invoker.stream_responses(**CALL, body=body, **kwargs))
-
-
-def _status_error(status: int, body: dict):
-    request = httpx.Request('POST', 'https://api.openai.com/v1/responses')
-    response = httpx.Response(status, json=body, request=request)
-    return openai.APIStatusError(body['error']['message'], response=response, body=body)
 
 
 class TestStreamResponses:
@@ -382,7 +298,7 @@ class TestStreamResponses:
 
     async def test_upstream_refusal_reaches_the_client_as_sent(self):
         body = {'error': {'message': 'context_length_exceeded', 'code': 'x'}}
-        primary = FakeChatModel(error=_status_error(400, body))
+        primary = FakeChatModel(error=status_error(400, body))
 
         with pytest.raises(ModelInvokerUpstreamError) as raised:
             await _stream(_invoker(primary), {'input': 'Hi'})
@@ -439,7 +355,7 @@ class TestCompleteResponses:
         body = {'error': {'message': 'rate limited', 'code': 'rate_limit'}}
         primary = FakeChatModel()
         primary.ainvoke_native_responses = AsyncMock(
-            side_effect=_status_error(429, body)
+            side_effect=status_error(429, body)
         )
 
         with pytest.raises(ModelInvokerUpstreamError) as raised:
