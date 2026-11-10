@@ -20,6 +20,7 @@ import tiktoken
 from tests.common import db_mock, provider_responses as upstream
 from tests.common.audio import make_wav_bytes
 from tests.common.gateway_harness import Gateway, build_routes, open_gateway
+from tests.common.pipeline_gateway import contains_guardrail
 from tests.common.provider_recorder import CannedResponse
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
@@ -48,16 +49,6 @@ def _priced(model_id: str, name: str, **extra) -> dict:
         'input_cost_per_million_tokens': 1,
         'output_cost_per_million_tokens': 2,
         **extra,
-    }
-
-
-def _contains(name: str, where: str, behavior: str, value: str) -> dict:
-    return {
-        'name': name,
-        'type': 'contains',
-        'where': where,
-        'behavior': behavior,
-        'parameters': {'values': [value]},
     }
 
 
@@ -98,8 +89,8 @@ CONFIG = {
             'where': 'output',
             'parameters': {'language': 'en', 'entities': ['EMAIL_ADDRESS']},
         },
-        _contains('warn_out', 'output', 'warn', 'warnout'),
-        _contains('soft_out', 'output', 'soft_block', 'softout'),
+        contains_guardrail('warn_out', 'output', 'warn', 'warnout'),
+        contains_guardrail('soft_out', 'output', 'soft_block', 'softout'),
     ],
     'cache': {'redis_host': 'localhost', 'redis_port': 6379},
     'routes': {

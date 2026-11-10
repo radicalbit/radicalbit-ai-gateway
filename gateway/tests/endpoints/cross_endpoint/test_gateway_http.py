@@ -16,12 +16,8 @@ from starlette.datastructures import State
 from tests.common import db_mock
 from tests.common.gateway_harness import HEADERS, WAV, build_routes, open_gateway
 from tests.common.limits import consumed, project_limit
+from tests.common.pipeline_gateway import CONFIG, gpt_a_completion, gpt_a_stream
 from tests.common.provider_recorder import CannedResponse, ProviderRecorder
-from tests.endpoints.cross_endpoint.test_pipeline_golden import (
-    CONFIG,
-    _completion,
-    _stream,
-)
 
 from radicalbit_ai_gateway import server
 from radicalbit_ai_gateway.limiting.limits import RequestLimits
@@ -133,7 +129,7 @@ def test_a_transcription_a_route_cannot_serve_answers_400(gateway, route, stream
 def test_the_tags_header_is_not_forwarded_upstream(gateway):
     response, [call] = _send(
         gateway,
-        [_completion()],
+        [gpt_a_completion()],
         '/v1/chat/completions',
         headers={**HEADERS, 'X-RB-Tags': 'cost_center=retail,env=prod'},
         json={
@@ -167,7 +163,7 @@ async def test_a_live_stream_counts_its_cost_on_the_project_limits(gateway):
     ):
         response, _ = _send(
             gateway,
-            [_stream()],
+            [gpt_a_stream()],
             '/v1/chat/completions',
             headers=HEADERS,
             json={
@@ -193,7 +189,9 @@ async def test_the_openai_sdk_reads_a_completion_and_a_stream(gateway):
         ),
     )
 
-    with ProviderRecorder([_completion('Hello World'), _stream('Hello', ' World')]):
+    with ProviderRecorder(
+        [gpt_a_completion('Hello World'), gpt_a_stream('Hello', ' World')]
+    ):
         completion = await sdk.chat.completions.create(
             model='proj/chat_metered', messages=[{'role': 'user', 'content': 'Hi'}]
         )
@@ -293,7 +291,7 @@ def test_a_live_stream_tags_the_rows_its_body_emits(gateway):
     """
     response = gateway.post(
         '/v1/chat/completions',
-        [_stream()],
+        [gpt_a_stream()],
         headers={'X-RB-Tags': 'env=prod,app=x'},
         json={
             'model': 'proj/chat_metered',

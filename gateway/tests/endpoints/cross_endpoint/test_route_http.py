@@ -12,8 +12,8 @@ import pytest
 from tests.common import db_mock
 from tests.common.gateway_harness import LOGGER, build_routes, open_gateway
 from tests.common.limits import consumed
+from tests.common.pipeline_gateway import gpt_a_completion
 from tests.common.provider_recorder import CannedResponse
-from tests.endpoints.cross_endpoint.test_pipeline_golden import _completion
 
 from radicalbit_ai_gateway import server
 from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits, Usage
@@ -276,7 +276,7 @@ def test_preprocessing_runs_before_the_route_prompt_is_added(gateway, uppercase)
     """The plugin sees only the client's messages; the route's prompt is
     added afterwards, so no plugin can change it.
     """
-    response = gateway.chat([_completion('hi')], text='hello')
+    response = gateway.chat([gpt_a_completion('hi')], text='hello')
 
     assert response.status_code == 200
     assert uppercase.seen == [('HumanMessage', 'hello')]
@@ -293,7 +293,7 @@ def test_preprocessing_sees_a_system_prompt_the_client_sends(gateway, uppercase)
     """
     response = gateway.post(
         '/v1/chat/completions',
-        [_completion('hi')],
+        [gpt_a_completion('hi')],
         json={
             'model': 'proj/chat',
             'messages': [

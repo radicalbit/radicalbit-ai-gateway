@@ -20,126 +20,13 @@ from tests.common import provider_responses as upstream
 from tests.common.audio import make_wav_bytes
 from tests.common.gateway_harness import Gateway, build_routes, open_gateway
 from tests.common.limits import consumed
+from tests.common.pipeline_gateway import CONFIG, gpt_a_completion, gpt_a_stream
 from tests.common.provider_recorder import CannedResponse
 
 from radicalbit_ai_gateway import server
 from radicalbit_ai_gateway.limiting.windows import Category
 
-CREDENTIALS = {'api_key': 'sk-test'}
 LONG_WAV = make_wav_bytes(2.0)
-
-
-def _priced(model_id: str, name: str) -> dict:
-    return {
-        'model_id': model_id,
-        'model': name,
-        'credentials': CREDENTIALS,
-        'input_cost_per_million_tokens': 1,
-        'output_cost_per_million_tokens': 2,
-    }
-
-
-def _contains(name: str, where: str, behavior: str, value: str) -> dict:
-    return {
-        'name': name,
-        'type': 'contains',
-        'where': where,
-        'behavior': behavior,
-        'parameters': {'values': [value]},
-    }
-
-
-INPUT_GUARDRAILS = ['warn_in', 'judge', 'soft_in']
-INPUT_LIMIT = {'input': {'window_size': '1 minute', 'max_token': 3}}
-ROOMY_LIMIT = {'input': {'window_size': '1 minute', 'max_token': 1000}}
-
-CONFIG = {
-    'chat_models': [
-        _priced('a', 'openai/gpt-a'),
-        _priced('b', 'openai/gpt-b'),
-        _priced('j1', 'openai/gpt-j1'),
-        _priced('r1', 'openai/gpt-r1'),
-    ],
-    'embedding_models': [_priced('e1', 'openai/text-embedding-3-small')],
-    'transcription_models': [_priced('t1', 'openai/gpt-4o-transcribe')],
-    'decision_models': [
-        {
-            'model_id': 'd1',
-            'model': 'typesafe/jev-latest',
-            'credentials': {'api_key': 'ts-test'},
-            'input_cost_per_million_tokens': 3,
-        }
-    ],
-    'guardrails': [
-        _contains('warn_in', 'input', 'warn', 'warnme'),
-        _contains('soft_in', 'input', 'soft_block', 'softme'),
-        _contains('soft_out', 'output', 'soft_block', 'softout'),
-        _contains('block_out', 'output', 'block', 'blockout'),
-        {
-            'name': 'judge',
-            'type': 'judge',
-            'where': 'input',
-            'behavior': 'block',
-            'parameters': {'model_id': 'j1', 'prompt': 'Judge this.'},
-        },
-    ],
-    'routing': [
-        {
-            'name': 'by-llm',
-            'type': 'llm',
-            'router_model_id': 'r1',
-            'default_model_id': 'a',
-            'output_mapping': [
-                {'model_id': 'a', 'description': 'Questions about geography'},
-                {'model_id': 'b', 'description': 'Questions about code'},
-            ],
-        }
-    ],
-    'routes': {
-        'chat': {
-            'chat_models': ['a', 'b'],
-            'routing': 'by-llm',
-            'guardrails': INPUT_GUARDRAILS,
-        },
-        'limited': {
-            'chat_models': ['a', 'b'],
-            'routing': 'by-llm',
-            'guardrails': INPUT_GUARDRAILS,
-            'token_limiting': INPUT_LIMIT,
-        },
-        'output': {
-            'chat_models': ['a'],
-            'guardrails': ['warn_in', 'soft_in', 'soft_out'],
-        },
-        'embed': {'embedding_models': ['e1'], 'guardrails': ['warn_in', 'soft_in']},
-        'embed_limited': {'embedding_models': ['e1'], 'token_limiting': INPUT_LIMIT},
-        'audio': {'transcription_models': ['t1']},
-        'audio_limited': {
-            'transcription_models': ['t1'],
-            'duration_limiting': {
-                'window_size': '1 minute',
-                'max_duration_seconds': 1,
-            },
-        },
-        'agent': {'decision_models': ['d1'], 'guardrails': ['warn_in', 'soft_in']},
-        # Limits that let every request through: their checks show in traces.
-        'chat_metered': {'chat_models': ['a'], 'token_limiting': ROOMY_LIMIT},
-        'embed_metered': {'embedding_models': ['e1'], 'token_limiting': ROOMY_LIMIT},
-        'audio_metered': {
-            'transcription_models': ['t1'],
-            'duration_limiting': {
-                'window_size': '1 minute',
-                'max_duration_seconds': 60,
-            },
-        },
-        'agent_metered': {'decision_models': ['d1'], 'token_limiting': ROOMY_LIMIT},
-        'output_metered': {
-            'chat_models': ['a'],
-            'guardrails': ['soft_out', 'block_out'],
-            'token_limiting': ROOMY_LIMIT,
-        },
-    },
-}
 
 
 @pytest.fixture
@@ -240,21 +127,6 @@ def _snapshot(gateway: Gateway, response) -> dict:
 def _structured(model: str, content: dict) -> CannedResponse:
     return upstream.openai_completion(
         json.dumps(content), model=model, prompt_tokens=30, completion_tokens=4
-    )
-
-
-def _completion(text: str = 'Paris is in France') -> CannedResponse:
-    return upstream.openai_completion(
-        text, model='gpt-a', prompt_tokens=11, completion_tokens=5
-    )
-
-
-def _stream(*parts: str) -> CannedResponse:
-    return upstream.openai_stream(
-        list(parts or ('Paris', ' is in France')),
-        model='gpt-a',
-        prompt_tokens=11,
-        completion_tokens=5,
     )
 
 
@@ -384,7 +256,7 @@ GOLDEN = [
     ),
     pytest.param(
         lambda g: g.chat(
-            [_completion('softout')], route='output', text='warnme'
+            [gpt_a_completion('softout')], route='output', text='warnme'
         ),
         {
             'status': 200,
@@ -416,7 +288,7 @@ GOLDEN = [
     ),
     pytest.param(
         lambda g: g.chat(
-            [_stream('softout')], route='output', text='warnme', stream=True
+            [gpt_a_stream('softout')], route='output', text='warnme', stream=True
         ),
         {
             'status': 400,
@@ -581,7 +453,7 @@ GOLDEN = [
     ),
     # Requests served: the route the metrics and the log lines carry.
     pytest.param(
-        lambda g: g.chat([ROUTED, NOT_TRIGGERED, _completion()]),
+        lambda g: g.chat([ROUTED, NOT_TRIGGERED, gpt_a_completion()]),
         {
             'status': 200,
             'body': {'choices': [{'finish_reason': 'stop', 'index': 0, 'logprobs': None, 'message': {'content': 'Paris is in France', 'refusal': None, 'role': 'assistant', 'annotations': None, 'audio': None, 'function_call': None, 'tool_calls': None}}], 'model': 'chat', 'object': 'chat.completion', 'metadata': None, 'moderation': None, 'service_tier': None, 'system_fingerprint': None, 'usage': {'completion_tokens': 5, 'prompt_tokens': 11, 'total_tokens': 16, 'completion_tokens_details': None, 'prompt_tokens_details': None}},
@@ -596,7 +468,7 @@ GOLDEN = [
     ),
     pytest.param(
         lambda g: g.chat(
-            [_stream()],
+            [gpt_a_stream()],
             route='chat_metered',
             stream=True,
             stream_options={'include_usage': True},
@@ -854,24 +726,24 @@ def _span_tree(spans: list) -> list[tuple[str, str | None]]:
 # fmt: off
 SPAN_CASES = [
     pytest.param(
-        lambda g: g.chat([ROUTED, NOT_TRIGGERED, _completion()]),
+        lambda g: g.chat([ROUTED, NOT_TRIGGERED, gpt_a_completion()]),
         [('auth_api_key.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_complete.task'), ('llm_complete.task', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat',
     ),
     pytest.param(
         lambda g: g.chat(
-            [ROUTED, NOT_TRIGGERED, _stream()], stream=True
+            [ROUTED, NOT_TRIGGERED, gpt_a_stream()], stream=True
         ),
         [('auth_api_key.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow')],
         id='chat_live_stream',
     ),
     pytest.param(
-        lambda g: g.chat([_stream()], route='output', stream=True),
+        lambda g: g.chat([gpt_a_stream()], route='output', stream=True),
         [('auth_api_key.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'stream_with_output_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'stream_with_output_guardrails.workflow'), ('stream_with_output_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat_buffered_stream',
     ),
     pytest.param(
-        lambda g: g.chat([_completion()], route='output'),
+        lambda g: g.chat([gpt_a_completion()], route='output'),
         [('auth_api_key.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_complete.task'), ('llm_complete.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'apply_output_guardrails.workflow'), ('apply_output_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat_output',
     ),
@@ -910,13 +782,13 @@ SPAN_CASES = [
         id='decision',
     ),
     pytest.param(
-        lambda g: g.chat([_completion()], route='chat_metered'),
+        lambda g: g.chat([gpt_a_completion()], route='chat_metered'),
         [('auth_api_key.task', 'chat_completions.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_complete.task'), ('llm_complete.task', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat_metered',
     ),
     pytest.param(
         lambda g: g.chat(
-            [_stream()], route='chat_metered', stream=True
+            [gpt_a_stream()], route='chat_metered', stream=True
         ),
         [('auth_api_key.task', 'chat_completions.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('chat_completions.workflow', None), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow')],
         id='chat_stream_metered',
@@ -1041,12 +913,14 @@ async def test_no_span_output_records_a_credential(gateway, span_collector, name
 
 BLOCKED_OUTPUTS = {
     'chat_buffered_soft_block': lambda g: g.chat(
-        [_stream('softout')], route='output_metered', stream=True
+        [gpt_a_stream('softout')], route='output_metered', stream=True
     ),
     'chat_buffered_block': lambda g: g.chat(
-        [_stream('blockout')], route='output_metered', stream=True
+        [gpt_a_stream('blockout')], route='output_metered', stream=True
     ),
-    'chat_block': lambda g: g.chat([_completion('blockout')], route='output_metered'),
+    'chat_block': lambda g: g.chat(
+        [gpt_a_completion('blockout')], route='output_metered'
+    ),
     'responses_block': lambda g: g.responses(
         [upstream.openai_response('blockout', model='gpt-a')], route='output_metered'
     ),
