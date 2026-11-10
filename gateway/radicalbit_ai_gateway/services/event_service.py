@@ -624,6 +624,20 @@ class EventService:
                 for server in config.get_route_mcp_servers(route_config.route_name)
             ]
 
+        # Every model the route uses, own lists plus guardrails and routing,
+        # with names: the route Models popover lists these.
+        used_ids = config.route_model_ids(route_config)
+
+        def resolve(ids: list[str], by_id: dict) -> list[dict]:
+            return [by_id[mid].model_dump() for mid in ids if mid in by_id]
+
+        route_dict['used_models'] = {
+            'chat': resolve(used_ids.chat, chat_by_id),
+            'embedding': resolve(used_ids.embedding, embed_by_id),
+            'transcription': resolve(used_ids.transcription, transcription_by_id),
+            'decision': resolve(used_ids.decision, decision_by_id),
+        }
+
         return GatewayRouteConfigOut(**route_dict)
 
     def get_costs_chart_data(

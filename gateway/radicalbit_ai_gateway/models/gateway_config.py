@@ -1,6 +1,6 @@
 from collections import Counter
 from decimal import Decimal
-from typing import Any
+from typing import Any, NamedTuple
 
 from radicalbit_ai_gateway.models.model import Model
 
@@ -37,6 +37,15 @@ from radicalbit_ai_gateway.utils.config_hooks import (
 )
 
 DECISION_MODEL_PROVIDER = 'typesafe'
+
+
+class RouteModelIds(NamedTuple):
+    """The model ids a route uses, per category."""
+
+    chat: list[str]
+    embedding: list[str]
+    transcription: list[str]
+    decision: list[str]
 
 
 def get_model_from_model_id(
@@ -140,6 +149,50 @@ class GatewayConfig(BaseModel):
             for g in self.guardrails
         )
 
+    def route_model_ids(self, route_config: GatewayRouteConfig) -> RouteModelIds:
+        """Every model a route uses, per category, in order, without repeats.
+
+        Besides its own model lists, a route uses the models its guardrails
+        and its routing call: LLM judge and LLM routing (chat), semantic
+        routing (embedding), decision judge and decision routing (decision).
+        Their fallback models count too. Route fallbacks and the semantic
+        cache's embedding model must already be on the route's own lists.
+        """
+        chat: list[str | None] = list(route_config.chat_models or [])
+        embedding: list[str | None] = list(route_config.embedding_models or [])
+        decision: list[str | None] = list(route_config.decision_models or [])
+
+        guardrails_by_name = {g.name: g for g in self.guardrails or []}
+        for name in route_config.guardrails or []:
+            guardrail = guardrails_by_name.get(name)
+            params = guardrail.parameters if guardrail is not None else None
+            if isinstance(params, JudgeParameter):
+                chat += [params.model_id, params.fallback_model_id]
+            elif isinstance(params, DecisionJudgeParameter):
+                decision += [params.model_id, params.fallback_model_id]
+
+        routing = (
+            self.routing_by_name.get(route_config.routing)
+            if route_config.routing
+            else None
+        )
+        if isinstance(routing, LLMRoutingConfig):
+            chat += [routing.router_model_id, routing.fallback_model_id]
+        elif isinstance(routing, SemanticRoutingConfig):
+            embedding.append(routing.embedding_model_id)
+        elif isinstance(routing, DecisionRoutingConfig):
+            decision += [routing.decision_model_id, routing.fallback_model_id]
+
+        def unique(ids: list[str | None]) -> list[str]:
+            return list(dict.fromkeys(i for i in ids if i is not None))
+
+        return RouteModelIds(
+            chat=unique(chat),
+            embedding=unique(embedding),
+            transcription=unique(list(route_config.transcription_models or [])),
+            decision=unique(decision),
+        )
+
     def get_route_feature_flags(
         self, route_config: GatewayRouteConfig
     ) -> tuple[bool, bool, bool, bool, bool, bool]:
@@ -158,7 +211,8 @@ class GatewayConfig(BaseModel):
         )
         has_semantic_cache = isinstance(route_config.caching, SemanticCaching)
         has_transcription_models = bool(route_config.transcription_models)
-        has_decision_models = bool(route_config.decision_models)
+        # Judges and routing bill decision cost too, not only served models.
+        has_decision_models = bool(self.route_model_ids(route_config).decision)
         return (
             has_chat_models,
             has_judges,
