@@ -1,6 +1,5 @@
 import logging
 import logging.config
-import os
 
 from celery import Celery
 import fakeredis
@@ -50,15 +49,6 @@ cache:
   redis_host: !secret CACHE_REDIS_HOST
   redis_port: !secret CACHE_REDIS_PORT
 """
-
-
-def test_data_dir():
-    return os.path.join(os.path.dirname(__file__), 'resources')
-
-
-@pytest.fixture(scope='session')
-def test_data_dir_fixture():
-    return test_data_dir()
 
 
 @pytest.fixture(scope='session')

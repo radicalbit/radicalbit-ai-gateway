@@ -111,7 +111,6 @@ async def test_exact_cache_does_not_leak_across_projects(
     mock_emit_event,
     mock_complete,
     fake_redis_client,
-    test_data_dir_fixture,
 ):
     """Same route name, same API key, same Redis, two projects: no cross-read.
 

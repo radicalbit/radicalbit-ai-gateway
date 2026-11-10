@@ -53,7 +53,7 @@ class FakeSemanticGatewayCache(GatewayCache):
 @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
 @pytest.mark.asyncio
 async def test_exact_cache_hit_with_different_history(
-    mock_model_invoker_emit_event, mock_emit_event, mock_complete, test_data_dir_fixture
+    mock_model_invoker_emit_event, mock_emit_event, mock_complete
 ):
     cost_service: CostService = MagicMock(spec_set=CostService)
     prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
@@ -161,9 +161,7 @@ async def test_exact_cache_hit_with_different_history(
 
 
 @pytest.mark.asyncio
-async def test_semantic_cache_uses_only_last_user_for_key_and_embedding(
-    test_data_dir_fixture,
-):
+async def test_semantic_cache_uses_only_last_user_for_key_and_embedding():
     # Build a route with semantic caching without YAML/!secret
     chat_registry = [
         Model(
