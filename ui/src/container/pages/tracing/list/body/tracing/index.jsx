@@ -1,6 +1,6 @@
 import Lucide from '@Components/lucide';
-import { SPAN_PARAM } from '@Components/modals/trace-detail/constants';
-import { useGetRequestsWithRange } from '@Src/store/state/tracing/vertical-hooks';
+import useModals, { modals } from '@Hooks/use-modals';
+import { useGetTracesWithRange } from '@Src/store/state/tracing/vertical-hooks';
 import {
   Board,
   Button,
@@ -12,19 +12,15 @@ import {
 import { TriangleAlert } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import columns from './columns';
-import RequestDetail from './request-detail';
-
-// The open request lives in the URL, so a request detail can be linked to.
-const REQUEST_PARAM = 'requestUuid';
 
 function Tracing() {
+  const { showModal } = useModals();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get('tracing-table-page')) || 1;
-  const openRequestUuid = searchParams.get(REQUEST_PARAM);
 
   const {
     data, isError, isLoading, isFetching, isSuccess, refetch,
-  } = useGetRequestsWithRange({ page: currentPage });
+  } = useGetTracesWithRange({ page: currentPage });
   const items = data?.items || [];
 
   const handleTableChange = (pagination) => {
@@ -34,27 +30,14 @@ function Tracing() {
     });
   };
 
-  const expandedRowKeys = openRequestUuid ? [openRequestUuid] : [];
-
-  // One request open at a time: the span selection (SPAN_PARAM) belongs to its trace.
-  const handleOnExpand = (expanded, { requestUuid }) => {
-    setSearchParams((prev) => {
-      prev.delete(SPAN_PARAM);
-
-      if (expanded) {
-        prev.set(REQUEST_PARAM, requestUuid);
-      } else {
-        prev.delete(REQUEST_PARAM);
-      }
-
-      return prev;
-    });
+  const handleOnRowClick = (record) => {
+    showModal(modals.TRACE_DETAIL, { traceId: record.traceId });
   };
 
   if (isLoading) {
     return (
       <Board
-        header={<SectionTitle title="Requests" />}
+        header={<SectionTitle title="Traces" />}
         main={<Skeleton active block />}
       />
     );
@@ -71,12 +54,16 @@ function Tracing() {
   if (items.length === 0) {
     return (
       <Board
-        header={<SectionTitle title="Requests" />}
+        header={<SectionTitle title="Traces" />}
         main={(
           <DataTable
+            clickable
             columns={columns}
             dataSource={[]}
             onChange={handleTableChange}
+            onRow={(record) => ({
+              onClick: () => { handleOnRowClick(record); },
+            })}
             pagination={{
               current: data.page,
               pageSize: data.size,
@@ -90,33 +77,26 @@ function Tracing() {
 
   return (
     <Board
-      header={<SectionTitle title="Requests" />}
+      header={<SectionTitle title="Traces" />}
       main={(
         <DataTable
           clickable
           columns={columns}
           dataSource={items}
-          expandable={{
-            expandedRowKeys,
-            expandedRowRender,
-            expandRowByClick: true,
-            onExpand: handleOnExpand,
-          }}
           onChange={handleTableChange}
+          onRow={(record) => ({
+            onClick: () => { handleOnRowClick(record); },
+          })}
           pagination={{
             current: data.page,
             pageSize: data.size,
             total: data.total,
           }}
-          rowKey="requestUuid"
+          rowKey="traceId"
         />
       )}
     />
   );
-}
-
-function expandedRowRender({ requestUuid }) {
-  return <RequestDetail requestUuid={requestUuid} />;
 }
 
 function IsError({ isFetching, refetch }) {
@@ -134,7 +114,7 @@ function IsError({ isFetching, refetch }) {
               </>
             )}
             image={<Lucide icon={TriangleAlert} />}
-            title="Unable to load requests"
+            title="Unable to load traces"
           />
         )}
         width="100%"

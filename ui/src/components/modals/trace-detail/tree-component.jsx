@@ -1,13 +1,16 @@
 import { useEffect } from 'react';
 import { formatMs } from '@Src/helpers/column-formatters';
+import useModals from '@Hooks/use-modals';
 import { Spin, Tree } from '@radicalbit/radicalbit-design-system';
 import { useGetSpanByIdVertical } from '@State/tracing/vertical-hooks';
 import { useSearchParams } from 'react-router-dom';
-import { SPAN_PARAM } from './constants';
 
-function TreeComponent({ traceId, tree, tree: { spanId } }) {
+function TreeComponent({ tree, tree: { spanId } }) {
+  const { modalPayload } = useModals();
+  const traceId = modalPayload?.data?.traceId;
+
   const [searchParams, setSearchParams] = useSearchParams();
-  const selectedSpanId = searchParams.get(SPAN_PARAM);
+  const selectedSpanId = searchParams.get('spanId');
 
   const { isFetching } = useGetSpanByIdVertical({ traceId, spanId: selectedSpanId });
 
@@ -19,7 +22,7 @@ function TreeComponent({ traceId, tree, tree: { spanId } }) {
   const handleOnSelect = (selectedKeys) => {
     if (selectedKeys.length > 0) {
       setSearchParams((prev) => {
-        prev.set(SPAN_PARAM, selectedKeys[0]);
+        prev.set('spanId', selectedKeys[0]);
         return prev;
       });
     }
@@ -72,12 +75,12 @@ function buildTreeData(node, { loadingSpanId }) {
 
 const useInitSelectedSpanId = (spanId) => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const selectedSpanId = searchParams.get(SPAN_PARAM);
+  const selectedSpanId = searchParams.get('spanId');
 
   useEffect(() => {
     if (!selectedSpanId && spanId) {
       setSearchParams((prev) => {
-        prev.set(SPAN_PARAM, spanId);
+        prev.set('spanId', spanId);
         return prev;
       });
     }

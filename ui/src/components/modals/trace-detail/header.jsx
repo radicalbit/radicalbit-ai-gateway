@@ -1,4 +1,5 @@
 import Lucide from '@Components/lucide';
+import useModals from '@Hooks/use-modals';
 import { formatMs, formatInt } from '@Src/helpers/column-formatters';
 import { useGetTraceByIdVertical } from '@State/tracing/vertical-hooks';
 import {
@@ -6,13 +7,13 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { SPAN_PARAM } from './constants';
 import RequestTypeTag from './request-type-tag';
 import TraceTags from './trace-tags';
 
-function Header({ traceId }) {
+function Header() {
+  const { modalPayload } = useModals();
   const navigate = useNavigate();
-
+  const traceId = modalPayload?.data?.traceId;
   const { data } = useGetTraceByIdVertical(traceId);
 
   const routeName = data?.routeName ?? '--';
@@ -29,7 +30,7 @@ function Header({ traceId }) {
   const handleOnClickBack = () => {
     const params = new URLSearchParams(window.location.search);
     params.delete('modal');
-    params.delete(SPAN_PARAM);
+    params.delete('spanId');
     navigate(`?${params.toString()}`);
   };
 
@@ -38,7 +39,7 @@ function Header({ traceId }) {
       details={{
         one: (
           <div className="pr-6 border-r border-gray-200">
-            <TraceTags traceId={traceId} />
+            <TraceTags />
           </div>
         ),
         two: (
@@ -62,7 +63,7 @@ function Header({ traceId }) {
           subtitle={subtitle}
           title={routeName}
           titlePrefix={<Lucide aria-label="Back" className="cursor-pointer" icon={ArrowLeft} onClick={handleOnClickBack} />}
-          titleSuffix={<RequestTypeTag traceId={traceId} />}
+          titleSuffix={<RequestTypeTag />}
         />
       )}
     />

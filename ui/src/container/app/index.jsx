@@ -201,7 +201,7 @@ const useNavigateNavBarWithKeyboard = () => {
 
       if ((isMac && e.ctrlKey && e.code === 'Digit6')) {
         e.preventDefault();
-        navigate(`/${PathsEnum.OBSERVABILITY}`);
+        navigate(`/${PathsEnum.TRACING}`);
       }
 
       if ((isMac && e.ctrlKey && e.code === 'Digit7')) {

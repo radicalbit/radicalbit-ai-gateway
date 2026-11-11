@@ -30,19 +30,3 @@ export function FormatBold({ value }) {
 }
 
 export const formatText = (value) => value ?? '--';
-
-// Per-request costs are often fractions of a cent, so keep up to 6 decimals.
-const costFormat = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 6,
-});
-
-export const formatCost = (value) => {
-  if (value === null || value === undefined) {
-    return '--';
-  }
-
-  return costFormat.format(value);
-};

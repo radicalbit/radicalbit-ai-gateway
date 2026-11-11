@@ -74,10 +74,10 @@ const usage = (hasLeftColumnCollapsed) => ({
 
 const tracing = (hasLeftColumnCollapsed) => ({
   position: 9,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Observability</CollapsedTitle> : 'Observability',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
   icon: <Lucide icon={Route} size="md" />,
-  key: PathsEnum.OBSERVABILITY,
-  link: getLink(PathsEnum.OBSERVABILITY, 'Observability'),
+  key: PathsEnum.TRACING,
+  link: getLink(PathsEnum.TRACING, 'Tracing'),
 });
 
 const groups = (hasLeftColumnCollapsed) => ({

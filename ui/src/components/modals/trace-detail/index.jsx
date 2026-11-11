@@ -36,11 +36,11 @@ function TraceDetail() {
       aria-label="Trace detail"
       closable={false}
       defaultMaximize
-      header={<Header traceId={traceId} />}
+      header={<Header />}
       onCancel={hideModal}
       open
     >
-      <Body traceId={traceId} />
+      <Body />
     </RbitModal>
   );
 }

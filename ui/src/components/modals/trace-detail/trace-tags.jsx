@@ -1,8 +1,12 @@
 import InfoPopover from '@Components/info-popover';
+import useModals from '@Hooks/use-modals';
 import { useGetTraceByIdVertical } from '@State/tracing/vertical-hooks';
 import { SectionTitle } from '@radicalbit/radicalbit-design-system';
 
-function TraceTags({ traceId }) {
+function TraceTags() {
+  const { modalPayload } = useModals();
+  const traceId = modalPayload?.data?.traceId;
+
   const { data } = useGetTraceByIdVertical(traceId);
   const tags = data?.tags;
 

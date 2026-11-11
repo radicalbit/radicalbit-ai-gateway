@@ -1,13 +1,16 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
 import { formatTimestamp } from '@Helpers/column-formatters';
+import useModals from '@Hooks/use-modals';
 import { useGetSpanByIdVertical } from '@State/tracing/vertical-hooks';
 import { Json, NewHeader, SectionTitle, Skeleton, Spinner } from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
-import { SPAN_PARAM } from './constants';
 
-function SpanDetail({ traceId }) {
+function SpanDetail() {
+  const { modalPayload } = useModals();
+  const traceId = modalPayload?.data?.traceId;
+
   const [searchParams] = useSearchParams();
-  const selectedSpanId = searchParams.get(SPAN_PARAM);
+  const selectedSpanId = searchParams.get('spanId');
 
   const { data, isLoading, isFetching, isError } = useGetSpanByIdVertical({ traceId, spanId: selectedSpanId });
   const attributes = data?.attributes;
@@ -53,9 +56,12 @@ function Placeholder() {
   );
 }
 
-export function SpanHeader({ traceId }) {
+export function SpanHeader() {
+  const { modalPayload } = useModals();
+  const traceId = modalPayload?.data?.traceId;
+
   const [searchParams] = useSearchParams();
-  const selectedSpanId = searchParams.get(SPAN_PARAM);
+  const selectedSpanId = searchParams.get('spanId');
 
   const { data, isLoading, isFetching, isError } = useGetSpanByIdVertical({ traceId, spanId: selectedSpanId });
   const spanName = data?.spanName;

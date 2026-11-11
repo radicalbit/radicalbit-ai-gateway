@@ -61,7 +61,7 @@ export default function MainHeaderContentSwitch() {
 
       <Route
         element={<TracingList />}
-        path={`/${PathsEnum.OBSERVABILITY}`}
+        path={`/${PathsEnum.TRACING}`}
       />
 
       <Route
