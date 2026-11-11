@@ -510,7 +510,6 @@ def test_chat_live_stream_hit(gateway):
     assert miss.status_code == hit.status_code == 200
     assert _cache_headers(miss) == {}
     assert _cache_headers(hit) == {CACHE_HIT: 'true'}
-    # One chunk with the whole text and its usage, and no usage chunk (D16).
     assert _sse(hit) == GOLDEN['live_stream_hit']
     assert list(_entries(gateway.stored('chat')).values()) == [GOLDEN['stream_entry']]
     assert gateway.cache_events() == _hit_events('gpt')
@@ -533,7 +532,6 @@ def test_chat_buffered_stream_hit(gateway):
 
 
 def test_a_soft_blocked_reply_is_cached_and_its_hit_loses_the_flags(gateway):
-    """D12, kept: the hit answers the block without the block's headers."""
     miss = gateway.chat([_completion('softout')], route='blocked')
     hit = gateway.chat([], route='blocked')
 
@@ -625,7 +623,6 @@ def test_embeddings_hit(gateway):
     hit = gateway.embed([])
 
     assert miss.status_code == hit.status_code == 200
-    # D16, kept: no cache header.
     assert _cache_headers(hit) == {}
     assert hit.json() == miss.json()
     assert _entries(gateway.stored('embed')) == {
@@ -648,7 +645,6 @@ def test_transcription_hit(gateway):
     hit = gateway.transcribe([])
 
     assert miss.status_code == hit.status_code == 200
-    # D16, kept: no cache header.
     assert _cache_headers(hit) == {}
     assert hit.json() == miss.json()
     assert _entries(gateway.stored('audio')) == {
@@ -712,8 +708,6 @@ def test_semantic_chat_hit(gateway):
     assert miss.status_code == hit.status_code == 200
     assert _cache_headers(hit) == {CACHE_HIT: 'true'}
     assert _body(hit) == _body(miss)
-    # D14, kept: the route's first embedding model embeds, not the one the
-    # caching block names.
     assert gateway.upstream[0]['url'] == 'https://api.openai.com/v1/embeddings'
     assert gateway.upstream[0]['body']['model'] == 'text-embedding-3-small'
     assert gateway.upstream[0]['body']['input'] == [_tokens('Where is Paris?')]
@@ -1158,7 +1152,7 @@ GOLDEN_SPANS = {
 
 
 def test_semantic_chat_that_cannot_be_embedded_skips_the_cache(gateway):
-    """D11: no embedding is a request the cache does not serve, not a 500."""
+    """No embedding is a request the cache does not serve, not a 500."""
     for _ in range(2):
         response = gateway.chat([upstream.error(500), _completion()], route='semantic')
         assert response.status_code == 200
@@ -1177,7 +1171,7 @@ def test_semantic_chat_that_cannot_be_embedded_skips_the_cache(gateway):
 
 
 def test_a_responses_request_over_its_limit_is_not_served_from_the_cache(gateway):
-    """D10: the limits are checked before the lookup, as on chat."""
+    """The limits are checked before the lookup, as on chat."""
     first = gateway.responses([upstream.openai_response('Paris')], route='limited')
     second = gateway.responses([], route='limited')
 
@@ -1188,7 +1182,7 @@ def test_a_responses_request_over_its_limit_is_not_served_from_the_cache(gateway
 
 
 def test_a_transcription_over_its_limit_is_not_served_from_the_cache(gateway):
-    """D10: the limits are checked before the lookup, as on chat."""
+    """The limits are checked before the lookup, as on chat."""
     first = gateway.transcribe([_transcription()], route='audio_limited')
     second = gateway.transcribe([], route='audio_limited')
 
@@ -1198,7 +1192,7 @@ def test_a_transcription_over_its_limit_is_not_served_from_the_cache(gateway):
 
 
 def test_a_semantic_responses_request_over_its_limit_embeds_nothing(gateway):
-    """D10: the limit check comes before the embedding call spends."""
+    """The limit check comes before the embedding call spends."""
     limited = gateway.routes['proj/limited']
     _use_semantic_index(limited, FakeSemanticIndex())
     gateway.responses(
@@ -1219,7 +1213,7 @@ INPUT_WARN = {
 
 
 def test_chat_keys_on_the_redacted_text(gateway):
-    """D13: messages that differ only in what a redaction masks share an
+    """Messages that differ only in what a redaction masks share an
     entry, as on Responses and embeddings.
     """
     miss = gateway.chat([_completion()], route='redacted', text=f'Mail {EMAIL}')
@@ -1237,7 +1231,7 @@ def test_chat_keys_on_the_redacted_text(gateway):
 
 
 def test_semantic_chat_embeds_the_redacted_text(gateway):
-    """D13: no text a redaction masks reaches the embedding provider (ADR 0010)."""
+    """No text a redaction masks reaches the embedding provider (ADR 0010)."""
     response = gateway.chat(
         [upstream.openai_embeddings(count=1), _completion()],
         route='semantic_redacted',
@@ -1251,7 +1245,7 @@ def test_semantic_chat_embeds_the_redacted_text(gateway):
 
 
 def test_stream_and_non_stream_requests_share_an_entry(gateway):
-    """D17: chat keys leave out stream and stream_options, as Responses keys
+    """Chat keys leave out stream and stream_options, as Responses keys
     do. An entry stored by either shape answers both.
     """
     gateway.chat([_completion()], stream=False)
@@ -1270,7 +1264,7 @@ def test_stream_and_non_stream_requests_share_an_entry(gateway):
 
 
 def test_a_stream_does_not_replay_a_reply_with_tool_calls(gateway):
-    """D17: a stream hit replays text only, so a stored tool call is a miss
+    """A stream hit replays text only, so a stored tool call is a miss
     for a stream, not an empty reply.
     """
     gateway.chat(
@@ -1289,7 +1283,7 @@ def test_a_stream_does_not_replay_a_reply_with_tool_calls(gateway):
 
 
 def test_a_streamed_tool_call_is_stored_whole(gateway):
-    """D17: a streamed reply is stored as the completion a non-streamed call
+    """A streamed reply is stored as the completion a non-streamed call
     would get: a tool call answers a plain request with the tool call, and
     is a miss for a stream, which replays text only.
     """
@@ -1318,7 +1312,7 @@ def test_a_streamed_tool_call_is_stored_whole(gateway):
 def test_a_streamed_reply_with_text_and_a_tool_call_keeps_the_tool_call(
     gateway, stream_route
 ):
-    """D17: text before a tool call does not make a streamed reply a text
+    """Text before a tool call does not make a streamed reply a text
     reply: a plain request served from it gets the tool call (live and
     buffered streams alike).
     """
@@ -1376,7 +1370,7 @@ def _entry_text(gateway, route: str) -> str:
 
 
 def test_a_buffered_stream_stores_its_screened_reply(gateway):
-    """D9: the cache holds only text the output guardrails passed."""
+    """The cache holds only text the output guardrails passed."""
     miss = gateway.chat([_stream(f'Mail {EMAIL}')], route='masked', stream=True)
     hit = gateway.chat([], route='masked', stream=True)
 
@@ -1386,7 +1380,7 @@ def test_a_buffered_stream_stores_its_screened_reply(gateway):
 
 
 def test_a_buffered_stream_hit_is_screened(gateway):
-    """D9: a hit runs the output guardrails, as a model's reply does."""
+    """A hit runs the output guardrails, as a model's reply does."""
     gateway.chat([_stream('Paris')], route='masked', stream=True)
     route = gateway.routes['proj/masked']
     (key,) = gateway.stored('masked')
@@ -1400,7 +1394,7 @@ def test_a_buffered_stream_hit_is_screened(gateway):
 
 
 def test_a_soft_blocked_buffered_stream_hit_answers_400_as_a_miss_does(gateway):
-    """D9: a hit the output guardrails soft-block answers the 400 a
+    """A hit the output guardrails soft-block answers the 400 a
     soft-blocked buffered reply answers.
     """
     miss = gateway.chat([_stream('softout')], route='blocked', stream=True)
@@ -1426,7 +1420,7 @@ def test_a_soft_blocked_buffered_stream_hit_answers_400_as_a_miss_does(gateway):
 
 @pytest.mark.parametrize('send', ['chat', 'responses'])
 def test_the_semantic_cache_embedding_counts_on_the_callers_limits(gateway, send):
-    """D15 (ADR 0006): the embedding call is charged to the request, as
+    """The embedding call (ADR 0006) is charged to the request, as
     semantic routing's is. Its events stay flagged semantic.
     """
     # Both replies count 21 input tokens; the embedding of 'Hi' counts one.
@@ -1452,7 +1446,7 @@ def test_the_semantic_cache_embedding_counts_on_the_callers_limits(gateway, send
 
 
 def test_a_transcription_hit_uses_none_of_the_audio_limit(gateway):
-    """D10 follow-up: the audio limit is checked before the lookup, but its
+    """The audio limit is checked before the lookup, but its
     seconds are counted only when the model transcribes.
     """
     route = 'audio_two_seconds'
@@ -1471,7 +1465,7 @@ def test_a_transcription_hit_uses_none_of_the_audio_limit(gateway):
 def test_the_semantic_cache_embedding_is_charged_at_the_answering_models_price(
     gateway,
 ):
-    """D15 follow-up: when a fallback answers the embedding call, the call is
+    """When a fallback answers the embedding call, the call is
     charged at the fallback's price, as its events price it.
     """
     first = gateway.chat(

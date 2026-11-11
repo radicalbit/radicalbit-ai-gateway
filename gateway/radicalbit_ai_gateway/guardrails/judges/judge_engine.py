@@ -286,7 +286,6 @@ class JudgeEngine:
         cached_token_count: int | None = None
 
         if isinstance(raw_response, AIMessage):
-            # Only the OpenAI usage's cached tokens (D22).
             cached_token_count = legacy_cached_tokens(raw_response.response_metadata)
 
         if isinstance(raw_response, AIMessage) and raw_response.usage_metadata:

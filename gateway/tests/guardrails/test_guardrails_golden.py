@@ -672,7 +672,7 @@ def test_chat_buffered_stream_output_redaction(gateway):
     response = gateway.chat('hello', stream=True)
 
     assert response.status_code == 200
-    # The redacted text goes out in the first content chunk (D8).
+    # The redacted text goes out in the first content chunk.
     assert [f['choices'][0]['delta'].get('content') for f in _sse(response)[:-1]] == [
         'Write to <EMAIL_ADDRESS>',
         None,

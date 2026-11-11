@@ -9,20 +9,6 @@ model events with their costs, the model metrics and the model spans. Judges
 and LLM routers on each provider, and the schemas each provider sends for
 structured output, are pinned the same way.
 
-These pin provider quirks found during the request-path refactor (D18-D22)
-as they are today:
-
-- D18: Mistral and DeepSeek get ``max_completion_tokens`` as sent; Mistral
-  also gets ``stream_options``.
-- D19: the Anthropic prompt-cache system block (``cache_control``) also
-  reaches a non-Anthropic fallback.
-- D20: a Mistral stream reports no cached tokens; a complete call reads them
-  from ``prompt_tokens_details``.
-- D21: a Gemini stream whose final prompt count is lower reports a negative
-  input delta; the invoker keeps the last non-zero input count.
-- D22: judges read cached tokens only from ``prompt_tokens_details``; LLM
-  routers read none.
-
 ``EXPECTED`` lives in ``provider_golden_expected.py``.
 """
 
@@ -526,11 +512,9 @@ def _request_scenarios() -> dict:
 SCENARIOS = {
     **_usage_scenarios(),
     **_request_scenarios(),
-    # D21: the last non-zero input count wins.
     'gemini_stream_lower_final_prompt': lambda g: g.chat(
         [_gemini_lower_final_prompt()], route='gemini', **STREAM_USAGE
     ),
-    # D19: the cached system block reaches the OpenAI fallback.
     'claude_prompt_cache_then_fallback': lambda g: g.chat(
         [_anthropic_error(), _reply('gpt')], route='cached-fallback'
     ),
