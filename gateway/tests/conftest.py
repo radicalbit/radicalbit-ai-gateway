@@ -6,6 +6,7 @@ import fakeredis
 from opentelemetry import context as otel_context, trace
 from opentelemetry.sdk.trace import SpanProcessor
 import pytest
+import tiktoken
 import tldextract
 from tldextract import tldextract as tldextract_module
 from traceloop.sdk import Traceloop
@@ -71,6 +72,18 @@ app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
 logging.config.dictConfig(logging_config_dict)
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+
+@pytest.fixture(scope='session', autouse=True)
+def _tiktoken_encodings():
+    """Load the token encodings the gateway counts with, once, before any test.
+
+    tiktoken downloads an encoding the first time it is used. The golden tests
+    block the network while they run (``ProviderRecorder``), so with a cold
+    cache the first request that counts tokens inside one of them would fail.
+    """
+    for name in ('cl100k_base', 'o200k_base'):
+        tiktoken.get_encoding(name)
 
 
 @pytest.fixture(autouse=True)
