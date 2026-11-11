@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -418,6 +418,45 @@ class OtelTracesDAO:
                 )
                 for row in res
             }
+
+    def get_trace_ids_by_request_uuids(
+        self,
+        project_uuid: UUID,
+        request_uuids: list[str],
+        date_from: date,
+        date_to: date,
+    ) -> dict[str, str]:
+        """Map each request UUID to the trace its root span belongs to.
+
+        Requests that left no trace are absent from the result. Spans are
+        bounded to `[date_from, date_to]` so ClickHouse prunes partitions.
+        """
+        if not request_uuids:
+            return {}
+
+        T = self.T
+        req_uuid_attr = literal_column(_REQUEST_UUID_ATTR)
+        stmt = (
+            select(
+                req_uuid_attr.label('request_uuid'),
+                F.any(T.c['TraceId']).label('trace_id'),
+            )
+            .select_from(OtelTraces)
+            .where(
+                T.c['ParentSpanId'] == '',
+                literal_column(_PROJECT_UUID_ATTR) == str(project_uuid),
+                req_uuid_attr.in_(request_uuids),
+                # Timestamp has no column timezone: read its date in UTC, as
+                # event and request_event DATE are, or the window shifts on a
+                # server whose timezone is not UTC.
+                F.toDate(T.c['Timestamp'], 'UTC') >= date_from,
+                F.toDate(T.c['Timestamp'], 'UTC') <= date_to,
+            )
+            .group_by(text(_REQUEST_UUID_ATTR))
+        )
+
+        with self.db.begin_session() as session:
+            return {row[0]: row[1] for row in session.execute(stmt).all()}
 
     def get_traces_chart_data(
         self,
