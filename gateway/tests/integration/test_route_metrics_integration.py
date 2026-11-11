@@ -190,3 +190,54 @@ class TestRouteMetricsIntegration(DatabaseIntegrationClickhouse):
             ('route-a', 'GUARDRAIL'): 'pii',
             ('route-b', 'GUARDRAIL'): 'toxic',
         }
+
+    def test_routing_choices_are_counted_per_route(self):
+        self.insert(
+            [
+                _event('route-a', 'ROUTING', selected_model_id='gpt'),
+                _event('route-a', 'ROUTING', selected_model_id='gpt'),
+                _event('route-a', 'ROUTING', selected_model_id='claude'),
+                _event('route-b', 'ROUTING', selected_model_id='claude'),
+            ]
+        )
+
+        counters = EventDAO(self.db).get_routing_model_counters_of_routes(
+            PROJECT, ['route-a', 'route-b', 'route-idle'], None, None
+        )
+
+        assert {
+            route: {c.model_id: c.value for c in models}
+            for route, models in counters.items()
+        } == {'route-a': {'gpt': 2, 'claude': 1}, 'route-b': {'claude': 1}}
+
+    def test_the_stats_of_one_route_count_its_own_requests(self):
+        self.insert(
+            [
+                _request('route-a'),
+                _request('route-a', RequestStatus.HANDLED_ERROR, 'RateLimitError'),
+                _request('route-b'),
+            ]
+        )
+        dao = RequestEventDAO(self.db)
+
+        stats = dao.get_request_stats_by_route(PROJECT, 'route-a', None, None)
+        idle = dao.get_request_stats_by_route(PROJECT, 'route-idle', None, None)
+
+        assert (stats.total_requests, stats.error_requests) == (2, 1)
+        assert idle.total_requests == 0
+
+    def test_no_route_means_no_query_and_no_metric(self):
+        event_dao = EventDAO(self.db)
+        request_event_dao = RequestEventDAO(self.db)
+        asked = (PROJECT, [], None, None)
+
+        assert event_dao.get_counters_of_routes(*asked) == {}
+        assert event_dao.get_tokens_by_model_of_routes(*asked) == []
+        assert event_dao.get_routing_model_counters_of_routes(*asked) == {}
+        assert event_dao.get_last_events(PROJECT, [], None, None) == {}
+        assert (
+            event_dao.get_last_events_of_routes(PROJECT, ['GUARDRAIL'], [], None, None)
+            == {}
+        )
+        assert request_event_dao.get_request_stats_of_routes(*asked) == {}
+        assert request_event_dao.get_error_breakdown_of_routes(*asked) == {}
