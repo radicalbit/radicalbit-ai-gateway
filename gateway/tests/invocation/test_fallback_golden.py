@@ -584,12 +584,12 @@ GOLDEN = [
     pytest.param(
         lambda g: g.chat([_mistral_error(401)], route='mistral'),
         {
-            'status': 401,
-            'body': {'object': 'error', 'message': 'Unauthorized', 'type': 'unauthorized', 'param': None, 'code': None},
+            'status': 502,
+            'body': {'error': {'message': "The provider refused the gateway's credentials for route mistral", 'type': 'model_invoker_error', 'param': None, 'code': 'model_invoker_bad_gateway'}},
             'upstream': ['https://api.mistral.ai/v1/chat/completions'],
             'events': [_invocation('mistral', 'chat-model')],
             'metrics': [('model_invocations_counter', 1, {'route_name': 'mistral', 'model_name': 'mistral'}), ('invocations_latency_histogram', None, {'route_name': 'mistral', 'model_name': 'mistral'})],
-            'logs': [('WARNING', 'Primary chat model mistral failed: Error response 401 while fetching https://api.mistral.ai/v1/chat/completions: {"object": "error", "message": "Unauthorized", "type": "unauthorized", "param": null, "code": null}. Trying fallbacks...'), ('ERROR', 'All chat models failed for route mistral'), ('WARNING', 'Error response 401 while fetching https://api.mistral.ai/v1/chat/completions: {"object": "error", "message": "Unauthorized", "type": "unauthorized", "param": null, "code": null}')],
+            'logs': [('WARNING', 'Primary chat model mistral failed: Error response 401 while fetching https://api.mistral.ai/v1/chat/completions: {"object": "error", "message": "Unauthorized", "type": "unauthorized", "param": null, "code": null}. Trying fallbacks...'), ('ERROR', "The provider refused the gateway's credentials for route mistral (HTTP 401)"), ('ERROR', "The provider refused the gateway's credentials for route mistral")],
         },
         id='chat_mistral_4xx',
     ),

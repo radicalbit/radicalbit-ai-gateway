@@ -475,7 +475,9 @@ class ModelInvokerInternalError(ModelInvokerError):
 
 
 class ModelInvokerBadGateway(ModelInvokerError):
-    """No upstream attempt got a response: every call errored or timed out."""
+    """No upstream attempt got a response (every call errored or timed out), or
+    the provider refused the gateway's own access to it (a 401 or 403).
+    """
 
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(

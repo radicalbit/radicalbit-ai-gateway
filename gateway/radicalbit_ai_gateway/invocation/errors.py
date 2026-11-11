@@ -36,6 +36,9 @@ class Surface(Enum):
 # The surfaces whose clients get a provider's refusal as the provider sent it.
 _PASSES_REFUSALS = frozenset({Surface.CHAT, Surface.CHAT_STREAM, Surface.RESPONSES})
 
+# The surfaces whose clients get a provider's access refusal as a bad gateway.
+_HIDES_ACCESS_REFUSALS = _PASSES_REFUSALS | {Surface.MESSAGES}
+
 
 def upstream_refusal(error: BaseException | None) -> ModelInvokerUpstreamError | None:
     """Return the provider's 4xx behind ``error``, as the client gets it: the
@@ -60,6 +63,18 @@ def upstream_refusal(error: BaseException | None) -> ModelInvokerUpstreamError |
 # Statuses that refuse the gateway's own access to the provider (its
 # configured key, say), not the client's request.
 _ACCESS_REFUSALS = frozenset({401, 403})
+
+
+def access_refusal(error: BaseException | None) -> int | None:
+    """Return the status of the provider's 401 or 403 behind ``error``, or None.
+
+    Such a refusal is of the gateway's own access to the provider, not of the
+    client's request.
+    """
+    refusal = upstream_refusal(error)
+    if refusal is not None and refusal.status_code in _ACCESS_REFUSALS:
+        return refusal.status_code
+    return None
 
 
 def messages_refusal(error: BaseException | None) -> ModelInvokerUpstreamError | None:
@@ -101,10 +116,22 @@ def exhausted(
     """Return the error of a ``surface`` call on ``route`` no model answered.
 
     ``errors`` are the candidates' errors, the target's first. A provider's
-    refusal (a 4xx) of the target reaches a chat or Responses client as the
-    provider sent it; any other failure is the gateway's own error.
+    refusal (a 4xx) of the target reaches a chat, Responses or Messages client
+    as the provider sent it, but for a 401 or 403: that refuses the gateway's
+    own access to the provider, so the client gets a bad gateway, without the
+    provider's body. Any other failure is the gateway's own error.
     """
     first = errors[0] if errors else None
+    if surface in _HIDES_ACCESS_REFUSALS and (status := access_refusal(first)):
+        logger.error(
+            "The provider refused the gateway's credentials for route %s (HTTP %s)",
+            route,
+            status,
+            exc_info=first,
+        )
+        return ModelInvokerBadGateway(
+            f"The provider refused the gateway's credentials for route {route}"
+        )
     if surface is Surface.CHAT:
         logger.error('All chat models failed for route %s', route, exc_info=first)
     if surface in _PASSES_REFUSALS and (refusal := upstream_refusal(first)):

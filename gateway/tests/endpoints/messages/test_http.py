@@ -709,13 +709,16 @@ def test_an_upstream_access_refusal_at_the_end_is_an_api_error(gateway):
     assert _shape(response.json()) == _shape(_error('api_error', ''))
 
 
-def test_an_upstream_permission_refusal_without_fallback_is_an_api_error(gateway):
-    _refuse(403, _error('permission_error', 'not allowed'))
+@pytest.mark.parametrize('status', [401, 403])
+def test_an_upstream_access_refusal_without_fallback_is_a_bad_gateway(gateway, status):
+    _refuse(status, _error('permission_error', 'not allowed for sk-ant-1****'))
 
     response = _send(gateway)
 
-    assert response.status_code >= 500
+    assert response.status_code == 502
     assert _shape(response.json()) == _shape(_error('api_error', ''))
+    assert 'sk-ant-1' not in response.text
+    assert "refused the gateway's credentials" in response.text
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['complete', 'stream'])

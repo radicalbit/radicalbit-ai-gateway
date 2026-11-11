@@ -379,6 +379,20 @@ def test_upstream_refusal_reaches_the_client_as_sent(post):
     assert (streamed.status_code, streamed.json()) == (400, body)
 
 
+@pytest.mark.parametrize('status', [401, 403])
+def test_upstream_access_refusal_is_a_bad_gateway_without_its_body(post, status):
+    body = {'error': {'message': 'Incorrect API key provided: sk-1****', 'type': 'x'}}
+    route = build_route({'openai': FakeChatModel(error=status_error(status, body))})
+
+    response = post(route, input='Hi')
+    streamed = post(route, input='Hi', stream=True)
+
+    for refused in (response, streamed):
+        assert refused.status_code == 502
+        assert 'sk-1' not in refused.text
+        assert "refused the gateway's credentials" in refused.text
+
+
 # ── Fallback and stored state ─────────────────────────────────────────────
 
 
