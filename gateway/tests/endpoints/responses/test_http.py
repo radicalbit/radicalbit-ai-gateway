@@ -1,7 +1,9 @@
 """POST /v1/responses through a real route: the request reaches the model with
 the route's policies applied, and the client gets the model's response.
 
-The models are fakes at the provider boundary (``FakeChatModel``).
+The routes are built from a project config and served on the real app
+(``open_gateway``). The OpenAI provider and its SDK are real; OpenAI is mocked
+over HTTP with pook. Mistral stands for a provider without the Responses API.
 """
 
 import copy
@@ -11,49 +13,47 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
 from openai.types.responses import Response
+import pook
 import pytest
 
-from tests.common.gateway_harness import open_gateway
+from tests.common.gateway_harness import build_routes, open_gateway
 from tests.common.limits import project_limit
-from tests.common.responses_api import (
-    OPENCODE_TURN,
-    FakeChatModel,
-    events_of,
-    openai_model,
-    status_error,
-)
+from tests.common.responses_api import OPENCODE_TURN, events_of
 from tests.common.scope import scope_of
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.route_cache import RouteCache
 from radicalbit_ai_gateway.endpoints.chat_completions.cache import ChatEntry
-from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
-from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
-from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
-from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits
 from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.caching import CacheType
-from radicalbit_ai_gateway.models.credentials import Credentials
-from radicalbit_ai_gateway.models.fallback import Fallback
-from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
-from radicalbit_ai_gateway.models.guardrails import (
-    CheckParameter,
-    Guardrail,
-    GuardrailBehaviorType,
-    GuardrailType,
-    GuardrailWhereType,
-    RedactParameter,
-)
+from radicalbit_ai_gateway.models.guardrails import GuardrailType
 from radicalbit_ai_gateway.models.model import Model
-from radicalbit_ai_gateway.models.responses import ResponsesSettings
-from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.server import app
-from radicalbit_ai_gateway.services.cost_service import CostService
 
 PROJECT_LIMITS = 'radicalbit_ai_gateway.endpoints.common.admission.load_project_limits'
 ROUTE = 'agents'
+ROUTE_KEY = f'proj/{ROUTE}'
+OPENAI_URL = 'https://api.openai.com/v1/responses'
+MISTRAL_URL = 'https://api.mistral.ai/v1/chat/completions'
+
+OPENAI = {
+    'model_id': 'openai',
+    'model': 'openai/gpt-6-luna',
+    'credentials': {'api_key': 'sk-test'},
+}
+BACKUP = {
+    'model_id': 'backup',
+    'model': 'openai/gpt-6-sol',
+    'credentials': {'api_key': 'sk-test'},
+}
+# A provider without the Responses API.
+MISTRAL = {
+    'model_id': 'mistral',
+    'model': 'mistralai/mistral-large-latest',
+    'credentials': {'api_key': 'mistral-key'},
+}
 
 MESSAGE = {
     'id': 'msg_1',
@@ -121,124 +121,162 @@ def upstream_events(text: str = 'Hello') -> list[dict]:
     ]
 
 
+def _guardrail(name, type_, behavior, where, parameters, message=None) -> dict:
+    guardrail = {
+        'name': name,
+        'type': type_,
+        'behavior': behavior,
+        'where': where,
+        'parameters': parameters,
+    }
+    if message:
+        guardrail['response_message'] = message
+    return guardrail
+
+
 GUARDRAILS = [
-    Guardrail(
-        name='input_soft_block',
-        type=GuardrailType.STARTS_WITH,
-        behavior=GuardrailBehaviorType.SOFT_BLOCK,
-        where=GuardrailWhereType.INPUT,
-        parameters=CheckParameter(values=['Forbidden']),
-        response_message='I cannot help with that.',
+    _guardrail(
+        'input_soft_block',
+        'starts_with',
+        'soft_block',
+        'input',
+        {'values': ['Forbidden']},
+        'I cannot help with that.',
     ),
-    Guardrail(
-        name='input_block',
-        type=GuardrailType.CONTAINS,
-        behavior=GuardrailBehaviorType.BLOCK,
-        where=GuardrailWhereType.INPUT,
-        parameters=CheckParameter(values=['explosive']),
+    _guardrail('input_block', 'contains', 'block', 'input', {'values': ['explosive']}),
+    _guardrail(
+        'redact_email',
+        'presidio_anonymizer',
+        'block',
+        'io',
+        {'entities': ['EMAIL_ADDRESS']},
     ),
-    Guardrail(
-        name='redact_email',
-        type=GuardrailType.PRESIDIO_ANONYMIZER,
-        behavior=GuardrailBehaviorType.BLOCK,
-        where=GuardrailWhereType.IO,
-        parameters=RedactParameter(entities=['EMAIL_ADDRESS']),
+    _guardrail(
+        'output_soft_block',
+        'contains',
+        'soft_block',
+        'output',
+        {'values': ['secret']},
+        'The answer was withheld.',
     ),
-    Guardrail(
-        name='output_soft_block',
-        type=GuardrailType.CONTAINS,
-        behavior=GuardrailBehaviorType.SOFT_BLOCK,
-        where=GuardrailWhereType.OUTPUT,
-        parameters=CheckParameter(values=['secret']),
-        response_message='The answer was withheld.',
-    ),
-    Guardrail(
-        name='output_warn',
-        type=GuardrailType.CONTAINS,
-        behavior=GuardrailBehaviorType.WARN,
-        where=GuardrailWhereType.OUTPUT,
-        parameters=CheckParameter(values=['secret']),
-    ),
+    _guardrail('output_warn', 'contains', 'warn', 'output', {'values': ['secret']}),
 ]
 
 
-def build_route(
-    models: dict[str, FakeChatModel],
+def _routes(
+    *models: dict,
     guardrails: list[str] | None = None,
     cache: bool = False,
-    responses: ResponsesSettings | None = None,
+    responses: dict | None = None,
     prompt: str | None = None,
-) -> GatewayRoute:
-    """Build a route over ``models``: the first is the primary, the others its fallbacks.
-
-    Not ``build_routes``: the models are faked as model objects, whose
-    mid-stream failures (``fail_after``) and sent bodies the transport fakes
-    of the harness cannot express.
+) -> dict:
+    """Build the ``agents`` route over ``models``: the first is the primary,
+    the others its fallbacks. ``prompt`` is the primary's configured prompt.
     """
-    model_ids = list(models)
-    registry = [
-        Model(
-            model_id=model_id,
-            model='deepseek/deepseek-chat'
-            if model_id.startswith('deepseek')
-            else 'openai/gpt-6-luna',
-            credentials=Credentials(api_key='sk-test'),
-            prompt=prompt if index == 0 else None,
-        )
-        for index, model_id in enumerate(model_ids)
+    model_ids = [model['model_id'] for model in models]
+    chat_models = [
+        {**model, 'prompt': prompt} if prompt and index == 0 else model
+        for index, model in enumerate(models)
     ]
-    config = GatewayRouteConfig(
-        route_name=ROUTE,
-        chat_models=model_ids,
-        fallback=[Fallback(target=model_ids[0], fallbacks=model_ids[1:])]
-        if len(model_ids) > 1
-        else None,
-        guardrails=guardrails,
-        responses=responses,
-    )
-    route = GatewayRoute(
-        gateway_route_config=config,
-        chat_models=registry,
-        embedding_models=None,
-        guardrails=Guardrails(
-            presidio_engine=PresidioEngine(),
-            judge_engine=JudgeEngine(prompt_manager=MagicMock(spec_set=PromptManager)),
-            cost_service=MagicMock(spec_set=CostService),
-            guardrails=GUARDRAILS,
-        ).for_route(config),
-        cost_service=MagicMock(spec_set=CostService),
-        gateway_cache=GatewayCache(CacheToolsInMemory()) if cache else None,
-    )
-    model_map = route.chat_invoker.model_map
-    for model, _, fallbacks in list(model_map.values()):
-        model_map[model.model_id] = (
-            model,
-            models[model.model_id],
-            [(fallback, models[fallback.model_id]) for fallback, _ in fallbacks],
-        )
-    return route
+    route: dict = {'chat_models': model_ids}
+    if len(model_ids) > 1:
+        route['fallback'] = [{'target': model_ids[0], 'fallbacks': model_ids[1:]}]
+    if guardrails:
+        route['guardrails'] = guardrails
+    if cache:
+        route['caching'] = {'type': 'exact'}
+    if responses:
+        route['responses'] = responses
+    config = {
+        'chat_models': chat_models,
+        'guardrails': GUARDRAILS,
+        'routes': {ROUTE: route},
+    }
+    if cache:
+        # No Redis client in these tests: an exact cache falls back to in-memory.
+        config['cache'] = {'redis_host': 'localhost', 'redis_port': 6379}
+    return build_routes(config)
 
 
 @pytest.fixture
-def post():
-    """Send a Responses request to a route, through the app (see ``open_gateway``)."""
-    with open_gateway(
-        patches=[
-            patch(
-                'radicalbit_ai_gateway.endpoints.chat_like.model_selection.emit_event'
-            )
-        ]
-    ) as gateway:
+def gateway():
+    with open_gateway(_routes(OPENAI), use_pook=True) as gateway:
+        yield gateway
 
-        def _post(route: GatewayRoute, **body):
-            app.state.routes = {ROUTE: route}
-            return gateway.post('/v1/responses', json={'model': ROUTE, **body})
 
-        yield _post
+def _serve(*models: dict, **route: object):
+    """Serve the ``agents`` route for the rest of the test (``open_gateway``
+    puts the routes back); return it.
+    """
+    app.state.routes = _routes(*models, **route)
+    return app.state.routes[ROUTE_KEY]
+
+
+def _send(gateway, **body):
+    """Send a Responses request to the ``agents`` route."""
+    return gateway.post('/v1/responses', json={'model': ROUTE_KEY, **body})
+
+
+def _sse(events: list[dict]) -> str:
+    return ''.join(f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n' for e in events)
+
+
+def _mock_openai(text: str = 'Hello', times: int = 1):
+    """Mock OpenAI answering ``text``, as a response object."""
+    mock = pook.post(OPENAI_URL).times(times)
+    mock.reply(200).json(upstream_events(text)[-1]['response'])
+    return mock
+
+
+def _mock_openai_stream(text: str = 'Hello'):
+    """Mock OpenAI streaming ``text``."""
+    mock = pook.post(OPENAI_URL).times(1)
+    mock.reply(200).header('Content-Type', 'text/event-stream').body(
+        _sse(upstream_events(text))
+    )
+    return mock
+
+
+def _mock_reply(text: str, stream: bool):
+    return _mock_openai_stream(text) if stream else _mock_openai(text)
+
+
+def _refuse(status: int, body: dict):
+    mock = pook.post(OPENAI_URL).times(1)
+    mock.reply(status).json(body)
+    return mock
+
+
+def _mock_every_upstream() -> list:
+    """Mock every upstream, to check later that none was called."""
+    mocks = []
+    for url in (OPENAI_URL, MISTRAL_URL):
+        mock = pook.post(url).times(1)
+        mock.reply(500).json({})
+        mocks.append(mock)
+    return mocks
+
+
+def _sent(mock, index: int = 0) -> dict:
+    """Return the JSON body of a request a pook mock matched."""
+    return mock.matches[index].json
 
 
 def stream_events(response) -> list[dict]:
     return events_of(response.text.split('\n\n')[:-1])
+
+
+def _final(response, stream: bool) -> dict:
+    """Return the response object a reply ends with, streamed or not."""
+    return stream_events(response)[-1]['response'] if stream else response.json()
+
+
+def _deltas(response) -> list[str]:
+    return [
+        e['delta']
+        for e in stream_events(response)
+        if e['type'] == 'response.output_text.delta'
+    ]
 
 
 OPENCODE_REQUEST = {
@@ -256,17 +294,15 @@ OPENCODE_REQUEST = {
 # ── Pass-through ──────────────────────────────────────────────────────────
 
 
-def test_request_goes_upstream_as_sent(post):
-    model = FakeChatModel(events=upstream_events())
-    # An OpenAI upstream gets its own history back unchanged.
-    model.adapt_responses_input = openai_model().adapt_responses_input
-    route = build_route({'openai': model})
+def test_request_goes_upstream_as_sent(gateway):
+    upstream = _mock_openai()
 
     with patch.object(RequestLimits, 'count', autospec=True) as count:
-        response = post(route, **OPENCODE_REQUEST)
+        response = _send(gateway, **OPENCODE_REQUEST)
 
     assert response.status_code == 200
-    assert model.bodies == [{'model': ROUTE, **OPENCODE_REQUEST}]
+    # An OpenAI upstream gets its own history back unchanged.
+    assert _sent(upstream) == {**OPENCODE_REQUEST, 'model': 'gpt-6-luna'}
     data = response.json()
     assert data['model'] == ROUTE
     assert data['output'] == [MESSAGE]
@@ -274,14 +310,19 @@ def test_request_goes_upstream_as_sent(post):
     assert (usage.input_tokens, usage.output_tokens) == (100, 7)
 
 
-def test_stream_is_relayed_as_sent(post):
+def test_stream_is_relayed_as_sent(gateway):
     events = upstream_events()
-    route = build_route({'openai': FakeChatModel(events=events)})
+    upstream = _mock_openai_stream()
 
     with patch.object(RequestLimits, 'count', autospec=True) as count:
-        response = post(route, **OPENCODE_REQUEST, stream=True)
+        response = _send(gateway, **OPENCODE_REQUEST, stream=True)
 
     assert response.status_code == 200
+    assert _sent(upstream) == {
+        **OPENCODE_REQUEST,
+        'model': 'gpt-6-luna',
+        'stream': True,
+    }
     received = stream_events(response)
     # Only the response's model changes: it is the route
     assert [e['type'] for e in received] == [e['type'] for e in events]
@@ -290,12 +331,13 @@ def test_stream_is_relayed_as_sent(post):
     assert count.call_args.args[1].output_tokens == 7
 
 
-def test_configured_prompt_goes_first(post):
-    model = FakeChatModel(events=upstream_events())
+def test_configured_prompt_goes_first(gateway):
+    _serve(OPENAI, prompt='Answer in Italian.')
+    upstream = _mock_openai()
 
-    post(build_route({'openai': model}, prompt='Answer in Italian.'), input='Hi')
+    _send(gateway, input='Hi')
 
-    assert model.bodies[0]['input'] == [
+    assert _sent(upstream)['input'] == [
         {'type': 'message', 'role': 'system', 'content': 'Answer in Italian.'},
         {'type': 'message', 'role': 'user', 'content': 'Hi'},
     ]
@@ -304,19 +346,17 @@ def test_configured_prompt_goes_first(post):
 # ── Specification ─────────────────────────────────────────────────────────
 
 
-def test_input_is_optional(post):
-    model = FakeChatModel(events=upstream_events())
+def test_input_is_optional(gateway):
+    upstream = _mock_openai()
 
-    response = post(build_route({'openai': model}), prompt={'id': 'pmpt_1'})
+    response = _send(gateway, prompt={'id': 'pmpt_1'})
 
     assert response.status_code == 200
-    assert model.bodies == [{'model': ROUTE, 'prompt': {'id': 'pmpt_1'}}]
+    assert _sent(upstream) == {'model': 'gpt-6-luna', 'prompt': {'id': 'pmpt_1'}}
 
 
-def test_invalid_request_is_an_openai_error(post):
-    response = post(
-        build_route({'openai': FakeChatModel()}), input='Hi', temperature='hot'
-    )
+def test_invalid_request_is_an_openai_error(gateway):
+    response = _send(gateway, input='Hi', temperature='hot')
 
     assert response.status_code == 400
     error = response.json()['error']
@@ -325,14 +365,14 @@ def test_invalid_request_is_an_openai_error(post):
     assert error['message'].startswith('Invalid value for temperature')
 
 
-def test_background_mode_is_refused(post):
-    model = FakeChatModel(events=upstream_events())
+def test_background_mode_is_refused(gateway):
+    upstreams = _mock_every_upstream()
 
-    response = post(build_route({'openai': model}), input='Hi', background=True)
+    response = _send(gateway, input='Hi', background=True)
 
     assert response.status_code == 400
     assert 'Background mode' in response.json()['error']['message']
-    assert model.bodies == []
+    assert not any(upstream.matched for upstream in upstreams)
 
 
 @pytest.mark.parametrize(
@@ -357,103 +397,98 @@ def test_endpoints_not_served_say_so(method, path):
     )
 
 
-def test_model_without_responses_api_is_refused(post):
-    deepseek = FakeChatModel(native=False, events=upstream_events())
+def test_model_without_responses_api_is_refused(gateway):
+    _serve(MISTRAL)
+    upstreams = _mock_every_upstream()
 
-    response = post(build_route({'deepseek': deepseek}), input='Hi')
+    response = _send(gateway, input='Hi')
 
     assert response.status_code == 400
     message = response.json()['error']['message']
-    assert message == 'Model deepseek of route agents does not serve the Responses API'
-    assert deepseek.bodies == []
+    assert message == 'Model mistral of route agents does not serve the Responses API'
+    assert not any(upstream.matched for upstream in upstreams)
 
 
-def test_upstream_refusal_reaches_the_client_as_sent(post):
+@pytest.mark.parametrize('stream', [False, True], ids=['complete', 'stream'])
+def test_upstream_refusal_reaches_the_client_as_sent(gateway, stream):
     body = {'error': {'message': 'context_length_exceeded', 'type': 'x'}}
-    route = build_route({'openai': FakeChatModel(error=status_error(400, body))})
+    _refuse(400, body)
 
-    response = post(route, input='Hi')
-    streamed = post(route, input='Hi', stream=True)
+    response = _send(gateway, input='Hi', stream=stream)
 
     assert (response.status_code, response.json()) == (400, body)
-    assert (streamed.status_code, streamed.json()) == (400, body)
 
 
+@pytest.mark.parametrize('stream', [False, True], ids=['complete', 'stream'])
 @pytest.mark.parametrize('status', [401, 403])
-def test_upstream_access_refusal_is_a_bad_gateway_without_its_body(post, status):
+def test_upstream_access_refusal_is_a_bad_gateway_without_its_body(
+    gateway, status, stream
+):
     body = {'error': {'message': 'Incorrect API key provided: sk-1****', 'type': 'x'}}
-    route = build_route({'openai': FakeChatModel(error=status_error(status, body))})
+    _refuse(status, body)
 
-    response = post(route, input='Hi')
-    streamed = post(route, input='Hi', stream=True)
+    response = _send(gateway, input='Hi', stream=stream)
 
-    for refused in (response, streamed):
-        assert refused.status_code == 502
-        assert 'sk-1' not in refused.text
-        assert "refused the gateway's credentials" in refused.text
+    assert response.status_code == 502
+    assert 'sk-1' not in response.text
+    assert "refused the gateway's credentials" in response.text
 
 
 # ── Fallback and stored state ─────────────────────────────────────────────
 
+UNAVAILABLE = {'error': {'message': 'busy', 'type': 'server_error'}}
 
-def test_fallback_skips_models_without_responses_api(post):
-    deepseek = FakeChatModel(native=False)
-    backup = FakeChatModel(events=upstream_events())
-    route = build_route(
-        {
-            'openai': FakeChatModel(error=RuntimeError('503')),
-            'deepseek': deepseek,
-            'backup': backup,
-        }
-    )
 
-    response = post(route, input='Hi')
+def test_fallback_skips_models_without_responses_api(gateway):
+    _serve(OPENAI, MISTRAL, BACKUP)
+    _refuse(503, UNAVAILABLE)
+    mistral = pook.post(MISTRAL_URL).times(1)
+    mistral.reply(500).json({})
+    backup = _mock_openai()
+
+    response = _send(gateway, input='Hi')
 
     assert response.status_code == 200
-    assert deepseek.bodies == []
-    assert backup.bodies == [{'model': ROUTE, 'input': 'Hi'}]
+    assert not mistral.matched
+    assert _sent(backup) == {'model': 'gpt-6-sol', 'input': 'Hi'}
 
 
-def test_stored_state_has_no_fallback(post):
-    backup = FakeChatModel(events=upstream_events())
-    route = build_route(
-        {'openai': FakeChatModel(error=RuntimeError('503')), 'backup': backup}
-    )
+def test_stored_state_has_no_fallback(gateway):
+    _serve(OPENAI, BACKUP)
+    _refuse(503, UNAVAILABLE)
+    backup = _mock_openai()
 
-    response = post(route, input='Hi', previous_response_id='resp_0')
+    response = _send(gateway, input='Hi', previous_response_id='resp_0')
 
     assert response.status_code == 500
-    assert backup.bodies == []
+    assert not backup.matched
 
 
 # ── Governance ────────────────────────────────────────────────────────────
 
 
-def test_hosted_tool_not_allowed_is_refused(post):
-    model = FakeChatModel(events=upstream_events())
-    route = build_route(
-        {'openai': model},
-        responses=ResponsesSettings(allowed_hosted_tools=['file_search']),
-    )
+def test_hosted_tool_not_allowed_is_refused(gateway):
+    _serve(OPENAI, responses={'allowed_hosted_tools': ['file_search']})
+    upstreams = _mock_every_upstream()
 
-    response = post(route, input='Hi', tools=[{'type': 'web_search'}])
+    response = _send(gateway, input='Hi', tools=[{'type': 'web_search'}])
 
     assert response.status_code == 400
     assert 'web_search' in response.json()['error']['message']
-    assert model.bodies == []
+    assert not any(upstream.matched for upstream in upstreams)
 
 
-def test_store_forced_false(post):
-    model = FakeChatModel(events=upstream_events())
-    route = build_route(
-        {'openai': model}, responses=ResponsesSettings(force_store_false=True)
-    )
+def test_store_forced_false(gateway):
+    _serve(OPENAI, responses={'force_store_false': True})
+    upstream = _mock_openai(times=2)
 
-    accepted = post(route, input='Hi')
-    refused = post(route, input='Hi', previous_response_id='resp_0')
+    accepted = _send(gateway, input='Hi')
+    refused = _send(gateway, input='Hi', previous_response_id='resp_0')
 
     assert accepted.status_code == 200
-    assert model.bodies == [{'model': ROUTE, 'input': 'Hi', 'store': False}]
+    assert [match.json for match in upstream.matches] == [
+        {'model': 'gpt-6-luna', 'input': 'Hi', 'store': False}
+    ]
     assert refused.status_code == 400
     assert 'does not store responses' in refused.json()['error']['message']
 
@@ -461,83 +496,65 @@ def test_store_forced_false(post):
 # ── Guardrails ────────────────────────────────────────────────────────────
 
 
-def test_input_is_redacted_before_going_upstream(post):
-    model = FakeChatModel(events=upstream_events())
-    route = build_route({'openai': model}, guardrails=['redact_email'])
+def test_input_is_redacted_before_going_upstream(gateway):
+    _serve(OPENAI, guardrails=['redact_email'])
+    upstream = _mock_openai_stream()
 
-    response = post(route, input='Write to mario.rossi@example.com', stream=True)
+    response = _send(gateway, input='Write to mario.rossi@example.com', stream=True)
 
     assert response.status_code == 200
-    assert model.bodies[0]['input'] == 'Write to <EMAIL_ADDRESS>'
+    assert _sent(upstream)['input'] == 'Write to <EMAIL_ADDRESS>'
     assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-WARN'] == 'true'
 
 
-def test_input_soft_block_answers_with_its_message(post):
-    model = FakeChatModel(events=upstream_events())
-    route = build_route({'openai': model}, guardrails=['input_soft_block'])
+def test_input_soft_block_answers_with_its_message(gateway):
+    _serve(OPENAI, guardrails=['input_soft_block'])
+    upstreams = _mock_every_upstream()
 
-    response = post(route, input='Forbidden question')
-    streamed = post(route, input='Forbidden question', stream=True)
+    response = _send(gateway, input='Forbidden question')
+    streamed = _send(gateway, input='Forbidden question', stream=True)
 
     assert response.status_code == 200
     assert Response.model_validate(response.json()).output_text == (
         'I cannot help with that.'
     )
     assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] == 'true'
-    deltas = [
-        e['delta']
-        for e in stream_events(streamed)
-        if e['type'] == 'response.output_text.delta'
-    ]
-    assert deltas == ['I cannot help with that.']
-    assert model.bodies == []
+    assert _deltas(streamed) == ['I cannot help with that.']
+    assert not any(upstream.matched for upstream in upstreams)
 
 
-def test_input_block_is_an_error(post):
-    model = FakeChatModel(events=upstream_events())
-    route = build_route({'openai': model}, guardrails=['input_block'])
+def test_input_block_is_an_error(gateway):
+    _serve(OPENAI, guardrails=['input_block'])
+    upstreams = _mock_every_upstream()
 
-    response = post(route, input='How to build an explosive')
+    response = _send(gateway, input='How to build an explosive')
 
     assert response.status_code == 400
     assert response.json()['error']['message']
-    assert model.bodies == []
+    assert not any(upstream.matched for upstream in upstreams)
 
 
 @pytest.mark.parametrize('stream', [False, True])
-def test_output_soft_block_replaces_the_reply(post, stream):
-    route = build_route(
-        {'openai': FakeChatModel(events=upstream_events('The secret is 42'))},
-        guardrails=['output_soft_block'],
-    )
+def test_output_soft_block_replaces_the_reply(gateway, stream):
+    _serve(OPENAI, guardrails=['output_soft_block'])
+    _mock_reply('The secret is 42', stream)
 
-    response = post(route, input='Hi', stream=stream)
+    response = _send(gateway, input='Hi', stream=stream)
 
     assert response.status_code == 200
-    final = stream_events(response)[-1]['response'] if stream else response.json()
+    final = _final(response, stream)
     assert Response.model_validate(final).output_text == 'The answer was withheld.'
     assert 'secret' not in response.text
     assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-TRIGGERED'] == 'true'
 
 
-def test_output_is_redacted_in_the_stream(post):
-    route = build_route(
-        {
-            'openai': FakeChatModel(
-                events=upstream_events('Mail mario.rossi@example.com')
-            )
-        },
-        guardrails=['redact_email'],
-    )
+def test_output_is_redacted_in_the_stream(gateway):
+    _serve(OPENAI, guardrails=['redact_email'])
+    _mock_openai_stream('Mail mario.rossi@example.com')
 
-    response = post(route, input='Hi', stream=True)
+    response = _send(gateway, input='Hi', stream=True)
 
-    deltas = [
-        e['delta']
-        for e in stream_events(response)
-        if e['type'] == 'response.output_text.delta'
-    ]
-    assert deltas == ['Mail <EMAIL_ADDRESS>']
+    assert _deltas(response) == ['Mail <EMAIL_ADDRESS>']
     assert 'mario.rossi' not in response.text
     assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] == 'true'
 
@@ -545,16 +562,16 @@ def test_output_is_redacted_in_the_stream(post):
 # ── Cache ─────────────────────────────────────────────────────────────────
 
 
-def test_cached_reply_is_served_without_the_model(post):
-    model = FakeChatModel(events=upstream_events())
-    route = build_route({'openai': model}, cache=True)
+def test_cached_reply_is_served_without_the_model(gateway):
+    _serve(OPENAI, cache=True)
+    upstream = _mock_openai_stream()
 
-    first = post(route, input='Hi', stream=True)
-    second = post(route, input='Hi')
-    third = post(route, input='Hi', stream=True)
+    first = _send(gateway, input='Hi', stream=True)
+    second = _send(gateway, input='Hi')
+    third = _send(gateway, input='Hi', stream=True)
 
     assert first.status_code == second.status_code == third.status_code == 200
-    assert len(model.bodies) == 1
+    assert len(upstream.matches) == 1
     assert second.headers['X-RB-AIGATEWAY-CACHE-HIT'] == 'true'
     assert second.json()['model'] == ROUTE
     assert second.json()['output'] == [MESSAGE]
@@ -565,19 +582,19 @@ def test_cached_reply_is_served_without_the_model(post):
     assert second.json()['completed_at'] == second.json()['created_at'] > 2
 
 
-def test_a_different_question_is_not_a_cache_hit(post):
-    model = FakeChatModel(events=upstream_events())
-    route = build_route({'openai': model}, cache=True)
+def test_a_different_question_is_not_a_cache_hit(gateway):
+    _serve(OPENAI, cache=True)
+    upstream = _mock_openai(times=2)
 
-    post(route, input='Hi')
-    response = post(route, input='Hello')
+    _send(gateway, input='Hi')
+    response = _send(gateway, input='Hello')
 
-    assert len(model.bodies) == 2
+    assert len(upstream.matches) == 2
     assert 'X-RB-AIGATEWAY-CACHE-HIT' not in response.headers
 
 
 async def test_chat_endpoint_ignores_a_responses_cache_entry():
-    route = build_route({'openai': FakeChatModel()}, cache=True)
+    route = _routes(OPENAI, cache=True)[ROUTE_KEY]
     entry = json.dumps(upstream_events()[-1]['response'])
 
     with patch.object(route.gateway_cache, 'get', AsyncMock(return_value=entry)):
@@ -595,15 +612,15 @@ async def test_chat_endpoint_ignores_a_responses_cache_entry():
         'not json',
     ],
 )
-def test_an_entry_that_is_not_a_response_object_is_a_miss(post, entry):
-    model = FakeChatModel(events=upstream_events())
-    route = build_route({'openai': model}, cache=True)
+def test_an_entry_that_is_not_a_response_object_is_a_miss(gateway, entry):
+    route = _serve(OPENAI, cache=True)
+    upstream = _mock_openai()
 
     with patch.object(route.gateway_cache, 'get', AsyncMock(return_value=entry)):
-        response = post(route, input='Hi')
+        response = _send(gateway, input='Hi')
 
     assert response.status_code == 200
-    assert len(model.bodies) == 1
+    assert len(upstream.matches) == 1
     assert 'X-RB-AIGATEWAY-CACHE-HIT' not in response.headers
 
 
@@ -627,8 +644,9 @@ class SemanticInMemoryCache(GatewayCache):
         await super().set(cache_key, response, ttl, **kwargs)
 
 
-def semantic_route(model: FakeChatModel, embedding_model: Model | None):
-    route = build_route({'openai': model})
+def _serve_semantic(embedding_model: Model | None):
+    """Serve the route with an in-memory semantic cache and a faked embedder."""
+    route = _serve(OPENAI)
     route.gateway_cache = SemanticInMemoryCache()
     embedder = MagicMock()
     embedder.embed_answered = AsyncMock(
@@ -651,25 +669,25 @@ def semantic_route(model: FakeChatModel, embedding_model: Model | None):
     return route
 
 
-def test_semantic_cache_embeds_the_last_user_text(post):
-    model = FakeChatModel(events=upstream_events())
+def test_semantic_cache_embeds_the_last_user_text(gateway):
     embedding_model = Model(
         model_id='embed',
         model='openai/text-embedding-3-small',
-        credentials=Credentials(api_key='sk-test'),
+        credentials={'api_key': 'sk-test'},
     )
-    route = semantic_route(model, embedding_model)
+    route = _serve_semantic(embedding_model)
+    upstream = _mock_openai()
     turn = [
         {'role': 'user', 'content': 'First question'},
         {'role': 'assistant', 'content': 'An answer'},
         {'role': 'user', 'content': 'Hi'},
     ]
 
-    first = post(route, input=turn)
-    second = post(route, input=turn)
+    first = _send(gateway, input=turn)
+    second = _send(gateway, input=turn)
 
     assert first.status_code == second.status_code == 200
-    assert len(model.bodies) == 1
+    assert len(upstream.matches) == 1
     assert second.headers['X-RB-AIGATEWAY-CACHE-HIT'] == 'true'
     embedded = route.cache.embedder.embed_answered.call_args.kwargs
     assert embedded['input_texts'] == ['Hi']
@@ -679,15 +697,15 @@ def test_semantic_cache_embeds_the_last_user_text(post):
         assert kwargs['embeddings'].tolist() == pytest.approx([0.1, 0.2])
 
 
-def test_semantic_cache_without_embeddings_is_skipped(post):
-    model = FakeChatModel(events=upstream_events())
-    route = semantic_route(model, embedding_model=None)
+def test_semantic_cache_without_embeddings_is_skipped(gateway):
+    route = _serve_semantic(embedding_model=None)
+    upstream = _mock_openai(times=2)
 
-    post(route, input='Hi')
-    response = post(route, input='Hi')
+    _send(gateway, input='Hi')
+    response = _send(gateway, input='Hi')
 
     assert response.status_code == 200
-    assert len(model.bodies) == 2
+    assert len(upstream.matches) == 2
     assert route.gateway_cache.calls == []
     assert 'X-RB-AIGATEWAY-CACHE-HIT' not in response.headers
 
@@ -696,32 +714,28 @@ def test_semantic_cache_without_embeddings_is_skipped(post):
 
 
 @pytest.mark.parametrize('stream', [False, True])
-def test_output_warn_is_reported_and_the_reply_kept(post, stream):
-    route = build_route(
-        {'openai': FakeChatModel(events=upstream_events('The secret is 42'))},
-        guardrails=['output_warn'],
-    )
+def test_output_warn_is_reported_and_the_reply_kept(gateway, stream):
+    _serve(OPENAI, guardrails=['output_warn'])
+    _mock_reply('The secret is 42', stream)
 
-    response = post(route, input='Hi', stream=stream)
+    response = _send(gateway, input='Hi', stream=stream)
 
     assert response.status_code == 200
-    final = stream_events(response)[-1]['response'] if stream else response.json()
+    final = _final(response, stream)
     assert Response.model_validate(final).output_text == 'The secret is 42'
     assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] == 'true'
     assert 'X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED' not in response.headers
 
 
 @pytest.mark.parametrize('stream', [False, True])
-def test_output_warn_is_evaluated_once(post, stream):
-    route = build_route(
-        {'openai': FakeChatModel(events=upstream_events('The secret is 42'))},
-        guardrails=['output_warn'],
-    )
+def test_output_warn_is_evaluated_once(gateway, stream):
+    route = _serve(OPENAI, guardrails=['output_warn'])
+    _mock_reply('The secret is 42', stream)
     mapping = route.guardrails.check._guardrail_check_mapping
     check = AsyncMock(wraps=mapping[GuardrailType.CONTAINS])
     mapping[GuardrailType.CONTAINS] = check
 
-    response = post(route, input='Hi', stream=stream)
+    response = _send(gateway, input='Hi', stream=stream)
 
     assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] == 'true'
     assert check.await_count == 1
@@ -730,33 +744,32 @@ def test_output_warn_is_evaluated_once(post, stream):
 # ── Limits ────────────────────────────────────────────────────────────────
 
 
-def test_budget_limit_blocks_before_the_model(post):
-    model = FakeChatModel(events=upstream_events())
-    route = build_route({'openai': model})
+def test_budget_limit_blocks_before_the_model(gateway):
+    upstreams = _mock_every_upstream()
 
     with (
         patch(PROJECT_LIMITS, return_value=[project_limit(0)]),
         patch('radicalbit_ai_gateway.limiting.limits.emit_event') as emit_event,
     ):
-        response = post(route, input='Hi')
+        response = _send(gateway, input='Hi')
 
     assert response.status_code == 429
-    assert model.bodies == []
+    assert not any(upstream.matched for upstream in upstreams)
     assert emit_event.call_args.args[0].route_name == ROUTE
 
 
 @pytest.mark.parametrize('stream', [False, True])
-def test_usage_is_counted_with_the_request_limits(post, stream):
+def test_usage_is_counted_with_the_request_limits(gateway, stream):
     """A streamed reply is counted after the handler returns: still on the
     request's own limits, the project's included.
     """
-    route = build_route({'openai': FakeChatModel(events=upstream_events())})
+    _mock_reply('Hello', stream)
 
     with (
         patch(PROJECT_LIMITS, return_value=[project_limit(10)]),
         patch.object(RequestLimits, 'count', autospec=True) as count,
     ):
-        response = post(route, input='Hi', stream=stream)
+        response = _send(gateway, input='Hi', stream=stream)
 
     assert response.status_code == 200
     request_limits = count.call_args.args[0]
