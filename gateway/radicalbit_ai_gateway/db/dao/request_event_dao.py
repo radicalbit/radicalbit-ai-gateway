@@ -2,8 +2,10 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
+from fastapi_pagination import Page, Params
+from fastapi_pagination.ext.sqlalchemy import paginate
 from pydantic import BaseModel
-from sqlalchemy import Float, func as F, select, text
+from sqlalchemy import Float, Row, func as F, select, text
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
@@ -16,7 +18,7 @@ from radicalbit_ai_gateway.db.models.event import (
     RequestStats,
 )
 from radicalbit_ai_gateway.db.tables.request_event_table import RequestEvent
-from radicalbit_ai_gateway.models.request_event_type import RequestStatus
+from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
@@ -340,6 +342,65 @@ class RequestEventDAO:
             res = session.execute(stmt).all()
             return [self._validate_row(ErrorDetail, FIELD_NAMES, row) for row in res]
 
+    def _request_columns(self) -> list:
+        """Return the columns of one request, shared by the Requests list and detail."""
+        T = self.T
+        return [
+            T.c['REQUEST_UUID'].label('request_uuid'),
+            T.c['TIMESTAMP'].label('timestamp'),
+            T.c['DATE'].label('date'),
+            T.c['ROUTE_NAME'].label('route_name'),
+            T.c['API_KEY_UUID'].label('api_key_uuid'),
+            T.c['API_KEY_NAME'].label('api_key_name'),
+            T.c['GROUP_UUID'].label('group_uuid'),
+            T.c['GROUP_NAME'].label('group_name'),
+            T.c['REQUEST_TYPE'].label('request_type'),
+            T.c['REQUEST_STATUS'].label('request_status'),
+            T.c['HTTP_STATUS_CODE'].label('http_status_code'),
+            T.c['DURATION_MS'].label('duration_ms'),
+            T.c['ERROR_TYPE'].label('error_type'),
+            T.c['ERROR_CODE'].label('error_code'),
+            T.c['TAGS'].label('tags'),
+        ]
+
+    def get_requests_paginated(
+        self,
+        project_uuid: UUID,
+        route_names: list[str] | None,
+        group_uuids: list[UUID] | None,
+        key_uuids: list[UUID] | None,
+        _from: datetime | None,
+        _to: datetime | None,
+        params: Params,
+        tags: list[str] | None = None,
+        request_types: list[RequestType] | None = None,
+    ) -> Page[Row]:
+        """One page of the project's requests, newest first."""
+        T = self.T
+        conditions: list = []
+        self._add_time_filters(project_uuid, conditions, _from, _to)
+        self._add_tags_filter(conditions, tags=tags)
+        if route_names:
+            conditions.append(T.c['ROUTE_NAME'].in_(route_names))
+        if group_uuids:
+            conditions.append(T.c['GROUP_UUID'].in_([str(g) for g in group_uuids]))
+        if key_uuids:
+            conditions.append(T.c['API_KEY_UUID'].in_([str(k) for k in key_uuids]))
+        if request_types:
+            conditions.append(T.c['REQUEST_TYPE'].in_([r.value for r in request_types]))
+
+        stmt = (
+            select(*self._request_columns())
+            .select_from(RequestEvent)
+            .where(*conditions)
+            # REQUEST_UUID breaks ties so pages never overlap.
+            .order_by(T.c['TIMESTAMP'].desc(), T.c['REQUEST_UUID'].desc())
+        )
+
+        with self.db.begin_session() as session:
+            # unique=False: TAGS is an array, not hashable for row dedup.
+            return paginate(session, stmt, params, unique=False)
+
     def get_http_status_by_request_uuids(
         self,
         request_uuids: list[str],
@@ -360,6 +421,25 @@ class RequestEventDAO:
         with self.db.begin_session() as session:
             res = session.execute(stmt).all()
             return {str(row.request_uuid): row.http_status_code for row in res}
+
+    def get_request(self, project_uuid: UUID, request_uuid: UUID) -> Row | None:
+        """One request of the project by its UUID, or None if there is none."""
+        T = self.T
+        stmt = (
+            select(
+                *self._request_columns(),
+                T.c['IS_STREAMING'].label('is_streaming'),
+            )
+            .select_from(RequestEvent)
+            .where(
+                T.c['PROJECT_UUID'] == str(project_uuid),
+                T.c['REQUEST_UUID'] == str(request_uuid),
+            )
+            .limit(1)
+        )
+
+        with self.db.begin_session() as session:
+            return session.execute(stmt).first()
 
     def get_distinct_tags(self, project_uuid: UUID) -> list[str]:
         T = self.T

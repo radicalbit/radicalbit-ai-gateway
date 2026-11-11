@@ -42,6 +42,9 @@ def _clickhouse() -> ClickHouseContainer:
 class DatabaseIntegrationClickhouse(unittest.TestCase):
     container = None
     engine = None
+    # Subclasses that build the schema themselves (e.g. from the ClickHouse
+    # migrations) turn this off.
+    create_orm_schema = True
 
     @classmethod
     def setUpClass(cls):
@@ -55,7 +58,8 @@ class DatabaseIntegrationClickhouse(unittest.TestCase):
         )
         cls.db = ClickHouseDatabase(conf=cls.db_conf)
         cls.db.connect()
-        ClickHouseBaseTable.metadata.create_all(cls.db._engine)
+        if cls.create_orm_schema:
+            ClickHouseBaseTable.metadata.create_all(cls.db._engine)
 
     def setUp(self):
         pass

@@ -274,3 +274,24 @@ class MostExpensiveRoute(Base):
 class RouteCostBreakdown(Base):
     route_name: str
     total_cost: float
+
+
+class EventsSummary(BaseModel):
+    """What one request's events add up to, for its row in the Requests list.
+
+    The lists hold the distinct promoted values of each icon's events, the
+    raw material of the icon tones and tooltips. Empty strings mean absent.
+    """
+
+    total_tokens: int = 0
+    cost: float = 0.0
+    # (name, behavior, where)
+    guardrails: list[tuple[str, str, str]] = []
+    # (cache_type,)
+    cache_hits: list[tuple[str]] = []
+    # (target, fallback)
+    fallbacks: list[tuple[str, str]] = []
+    # (routing_name, selected_model_id)
+    routings: list[tuple[str, str]] = []
+    # (event_type, limit_scope, category, threshold_percentage)
+    limits: list[tuple[str, str, str, str]] = []

@@ -21,6 +21,7 @@ from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
+from radicalbit_ai_gateway.utils.exceptions import unhandled_exception_handler
 from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 
 EMIT = 'radicalbit_ai_gateway.middleware.request_event_middleware.emit_request_event'
@@ -305,3 +306,30 @@ def test_untracked_paths_do_not_validate_tags():
 
     response = TestClient(app).post('/health', headers={'X-RB-Tags': 'broken'})
     assert response.status_code == 200
+
+
+class UpstreamTimeoutError(Exception):
+    pass
+
+
+def test_an_escaping_exception_stores_its_class_name_never_its_message(caplog):
+    """The message can carry request content or secrets: log it, never store it."""
+    secret = 'user prompt: my password is hunter2'
+
+    async def endpoint(request):
+        raise UpstreamTimeoutError(secret)
+
+    app = Starlette(routes=[Route('/v1/chat/completions', endpoint, methods=['POST'])])
+    app.add_middleware(RequestEventMiddleware)
+    # As in server.py: the catch-all handler is what logs the message.
+    app.add_exception_handler(Exception, unhandled_exception_handler)
+
+    with patch(EMIT) as emit, caplog.at_level('ERROR'):
+        TestClient(app, raise_server_exceptions=False).post('/v1/chat/completions')
+
+    payload = emit.call_args.args[0]
+    assert payload.status is RequestStatus.UNHANDLED_ERROR
+    assert payload.error_type == 'UpstreamTimeoutError'
+    assert payload.error_code == 'upstream_timeout_error'
+    assert secret not in payload.model_dump_json()
+    assert caplog.text.count(secret) == 1

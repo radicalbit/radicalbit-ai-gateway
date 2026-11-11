@@ -521,6 +521,51 @@ class TracingServiceTest(unittest.TestCase):
         assert grandchild.span_id == 'span-grandchild'
         assert grandchild.children == []
 
+    def test_tree_nodes_carry_their_start_offset_from_the_root(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        def span(span_id, parent, offset_ms, duration_ms):
+            return SpanRecord(
+                timestamp=base_time + datetime.timedelta(milliseconds=offset_ms),
+                trace_id='trace-123',
+                request_uuid='12345678-1234-5678-1234-567812345678',
+                span_id=span_id,
+                span_name=span_id,
+                service_name='ai-gateway',
+                duration=duration_ms * 1_000_000,
+                status_code='Unset',
+                parent_span_id=parent,
+                route_name='test-route',
+                api_key_uuid='',
+                api_key_name='',
+                group_uuid='',
+                group_name='',
+            )
+
+        # Two children running in parallel, one grandchild; listed out of order.
+        self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
+            return_value=[
+                span('child-b', 'root', 20.5, 50),
+                span('root', '', 0, 100),
+                span('grandchild', 'child-a', 15, 5),
+                span('child-a', 'root', 10, 50),
+            ]
+        )
+
+        tree = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
+
+        assert tree.start_offset_ms == 0
+        children = {c.span_id: c for c in tree.children}
+        a, b = children['child-a'], children['child-b']
+        assert a.start_offset_ms == 10
+        assert b.start_offset_ms == 20.5
+        # The parallel children overlap: b starts before a ends.
+        assert b.start_offset_ms < a.start_offset_ms + a.duration_ms
+        assert a.children[0].start_offset_ms == 15
+        assert tree.model_dump(by_alias=True)['startOffsetMs'] == 0
+
     def test_get_trace_by_id_with_errors(self):
         """Test error count is calculated correctly — root span error gives ERROR."""
         base_time = datetime.datetime(

@@ -560,6 +560,9 @@ def get_sample_event(
     guardrail_where = kwargs.get('where', kwargs.get('guardrail_where', ''))
     guardrail_params = kwargs.get('parameters', kwargs.get('guardrail_params', ''))
     guardrail_behavior = kwargs.get('behavior', kwargs.get('guardrail_behavior', ''))
+    # Same keys the events processor promotes to the routing columns.
+    routing_name = kwargs.get('routing_name', '')
+    routing_selected_model_id = kwargs.get('selected_model_id', '')
 
     return Event(
         request_uuid=request_uuid if request_uuid else uuid.uuid4(),
@@ -588,6 +591,8 @@ def get_sample_event(
         guardrail_params=guardrail_params,
         guardrail_behavior=guardrail_behavior,
         is_judge=is_judge,
+        routing_name=routing_name,
+        routing_selected_model_id=routing_selected_model_id,
         mcp_method=mcp_method,
         mcp_alias=mcp_alias,
         mcp_target=mcp_target,

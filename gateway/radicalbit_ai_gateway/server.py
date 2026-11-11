@@ -64,6 +64,7 @@ from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
+from radicalbit_ai_gateway.routes.requests_route import RequestsRoute
 from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.routes.tag_route import TagRoute
 from radicalbit_ai_gateway.routes.tracing_route import TracingRoute
@@ -81,6 +82,7 @@ from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.services.mcp_usage_service import McpUsageService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
+from radicalbit_ai_gateway.services.requests_service import RequestsService
 from radicalbit_ai_gateway.services.secret_service import SecretService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -194,6 +196,11 @@ tracing_service = TracingService(
     otel_traces_dao=otel_traces_dao,
     key_service=key_service,
     group_service=group_service,
+)
+requests_service = RequestsService(
+    request_event_dao=request_event_dao,
+    event_dao=event_dao,
+    otel_traces_dao=otel_traces_dao,
 )
 mcp_service = McpService(upstream_client=McpUpstreamClient())
 mcp_usage_service = McpUsageService(
@@ -383,6 +390,13 @@ app.include_router(
 app.include_router(
     TracingRoute.get_tracing_router(
         tracing_service=tracing_service,
+        project_service=project_service,
+    ),
+    prefix=prefix,
+)
+app.include_router(
+    RequestsRoute.get_requests_router(
+        requests_service=requests_service,
         project_service=project_service,
     ),
     prefix=prefix,

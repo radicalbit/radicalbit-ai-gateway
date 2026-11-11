@@ -24,3 +24,10 @@ class EventType(str, Enum):
     CACHE_OUTPUT_TOKENS = 'CACHE_OUTPUT_TOKENS'
     MCP_INVOCATION = 'MCP_INVOCATION'
     REQUEST = 'REQUEST'
+
+
+# The events a limit leaves when it blocks a request: route, credential or
+# project; rate, token, duration or budget. LIMIT_THRESHOLD is only a warning.
+LIMIT_BLOCK_EVENT_TYPES: tuple[str, ...] = tuple(
+    t.value for t in EventType if t.value.endswith('_LIMIT')
+)
