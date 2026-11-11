@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from fastapi_pagination import Page, Params
+from pydantic import BaseModel
 from sqlalchemy import Row
 
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
@@ -11,9 +12,17 @@ from radicalbit_ai_gateway.db.models.event import EventsSummary
 from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENT_TYPES, EventType
 from radicalbit_ai_gateway.models.guardrails import GuardrailBehaviorType
 from radicalbit_ai_gateway.models.request_dto import (
+    CacheTooltip,
     EventDTO,
+    EventIcon,
+    FallbackTooltip,
+    GuardrailTooltip,
+    IconTone,
+    LimitTooltip,
     RequestDetailDTO,
     RequestDTO,
+    RequestIcons,
+    RoutingTooltip,
 )
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
@@ -55,6 +64,94 @@ def _event_dto(event: dict) -> EventDTO:
     )
 
 
+def _or_none(value: str) -> str | None:
+    # Promoted string columns and missing ATTRIBUTES keys read as ''.
+    return value or None
+
+
+def _icon(tones_and_details: list[tuple[IconTone, BaseModel]]) -> EventIcon | None:
+    """Build the icon of one kind of event: None if none fired, else its top tone."""
+    if not tones_and_details:
+        return None
+    return EventIcon(
+        tone=max((tone for tone, _ in tones_and_details), key=lambda t: t.rank),
+        details=[detail for _, detail in tones_and_details],
+    )
+
+
+def _guardrail_tone(behavior: str) -> IconTone:
+    if behavior == GuardrailBehaviorType.BLOCK:
+        return IconTone.ERROR
+    if behavior in (GuardrailBehaviorType.WARN, GuardrailBehaviorType.SOFT_BLOCK):
+        return IconTone.WARNING
+    return IconTone.SUCCESS
+
+
+def _limit_tone(event_type: str) -> IconTone:
+    # A *_LIMIT event blocked the request; LIMIT_THRESHOLD only warns.
+    return IconTone.ERROR if event_type in LIMIT_BLOCK_EVENT_TYPES else IconTone.WARNING
+
+
+def _icons(summary: EventsSummary) -> RequestIcons:
+    """Return the Requests row icons: which kinds of event fired, in which tone."""
+    return RequestIcons(
+        guardrail=_icon(
+            [
+                (
+                    _guardrail_tone(behavior),
+                    GuardrailTooltip(
+                        name=_or_none(name),
+                        behavior=_or_none(behavior),
+                        position=_or_none(where),
+                    ),
+                )
+                for name, behavior, where in sorted(summary.guardrails)
+            ]
+        ),
+        cache=_icon(
+            [
+                (IconTone.SUCCESS, CacheTooltip(cache_type=_or_none(cache_type)))
+                for (cache_type,) in sorted(summary.cache_hits)
+            ]
+        ),
+        fallback=_icon(
+            [
+                (
+                    IconTone.WARNING,
+                    FallbackTooltip(
+                        target=_or_none(target), fallback_model=_or_none(fallback)
+                    ),
+                )
+                for target, fallback in sorted(summary.fallbacks)
+            ]
+        ),
+        routing=_icon(
+            [
+                (
+                    IconTone.SUCCESS,
+                    RoutingTooltip(
+                        routing_name=_or_none(name), selected_model=_or_none(model)
+                    ),
+                )
+                for name, model in sorted(summary.routings)
+            ]
+        ),
+        limits=_icon(
+            [
+                (
+                    _limit_tone(event_type),
+                    LimitTooltip(
+                        limit_scope=_or_none(scope),
+                        category=_or_none(category),
+                        threshold_percentage=int(pct) if pct else None,
+                    ),
+                )
+                for event_type, scope, category, pct in sorted(summary.limits)
+            ]
+        ),
+    )
+
+
 def _request_fields(row: Row) -> dict:
     """Return the fields a request_event row gives the Requests list and detail."""
     return {
@@ -69,6 +166,7 @@ def _request_fields(row: Row) -> dict:
         'request_status': _enum_or_none(RequestStatus, row.request_status),
         'http_status_code': row.http_status_code,
         'error_type': row.error_type or None,
+        'error_code': row.error_code or None,
         'duration_ms': row.duration_ms,
         'created_at': int(row.timestamp.timestamp()),
     }
@@ -127,14 +225,18 @@ class RequestsService:
             project_uuid, request_uuids, date_from, date_to
         )
 
-        items = [
-            RequestDTO(
-                **_request_fields(row),
-                trace_id=trace_ids.get(str(row.request_uuid)),
-                **summaries.get(str(row.request_uuid), EventsSummary()).model_dump(),
+        items = []
+        for row in rows:
+            summary = summaries.get(str(row.request_uuid), EventsSummary())
+            items.append(
+                RequestDTO(
+                    **_request_fields(row),
+                    trace_id=trace_ids.get(str(row.request_uuid)),
+                    total_tokens=summary.total_tokens,
+                    cost=summary.cost,
+                    icons=_icons(summary),
+                )
             )
-            for row in rows
-        ]
         return Page.create(items, params, total=requests_page.total)
 
     def get_request(self, project_uuid: UUID, request_uuid: UUID) -> RequestDetailDTO:
@@ -151,11 +253,16 @@ class RequestsService:
         events = self.event_dao.get_request_events(
             project_uuid, row.request_uuid, date_from, date_to
         )
+        # Same totals as the request's row in the list, by the same rule.
+        summary = self.event_dao.get_request_summaries(
+            project_uuid, [key], date_from, date_to
+        ).get(key, EventsSummary())
 
         return RequestDetailDTO(
             **_request_fields(row),
             trace_id=trace_ids.get(key),
-            error_code=row.error_code or None,
+            total_tokens=summary.total_tokens,
+            cost=summary.cost,
             is_streaming=row.is_streaming,
             events=[_event_dto(event) for event in events],
         )

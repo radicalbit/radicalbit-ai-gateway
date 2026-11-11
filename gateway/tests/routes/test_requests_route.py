@@ -8,7 +8,13 @@ from fastapi import FastAPI
 from fastapi_pagination import Page, Params
 from starlette.testclient import TestClient
 
-from radicalbit_ai_gateway.models.request_dto import RequestDTO
+from radicalbit_ai_gateway.models.request_dto import (
+    EventIcon,
+    IconTone,
+    LimitTooltip,
+    RequestDTO,
+    RequestIcons,
+)
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 from radicalbit_ai_gateway.routes.requests_route import RequestsRoute
 from radicalbit_ai_gateway.services.project_service import ProjectService
@@ -55,12 +61,23 @@ class TestRequestsRoute(unittest.TestCase):
                     request_status=RequestStatus.HANDLED_ERROR,
                     http_status_code=422,
                     error_type='RequestValidationError',
+                    error_code='request_validation_error',
                     duration_ms=3.5,
                     created_at=1773144000,
                     total_tokens=12,
                     cost=0.25,
-                    has_guardrail=True,
-                    has_limit=True,
+                    icons=RequestIcons(
+                        limits=EventIcon(
+                            tone=IconTone.WARNING,
+                            details=[
+                                LimitTooltip(
+                                    limit_scope='route',
+                                    category='budget',
+                                    threshold_percentage=80,
+                                )
+                            ],
+                        )
+                    ),
                 )
             ],
             params=Params(page=1, size=50),
@@ -82,11 +99,23 @@ class TestRequestsRoute(unittest.TestCase):
         assert item['createdAt'] == 1773144000
         assert item['totalTokens'] == 12
         assert item['cost'] == 0.25
-        assert item['hasGuardrail'] is True
-        assert item['hasCacheHit'] is False
-        assert item['hasFallback'] is False
-        assert item['hasRouting'] is False
-        assert item['hasLimit'] is True
+        assert item['errorCode'] == 'request_validation_error'
+        assert item['icons'] == {
+            'guardrail': None,
+            'cache': None,
+            'fallback': None,
+            'routing': None,
+            'limits': {
+                'tone': 'warning',
+                'details': [
+                    {
+                        'limitScope': 'route',
+                        'category': 'budget',
+                        'thresholdPercentage': 80,
+                    }
+                ],
+            },
+        }
 
     def test_defaults(self):
         self.requests_service.get_requests.return_value = _empty_page()

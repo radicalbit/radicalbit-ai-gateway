@@ -109,7 +109,33 @@ class TestRequestDetailIntegration(DatabaseIntegrationClickhouse):
         assert detail.error_code == 'rate_limit_exceeded'
         assert detail.duration_ms == 12.5
         assert detail.created_at == int(T0.timestamp())
+        assert detail.total_tokens == 0
+        assert detail.cost == 0.0
         assert detail.events == []
+
+    def test_tokens_and_cost_include_judges_and_exclude_cache_tokens(self):
+        request_uuid = uuid.uuid4()
+        self.insert([_request(request_uuid)])
+        self.insert(
+            [
+                _event(request_uuid, 'INPUT_TOKEN_PROCESSED', value=10, cost=0.1),
+                _event(request_uuid, 'OUTPUT_TOKEN_PROCESSED', value=20, cost=0.2),
+                _event(
+                    request_uuid,
+                    'INPUT_TOKEN_PROCESSED',
+                    value=3,
+                    cost=0.03,
+                    is_judge=True,
+                ),
+                _event(request_uuid, 'CACHE_INPUT_TOKENS', value=100, cost=1.0),
+                _event(request_uuid, 'CACHE_OUTPUT_TOKENS', value=100, cost=1.0),
+            ]
+        )
+
+        detail = self.service.get_request(PROJECT, request_uuid)
+
+        assert detail.total_tokens == 33
+        assert detail.cost == pytest.approx(0.33)
 
     def test_events_come_in_time_order_with_their_columns(self):
         request_uuid = uuid.uuid4()

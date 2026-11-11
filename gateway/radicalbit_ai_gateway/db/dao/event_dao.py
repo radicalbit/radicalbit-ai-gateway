@@ -30,7 +30,7 @@ from radicalbit_ai_gateway.db.models.event import (
     TokensCounter,
 )
 from radicalbit_ai_gateway.db.tables.event_table import Event
-from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENT_TYPES
+from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENT_TYPES, EventType
 from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
@@ -830,9 +830,13 @@ class EventDAO:
             ]
 
     @staticmethod
-    def _fired(condition: ColumnElement) -> ColumnElement:
-        """1 when at least one event of the group matches `condition`."""
-        return F.countIf(condition) > 0
+    def _distinct(condition: ColumnElement, *values: ColumnElement) -> ColumnElement:
+        """Collect the distinct `values` tuples of the events matching `condition`."""
+        return F.groupUniqArrayIf(F.tuple(*values), condition)
+
+    def _attribute(self, key: str) -> ColumnElement:
+        """Read one ATTRIBUTES entry, '' when the event has no such key."""
+        return F.arrayElement(self.ATTRIBUTES, key)
 
     def get_request_summaries(
         self,
@@ -863,13 +867,32 @@ class EventDAO:
         columns = [
             F.sumIf(T.c['VALUE'], processed_tokens).label('total_tokens'),
             F.sumIf(T.c['COST'], processed_tokens).label('cost'),
-            self._fired(T.c['EVENT_TYPE'] == 'GUARDRAIL').label('has_guardrail'),
-            self._fired(T.c['EVENT_TYPE'] == 'CACHE_HIT').label('has_cache_hit'),
-            self._fired(T.c['EVENT_TYPE'] == 'FALLBACK').label('has_fallback'),
-            self._fired(T.c['EVENT_TYPE'] == 'ROUTING').label('has_routing'),
-            self._fired(T.c['EVENT_TYPE'].in_(LIMIT_BLOCK_EVENT_TYPES)).label(
-                'has_limit'
+            self._distinct(
+                T.c['EVENT_TYPE'] == 'GUARDRAIL',
+                T.c['GUARDRAIL_NAME'],
+                T.c['GUARDRAIL_BEHAVIOR'],
+                T.c['GUARDRAIL_WHERE'],
+            ).label('guardrails'),
+            self._distinct(T.c['EVENT_TYPE'] == 'CACHE_HIT', T.c['CACHE_TYPE']).label(
+                'cache_hits'
             ),
+            self._distinct(
+                T.c['EVENT_TYPE'] == 'FALLBACK', T.c['TARGET'], T.c['FALLBACK']
+            ).label('fallbacks'),
+            self._distinct(
+                T.c['EVENT_TYPE'] == 'ROUTING',
+                T.c['ROUTING_NAME'],
+                T.c['ROUTING_SELECTED_MODEL_ID'],
+            ).label('routings'),
+            self._distinct(
+                T.c['EVENT_TYPE'].in_(
+                    [*LIMIT_BLOCK_EVENT_TYPES, EventType.LIMIT_THRESHOLD.value]
+                ),
+                T.c['EVENT_TYPE'],
+                self._attribute('limit_scope'),
+                self._attribute('category'),
+                self._attribute('threshold_percentage'),
+            ).label('limits'),
         ]
         stmt = (
             select(T.c['REQUEST_UUID'], *columns)

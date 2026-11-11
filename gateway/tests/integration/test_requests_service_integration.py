@@ -21,6 +21,7 @@ from tests.common.db_mock import (
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
+from radicalbit_ai_gateway.models.request_dto import IconTone
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 from radicalbit_ai_gateway.services.requests_service import RequestsService
 
@@ -103,6 +104,7 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
                     http_status_code=422,
                     duration_ms=12.5,
                     error_type='RequestValidationError',
+                    error_code='request_validation_error',
                     tags=['team=a'],
                 )
             ]
@@ -124,6 +126,7 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
         assert row.request_status == RequestStatus.HANDLED_ERROR
         assert row.http_status_code == 422
         assert row.error_type == 'RequestValidationError'
+        assert row.error_code == 'request_validation_error'
         assert row.duration_ms == 12.5
         assert row.created_at == int(T0.timestamp())
         assert row.total_tokens == 0
@@ -225,44 +228,88 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
         assert row.total_tokens == 0
         assert row.cost == 0.0
 
-    def _icons(self, *event_types, **event_kwargs):
-        """Return the five icon flags of a request holding one event per type."""
+    def _icons(self, *events):
+        """Return the icons of a request holding `events`, (type, kwargs) pairs."""
         request_uuid = uuid.uuid4()
         self.insert([_request(request_uuid)])
-        if event_types:
-            self.insert([_event(request_uuid, t, **event_kwargs) for t in event_types])
+        if events:
+            self.insert([_event(request_uuid, t, **kw) for t, kw in events])
         [row] = self._list().items
         self.clean()
+        return row.icons
+
+    @staticmethod
+    def _lit(icons):
         return {
-            'guardrail': row.has_guardrail,
-            'cache_hit': row.has_cache_hit,
-            'fallback': row.has_fallback,
-            'routing': row.has_routing,
-            'limit': row.has_limit,
+            name
+            for name in ['guardrail', 'cache', 'fallback', 'routing', 'limits']
+            if getattr(icons, name) is not None
         }
 
-    def _only(self, icon):
-        flags = dict.fromkeys(
-            ['guardrail', 'cache_hit', 'fallback', 'routing', 'limit'], False
+    def test_a_request_with_no_event_shows_no_icon(self):
+        assert self._lit(self._icons()) == set()
+
+    def test_a_guardrail_tone_follows_its_behavior(self):
+        for behavior, tone in [
+            ('BLOCK', IconTone.ERROR),
+            ('WARN', IconTone.WARNING),
+            ('SOFT_BLOCK', IconTone.WARNING),
+            ('REDACT', IconTone.SUCCESS),
+            ('', IconTone.SUCCESS),
+        ]:
+            icons = self._icons(('GUARDRAIL', {'behavior': behavior}))
+            assert self._lit(icons) == {'guardrail'}, behavior
+            assert icons.guardrail.tone == tone, behavior
+
+    def test_the_highest_tone_wins(self):
+        icons = self._icons(
+            ('GUARDRAIL', {'name': 'pii', 'behavior': 'REDACT', 'where': 'input'}),
+            ('GUARDRAIL', {'name': 'tox', 'behavior': 'BLOCK', 'where': 'output'}),
+            ('GUARDRAIL', {'name': 'len', 'behavior': 'WARN', 'where': 'input'}),
         )
-        return {**flags, icon: True}
+        assert icons.guardrail.tone == IconTone.ERROR
+        icons = self._icons(
+            ('GUARDRAIL', {'behavior': 'REDACT'}),
+            ('GUARDRAIL', {'behavior': 'SOFT_BLOCK'}),
+        )
+        assert icons.guardrail.tone == IconTone.WARNING
 
-    def test_a_request_with_no_event_lights_no_icon(self):
-        assert not any(self._icons().values())
+    def test_a_guardrail_tooltip_lists_each_guardrail_that_fired(self):
+        icons = self._icons(
+            ('GUARDRAIL', {'name': 'pii', 'behavior': 'REDACT', 'where': 'input'}),
+            ('GUARDRAIL', {'name': 'tox', 'behavior': 'BLOCK', 'where': 'output'}),
+        )
+        assert {(d.name, d.behavior, d.position) for d in icons.guardrail.details} == {
+            ('pii', 'REDACT', 'input'),
+            ('tox', 'BLOCK', 'output'),
+        }
 
-    def test_each_kind_of_event_lights_its_own_icon(self):
-        assert self._icons('GUARDRAIL', behavior='BLOCK') == self._only('guardrail')
-        assert self._icons('CACHE_HIT') == self._only('cache_hit')
-        assert self._icons('FALLBACK') == self._only('fallback')
-        assert self._icons('ROUTING') == self._only('routing')
+    def test_a_cache_hit_is_a_success_with_its_cache_type(self):
+        icons = self._icons(('CACHE_HIT', {'cache_type': 'semantic'}))
+        assert self._lit(icons) == {'cache'}
+        assert icons.cache.tone == IconTone.SUCCESS
+        assert [d.cache_type for d in icons.cache.details] == ['semantic']
 
-    def test_a_non_blocking_guardrail_lights_guardrail(self):
-        assert self._icons('GUARDRAIL', behavior='WARN') == self._only('guardrail')
-        assert self._icons('GUARDRAIL', behavior='SOFT_BLOCK') == self._only(
-            'guardrail'
+    def test_a_fallback_is_a_warning_with_its_target_and_fallback_model(self):
+        icons = self._icons(('FALLBACK', {'target': 'gpt-4o', 'fallback': 'claude'}))
+        assert self._lit(icons) == {'fallback'}
+        assert icons.fallback.tone == IconTone.WARNING
+        [detail] = icons.fallback.details
+        assert (detail.target, detail.fallback_model) == ('gpt-4o', 'claude')
+
+    def test_a_routing_is_a_success_with_its_name_and_chosen_model(self):
+        icons = self._icons(
+            ('ROUTING', {'routing_name': 'smart', 'selected_model_id': 'gpt-4o-mini'})
+        )
+        assert self._lit(icons) == {'routing'}
+        assert icons.routing.tone == IconTone.SUCCESS
+        [detail] = icons.routing.details
+        assert (detail.routing_name, detail.selected_model) == (
+            'smart',
+            'gpt-4o-mini',
         )
 
-    def test_every_limit_block_lights_limits(self):
+    def test_every_limit_block_is_an_error(self):
         for limit in [
             'RATE_LIMIT',
             'TOKEN_INPUT_LIMIT',
@@ -275,20 +322,53 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
             'CREDENTIAL_BUDGET_LIMIT',
             'PROJECT_BUDGET_LIMIT',
         ]:
-            assert self._icons(limit) == self._only('limit'), limit
+            icons = self._icons(
+                (limit, {'limit_scope': 'credential', 'category': 'budget'})
+            )
+            assert self._lit(icons) == {'limits'}, limit
+            assert icons.limits.tone == IconTone.ERROR, limit
+            [detail] = icons.limits.details
+            assert (detail.limit_scope, detail.category) == ('credential', 'budget')
+            assert detail.threshold_percentage is None
 
-    def test_a_limit_threshold_or_an_mcp_invocation_lights_nothing(self):
-        assert not any(self._icons('LIMIT_THRESHOLD', 'MCP_INVOCATION').values())
-
-    def test_token_and_model_events_light_nothing(self):
-        flags = self._icons(
-            'MODEL_INVOCATION',
-            'INPUT_TOKEN_PROCESSED',
-            'OUTPUT_TOKEN_PROCESSED',
-            'CACHE_INPUT_TOKENS',
-            'CACHE_OUTPUT_TOKENS',
+    def test_a_limit_threshold_is_a_warning_with_its_percentage(self):
+        icons = self._icons(
+            (
+                'LIMIT_THRESHOLD',
+                {
+                    'limit_scope': 'route',
+                    'category': 'token_input',
+                    'threshold_percentage': '80',
+                },
+            )
         )
-        assert not any(flags.values())
+        assert self._lit(icons) == {'limits'}
+        assert icons.limits.tone == IconTone.WARNING
+        [detail] = icons.limits.details
+        assert (detail.limit_scope, detail.category, detail.threshold_percentage) == (
+            'route',
+            'token_input',
+            80,
+        )
+
+    def test_a_limit_block_outranks_a_threshold(self):
+        icons = self._icons(
+            ('LIMIT_THRESHOLD', {'threshold_percentage': '90'}),
+            ('RATE_LIMIT', {}),
+        )
+        assert icons.limits.tone == IconTone.ERROR
+        assert len(icons.limits.details) == 2
+
+    def test_mcp_token_and_model_events_show_no_icon(self):
+        icons = self._icons(
+            ('MCP_INVOCATION', {}),
+            ('MODEL_INVOCATION', {}),
+            ('INPUT_TOKEN_PROCESSED', {}),
+            ('OUTPUT_TOKEN_PROCESSED', {}),
+            ('CACHE_INPUT_TOKENS', {}),
+            ('CACHE_OUTPUT_TOKENS', {}),
+        )
+        assert self._lit(icons) == set()
 
     def test_icons_belong_to_their_own_request(self):
         lit, dark = uuid.uuid4(), uuid.uuid4()
@@ -306,16 +386,14 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
 
         rows = {row.request_uuid: row for row in self._list().items}
 
-        assert rows[lit].has_guardrail
-        assert rows[lit].has_cache_hit
-        assert rows[lit].has_fallback
-        assert rows[lit].has_routing
-        assert rows[lit].has_limit
-        assert not rows[dark].has_guardrail
-        assert not rows[dark].has_cache_hit
-        assert not rows[dark].has_fallback
-        assert not rows[dark].has_routing
-        assert not rows[dark].has_limit
+        assert self._lit(rows[lit].icons) == {
+            'guardrail',
+            'cache',
+            'fallback',
+            'routing',
+            'limits',
+        }
+        assert self._lit(rows[dark].icons) == set()
         assert rows[dark].total_tokens == 5
 
     def test_a_page_costs_one_events_query_and_one_trace_query(self):

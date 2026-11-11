@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -280,6 +280,8 @@ class TracingService:
                 total_tokens=total,
                 error_count=number_of_errors,
                 created_at=int(span.timestamp.timestamp()),
+                start_offset_ms=(span.timestamp - root_span.timestamp)
+                / timedelta(milliseconds=1),
                 children=[build_tree(child) for child in children],
             )
 

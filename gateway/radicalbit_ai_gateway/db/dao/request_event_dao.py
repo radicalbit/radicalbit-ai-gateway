@@ -359,6 +359,7 @@ class RequestEventDAO:
             T.c['HTTP_STATUS_CODE'].label('http_status_code'),
             T.c['DURATION_MS'].label('duration_ms'),
             T.c['ERROR_TYPE'].label('error_type'),
+            T.c['ERROR_CODE'].label('error_code'),
             T.c['TAGS'].label('tags'),
         ]
 
@@ -427,7 +428,6 @@ class RequestEventDAO:
         stmt = (
             select(
                 *self._request_columns(),
-                T.c['ERROR_CODE'].label('error_code'),
                 T.c['IS_STREAMING'].label('is_streaming'),
             )
             .select_from(RequestEvent)
