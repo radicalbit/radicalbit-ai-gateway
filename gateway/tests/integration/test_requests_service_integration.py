@@ -580,3 +580,24 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
             _to=T0 - datetime.timedelta(days=1),
         ) == {r_old}
         assert len(listed()) == 6
+
+    def test_an_unknown_request_type_or_status_reads_as_null(self):
+        # A value written by a newer or older gateway must not break the list.
+        request = _request()
+        request.request_type = 'NOT_A_REQUEST_TYPE'
+        request.request_status = 'NOT_A_REQUEST_STATUS'
+        self.insert([request])
+
+        row = self._list().items[0]
+
+        assert row.request_type is None
+        assert row.request_status is None
+
+    def test_no_request_means_no_summary_and_no_trace_id(self):
+        day = T0.date()
+
+        assert self.event_dao.get_request_summaries(PROJECT, [], day, day) == {}
+        assert (
+            self.otel_traces_dao.get_trace_ids_by_request_uuids(PROJECT, [], day, day)
+            == {}
+        )
