@@ -37,11 +37,13 @@ from radicalbit_ai_gateway.limiting.duration_limiter import DurationLimiter
 from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
 from radicalbit_ai_gateway.limiting.token_limiter import TokenLimiter
 from radicalbit_ai_gateway.llm.messages import (
+    REASONING_KEY,
     AIMessage,
     AIMessageChunk,
     BaseMessage,
     HumanMessage,
     SystemMessage,
+    message_reasoning,
 )
 from radicalbit_ai_gateway.messages.events import relay_frame
 from radicalbit_ai_gateway.messages.request import MessagesRequest
@@ -933,6 +935,7 @@ class GatewayRoute:
             )
             if any(
                 before.content != after.content
+                or message_reasoning(before) != message_reasoning(after)
                 for before, after in zip(messages, redacted, strict=True)
             ):
                 guardrails_triggered = True
@@ -2345,6 +2348,20 @@ class GatewayRoute:
         """Process output with guardrails. Returns (response, guardrails_triggered, guardrails_block_triggered)."""
         original_output = response.choices[0].message.content
         redacted_output = original_output
+        # The model's reasoning, read by the guardrails that include it.
+        original_reasoning = (
+            getattr(response.choices[0].message, REASONING_KEY, None) or None
+        )
+        redacted_reasoning = original_reasoning
+
+        def output_message() -> AIMessage:
+            return AIMessage(
+                content=redacted_output or '',
+                additional_kwargs=(
+                    {REASONING_KEY: redacted_reasoning} if redacted_reasoning else {}
+                ),
+            )
+
         guardrails_triggered = False
         guardrails_block_triggered = (
             False  # Only tracks BLOCK/SOFT_BLOCK, not REDACT or WARN
@@ -2358,20 +2375,27 @@ class GatewayRoute:
             )
             if has_redact_output:
                 set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
-                if redacted_output:
-                    redacted_output = (
+                if redacted_output or redacted_reasoning:
+                    redacted = (
                         await self._apply_redact_guardrails(
                             request_uuid=request_uuid,
                             api_key_uuid=api_key_uuid,
                             group_uuid=group_uuid,
                             api_key_name=api_key_name,
                             group_name=group_name,
-                            messages=[AIMessage(content=redacted_output)],
+                            messages=[output_message()],
                             where=GuardrailWhereType.OUTPUT,
                         )
-                    )[0].content
+                    )[0]
+                    if redacted_output:
+                        redacted_output = redacted.content
+                    if redacted_reasoning:
+                        redacted_reasoning = message_reasoning(redacted)
                     # Mark as triggered if output was redacted (but NOT for block header)
-                    if redacted_output != original_output:
+                    if (
+                        redacted_output != original_output
+                        or redacted_reasoning != original_reasoning
+                    ):
                         guardrails_triggered = True
 
             if self.guardrail_engine.has_guardrails_for_route(
@@ -2388,7 +2412,7 @@ class GatewayRoute:
                     group_uuid=group_uuid,
                     api_key_name=api_key_name,
                     group_name=group_name,
-                    messages=[AIMessage(content=redacted_output)],
+                    messages=[output_message()],
                     where=GuardrailWhereType.OUTPUT,
                 )
 
@@ -2411,7 +2435,7 @@ class GatewayRoute:
                 try:
                     if await self.guardrail_engine.guardrail_check.evaluate_warn_triggered(
                         self.gateway_route_config,
-                        [AIMessage(content=redacted_output)],
+                        [output_message()],
                         GuardrailWhereType.OUTPUT,
                         request_uuid=request_uuid,
                         api_key_uuid=api_key_uuid,
@@ -2433,6 +2457,10 @@ class GatewayRoute:
         normalized_output = ContentUtils.normalize_openai_message_content(
             redacted_output
         )
+        message_update: dict = {'content': normalized_output}
+        if redacted_reasoning != original_reasoning:
+            message_update['reasoning_content'] = redacted_reasoning
+            message_update['reasoning'] = redacted_reasoning
 
         return OutputProcessResult(
             response=response.model_copy(
@@ -2441,7 +2469,7 @@ class GatewayRoute:
                         response.choices[0].model_copy(
                             update={
                                 'message': response.choices[0].message.model_copy(
-                                    update={'content': normalized_output}
+                                    update=message_update
                                 )
                             }
                         )
@@ -2720,6 +2748,7 @@ class GatewayRoute:
         try:
             if (len(messages) != len(redacted_messages)) or any(
                 (m1.content != m2.content)
+                or message_reasoning(m1) != message_reasoning(m2)
                 for m1, m2 in zip(messages, redacted_messages)
             ):
                 guardrails_input_triggered = True
@@ -3421,6 +3450,7 @@ class GatewayRoute:
         """Handle streaming with buffering for output guardrails."""
         original_stream_options = kwargs.pop('original_stream_options', None)
         full_content_text = ''
+        full_reasoning = ''
         final_usage = None
         buffered_chunks = []
 
@@ -3446,12 +3476,15 @@ class GatewayRoute:
                     chunk, full_content_text
                 )
                 full_content_text = result.text
+                full_reasoning += message_reasoning(chunk)
                 if result.usage_metadata:
                     final_usage = result.usage_metadata
 
         # Validate output guardrails
         full_ai_message = AIMessage(
-            content=full_content_text, usage_metadata=final_usage
+            content=full_content_text,
+            usage_metadata=final_usage,
+            additional_kwargs={REASONING_KEY: full_reasoning} if full_reasoning else {},
         )
 
         # Check guardrails

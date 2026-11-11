@@ -602,6 +602,18 @@ def parse_raw_tool_call(raw: dict) -> dict | None:
     )
 
 
+def reasoning_of(data: dict) -> str | None:
+    """Return the model's reasoning in a Chat Completions message or delta.
+
+    DeepSeek names it ``reasoning_content``; vLLM, Ollama and OpenRouter name
+    it ``reasoning``. OpenAI sends neither.
+    """
+    for key in ('reasoning_content', 'reasoning'):
+        if isinstance(value := data.get(key), str):
+            return value
+    return None
+
+
 def dict_to_ai_message(data: dict) -> AIMessage:
     """Build the assistant message of a Chat Completions choice."""
     # Azure and tool-calling replies may carry a null content.
@@ -625,6 +637,8 @@ def dict_to_ai_message(data: dict) -> AIMessage:
             )
     if audio := data.get('audio'):
         additional_kwargs['audio'] = audio
+    if reasoning := reasoning_of(data):
+        additional_kwargs['reasoning_content'] = reasoning
     return AIMessage(
         content=content,
         additional_kwargs=additional_kwargs,
@@ -656,6 +670,8 @@ def delta_to_chunk(delta: dict) -> AIMessageChunk:
                 )
                 for rtc in raw_tool_calls
             ]
+    if reasoning := reasoning_of(delta):
+        additional_kwargs['reasoning_content'] = reasoning
     return AIMessageChunk(
         content=delta.get('content') or '',
         additional_kwargs=additional_kwargs,

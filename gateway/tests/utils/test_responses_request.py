@@ -394,3 +394,137 @@ class TestCache:
     def test_last_user_text(self):
         assert last_user_text(_body()) == 'Implement the task'
         assert last_user_text({'input': 'Hi'}) == 'Hi'
+
+
+def _reasoning(text, encrypted=None):
+    item = {
+        'type': 'reasoning',
+        'id': 'rs_1',
+        'summary': [{'type': 'summary_text', 'text': text}],
+    }
+    if encrypted:
+        item['encrypted_content'] = encrypted
+    return item
+
+
+def _assistant(text):
+    return {
+        'type': 'message',
+        'role': 'assistant',
+        'content': [{'type': 'output_text', 'text': text}],
+    }
+
+
+def _user(text):
+    return {'type': 'message', 'role': 'user', 'content': text}
+
+
+CALL = {
+    'type': 'function_call',
+    'call_id': 'call_A',
+    'name': 'read',
+    'arguments': '{}',
+}
+
+
+class TestReasoningInHistory:
+    def test_reasoning_rides_on_the_assistant_message_after_it(self):
+        body = {'input': [_user('Hi'), _reasoning('Thinking'), _assistant('Hello')]}
+
+        messages = ResponsesRequest(body).messages()
+
+        assert [type(m) for m in messages] == [HumanMessage, AIMessage]
+        assert messages[1].additional_kwargs == {'reasoning_content': 'Thinking'}
+
+    def test_reasoning_before_a_tool_call_is_its_own_message(self):
+        body = {'input': [_user('Hi'), _reasoning('Thinking'), CALL]}
+
+        messages = ResponsesRequest(body).messages()
+
+        assert messages[1] == AIMessage(
+            content='',
+            additional_kwargs={
+                'reasoning_content': 'Thinking',
+                '__reasoning_only__': True,
+            },
+        )
+
+    def test_reasoning_at_the_end_is_its_own_message(self):
+        body = {'input': [_user('Hi'), _reasoning('Thinking')]}
+
+        messages = ResponsesRequest(body).messages()
+
+        assert messages[1] == AIMessage(
+            content='',
+            additional_kwargs={
+                'reasoning_content': 'Thinking',
+                '__reasoning_only__': True,
+            },
+        )
+
+    def test_encrypted_reasoning_is_not_read(self):
+        body = {'input': [_user('Hi'), _assistant('Hello')]}
+        body['input'].insert(
+            1, {'type': 'reasoning', 'summary': [], 'encrypted_content': 'gAAA'}
+        )
+
+        messages = ResponsesRequest(body).messages()
+
+        assert messages[1].additional_kwargs == {}
+
+    def test_changed_reasoning_is_written_back(self):
+        body = {'input': [_reasoning('Thinking', 'gAAA'), _assistant('Hello'), CALL]}
+        request = ResponsesRequest(body)
+        messages = request.messages()
+
+        request.write_back(
+            [
+                messages[0].model_copy(
+                    update={'additional_kwargs': {'reasoning_content': '<X>'}}
+                )
+            ]
+        )
+
+        assert request.body['input'][0]['summary'][0]['text'] == '<X>'
+        assert request.body['input'][0]['encrypted_content'] == 'gAAA'
+        assert body['input'][0]['summary'][0]['text'] == 'Thinking'
+
+    def test_reasoning_only_message_writes_back(self):
+        body = {'input': [_reasoning('Thinking'), CALL]}
+        request = ResponsesRequest(body)
+        [only] = request.messages()
+
+        request.write_back(
+            [
+                only.model_copy(
+                    update={'additional_kwargs': {'reasoning_content': '<X>'}}
+                )
+            ]
+        )
+
+        assert request.body['input'][0]['summary'][0]['text'] == '<X>'
+
+    def test_a_message_rebuilt_without_reasoning_keeps_it(self):
+        body = {'input': [_reasoning('Thinking'), _assistant('Hello')]}
+        request = ResponsesRequest(body)
+
+        request.write_back([AIMessage(content='Hello')])
+
+        assert request.body['input'][0]['summary'][0]['text'] == 'Thinking'
+
+    def test_a_plain_text_copy_in_encrypted_content_is_rewritten(self):
+        item = _reasoning('Mail john@acme.com', encrypted='Mail john@acme.com')
+        body = {'input': [item, _assistant('Done')]}
+        request = ResponsesRequest(body)
+        [message] = request.messages()
+
+        request.write_back(
+            [
+                message.model_copy(
+                    update={'additional_kwargs': {'reasoning_content': 'Mail <EMAIL>'}}
+                )
+            ]
+        )
+
+        assert request.body['input'][0]['encrypted_content'] == 'Mail <EMAIL>'
+        assert body['input'][0]['encrypted_content'] == 'Mail john@acme.com'

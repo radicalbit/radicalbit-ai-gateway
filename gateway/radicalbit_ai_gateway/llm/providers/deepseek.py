@@ -165,34 +165,18 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
             return generations, llm_output
         for message, _ in generations:
             message.response_metadata['model_provider'] = 'deepseek'
-        choices = getattr(response, 'choices', None)
-        if choices and hasattr(choices[0].message, 'reasoning_content'):
-            generations[0][0].additional_kwargs['reasoning_content'] = choices[
-                0
-            ].message.reasoning_content
-        # OpenRouter sends the reasoning as ``reasoning``.
-        elif choices and isinstance(
-            model_extra := choices[0].message.model_extra, dict
-        ):
-            if reasoning := model_extra.get('reasoning'):
-                generations[0][0].additional_kwargs['reasoning_content'] = reasoning
         return generations, llm_output
 
     def _convert_chunk(
         self, chunk: dict, base_generation_info: dict
     ) -> tuple[AIMessageChunk, dict | None] | None:
         converted = super()._convert_chunk(chunk, base_generation_info)
-        if (choices := chunk.get('choices')) and converted:
+        if chunk.get('choices') and converted:
             message, _ = converted
             message.response_metadata = {
                 **message.response_metadata,
                 'model_provider': 'deepseek',
             }
-            delta = choices[0].get('delta', {})
-            if (reasoning_content := delta.get('reasoning_content')) is not None:
-                message.additional_kwargs['reasoning_content'] = reasoning_content
-            elif (reasoning := delta.get('reasoning')) is not None:
-                message.additional_kwargs['reasoning_content'] = reasoning
         return converted
 
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:

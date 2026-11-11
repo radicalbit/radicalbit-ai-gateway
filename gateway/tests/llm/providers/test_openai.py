@@ -1156,3 +1156,34 @@ async def test_stalled_stream_raises_chunk_timeout():
         async for _ in with_chunk_timeout(source, 0.01, 'm'):
             pass
     assert source.closed
+
+
+@pytest.mark.parametrize('field', ['reasoning', 'reasoning_content'])
+async def test_compatible_backend_reasoning_is_kept(field):
+    """vLLM, Ollama and OpenRouter name it reasoning; DeepSeek reasoning_content."""
+    result, _ = await invoke(
+        model('qwen3', base_url='http://ollama:11434/v1'),
+        [canned.openai_completion('OK', extra_message={field: 'Thinking.'})],
+    )
+    assert result.additional_kwargs['reasoning_content'] == 'Thinking.'
+
+
+async def test_compatible_backend_streamed_reasoning_is_kept():
+    chunks, _ = await stream(
+        model('qwen3', base_url='http://ollama:11434/v1'),
+        [canned.openai_stream(extra_first_delta={'reasoning': 'Hmm.'})],
+    )
+    assert chunks[0].additional_kwargs['reasoning_content'] == 'Hmm.'
+
+
+async def test_reasoning_is_not_sent_back_to_openai():
+    messages = [
+        HumanMessage('Hi'),
+        AIMessage('Hello.', additional_kwargs={'reasoning_content': 'greeting'}),
+        HumanMessage('Again?'),
+    ]
+    _, requests = await invoke(model(), [canned.openai_completion()], messages)
+    assert requests[0]['body']['messages'][1] == {
+        'content': 'Hello.',
+        'role': 'assistant',
+    }

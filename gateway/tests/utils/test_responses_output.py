@@ -55,6 +55,135 @@ class TestResponsesOutput:
     def test_each_message_text_reads_as_one_message(self):
         output = ResponsesOutput(_response([REASONING, message_item('Hello'), CALL]))
 
+        assert output.messages() == [
+            AIMessage(
+                content='Hello', additional_kwargs={'reasoning_content': 'Thinking'}
+            )
+        ]
+
+    def test_reasoning_with_no_message_after_it_reads_as_its_own_message(self):
+        output = ResponsesOutput(_response([REASONING, CALL]))
+
+        assert output.messages() == [
+            AIMessage(
+                content='',
+                additional_kwargs={
+                    'reasoning_content': 'Thinking',
+                    '__reasoning_only__': True,
+                },
+            )
+        ]
+
+    def test_raw_reasoning_text_is_read(self):
+        raw = {
+            'id': 'rs_2',
+            'type': 'reasoning',
+            'summary': [],
+            'content': [{'type': 'reasoning_text', 'text': 'Raw thought'}],
+        }
+        output = ResponsesOutput(_response([raw, message_item('Hi')]))
+
+        assert output.messages()[0].additional_kwargs['reasoning_content'] == (
+            'Raw thought'
+        )
+
+    def test_changed_reasoning_is_written_back(self):
+        response = _response([REASONING, message_item('Hello')])
+        output = ResponsesOutput(response)
+
+        output.write_back(
+            [AIMessage(content='Hello', additional_kwargs={'reasoning_content': '<X>'})]
+        )
+
+        assert output.response['output'][0]['summary'][0]['text'] == '<X>'
+        assert output.response['output'][0]['encrypted_content'] == 'gAAA'
+        assert response['output'][0]['summary'][0]['text'] == 'Thinking'
+
+    def test_a_plain_text_copy_in_encrypted_content_is_rewritten(self):
+        """Ollama copies the readable reasoning in encrypted_content."""
+        item = {
+            'id': 'rs_x',
+            'type': 'reasoning',
+            'summary': [{'type': 'summary_text', 'text': 'Mail john@acme.com'}],
+            'encrypted_content': 'Mail john@acme.com',
+        }
+        output = ResponsesOutput(_response([item, message_item('Done')]))
+
+        output.write_back(
+            [
+                AIMessage(
+                    content='Done',
+                    additional_kwargs={'reasoning_content': 'Mail <EMAIL>'},
+                )
+            ]
+        )
+
+        reasoning = output.response['output'][0]
+        assert reasoning['summary'][0]['text'] == 'Mail <EMAIL>'
+        assert reasoning['encrypted_content'] == 'Mail <EMAIL>'
+
+    def test_a_label_in_encrypted_content_is_kept(self):
+        """DeepSeek's encrypted_content is a response id label, not the text."""
+        item = {
+            'id': 'rs_x',
+            'type': 'reasoning',
+            'summary': [{'type': 'summary_text', 'text': 'Mail john@acme.com'}],
+            'encrypted_content': 'resp_1-0',
+        }
+        output = ResponsesOutput(_response([item, message_item('Done')]))
+
+        output.write_back(
+            [
+                AIMessage(
+                    content='Done',
+                    additional_kwargs={'reasoning_content': 'Mail <EMAIL>'},
+                )
+            ]
+        )
+
+        assert output.response['output'][0]['encrypted_content'] == 'resp_1-0'
+
+    def test_message_without_reasoning_leaves_the_reasoning_alone(self):
+        output = ResponsesOutput(_response([REASONING, message_item('Hello')]))
+
+        output.write_back([AIMessage(content='Hello')])
+
+        assert output.response['output'][0]['summary'][0]['text'] == 'Thinking'
+
+    def test_reasoning_at_the_end_reads_as_its_own_message(self):
+        output = ResponsesOutput(_response([message_item('Hi'), REASONING]))
+
+        assert output.messages()[1] == AIMessage(
+            content='',
+            additional_kwargs={
+                'reasoning_content': 'Thinking',
+                '__reasoning_only__': True,
+            },
+        )
+
+    def test_reasoning_only_message_writes_back(self):
+        output = ResponsesOutput(_response([message_item('Hi'), REASONING]))
+
+        output.write_back(
+            [
+                AIMessage(content='Hi'),
+                AIMessage(content='', additional_kwargs={'reasoning_content': '<X>'}),
+            ]
+        )
+
+        assert output.response['output'][1]['summary'][0]['text'] == '<X>'
+
+    def test_unchanged_messages_leave_the_response_alone(self):
+        response = _response([REASONING, message_item('Hello')])
+        output = ResponsesOutput(response)
+
+        output.write_back(output.messages())
+
+        assert output.response == response
+
+    def test_items_that_are_not_objects_are_skipped(self):
+        output = ResponsesOutput(_response(['junk', message_item('Hello')]))
+
         assert output.messages() == [AIMessage(content='Hello')]
 
     def test_changed_text_is_written_back(self):

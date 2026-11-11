@@ -77,11 +77,24 @@ class ChatCompletionUserMessageParamCustom(TypedDict, total=False):
     """
 
 
+class ChatCompletionAssistantMessageParamCustom(
+    ChatCompletionAssistantMessageParam, total=False
+):
+    """An assistant message, with the model's reasoning when the client sends it back.
+
+    DeepSeek names it ``reasoning_content``; vLLM, Ollama and OpenRouter name it
+    ``reasoning``. Without these fields, validation would drop them.
+    """
+
+    reasoning_content: str | None
+    reasoning: str | None
+
+
 ChatCompletionMessageParamCustom: TypeAlias = Union[
     ChatCompletionDeveloperMessageParam,
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParamCustom,
-    ChatCompletionAssistantMessageParam,
+    ChatCompletionAssistantMessageParamCustom,
     ChatCompletionToolMessageParam,
     ChatCompletionFunctionMessageParam,
 ]
