@@ -9,8 +9,8 @@ model events with their costs, the model metrics and the model spans. Judges
 and LLM routers on each provider, and the schemas each provider sends for
 structured output, are pinned the same way.
 
-These pin quirks recorded for the team (ARCHITECTURE-JOURNEY.md, D18-D22) as
-they are today:
+These pin provider quirks found during the request-path refactor (D18-D22)
+as they are today:
 
 - D18: Mistral and DeepSeek get ``max_completion_tokens`` as sent; Mistral
   also gets ``stream_options``.
