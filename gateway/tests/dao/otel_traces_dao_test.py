@@ -1978,6 +1978,37 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         assert res[trace_id].input_tokens == 300
         assert res[trace_id].output_tokens == 130
 
+    def test_span_lookups_by_trace_id_keep_to_the_date_window(self):
+        day = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
+        self.insert(
+            [
+                db_mock.get_sample_otel_span(
+                    timestamp=day,
+                    trace_id='trace-in',
+                    span_id='root-in',
+                    parent_span_id='',
+                    status_code='Error',
+                ),
+                db_mock.get_sample_otel_span(
+                    timestamp=day - datetime.timedelta(days=3),
+                    trace_id='trace-out',
+                    span_id='root-out',
+                    parent_span_id='',
+                    status_code='Error',
+                ),
+            ]
+        )
+        trace_ids = ['trace-in', 'trace-out']
+        window = (day.date() - datetime.timedelta(days=1), day.date())
+
+        stats = self.otel_traces_dao.get_spans_stats_by_trace_ids(trace_ids, *window)
+        errors = self.otel_traces_dao.get_root_span_error_by_trace_ids(
+            trace_ids, *window
+        )
+
+        assert set(stats) == {'trace-in'}
+        assert errors == {'trace-in'}
+
     def test_get_spans_stats_by_trace_ids_isolates_by_trace_id(self):
         base_time = datetime.datetime(
             2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc

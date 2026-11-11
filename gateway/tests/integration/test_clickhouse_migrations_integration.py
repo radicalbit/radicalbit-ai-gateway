@@ -47,19 +47,23 @@ class TestClickHouseMigrations(DatabaseIntegrationClickhouse):
             assert time.monotonic() < deadline, 'mutations did not finish'
             time.sleep(0.2)
 
-    def request_uuid_index(self):
+    def request_uuid_index(self, table: str = 'event'):
         return self.execute(
             'SELECT name, type, granularity FROM system.data_skipping_indices '
-            "WHERE database = 'default' AND table = 'event' "
-            "AND expr = 'REQUEST_UUID'"
+            "WHERE database = 'default' AND table = :table "
+            "AND expr = 'REQUEST_UUID'",
+            table=table,
         )
 
-    def granules_after_lookup(self, request_uuid: uuid.UUID) -> str:
+    def granules_after_lookup(
+        self, request_uuid: uuid.UUID, table: str = 'event'
+    ) -> str:
         """Return the `Granules: kept/total` line of the request UUID skip index."""
         plan = [
             row[0]
             for row in self.execute(
-                'EXPLAIN indexes = 1 SELECT count() FROM default.event '
+                # `table` is one of this file's own table names, never input.
+                f'EXPLAIN indexes = 1 SELECT count() FROM default.{table} '  # noqa: S608
                 'WHERE REQUEST_UUID = :request_uuid',
                 request_uuid=str(request_uuid),
             )
@@ -93,3 +97,31 @@ class TestClickHouseMigrations(DatabaseIntegrationClickhouse):
         # A lookup of an unknown request UUID drops every granule of the old
         # parts, which only happens once the index is built for them.
         assert self.granules_after_lookup(uuid.uuid4()) == 'Granules: 0/3'
+
+    def test_fresh_database_gets_a_bloom_filter_index_on_request_event(self):
+        self.migrate()
+
+        assert self.request_uuid_index('request_event') == [
+            ('idx_request_uuid', 'bloom_filter', 1)
+        ]
+
+    def test_request_event_index_is_materialized_for_requests_already_stored(self):
+        self.migrate(until='014')
+        # Two routes in each part: the primary key, which leads with
+        # ROUTE_NAME, cannot rule a request UUID out, only the skip index can.
+        for _ in range(3):
+            self.execute(
+                'INSERT INTO default.request_event '
+                '(REQUEST_UUID, TIMESTAMP, ROUTE_NAME) VALUES '
+                "(generateUUIDv4(), now64(9, 'UTC'), 'route-a'), "
+                "(generateUUIDv4(), now64(9, 'UTC'), 'route-b')"
+            )
+
+        self.migrate()
+        self.wait_for_mutations()
+
+        # Opening an unknown request drops every granule of the old parts,
+        # which only happens once the index is built for them.
+        assert (
+            self.granules_after_lookup(uuid.uuid4(), 'request_event') == 'Granules: 0/3'
+        )

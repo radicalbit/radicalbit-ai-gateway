@@ -222,15 +222,6 @@ class EventServiceTest(unittest.TestCase):
         cls.mocks = [cls.event_dao]
 
     def test_total_counter(self):
-        def get_event_details_side_effect(
-            project_uuid, event_type, _from, _to, **kwargs
-        ):
-            if event_type == EventType.GUARDRAIL:
-                return self.get_last_event_details_guardrail
-            if event_type == EventType.FALLBACK:
-                return self.get_last_event_details_fallback
-            return None
-
         def get_api_key_name_side_effect(api_key_uuid, include_groups):
             if api_key_uuid == self.dev_key_uuid:
                 return KeyOut.from_key(
@@ -242,8 +233,11 @@ class EventServiceTest(unittest.TestCase):
 
         self.event_dao.get_all_counters = MagicMock(return_value=self.counters)
         self.event_dao.get_tokens_by_model = MagicMock(return_value=self.tokens_counter)
-        self.event_dao.get_last_event = MagicMock(
-            side_effect=get_event_details_side_effect
+        self.event_dao.get_last_events = MagicMock(
+            return_value={
+                EventType.GUARDRAIL: self.get_last_event_details_guardrail,
+                EventType.FALLBACK: self.get_last_event_details_fallback,
+            }
         )
         self.key_service.get_key_by_uuid = MagicMock(
             side_effect=get_api_key_name_side_effect
@@ -272,29 +266,50 @@ class EventServiceTest(unittest.TestCase):
         )
         assert res == expected
 
-    def test_get_total_counter_per_route(self):
-        def get_event_details_side_effect(
-            project_uuid, event_type, route_name, _from, _to, **kwargs
-        ):
-            if event_type == EventType.GUARDRAIL:
-                return self.get_last_event_details_guardrail
-            if event_type == EventType.FALLBACK:
-                return self.get_last_event_details_fallback
-            return None
+    def _mock_route_metrics(
+        self,
+        route_name,
+        counters=None,
+        tokens=(),
+        last_events=None,
+        routing=(),
+        request_stats=None,
+    ):
+        """Make the DAOs answer the per-route metric reads for one route."""
+        self.event_dao.get_counters_of_routes = MagicMock(
+            return_value={route_name: counters} if counters else {}
+        )
+        self.event_dao.get_tokens_by_model_of_routes = MagicMock(
+            return_value=list(tokens)
+        )
+        self.event_dao.get_last_events_of_routes = MagicMock(
+            return_value={
+                (route_name, event_type): event
+                for event_type, event in (last_events or {}).items()
+            }
+        )
+        self.event_dao.get_routing_model_counters_of_routes = MagicMock(
+            return_value={route_name: list(routing)} if routing else {}
+        )
+        self.request_event_dao.get_request_stats_of_routes = MagicMock(
+            return_value={route_name: request_stats} if request_stats else {}
+        )
+        self.request_event_dao.get_error_breakdown_of_routes = MagicMock(
+            return_value={}
+        )
 
-        self.event_dao.get_tokens_by_model_per_route = MagicMock(
-            return_value=self.tokens_counter
-        )
-        self.event_dao.get_all_counters_by_route = MagicMock(
-            return_value=self.counters_per_route
-        )
-        self.event_dao.get_last_event_route = MagicMock(
-            side_effect=get_event_details_side_effect
-        )
-        self.request_event_dao.get_request_stats_by_route = MagicMock(
-            return_value=RequestStats(
+    def test_get_total_counter_per_route(self):
+        self._mock_route_metrics(
+            'route-A',
+            counters=self.counters_per_route,
+            tokens=self.tokens_counter,
+            last_events={
+                EventType.GUARDRAIL: self.get_last_event_details_guardrail,
+                EventType.FALLBACK: self.get_last_event_details_fallback,
+            },
+            request_stats=RequestStats(
                 successful_requests=10, error_requests=1, total_requests=11
-            )
+            ),
         )
         res = self.event_service.get_total_counter_per_route(
             config=self.gateway_config,
@@ -337,28 +352,17 @@ class EventServiceTest(unittest.TestCase):
         assert res[0].metrics == expected_metrics
 
     def test_get_counter_per_route(self):
-        def get_event_details_side_effect(
-            project_uuid, event_type, route_name, _from, _to, **kwargs
-        ):
-            if event_type == EventType.GUARDRAIL:
-                return self.get_last_event_details_guardrail
-            if event_type == EventType.FALLBACK:
-                return self.get_last_event_details_fallback
-            return None
-
-        self.event_dao.get_tokens_by_model_per_route = MagicMock(
-            return_value=self.tokens_counter
-        )
-        self.event_dao.get_all_counters_by_route = MagicMock(
-            return_value=self.counters_per_route
-        )
-        self.event_dao.get_last_event_route = MagicMock(
-            side_effect=get_event_details_side_effect
-        )
-        self.request_event_dao.get_request_stats_by_route = MagicMock(
-            return_value=RequestStats(
+        self._mock_route_metrics(
+            'route-A',
+            counters=self.counters_per_route,
+            tokens=self.tokens_counter,
+            last_events={
+                EventType.GUARDRAIL: self.get_last_event_details_guardrail,
+                EventType.FALLBACK: self.get_last_event_details_fallback,
+            },
+            request_stats=RequestStats(
                 successful_requests=10, error_requests=1, total_requests=11
-            )
+            ),
         )
         res = self.event_service.get_counter_per_route(
             route_name='route-A',
@@ -1921,7 +1925,7 @@ class EventServiceTest(unittest.TestCase):
         """
         self.event_dao.get_all_counters = MagicMock(return_value=Counters())
         self.event_dao.get_tokens_by_model = MagicMock(return_value=[])
-        self.event_dao.get_last_event = MagicMock(return_value=None)
+        self.event_dao.get_last_events = MagicMock(return_value={})
         self.event_dao.get_routing_model_counters = MagicMock(return_value=[])
         self.request_event_dao.get_request_stats_global = MagicMock(
             return_value=RequestStats()
@@ -2700,7 +2704,7 @@ class EventServiceTest(unittest.TestCase):
             return_value=Counters(routing_value=5)
         )
         self.event_dao.get_tokens_by_model = MagicMock(return_value=[])
-        self.event_dao.get_last_event = MagicMock(return_value=None)
+        self.event_dao.get_last_events = MagicMock(return_value={})
         self.event_dao.get_routing_model_counters = MagicMock(
             return_value=self.routing_model_counters
         )
@@ -2734,7 +2738,7 @@ class EventServiceTest(unittest.TestCase):
             return_value=Counters(routing_value=0)
         )
         self.event_dao.get_tokens_by_model = MagicMock(return_value=[])
-        self.event_dao.get_last_event = MagicMock(return_value=None)
+        self.event_dao.get_last_events = MagicMock(return_value={})
         self.event_dao.get_routing_model_counters = MagicMock(return_value=[])
         self.request_event_dao.get_request_stats_global = MagicMock(
             return_value=RequestStats()
@@ -2752,18 +2756,13 @@ class EventServiceTest(unittest.TestCase):
         assert res.routing.model_invocations == []
 
     def test_get_counter_per_route_with_routing(self):
-        self.event_dao.get_all_counters_by_route = MagicMock(
-            return_value=Counters(routing_value=5)
-        )
-        self.event_dao.get_tokens_by_model_per_route = MagicMock(return_value=[])
-        self.event_dao.get_last_event_route = MagicMock(return_value=None)
-        self.event_dao.get_routing_model_counters = MagicMock(
-            return_value=self.routing_model_counters
-        )
-        self.request_event_dao.get_request_stats_by_route = MagicMock(
-            return_value=RequestStats(
+        self._mock_route_metrics(
+            'route-R',
+            counters=Counters(routing_value=5),
+            routing=self.routing_model_counters,
+            request_stats=RequestStats(
                 successful_requests=10, error_requests=2, total_requests=12
-            )
+            ),
         )
 
         res = self.event_service_routing.get_counter_per_route(
