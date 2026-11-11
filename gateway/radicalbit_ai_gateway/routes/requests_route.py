@@ -20,8 +20,6 @@ class RequestsRoute:
     ) -> APIRouter:
         router = APIRouter(tags=['requests_api'])
 
-        # No response_model_exclude_none: a request with no trace answers
-        # `traceId: null`, which the UI relies on.
         @router.get(
             '/projects/{project_uuid}/requests',
             status_code=200,
