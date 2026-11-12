@@ -1,5 +1,5 @@
 import HtmlAnchor from '@Components/html-anchor';
-import { Popover } from '@radicalbit/radicalbit-design-system';
+import { Popover, SectionTitle } from '@radicalbit/radicalbit-design-system';
 import { useState } from 'react';
 import { LIMIT_CATEGORY_LABELS, LimitCategoryEnum, WINDOW_TYPE_LABELS } from './constants';
 import {
@@ -10,7 +10,7 @@ import LimitConsumption from './limit-consumption';
 const TRIGGER = ['hover', 'focus'];
 
 const STATUS_CLASS_NAMES = {
-  ok: 'opacity-70',
+  ok: '',
   warning: 'text-[var(--coo-warning)]',
   critical: 'text-[var(--coo-error)]',
 };
@@ -48,12 +48,13 @@ function LimitsSummary({
       title={<strong>{title}</strong>}
       trigger={TRIGGER}
     >
-      <span className="inline-flex flex-col">
-        <span>
-          <HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>
-        </span>
-
-        <Details consumption={consumption} limits={limits} neverReachedCount={neverReachedCount} />
+      <span className="inline-block">
+        <SectionTitle
+          size="small"
+          subtitle={<Details consumption={consumption} limits={limits} neverReachedCount={neverReachedCount} />}
+          title={<HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>}
+          titleWeight="normal"
+        />
       </span>
     </Popover>
   );
@@ -69,20 +70,20 @@ function Details({ consumption, limits, neverReachedCount }) {
 
   if (mostConsumed && neverReachedCount) {
     return (
-      <small>
+      <span>
         <span className={STATUS_CLASS_NAMES[status]}>{`up to ${percentage}% used`}</span>
 
         <span className="text-[var(--coo-warning)]">{` · ${neverReached}`}</span>
-      </small>
+      </span>
     );
   }
 
   if (mostConsumed) {
-    return <small className={STATUS_CLASS_NAMES[status]}>{`up to ${percentage}% used`}</small>;
+    return <span className={STATUS_CLASS_NAMES[status]}>{`up to ${percentage}% used`}</span>;
   }
 
   if (neverReachedCount) {
-    return <small className="text-[var(--coo-warning)]">{neverReached}</small>;
+    return <span className="text-[var(--coo-warning)]">{neverReached}</span>;
   }
 
   return false;
