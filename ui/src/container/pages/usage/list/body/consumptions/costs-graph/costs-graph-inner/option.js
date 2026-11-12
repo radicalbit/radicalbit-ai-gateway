@@ -1,5 +1,6 @@
 import chartTsToDate from '@Helpers/chart-ts-to-date';
 import { CHART_COLORS } from '@Src/constants';
+import formatAxisCost from '@Helpers/format-axis-cost';
 import formatCost from '@Helpers/format-cost';
 import * as echarts from 'echarts/core';
 
@@ -70,15 +71,7 @@ export default ({ xAxisData, series = [], granularity, total, routeBreakdownCach
     yAxis: {
       type: 'value',
       axisLabel: {
-        formatter(value) {
-          const num = Number(value);
-
-          if (num < 1) {
-            return `$${num.toFixed(4)}`;
-          }
-
-          return `$${num.toFixed(2)}`;
-        },
+        formatter: formatAxisCost,
       },
     },
     series: series.map((s) => ({ type: 'bar', stack: 'total', barMaxWidth: 35, barMinWidth: 8, ...s })),
