@@ -30,6 +30,7 @@ class ChatModel(ABC):
 
     async def ainvoke(self, input: Sequence[BaseMessage], **kwargs: Any) -> AIMessage:  # noqa: A002
         messages = list(input)
+        kwargs = self._adapt_kwargs(kwargs)
         trace = ChatTrace.start(self, messages, kwargs)
         try:
             message = await self._agenerate(messages, **kwargs)
@@ -49,6 +50,7 @@ class ChatModel(ABC):
         **kwargs: Any,
     ) -> AsyncIterator[AIMessageChunk]:
         messages = list(input)
+        kwargs = self._adapt_kwargs(kwargs)
         trace = ChatTrace.start(self, messages, kwargs, stream=True)
         run_id = _run_id()
         # The provider's chunks, without the closing one added here.
@@ -76,6 +78,13 @@ class ChatModel(ABC):
             raise
         if trace:
             trace.end_stream(chunks)
+
+    def _adapt_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Return the call's OpenAI-style kwargs as this provider takes them.
+
+        The span sees the adapted kwargs. By default they pass unchanged.
+        """
+        return kwargs
 
     @abstractmethod
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:

@@ -1,16 +1,9 @@
-from uuid import UUID
-
 from fastapi import Request
 
-from radicalbit_ai_gateway.limiting.credential_limiter import CredentialLimiter
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
-from radicalbit_ai_gateway.services.group_service import GroupService
-from radicalbit_ai_gateway.utils.exceptions import InvalidApiKey, MissingApiKey
-from radicalbit_ai_gateway.utils.request_context import (
-    get_current_request_tags,
-    set_current_credential_limiter,
-)
+from radicalbit_ai_gateway.utils.exceptions import MissingApiKey
+from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 from radicalbit_ai_gateway.utils.trace_attributes import set_trace_attributes
 
 
@@ -57,15 +50,6 @@ async def _authenticate_token(
     ctx.api_key_name = key_details.api_key_name
     ctx.group_uuid = key_details.group_uuid
     ctx.group_name = key_details.group_name
-    set_current_credential_limiter(
-        CredentialLimiter(
-            credential_uuid=key_details.api_key_uuid,
-            credential_name=key_details.api_key_name,
-            limits=key_details.limits,
-        )
-        if key_details.limits
-        else None
-    )
     set_trace_attributes(
         api_key_uuid=key_details.api_key_uuid,
         api_key_name=key_details.api_key_name,
@@ -76,16 +60,3 @@ async def _authenticate_token(
         tags=list(get_current_request_tags()),
     )
     return key_details
-
-
-def ensure_key_bound_to_route(
-    group_service: GroupService,
-    project_name: str,
-    route_name: str,
-    key_details: KeyDetails,
-) -> None:
-    """Raise ``InvalidApiKey`` unless the key's group is bound to the route."""
-    if not group_service.check_key_uuid_for_route(
-        f'{project_name}/{route_name}', UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey(f'API Key not associated with route {route_name}')

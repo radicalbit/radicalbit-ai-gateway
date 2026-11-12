@@ -78,7 +78,6 @@ class GroupDAOTest(DatabaseIntegration):
         self.group_dao.delete_by_uuid(group.uuid)
 
         kept = self.key_dao.get_by_uuid(key.uuid)
-        assert kept is not None
         assert kept.group_uuid is None
         assert [item.uuid for item in self.key_limit_dao.get_by_key_uuid(key.uuid)] == [
             limit.uuid

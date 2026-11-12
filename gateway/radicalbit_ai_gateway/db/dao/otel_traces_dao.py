@@ -566,8 +566,30 @@ class OtelTracesDAO:
                 for row_tuple in res
             ]
 
-    def get_root_span_error_by_trace_ids(self, trace_ids: list[str]) -> set[str]:
-        """Return trace IDs where the root span has StatusCode = 'Error'."""
+    def _date_window(self, date_from: date | None, date_to: date | None) -> list:
+        """Bound spans to `[date_from, date_to]` so ClickHouse prunes partitions.
+
+        Timestamp has no column timezone: its date is read in UTC, as the
+        callers compute theirs.
+        """
+        conditions = []
+        if date_from is not None:
+            conditions.append(F.toDate(self.T.c['Timestamp'], 'UTC') >= date_from)
+        if date_to is not None:
+            conditions.append(F.toDate(self.T.c['Timestamp'], 'UTC') <= date_to)
+        return conditions
+
+    def get_root_span_error_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> set[str]:
+        """Return trace IDs where the root span has StatusCode = 'Error'.
+
+        A lookup by TraceId alone reads every partition: pass the dates the
+        traces span to bound it.
+        """
         if not trace_ids:
             return set()
 
@@ -579,6 +601,7 @@ class OtelTracesDAO:
                 T.c['TraceId'].in_(trace_ids),
                 T.c['ParentSpanId'] == '',
                 T.c['StatusCode'] == 'Error',
+                *self._date_window(date_from, date_to),
             )
         )
 
@@ -705,8 +728,14 @@ class OtelTracesDAO:
     def get_spans_stats_by_trace_ids(
         self,
         trace_ids: list[str],
+        date_from: date | None = None,
+        date_to: date | None = None,
     ) -> dict[str, SpanStats]:
-        """Aggregate span stats by TraceId."""
+        """Aggregate span stats by TraceId.
+
+        A lookup by TraceId alone reads every partition: pass the dates the
+        traces span to bound it.
+        """
         if not trace_ids:
             return {}
 
@@ -726,7 +755,10 @@ class OtelTracesDAO:
                 F.max(T.c['Timestamp']).label('last_span'),
             )
             .select_from(OtelTraces)
-            .where(T.c['TraceId'].in_(trace_ids))
+            .where(
+                T.c['TraceId'].in_(trace_ids),
+                *self._date_window(date_from, date_to),
+            )
             .group_by(T.c['TraceId'])
         )
 

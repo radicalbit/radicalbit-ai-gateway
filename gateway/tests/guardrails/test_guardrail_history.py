@@ -10,11 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from radicalbit_ai_gateway.guardrails.guardrail_check import (
-    GuardrailCheck,
-    _select_messages,
-)
-from radicalbit_ai_gateway.guardrails.guardrail_redact import GuardrailRedact
+from tests.common.guardrails import apply_check, apply_redact
+
+from radicalbit_ai_gateway.guardrails.guardrail_check import _select_messages
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.llm.messages import AIMessage, HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.guardrails import (
     CheckParameter,
@@ -64,133 +63,149 @@ def _guardrail(**overrides) -> Guardrail:
     return Guardrail(**data)
 
 
-class TestModel:
-    def test_default_is_all_without_last_n(self):
-        g = _guardrail()
-        assert g.history == GuardrailHistory.ALL
-        assert g.last_n is None
+@pytest.mark.parametrize(
+    ('overrides', 'history', 'last_n'),
+    [
+        pytest.param({}, GuardrailHistory.ALL, None, id='default-all'),
+        pytest.param(
+            {'history': 'last_n', 'last_n': 3},
+            GuardrailHistory.LAST_N,
+            3,
+            id='lower-case-last-n',
+        ),
+        pytest.param(
+            {'where': GuardrailWhereType.IO, 'history': 'last'},
+            GuardrailHistory.LAST,
+            None,
+            id='history-on-io',
+        ),
+    ],
+)
+def test_valid_history(overrides, history, last_n):
+    g = _guardrail(**overrides)
+    assert (g.history, g.last_n) == (history, last_n)
 
-    def test_lower_case_values_are_accepted(self):
-        g = _guardrail(history='last_n', last_n=3)
-        assert g.history == GuardrailHistory.LAST_N
-        assert g.last_n == 3
 
-    def test_history_last_n_needs_last_n(self):
-        with pytest.raises(ValueError, match='needs last_n'):
-            _guardrail(history='last_n')
+def test_output_without_history_is_accepted_and_round_trips():
+    g = _guardrail(where=GuardrailWhereType.OUTPUT)
+    assert (g.history, g.last_n) == (GuardrailHistory.ALL, None)
+    assert Guardrail.model_validate(g.model_dump()) == g
 
-    def test_last_n_only_with_history_last_n(self):
-        with pytest.raises(ValueError, match='only allowed'):
-            _guardrail(history='last', last_n=2)
 
-    def test_last_n_must_be_positive(self):
-        with pytest.raises(ValueError):
-            _guardrail(history='last_n', last_n=0)
+@pytest.mark.parametrize(
+    ('overrides', 'match'),
+    [
+        pytest.param({'history': 'last_n'}, 'needs last_n', id='last-n-needs-last-n'),
+        pytest.param(
+            {'history': 'last', 'last_n': 2},
+            'only allowed',
+            id='last-n-only-with-last-n',
+        ),
+        pytest.param(
+            {'history': 'last_n', 'last_n': 0},
+            'greater than or equal to 1',
+            id='last-n-positive',
+        ),
+        pytest.param(
+            {'where': GuardrailWhereType.OUTPUT, 'history': 'last'},
+            'where: output',
+            id='history-rejected-on-output',
+        ),
+    ],
+)
+def test_invalid_history(overrides, match):
+    with pytest.raises(ValueError, match=match):
+        _guardrail(**overrides)
 
-    def test_history_is_rejected_on_output(self):
-        with pytest.raises(ValueError, match='where: output'):
-            _guardrail(where=GuardrailWhereType.OUTPUT, history='last')
 
-    def test_output_without_history_is_accepted(self):
-        g = _guardrail(where=GuardrailWhereType.OUTPUT)
-        assert g.history == GuardrailHistory.ALL
-
-    def test_output_guardrail_loads_again_after_a_dump(self):
-        g = _guardrail(where=GuardrailWhereType.OUTPUT)
-        assert Guardrail.model_validate(g.model_dump()) == g
-
-    def test_history_is_accepted_on_io(self):
-        g = _guardrail(where=GuardrailWhereType.IO, history='last')
-        assert g.history == GuardrailHistory.LAST
-
-    def test_narrow_history_on_anonymizer_warns(self, caplog):
-        with caplog.at_level(logging.WARNING):
-            _guardrail(
-                type=GuardrailType.PRESIDIO_ANONYMIZER,
-                parameters=RedactParameter(entities=['PERSON']),
-                history='last',
-            )
-        assert 'does not redact older messages' in caplog.text
+def test_narrow_history_on_anonymizer_warns(caplog):
+    with caplog.at_level(logging.WARNING):
+        _guardrail(
+            type=GuardrailType.PRESIDIO_ANONYMIZER,
+            parameters=RedactParameter(entities=['PERSON']),
+            history='last',
+        )
+    assert 'does not redact older messages' in caplog.text
 
 
 # ---------------------------------------------------------------------------
 # _select_messages
 # ---------------------------------------------------------------------------
 
-
-def _select(messages, where=GuardrailWhereType.INPUT, **kwargs):
-    window_kwargs = {k: kwargs.pop(k) for k in ('windowed', 'skip') if k in kwargs}
-    return _select_messages(messages, _guardrail(**kwargs), where, **window_kwargs)
+_USER_ONLY = [GuardrailMessageRole.USER]
+_INPUT = GuardrailWhereType.INPUT
 
 
-class TestSelectMessages:
-    def test_all_keeps_every_message_with_its_index(self):
-        assert _select(HISTORY) == list(enumerate(HISTORY))
-
-    def test_last_keeps_only_the_last_message(self):
-        assert _select(HISTORY, history='last') == [(3, USER_2)]
-
-    def test_last_n_keeps_the_tail(self):
-        got = _select(HISTORY, history='last_n', last_n=2)
-        assert got == [(2, AI_1), (3, USER_2)]
-
-    def test_last_n_larger_than_list_keeps_all(self):
-        got = _select(HISTORY, history='last_n', last_n=99)
-        assert got == list(enumerate(HISTORY))
-
-    def test_roles_filter_before_history(self):
-        """Last + [user] is the last user message, even if more follow."""
-        got = _select(
+@pytest.mark.parametrize(
+    ('messages', 'where', 'kwargs', 'expected'),
+    [
+        pytest.param(HISTORY, _INPUT, {}, list(enumerate(HISTORY)), id='all'),
+        pytest.param(HISTORY, _INPUT, {'history': 'last'}, [(3, USER_2)], id='last'),
+        pytest.param(
+            HISTORY,
+            _INPUT,
+            {'history': 'last_n', 'last_n': 2},
+            [(2, AI_1), (3, USER_2)],
+            id='last-n-tail',
+        ),
+        pytest.param(
+            HISTORY,
+            _INPUT,
+            {'history': 'last_n', 'last_n': 99},
+            list(enumerate(HISTORY)),
+            id='last-n-larger-than-list',
+        ),
+        # Last + [user] is the last user message, even if more follow.
+        pytest.param(
             [USER_1, AI_1],
-            history='last',
-            message_roles=[GuardrailMessageRole.USER],
-        )
-        assert got == [(0, USER_1)]
-
-    def test_roles_keep_the_original_index(self):
-        got = _select(
+            _INPUT,
+            {'history': 'last', 'message_roles': _USER_ONLY},
+            [(0, USER_1)],
+            id='roles-filter-before-history',
+        ),
+        pytest.param(
             HISTORY,
-            history='last_n',
-            last_n=2,
-            message_roles=[GuardrailMessageRole.USER],
-        )
-        assert got == [(1, USER_1), (3, USER_2)]
-
-    def test_judge_counts_user_messages_by_default(self):
-        """Epic table: judge, last_n 2, no roles reads [1, 3]."""
-        got = _select(
+            _INPUT,
+            {'history': 'last_n', 'last_n': 2, 'message_roles': _USER_ONLY},
+            [(1, USER_1), (3, USER_2)],
+            id='roles-keep-original-index',
+        ),
+        # where: io, output phase: history is for input only.
+        pytest.param(
             HISTORY,
-            type=GuardrailType.JUDGE,
-            parameters=JudgeParameter(prompt='Is it bad?', model_id='m1'),
-            history='last_n',
-            last_n=2,
-        )
-        assert got == [(1, USER_1), (3, USER_2)]
-
-    def test_output_ignores_history(self):
-        """where: io, output phase: history is for input only."""
-        got = _select_messages(
-            HISTORY,
-            _guardrail(where=GuardrailWhereType.IO, history='last'),
             GuardrailWhereType.OUTPUT,
-        )
-        assert got == list(enumerate(HISTORY))
-
-    def test_no_window_without_a_conversation(self):
-        got = _select(HISTORY, history='last', windowed=False)
-        assert got == list(enumerate(HISTORY))
-
-    def test_skip_drops_the_gateway_prompt(self):
-        got = _select([SYSTEM, *HISTORY], skip=1)
-        assert [m for _, m in got] == HISTORY
-        assert got[0][0] == 1
-
-    def test_empty_list(self):
-        assert _select([], history='last') == []
+            {'where': GuardrailWhereType.IO, 'history': 'last'},
+            list(enumerate(HISTORY)),
+            id='output-ignores-history',
+        ),
+        pytest.param(
+            HISTORY,
+            _INPUT,
+            {'history': 'last', 'windowed': False},
+            list(enumerate(HISTORY)),
+            id='no-window-without-conversation',
+        ),
+        pytest.param(
+            [SYSTEM, *HISTORY],
+            _INPUT,
+            {'skip': 1},
+            [(i + 1, m) for i, m in enumerate(HISTORY)],
+            id='skip-drops-gateway-prompt',
+        ),
+        pytest.param([], _INPUT, {'history': 'last'}, [], id='empty'),
+    ],
+)
+def test_select_messages(messages, where, kwargs, expected):
+    window_kwargs = {k: v for k, v in kwargs.items() if k in ('windowed', 'skip')}
+    guardrail_kwargs = {k: v for k, v in kwargs.items() if k not in window_kwargs}
+    got = _select_messages(
+        messages, _guardrail(**guardrail_kwargs), where, **window_kwargs
+    )
+    assert got == expected
 
 
 # ---------------------------------------------------------------------------
-# apply_guardrails: deterministic checks
+# apply_check: deterministic checks
 # ---------------------------------------------------------------------------
 
 
@@ -201,21 +216,22 @@ def _route(name='g'):
     return cfg
 
 
-def _check(guardrail: Guardrail, **engines) -> GuardrailCheck:
-    return GuardrailCheck(
+def _check(guardrail: Guardrail, **engines) -> Guardrails:
+    return Guardrails(
         presidio_engine=engines.get('presidio_engine', MagicMock()),
         judge_engine=engines.get('judge_engine', MagicMock()),
         cost_service=MagicMock(),
-        guardrails_by_name={guardrail.name: guardrail},
+        guardrails=[guardrail],
     )
 
 
-async def _run(check: GuardrailCheck, messages, **extra) -> GuardrailBadRequest | None:
+async def _run(check: Guardrails, messages, **extra) -> GuardrailBadRequest | None:
     with patch(
         'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event', autospec=True
     ):
         try:
-            await check.apply_guardrails(
+            await apply_check(
+                check,
                 route_config=_route(),
                 messages=messages,
                 where=GuardrailWhereType.INPUT,
@@ -227,104 +243,132 @@ async def _run(check: GuardrailCheck, messages, **extra) -> GuardrailBadRequest 
     return None
 
 
-class TestDeterministicChecks:
-    @pytest.mark.asyncio
-    async def test_all_points_at_the_client_system_message(self):
-        """Default: a system message the client sent is message 0 and counts."""
-        err = await _run(_check(_guardrail()), HISTORY)
-        assert err is not None
-        assert err.reason['message_indices'] == [0]
-        assert err.reason['role'] == 'system'
+def _reason(err: GuardrailBadRequest | None, expected: dict | None) -> dict | None:
+    """Return the reason keys ``expected`` names, or None when nothing was blocked."""
+    if err is None or expected is None:
+        return None if err is None else err.reason
+    return {k: err.reason[k] for k in expected}
 
-    @pytest.mark.asyncio
-    async def test_gateway_prompt_is_not_checked(self):
-        """The prompt from the route config is skipped, even with all."""
-        injected = SystemMessage(content=f'Never say {BAD}.')
-        assert await _run(_check(_guardrail()), [injected, USER_1], skip=1) is None
 
-    @pytest.mark.asyncio
-    async def test_gateway_prompt_does_not_shift_the_index(self):
-        injected = SystemMessage(content='Be kind.')
-        g = _guardrail(message_roles=[GuardrailMessageRole.ASSISTANT])
-        err = await _run(_check(g), [injected, *HISTORY], skip=1)
-        assert err is not None
-        assert err.reason['message_indices'] == [2]
+_ASSISTANT_ONLY = [GuardrailMessageRole.ASSISTANT]
 
-    @pytest.mark.asyncio
-    async def test_no_window_sees_old_messages(self):
-        """Embeddings and decision models: history is ignored."""
-        g = _guardrail(history='last')
-        err = await _run(_check(g), HISTORY, windowed=False)
-        assert err is not None
-        assert err.reason['message_indices'] == [0]
 
-    @pytest.mark.asyncio
-    async def test_roles_point_at_the_matched_message_not_the_prompt(self):
-        """Lab 05 fix: the reason comes from the filtered list."""
-        g = _guardrail(message_roles=[GuardrailMessageRole.ASSISTANT])
-        err = await _run(_check(g), HISTORY)
-        assert err is not None
-        assert err.reason['message_indices'] == [2]
-        assert err.reason['role'] == 'assistant'
-        assert 'Never mention' not in err.reason['context']
-        assert f'<<{BAD}>>' in err.reason['context']
-
-    @pytest.mark.asyncio
-    async def test_last_does_not_see_old_messages(self):
-        g = _guardrail(history='last')
-        assert await _run(_check(g), HISTORY) is None
-
-    @pytest.mark.asyncio
-    async def test_last_triggers_on_the_last_message(self):
-        g = _guardrail(history='last')
-        err = await _run(_check(g), [*HISTORY, HumanMessage(content=f'Tell {BAD}')])
-        assert err is not None
-        assert err.reason['message_indices'] == [4]
-        assert err.reason['role'] == 'user'
-
-    @pytest.mark.asyncio
-    async def test_last_n_sees_only_the_tail(self):
-        g = _guardrail(history='last_n', last_n=2)
-        err = await _run(_check(g), HISTORY)
-        assert err is not None
-        assert err.reason['message_indices'] == [2]
-
-        g = _guardrail(history='last_n', last_n=1)
-        assert await _run(_check(g), HISTORY) is None
-
-    @pytest.mark.asyncio
-    async def test_empty_text_does_not_shift_the_index(self):
-        msgs = [HumanMessage(content=''), HumanMessage(content=f'say {BAD}')]
-        err = await _run(_check(_guardrail()), msgs)
-        assert err is not None
-        assert err.reason['message_indices'] == [1]
-
-    @pytest.mark.asyncio
-    async def test_regex_reports_pattern_and_index(self):
-        g = _guardrail(
-            type=GuardrailType.REGEX,
-            parameters=CheckParameter(values=[r'\d \+ \d']),
-            history='last',
-        )
-        err = await _run(_check(g), HISTORY)
-        assert err is not None
-        assert err.reason['kind'] == 'regex'
-        assert err.reason['pattern'] == r'\d \+ \d'
-        assert err.reason['message_indices'] == [3]
-
-    @pytest.mark.asyncio
-    async def test_starts_with_and_ends_with(self):
-        g = _guardrail(
-            type=GuardrailType.STARTS_WITH, parameters=CheckParameter(values=['What'])
-        )
-        err = await _run(_check(g), HISTORY)
-        assert err is not None and err.reason['message_indices'] == [3]
-
-        g = _guardrail(
-            type=GuardrailType.ENDS_WITH, parameters=CheckParameter(values=['there'])
-        )
-        err = await _run(_check(g), HISTORY)
-        assert err is not None and err.reason['message_indices'] == [1]
+@pytest.mark.parametrize(
+    ('overrides', 'messages', 'extra', 'expected'),
+    [
+        # Default: a system message the client sent is message 0 and counts.
+        pytest.param(
+            {},
+            HISTORY,
+            {},
+            {'message_indices': [0], 'role': 'system'},
+            id='all-points-at-client-system-message',
+        ),
+        # The prompt from the route config is skipped, even with all.
+        pytest.param(
+            {},
+            [SystemMessage(content=f'Never say {BAD}.'), USER_1],
+            {'skip': 1},
+            None,
+            id='gateway-prompt-not-checked',
+        ),
+        pytest.param(
+            {'message_roles': _ASSISTANT_ONLY},
+            [SystemMessage(content='Be kind.'), *HISTORY],
+            {'skip': 1},
+            {'message_indices': [2], 'role': 'assistant'},
+            id='gateway-prompt-does-not-shift-index',
+        ),
+        # Embeddings and decision models: history is ignored.
+        pytest.param(
+            {'history': 'last'},
+            HISTORY,
+            {'windowed': False},
+            {'message_indices': [0], 'role': 'system'},
+            id='no-window-sees-old-messages',
+        ),
+        # Lab 05 fix: the reason comes from the filtered list, not the prompt.
+        pytest.param(
+            {'message_roles': _ASSISTANT_ONLY},
+            HISTORY,
+            {},
+            {
+                'kind': 'contains',
+                'value': BAD,
+                'message_indices': [2],
+                'role': 'assistant',
+                'context': f'I know about <<{BAD}>> but I will …',
+            },
+            id='roles-point-at-matched-message',
+        ),
+        pytest.param({'history': 'last'}, HISTORY, {}, None, id='last-skips-old'),
+        pytest.param(
+            {'history': 'last'},
+            [*HISTORY, HumanMessage(content=f'Tell {BAD}')],
+            {},
+            {'message_indices': [4], 'role': 'user'},
+            id='last-triggers-on-last',
+        ),
+        pytest.param(
+            {'history': 'last_n', 'last_n': 2},
+            HISTORY,
+            {},
+            {'message_indices': [2], 'role': 'assistant'},
+            id='last-n-2-sees-tail',
+        ),
+        pytest.param(
+            {'history': 'last_n', 'last_n': 1}, HISTORY, {}, None, id='last-n-1-misses'
+        ),
+        pytest.param(
+            {},
+            [HumanMessage(content=''), HumanMessage(content=f'say {BAD}')],
+            {},
+            {'message_indices': [1], 'role': 'user'},
+            id='empty-text-does-not-shift-index',
+        ),
+        pytest.param(
+            {
+                'type': GuardrailType.REGEX,
+                'parameters': CheckParameter(values=[r'\d \+ \d']),
+                'history': 'last',
+            },
+            HISTORY,
+            {},
+            {
+                'kind': 'regex',
+                'pattern': r'\d \+ \d',
+                'message_indices': [3],
+                'role': 'user',
+                'context': 'What is <<2>> <<+>> <<2?>>',
+            },
+            id='regex-reports-pattern-and-index',
+        ),
+        pytest.param(
+            {
+                'type': GuardrailType.STARTS_WITH,
+                'parameters': CheckParameter(values=['What']),
+            },
+            HISTORY,
+            {},
+            {'message_indices': [3], 'role': 'user'},
+            id='starts-with',
+        ),
+        pytest.param(
+            {
+                'type': GuardrailType.ENDS_WITH,
+                'parameters': CheckParameter(values=['there']),
+            },
+            HISTORY,
+            {},
+            {'message_indices': [1], 'role': 'user'},
+            id='ends-with',
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_deterministic_check(overrides, messages, extra, expected):
+    err = await _run(_check(_guardrail(**overrides)), messages, **extra)
+    assert _reason(err, expected) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -396,57 +440,62 @@ def _judge_guardrail(**overrides) -> Guardrail:
     )
 
 
-def _judge_check(g: Guardrail) -> GuardrailCheck:
+def _judge_check(g: Guardrail) -> Guardrails:
     chk = _check(g, judge_engine=_TriggeringJudge())
-    chk._chat_models_by_id = {
+    chk._check._chat_models_by_id = {
         'm1': Model(model_id='m1', model='mock/gateway', credentials=None, params={})
     }
     return chk
 
 
-class TestJudge:
-    @pytest.mark.asyncio
-    async def test_all_reports_every_message_read(self):
-        """No roles: the judge reads every user turn as one text."""
-        err = await _run(_judge_check(_judge_guardrail()), HISTORY)
-        assert err is not None
-        assert err.reason['message_indices'] == [1, 3]
-        assert err.reason['role'] is None
-
-    @pytest.mark.asyncio
-    async def test_last_n_counts_user_messages(self):
-        g = _judge_guardrail(history='last_n', last_n=2)
-        err = await _run(_judge_check(g), HISTORY)
-        assert err is not None
-        assert err.reason['message_indices'] == [1, 3]
-
-    @pytest.mark.asyncio
-    async def test_blank_messages_are_not_counted_as_read(self):
-        """The judge drops blank text, so the index must not count it."""
-        msgs = [HumanMessage(content='   '), HumanMessage(content='real')]
-        err = await _run(_judge_check(_judge_guardrail()), msgs)
-        assert err is not None
-        assert err.reason['message_indices'] == [1]
-
-    @pytest.mark.asyncio
-    async def test_last_reads_the_last_user_message(self):
-        msgs = [*HISTORY, AIMessage(content='4')]
-        err = await _run(_judge_check(_judge_guardrail(history='last')), msgs)
-        assert err is not None
-        assert err.reason['message_indices'] == [3]
-        assert err.reason['role'] == 'user'
-        assert err.reason['context'] == USER_2.content
-
-    @pytest.mark.asyncio
-    async def test_roles_list_what_the_judge_read(self):
-        g = _judge_guardrail(
-            message_roles=[GuardrailMessageRole.ASSISTANT, GuardrailMessageRole.USER],
-            history='last_n',
-            last_n=2,
-        )
-        err = await _run(_judge_check(g), HISTORY)
-        assert err is not None
-        assert err.reason['message_indices'] == [2, 3]
+@pytest.mark.parametrize(
+    ('overrides', 'messages', 'expected'),
+    [
+        # No roles: the judge reads every user turn as one text.
+        pytest.param(
+            {},
+            HISTORY,
+            {'message_indices': [1, 3], 'role': None, 'context': USER_2.content},
+            id='all-reports-every-message-read',
+        ),
+        pytest.param(
+            {'history': 'last_n', 'last_n': 2},
+            HISTORY,
+            {'message_indices': [1, 3], 'role': None},
+            id='last-n-counts-user-messages',
+        ),
+        # The judge drops blank text, so the index must not count it.
+        pytest.param(
+            {},
+            [HumanMessage(content='   '), HumanMessage(content='real')],
+            {'message_indices': [1], 'role': 'user'},
+            id='blank-messages-not-counted',
+        ),
+        pytest.param(
+            {'history': 'last'},
+            [*HISTORY, AIMessage(content='4')],
+            {'message_indices': [3], 'role': 'user', 'context': USER_2.content},
+            id='last-reads-last-user-message',
+        ),
+        pytest.param(
+            {
+                'message_roles': [
+                    GuardrailMessageRole.ASSISTANT,
+                    GuardrailMessageRole.USER,
+                ],
+                'history': 'last_n',
+                'last_n': 2,
+            },
+            HISTORY,
+            {'message_indices': [2, 3], 'role': None},
+            id='roles-list-what-judge-read',
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_judge_reports_messages_read(overrides, messages, expected):
+    err = await _run(_judge_check(_judge_guardrail(**overrides)), messages)
+    assert _reason(err, expected) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -464,8 +513,11 @@ class TestRedactWindow:
             parameters=RedactParameter(entities=['PERSON']),
             history='last',
         )
-        redact = GuardrailRedact(
-            presidio_engine=MagicMock(), guardrails_by_name={'red': g}
+        redact = Guardrails(
+            presidio_engine=MagicMock(),
+            judge_engine=MagicMock(),
+            cost_service=MagicMock(),
+            guardrails=[g],
         )
 
         async def fake_anonymize(text, *args, **kwargs):
@@ -481,7 +533,8 @@ class TestRedactWindow:
                 autospec=True,
             ),
         ):
-            out = await redact.apply_guardrails(
+            out = await apply_redact(
+                redact,
                 route_config=_route('red'),
                 messages=list(HISTORY),
                 where=GuardrailWhereType.INPUT,

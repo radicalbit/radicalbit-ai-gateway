@@ -27,13 +27,16 @@ from radicalbit_ai_gateway.llm.messages import (
     tool_call,
     tool_call_chunk,
 )
+from radicalbit_ai_gateway.llm.providers._schema import (
+    OutputParserError,
+    is_data_content_block,
+    pydantic_to_function,
+)
 
 logger = logging.getLogger(__name__)
 
 Api = Literal['chat/completions', 'responses']
 
-# Data block types of the LangChain standard content format.
-_DATA_BLOCK_TYPES = ('image', 'video', 'audio', 'text-plain', 'file')
 
 # Tool types OpenAI defines besides plain functions; passed through untouched.
 WELL_KNOWN_TOOL_TYPES = (
@@ -64,16 +67,13 @@ WELL_KNOWN_TOOL_CHOICES = (
 )
 
 
-class OutputParserError(ValueError):
-    """A reply could not be parsed into the requested structure."""
-
-    def __init__(self, message: str):
-        # Same message as LangChain's OutputParserException.
-        super().__init__(
-            f'{message}\nFor troubleshooting, visit: '
-            'https://docs.langchain.com/oss/python/langchain/errors/'
-            'OUTPUT_PARSING_FAILURE '
-        )
+def _parser_error(message: str) -> OutputParserError:
+    # Same message as LangChain's OutputParserException.
+    return OutputParserError(
+        f'{message}\nFor troubleshooting, visit: '
+        'https://docs.langchain.com/oss/python/langchain/errors/'
+        'OUTPUT_PARSING_FAILURE '
+    )
 
 
 class StreamChunkTimeoutError(TimeoutError):
@@ -87,24 +87,6 @@ class StreamChunkTimeoutError(TimeoutError):
 
 
 # ── Request messages ─────────────────────────────────────────────────────────
-
-
-def is_data_content_block(block: dict) -> bool:
-    if block.get('type') not in _DATA_BLOCK_TYPES:
-        return False
-    if any(key in block for key in ('url', 'base64', 'file_id', 'text')):
-        return True
-    if 'source_type' in block:
-        source_type = block['source_type']
-        if (source_type == 'url' and 'url' in block) or (
-            source_type == 'base64' and 'data' in block
-        ):
-            return True
-        if (source_type == 'id' and 'id' in block) or (
-            source_type == 'text' and 'url' in block
-        ):
-            return True
-    return False
 
 
 def _image_block(block: dict) -> dict:
@@ -360,47 +342,6 @@ def message_to_dict(message: BaseMessage, api: Api = 'chat/completions') -> dict
 # ── Tools and structured output ──────────────────────────────────────────────
 
 
-def _rm_titles(kv: dict, prev_key: str = '') -> dict:
-    new_kv = {}
-    for k, v in kv.items():
-        if k == 'title':
-            # A property may itself be named "title".
-            if isinstance(v, dict) and prev_key == 'properties':
-                new_kv[k] = _rm_titles(v, k)
-        elif isinstance(v, dict):
-            new_kv[k] = _rm_titles(v, k)
-        else:
-            new_kv[k] = v
-    return new_kv
-
-
-def _dereference(node: Any, defs: dict) -> Any:
-    if isinstance(node, dict):
-        ref = node.get('$ref')
-        if isinstance(ref, str) and ref.startswith('#/$defs/'):
-            target = _dereference(copy.deepcopy(defs[ref.split('/')[-1]]), defs)
-            rest = {k: _dereference(v, defs) for k, v in node.items() if k != '$ref'}
-            return {**target, **rest}
-        return {k: _dereference(v, defs) for k, v in node.items()}
-    if isinstance(node, list):
-        return [_dereference(v, defs) for v in node]
-    return node
-
-
-def pydantic_to_function(schema: type[BaseModel]) -> dict:
-    """Describe a pydantic model as an OpenAI function definition."""
-    json_schema = schema.model_json_schema()
-    defs = json_schema.pop('$defs', {})
-    json_schema = _dereference(json_schema, defs)
-    title = json_schema.pop('title', '')
-    description = json_schema.pop('description', '')
-    return {
-        'name': title,
-        'description': description,
-        'parameters': _rm_titles(json_schema),
-    }
-
-
 def _set_additional_properties_false(schema: Any) -> Any:
     if isinstance(schema, dict):
         properties = schema.get('properties')
@@ -572,7 +513,7 @@ def parse_first_tool_call(message: AIMessage, schema: type[BaseModel]) -> Any:
         )
     name = schema.model_config.get('title') or schema.__name__
     if first['type'] != name:
-        raise OutputParserError(
+        raise _parser_error(
             f'Unknown tool type: {first["type"]!r}. Available tools: {name}'
         )
     return schema(**first['args'])
@@ -592,7 +533,7 @@ def parse_raw_tool_call(raw: dict) -> dict | None:
         try:
             args = json.loads(arguments, strict=False)
         except json.JSONDecodeError as e:
-            raise OutputParserError(
+            raise _parser_error(
                 f'Function {raw["function"]["name"]} arguments:\n\n'
                 f'{arguments}\n\nare not valid JSON. '
                 f'Received JSONDecodeError {e}'

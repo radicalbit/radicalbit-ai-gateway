@@ -215,7 +215,10 @@ class GuardrailBadRequest(GuardrailError):
         *,
         log_message: str | None = None,
         reason: dict | None = None,
+        headers: dict[str, str] | None = None,
     ):
+        # The gateway's headers of the request so far (cache, guardrails).
+        self.headers = headers or {}
         super().__init__(
             message,
             status.HTTP_400_BAD_REQUEST,
@@ -472,7 +475,9 @@ class ModelInvokerInternalError(ModelInvokerError):
 
 
 class ModelInvokerBadGateway(ModelInvokerError):
-    """No upstream attempt got a response: every call errored or timed out."""
+    """No upstream attempt got a response (every call errored or timed out), or
+    the provider refused the gateway's own access to it (a 401 or 403).
+    """
 
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
@@ -843,6 +848,7 @@ def guardrail_exception_handler(request: Request, err: GuardrailError):
         sanitized_reason.pop('threshold', None)
         payload = {**payload, 'reason': sanitized_reason}
     response = _log_and_json_response(err, 'guardrail_error', param_override=payload)
+    response.headers.update(getattr(err, 'headers', None) or {})
     # Surface that a guardrail (hard block) was triggered
     response.headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
     return response

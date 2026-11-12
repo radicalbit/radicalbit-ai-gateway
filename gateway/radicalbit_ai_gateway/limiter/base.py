@@ -85,14 +85,28 @@ class BaseFixedWindowLimiter(ABC):
             Consumption with the new counter value and the window's ID.
 
         """
-        key = self._build_key(item)
+        value, window_id = await self._storage.increment(
+            *self.increment_args(item, cost)
+        )
+        return Consumption(value=value, window_id=window_id)
+
+    def increment_args(
+        self, item: WindowConfig, cost: int
+    ) -> tuple[str, int, int, int]:
+        """Return the storage ``increment`` arguments that consume ``cost``.
+
+        Args:
+            item: Limit configuration.
+            cost: Cost of the operation.
+
+        Returns:
+            Tuple of (key, cost, ttl_seconds, window_start).
+
+        """
         window_start, ttl_remaining = self._calculate_window_boundary(
             item.window_seconds
         )
-        value, window_id = await self._storage.increment(
-            key, cost, ttl_remaining, window_start
-        )
-        return Consumption(value=value, window_id=window_id)
+        return self._build_key(item), cost, ttl_remaining, window_start
 
     async def get_window_stats(self, item: WindowConfig) -> WindowStats:
         """Get remaining capacity and reset time for a window.

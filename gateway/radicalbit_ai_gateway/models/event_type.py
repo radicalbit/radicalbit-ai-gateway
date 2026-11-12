@@ -31,3 +31,10 @@ class EventType(str, Enum):
 LIMIT_BLOCK_EVENT_TYPES: tuple[str, ...] = tuple(
     t.value for t in EventType if t.value.endswith('_LIMIT')
 )
+
+# The events that count the tokens a request consumed, judges included.
+# Tokens and cost of a request are summed over these.
+PROCESSED_TOKEN_EVENT_TYPES: tuple[str, ...] = (
+    EventType.INPUT_TOKEN_PROCESSED.value,
+    EventType.OUTPUT_TOKEN_PROCESSED.value,
+)

@@ -1,5 +1,4 @@
 import datetime
-import unittest
 from unittest.mock import MagicMock
 import uuid
 
@@ -38,54 +37,8 @@ _MCP_CONFIG_WITH_SECRET = (
     '      Authorization: !secret GITHUB_TOKEN\n'
 )
 
-
-def _served_configs_dao(served: list[tuple[ProjectRef, str]]) -> ProjectConfigDAO:
-    """Return a DAO stand-in serving the given (project, config) pairs as published."""
-    dao = MagicMock(spec_set=ProjectConfigDAO)
-    dao.list_served_with_project_name.return_value = [
-        ServedConfigWithProject(config_file, project.uuid, project.name)
-        for project, config_file in served
-    ]
-    return dao
-
-
-class SecretServiceBackendKeysTest(unittest.TestCase):
-    """Backend key listing only — no served-configuration usage involved."""
-
-    def _service(self, secrets: dict[str, str]) -> SecretService:
-        return SecretService(
-            project_config_dao=_served_configs_dao([]),
-            secret_provider_factory=lambda: FakeSecretProvider(secrets),
-        )
-
-    def test_get_secrets_returns_a_row_per_backend_key(self):
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy-key'})
-        assert service.get_secrets() == [SecretOut(key='OPENAI_API_KEY')]
-
-    def test_get_secrets_returns_no_values(self):
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy-key'})
-        rows = service.get_secrets()
-        assert 'sk-dummy-key' not in str(rows[0].model_dump())
-
-    def test_get_secrets_empty_backend(self):
-        assert self._service({}).get_secrets() == []
-
-    def test_get_secrets_sorts_by_key(self):
-        service = self._service({'ZETA': 'z', 'ALPHA': 'a', 'MIKE': 'm'})
-        assert [row.key for row in service.get_secrets()] == ['ALPHA', 'MIKE', 'ZETA']
-
-    def test_get_secrets_reads_the_backend_on_every_call(self):
-        # The page must never show a stale snapshot, so the provider is built
-        # per call. A backend that gained a key between calls shows it on the
-        # second.
-        secrets = {'ALPHA': 'a'}
-        service = SecretService(
-            project_config_dao=_served_configs_dao([]),
-            secret_provider_factory=lambda: FakeSecretProvider(dict(secrets)),
-        )
-        assert [row.key for row in service.get_secrets()] == ['ALPHA']
-        secrets['BRAVO'] = 'b'
-        assert [row.key for row in service.get_secrets()] == ['ALPHA', 'BRAVO']
+# The project is named after a key, so searching a key cannot match it.
+PROJECT = ProjectRef(uuid=uuid.uuid4(), name='openai-project')
 
 
 def _config_referencing(*keys: str) -> str:
@@ -96,131 +49,133 @@ def _config_referencing(*keys: str) -> str:
     return f'chat_models:\n{models}'
 
 
-class SecretServiceUnavailableTest(unittest.TestCase):
-    """Row set is the union of backend keys and published references."""
-
-    def setUp(self):
-        self.project = ProjectRef(uuid=uuid.uuid4(), name='project-a')
-
-    def _service(self, secrets: dict[str, str], *referenced_keys: str) -> SecretService:
-        served = (
-            [(self.project, _config_referencing(*referenced_keys))]
-            if referenced_keys
-            else []
-        )
-        return SecretService(
-            project_config_dao=_served_configs_dao(served),
-            secret_provider_factory=lambda: FakeSecretProvider(secrets),
-        )
-
-    def test_key_referenced_but_absent_from_backend_is_unavailable(self):
-        service = self._service({}, 'DEAD_TOKEN')
-
-        assert service.get_secrets() == [
-            SecretOut(
-                key='DEAD_TOKEN',
-                used_in=[self.project],
-                status=SecretStatus.UNAVAILABLE,
+def _service(secret_provider_factory, *referenced_keys: str) -> SecretService:
+    """Build a service on a DAO serving one config of PROJECT that references the keys."""
+    dao = MagicMock(spec_set=ProjectConfigDAO)
+    dao.list_served_with_project_name.return_value = (
+        [
+            ServedConfigWithProject(
+                _config_referencing(*referenced_keys), PROJECT.uuid, PROJECT.name
             )
         ]
-
-    def test_key_in_backend_and_referenced_carries_no_status(self):
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy'}, 'OPENAI_API_KEY')
-
-        assert service.get_secrets() == [
-            SecretOut(key='OPENAI_API_KEY', used_in=[self.project], status=None)
-        ]
-
-    def test_key_in_backend_and_unreferenced_carries_no_status(self):
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy'})
-
-        assert service.get_secrets() == [
-            SecretOut(key='OPENAI_API_KEY', used_in=[], status=None)
-        ]
-
-    def test_unavailable_rows_sort_first_then_by_key(self):
-        service = self._service(
-            {'ALPHA': 'a', 'MIKE': 'm'}, 'ZULU_DEAD', 'BRAVO_DEAD', 'MIKE'
-        )
-
-        assert [(row.key, row.status) for row in service.get_secrets()] == [
-            ('BRAVO_DEAD', SecretStatus.UNAVAILABLE),
-            ('ZULU_DEAD', SecretStatus.UNAVAILABLE),
-            ('ALPHA', None),
-            ('MIKE', None),
-        ]
-
-    def test_status_clears_once_the_key_is_back_in_the_backend(self):
-        secrets: dict[str, str] = {}
-        service = SecretService(
-            project_config_dao=_served_configs_dao(
-                [(self.project, _config_referencing('DEAD_TOKEN'))]
-            ),
-            secret_provider_factory=lambda: FakeSecretProvider(dict(secrets)),
-        )
-        assert service.get_secrets()[0].status == SecretStatus.UNAVAILABLE
-
-        secrets['DEAD_TOKEN'] = 'restored'
-
-        assert service.get_secrets() == [
-            SecretOut(key='DEAD_TOKEN', used_in=[self.project], status=None)
-        ]
+        if referenced_keys
+        else []
+    )
+    return SecretService(
+        project_config_dao=dao, secret_provider_factory=secret_provider_factory
+    )
 
 
-class SecretServiceSearchTest(unittest.TestCase):
-    """Server-side search on the secret key."""
+def _available(key: str, *used_in: ProjectRef) -> SecretOut:
+    return SecretOut(key=key, used_in=list(used_in), status=None)
 
-    def setUp(self):
-        self.project = ProjectRef(uuid=uuid.uuid4(), name='openai-project')
 
-    def _service(self, secrets: dict[str, str], *referenced_keys: str) -> SecretService:
-        served = (
-            [(self.project, _config_referencing(*referenced_keys))]
-            if referenced_keys
-            else []
-        )
-        return SecretService(
-            project_config_dao=_served_configs_dao(served),
-            secret_provider_factory=lambda: FakeSecretProvider(secrets),
-        )
+def _unavailable(key: str) -> SecretOut:
+    return SecretOut(key=key, used_in=[PROJECT], status=SecretStatus.UNAVAILABLE)
 
-    def test_search_keeps_only_keys_containing_the_term(self):
-        service = self._service(
-            {'OPENAI_API_KEY': 'o', 'ANTHROPIC_API_KEY': 'a', 'GITHUB_TOKEN': 'g'}
-        )
 
-        assert [row.key for row in service.get_secrets(search='API')] == [
-            'ANTHROPIC_API_KEY',
-            'OPENAI_API_KEY',
-        ]
+@pytest.mark.parametrize(
+    ('secrets', 'referenced', 'search', 'expected'),
+    [
+        pytest.param({}, (), None, [], id='empty backend'),
+        pytest.param(
+            {'OPENAI_API_KEY': 'sk-dummy-key'},
+            (),
+            None,
+            [_available('OPENAI_API_KEY')],
+            id='a row per backend key',
+        ),
+        pytest.param(
+            {'ZETA': 'z', 'ALPHA': 'a', 'MIKE': 'm'},
+            (),
+            None,
+            [_available('ALPHA'), _available('MIKE'), _available('ZETA')],
+            id='sorted by key',
+        ),
+        pytest.param(
+            {},
+            ('DEAD_TOKEN',),
+            None,
+            [_unavailable('DEAD_TOKEN')],
+            id='referenced but absent from the backend',
+        ),
+        pytest.param(
+            {'OPENAI_API_KEY': 'sk-dummy'},
+            ('OPENAI_API_KEY',),
+            None,
+            [_available('OPENAI_API_KEY', PROJECT)],
+            id='in the backend and referenced',
+        ),
+        pytest.param(
+            {'ALPHA': 'a', 'MIKE': 'm'},
+            ('ZULU_DEAD', 'BRAVO_DEAD', 'MIKE'),
+            None,
+            [
+                _unavailable('BRAVO_DEAD'),
+                _unavailable('ZULU_DEAD'),
+                _available('ALPHA'),
+                _available('MIKE', PROJECT),
+            ],
+            id='unavailable first then by key',
+        ),
+        pytest.param(
+            {'OPENAI_API_KEY': 'o', 'ANTHROPIC_API_KEY': 'a', 'GITHUB_TOKEN': 'g'},
+            (),
+            'API',
+            [_available('ANTHROPIC_API_KEY'), _available('OPENAI_API_KEY')],
+            id='search keeps keys containing the term',
+        ),
+        pytest.param(
+            {'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'},
+            (),
+            'openai',
+            [_available('OPENAI_API_KEY')],
+            id='search ignores case',
+        ),
+        pytest.param(
+            {'ANTHROPIC_API_KEY': 'a'},
+            ('ANTHROPIC_API_KEY',),
+            'openai',
+            [],
+            id='search matches the key not the projects using it',
+        ),
+        pytest.param(
+            {'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'},
+            ('OPENAI_ORG_KEY',),
+            'OPENAI',
+            [_unavailable('OPENAI_ORG_KEY'), _available('OPENAI_API_KEY')],
+            id='search covers unavailable keys and keeps them first',
+        ),
+        pytest.param(
+            {'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'},
+            (),
+            '',
+            [_available('GITHUB_TOKEN'), _available('OPENAI_API_KEY')],
+            id='empty search filters nothing',
+        ),
+    ],
+)
+def test_get_secrets(secrets, referenced, search, expected):
+    service = _service(lambda: FakeSecretProvider(secrets), *referenced)
 
-    def test_search_ignores_case(self):
-        service = self._service({'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'})
+    assert service.get_secrets(search=search) == expected
 
-        assert [row.key for row in service.get_secrets(search='openai')] == [
-            'OPENAI_API_KEY'
-        ]
 
-    def test_search_matches_the_key_not_the_projects_using_it(self):
-        # The project is named 'openai-project'; only the key is searched.
-        service = self._service({'ANTHROPIC_API_KEY': 'a'}, 'ANTHROPIC_API_KEY')
+def test_get_secrets_reads_the_backend_on_every_call():
+    # The page must never show a stale snapshot, so the provider is built per
+    # call: a key added between calls shows up, and a referenced key that is
+    # back in the backend is no longer unavailable.
+    secrets = {'ALPHA': 'a'}
+    service = _service(lambda: FakeSecretProvider(dict(secrets)), 'DEAD_TOKEN')
+    assert service.get_secrets() == [_unavailable('DEAD_TOKEN'), _available('ALPHA')]
 
-        assert service.get_secrets(search='openai') == []
+    secrets |= {'BRAVO': 'b', 'DEAD_TOKEN': 'restored'}
 
-    def test_search_covers_unavailable_keys_and_keeps_them_first(self):
-        service = self._service(
-            {'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'}, 'OPENAI_ORG_KEY'
-        )
-
-        assert [(row.key, row.status) for row in service.get_secrets('OPENAI')] == [
-            ('OPENAI_ORG_KEY', SecretStatus.UNAVAILABLE),
-            ('OPENAI_API_KEY', None),
-        ]
-
-    def test_empty_search_filters_nothing(self):
-        service = self._service({'OPENAI_API_KEY': 'o', 'GITHUB_TOKEN': 'g'})
-
-        assert service.get_secrets(search='') == service.get_secrets()
+    assert service.get_secrets() == [
+        _available('ALPHA'),
+        _available('BRAVO'),
+        _available('DEAD_TOKEN', PROJECT),
+    ]
 
 
 class _UnreachableSecretProvider(FakeSecretProvider):
@@ -233,33 +188,26 @@ class _UnreachableSecretProvider(FakeSecretProvider):
         raise SecretsBackendError('connection refused')
 
 
-class SecretServiceBackendFailureTest(unittest.TestCase):
-    """A backend that cannot be listed fails the read instead of degrading."""
+def _failing_factory():
+    raise SecretsBackendError('authentication failed')
 
-    def _service(self, secret_provider_factory) -> SecretService:
-        project = ProjectRef(uuid=uuid.uuid4(), name='healthy-project')
-        return SecretService(
-            project_config_dao=_served_configs_dao(
-                [(project, _config_referencing('OPENAI_API_KEY'))]
-            ),
-            secret_provider_factory=secret_provider_factory,
-        )
 
-    def test_listing_failure_propagates(self):
-        # Not an empty list, and not every referenced key reported unavailable.
-        service = self._service(_UnreachableSecretProvider)
+@pytest.mark.parametrize(
+    ('factory', 'message'),
+    [
+        (_UnreachableSecretProvider, 'connection refused'),
+        (_failing_factory, 'authentication failed'),
+    ],
+)
+def test_backend_failure_propagates(factory, message):
+    # Not an empty list, and not every referenced key reported unavailable.
+    service = _service(factory, 'OPENAI_API_KEY')
 
-        with pytest.raises(SecretsBackendError):
-            service.get_secrets()
+    with pytest.raises(SecretsBackendError, match=message):
+        service.get_secrets()
 
-    def test_provider_construction_failure_propagates(self):
-        def failing_factory():
-            raise SecretsBackendError('authentication failed')
 
-        service = self._service(failing_factory)
-
-        with pytest.raises(SecretsBackendError):
-            service.get_secrets()
+_OPENAI_CONFIG = 'chat_models:\n  - model_id: m\n    api_key: !secret OPENAI_API_KEY\n'
 
 
 class SecretServiceUsedInTest(DatabaseIntegration):
@@ -270,149 +218,67 @@ class SecretServiceUsedInTest(DatabaseIntegration):
         super().setUpClass()
         cls.dao = ProjectConfigDAO(cls.db)
 
-    def _service(self, secrets: dict[str, str]) -> SecretService:
+    def _secrets(self, secrets: dict[str, str]) -> list[SecretOut]:
         return SecretService(
             project_config_dao=self.dao,
             secret_provider_factory=lambda: FakeSecretProvider(secrets),
-        )
+        ).get_secrets()
 
-    def _project(self, name: str = 'my-project'):
+    def _project(self, name: str):
         return self.insert(db_mock.get_sample_project(uuid=uuid.uuid4(), name=name))
 
-    def _served_config(self, project_uuid, config_file: str):
+    def _config(self, project, config_file: str, status=ConfigStatus.SERVED):
         return self.insert(
             db_mock.get_sample_project_config(
-                project_uuid=project_uuid,
-                config_file=config_file,
-                config_status=ConfigStatus.SERVED,
+                project_uuid=project.uuid, config_file=config_file, config_status=status
             )
         )
 
-    def _row(self, service: SecretService, key: str) -> SecretOut:
-        return next(r for r in service.get_secrets() if r.key == key)
-
-    def test_key_used_by_a_published_configuration(self):
-        project = self._project(name='project-a')
-        self._served_config(
-            project.uuid,
-            'chat_models:\n  - model_id: m\n    api_key: !secret OPENAI_API_KEY\n',
+    def test_published_configurations_make_a_key_used(self):
+        zebra = self._project('Zebra')
+        apple = self._project('apple')
+        mcp = self._project('project-mcp')
+        # A served row that fails to parse must never take the whole endpoint
+        # down for every other key and project.
+        broken = self._project('broken-project')
+        self._config(zebra, _OPENAI_CONFIG)
+        self._config(
+            apple,
+            'chat_models:\n  - model_id: m2\n    api_key: !secret OPENAI_API_KEY\n',
         )
+        self._config(mcp, _MCP_CONFIG_WITH_SECRET)
+        self._config(broken, 'chat_models: [\n  unterminated')
 
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy'})
+        secrets = self._secrets({'OPENAI_API_KEY': 'sk', 'GITHUB_TOKEN': 'ghp'})
 
-        assert self._row(service, 'OPENAI_API_KEY').used_in == [
-            ProjectRef(uuid=project.uuid, name='project-a')
+        assert secrets == [
+            _available('GITHUB_TOKEN', ProjectRef(uuid=mcp.uuid, name='project-mcp')),
+            _available(
+                'OPENAI_API_KEY',
+                # Sorted case-insensitively
+                ProjectRef(uuid=apple.uuid, name='apple'),
+                ProjectRef(uuid=zebra.uuid, name='Zebra'),
+            ),
         ]
 
-    def test_key_used_by_nobody(self):
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy'})
-        assert self._row(service, 'OPENAI_API_KEY').used_in == []
-
-    def test_key_referenced_only_by_a_draft_reads_as_unused(self):
-        project = self._project()
-        self.insert(
-            db_mock.get_sample_project_config(
-                project_uuid=project.uuid,
-                config_file='chat_models:\n'
-                '  - model_id: m\n'
-                '    api_key: !secret OPENAI_API_KEY\n',
-                config_status=ConfigStatus.DRAFT,
-            )
+    def test_drafts_and_deleted_configurations_use_no_key(self):
+        draft = self._project('draft-project')
+        # A key absent from the backend and referenced only by a draft is not a row
+        self._config(
+            draft,
+            _config_referencing('OPENAI_API_KEY', 'DRAFT_ONLY_KEY'),
+            status=ConfigStatus.DRAFT,
         )
-
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy'})
-
-        assert self._row(service, 'OPENAI_API_KEY').used_in == []
-
-    def test_key_absent_from_backend_and_referenced_only_by_a_draft_is_not_a_row(
-        self,
-    ):
-        project = self._project()
-        self.insert(
-            db_mock.get_sample_project_config(
-                project_uuid=project.uuid,
-                config_file='chat_models:\n'
-                '  - model_id: m\n'
-                '    api_key: !secret DRAFT_ONLY_KEY\n',
-                config_status=ConfigStatus.DRAFT,
-            )
-        )
-
-        service = self._service({})
-
-        assert 'DRAFT_ONLY_KEY' not in [row.key for row in service.get_secrets()]
-
-    def test_reference_inside_mcp_server_block_counts(self):
-        project = self._project(name='project-mcp')
-        self._served_config(project.uuid, _MCP_CONFIG_WITH_SECRET)
-
-        service = self._service({'GITHUB_TOKEN': 'ghp-dummy'})
-
-        assert self._row(service, 'GITHUB_TOKEN').used_in == [
-            ProjectRef(uuid=project.uuid, name='project-mcp')
-        ]
-
-    def test_soft_deleted_project_contributes_nothing(self):
-        project = self._project()
-        self._served_config(
-            project.uuid,
-            'chat_models:\n  - model_id: m\n    api_key: !secret OPENAI_API_KEY\n',
-        )
+        deleted_project = self._project('deleted-project')
+        self._config(deleted_project, _OPENAI_CONFIG)
         with self.db.begin_session() as session:
             session.execute(
                 update(Project)
-                .where(Project.uuid == project.uuid)
+                .where(Project.uuid == deleted_project.uuid)
                 .values(deleted_at=datetime.datetime.now(tz=_UTC))
             )
+        deleted_config = self._project('deleted-config')
+        self._config(deleted_config, _OPENAI_CONFIG)
+        self.dao.soft_delete_by_project(deleted_config.uuid)
 
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy'})
-
-        assert self._row(service, 'OPENAI_API_KEY').used_in == []
-
-    def test_soft_deleted_config_contributes_nothing(self):
-        project = self._project()
-        self._served_config(
-            project.uuid,
-            'chat_models:\n  - model_id: m\n    api_key: !secret OPENAI_API_KEY\n',
-        )
-        self.dao.soft_delete_by_project(project.uuid)
-
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy'})
-
-        assert self._row(service, 'OPENAI_API_KEY').used_in == []
-
-    def test_used_in_is_sorted_case_insensitively(self):
-        zebra = self._project(name='Zebra')
-        apple = self._project(name='apple')
-        self._served_config(
-            zebra.uuid,
-            'chat_models:\n  - model_id: m\n    api_key: !secret OPENAI_API_KEY\n',
-        )
-        self._served_config(
-            apple.uuid,
-            'chat_models:\n  - model_id: m2\n    api_key: !secret OPENAI_API_KEY\n',
-        )
-
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy'})
-
-        assert [p.name for p in self._row(service, 'OPENAI_API_KEY').used_in] == [
-            'apple',
-            'Zebra',
-        ]
-
-    def test_unparsable_served_config_is_skipped_not_raised(self):
-        # A served row that fails to parse must never take the whole
-        # endpoint down for every other key and project.
-        broken = self._project(name='broken-project')
-        self._served_config(broken.uuid, 'chat_models: [\n  unterminated')
-        healthy = self._project(name='healthy-project')
-        self._served_config(
-            healthy.uuid,
-            'chat_models:\n  - model_id: m\n    api_key: !secret OPENAI_API_KEY\n',
-        )
-
-        service = self._service({'OPENAI_API_KEY': 'sk-dummy'})
-
-        assert self._row(service, 'OPENAI_API_KEY').used_in == [
-            ProjectRef(uuid=healthy.uuid, name='healthy-project')
-        ]
+        assert self._secrets({'OPENAI_API_KEY': 'sk'}) == [_available('OPENAI_API_KEY')]
