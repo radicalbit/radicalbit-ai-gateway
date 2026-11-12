@@ -43,12 +43,12 @@ function RequestRow({ request }) {
         <span className="ml-auto text-xs">{formatTimestamp(createdAt)}</span>
       </div>
 
-      <div className="flex flex-wrap gap-x-4 gap-y-1 pl-4 text-xs">
-        <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} text="Credential" textProps={LABEL_PROPS} />
+      <div className="flex flex-wrap gap-x-4 gap-y-1 pl-4">
+        <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={LABEL_PROPS} />
 
-        <TextWithBold bold={formatMs(durationMs)} text="Duration" textProps={LABEL_PROPS} />
+        <TextWithBold bold={formatMs(durationMs)} size="small" text="Duration" textProps={LABEL_PROPS} />
 
-        <TextWithBold bold={formatCost(cost)} text="Cost" textProps={LABEL_PROPS} />
+        <TextWithBold bold={formatCost(cost)} size="small" text="Cost" textProps={LABEL_PROPS} />
       </div>
     </div>
   );

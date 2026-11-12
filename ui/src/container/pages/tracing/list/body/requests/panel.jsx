@@ -83,19 +83,19 @@ function Summary({ request }) {
 
   return (
     <div className="flex flex-wrap items-center gap-x-7 gap-y-2">
-      <TextWithBold bold={statusLine} boldProps={statusProps} text="Status" textProps={LABEL_PROPS} />
+      <TextWithBold bold={statusLine} boldProps={statusProps} size="small" text="Status" textProps={LABEL_PROPS} />
 
-      <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} text="Credential" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={LABEL_PROPS} />
 
-      <TextWithBold bold={<GroupLink groupName={groupName} groupUuid={groupUuid} />} text="Group" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<GroupLink groupName={groupName} groupUuid={groupUuid} />} size="small" text="Group" textProps={LABEL_PROPS} />
 
-      <TextWithBold bold={<SummaryTags tags={tags} />} text="Tags" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<SummaryTags tags={tags} />} size="small" text="Tags" textProps={LABEL_PROPS} />
 
-      <TextWithBold bold={formatMs(durationMs)} text="Duration" textProps={LABEL_PROPS} />
+      <TextWithBold bold={formatMs(durationMs)} size="small" text="Duration" textProps={LABEL_PROPS} />
 
-      <TextWithBold bold={tokens} text="Tokens" textProps={LABEL_PROPS} />
+      <TextWithBold bold={tokens} size="small" text="Tokens" textProps={LABEL_PROPS} />
 
-      <TextWithBold bold={formatCost(cost)} text="Cost" textProps={LABEL_PROPS} />
+      <TextWithBold bold={formatCost(cost)} size="small" text="Cost" textProps={LABEL_PROPS} />
     </div>
   );
 }
