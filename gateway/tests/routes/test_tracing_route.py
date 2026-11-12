@@ -659,6 +659,59 @@ class TestTracingRoute(unittest.TestCase):
         assert grandchild['spanId'] == 'span-grandchild'
         assert grandchild['children'] == []
 
+    def test_get_trace_by_id_tree_nodes_expose_category_and_kind(self):
+        created_at = int(
+            datetime.datetime(
+                2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+            ).timestamp()
+        )
+
+        def node(span_id, children=(), **fields):
+            return TreeNodeDTO(
+                span_id=span_id,
+                span_name=span_id,
+                duration_ms=1.0,
+                status_code='Unset',
+                created_at=created_at,
+                children=list(children),
+                **fields,
+            )
+
+        self.tracing_service.get_trace_by_id = MagicMock(
+            return_value=TraceDTO(
+                trace_id='trace-cat',
+                root_span_id='root',
+                total_spans=3,
+                duration_ms=1.0,
+                created_at=created_at,
+                latest_span_ts=created_at,
+                tree=node(
+                    'root',
+                    operation_category='endpoint',
+                    span_kind='workflow',
+                    children=[
+                        node(
+                            'invoke', operation_category='invocation', span_kind='task'
+                        ),
+                        node('bare'),
+                    ],
+                ),
+            )
+        )
+
+        response = self.client.get(f'{self.project_path}/traces/trace-cat')
+
+        assert response.status_code == 200
+        tree = response.json()['tree']
+        assert tree['operationCategory'] == 'endpoint'
+        assert tree['spanKind'] == 'workflow'
+        invoke, bare = tree['children']
+        assert invoke['operationCategory'] == 'invocation'
+        assert invoke['spanKind'] == 'task'
+        # A span with no category or kind leaves the fields out.
+        assert 'operationCategory' not in bare
+        assert 'spanKind' not in bare
+
     def test_get_trace_by_id_with_attributes(self):
         base_time = datetime.datetime(
             2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc

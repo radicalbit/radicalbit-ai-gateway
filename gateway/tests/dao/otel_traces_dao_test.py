@@ -459,6 +459,42 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         assert span.group_uuid == '550e8400-e29b-41d4-a716-446655440003'
         assert span.group_name == 'test-group'
 
+    def test_get_spans_by_trace_id_reads_category_and_kind(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        self.insert(
+            [
+                db_mock.get_sample_otel_span(
+                    timestamp=base_time,
+                    trace_id='trace-cat',
+                    span_id='span-invoke',
+                    span_attributes={
+                        'traceloop.association.properties.rb.gateway.operation_category': 'invocation',
+                        'traceloop.span.kind': 'task',
+                    },
+                ),
+                db_mock.get_sample_otel_span(
+                    timestamp=base_time + datetime.timedelta(milliseconds=1),
+                    trace_id='trace-cat',
+                    span_id='span-bare',
+                ),
+            ]
+        )
+
+        spans = {
+            s.span_id: s
+            for s in self.otel_traces_dao.get_spans_by_trace_id(
+                TEST_PROJECT_UUID, 'trace-cat'
+            )
+        }
+
+        assert spans['span-invoke'].operation_category == 'invocation'
+        assert spans['span-invoke'].span_kind == 'task'
+        # A missing map key reads as an empty string.
+        assert spans['span-bare'].operation_category == ''
+        assert spans['span-bare'].span_kind == ''
+
     def test_get_spans_by_trace_id_multiple_spans_ordered(self):
         """Test retrieving multiple spans ordered by timestamp."""
         base_time = datetime.datetime(

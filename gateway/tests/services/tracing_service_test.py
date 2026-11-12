@@ -620,6 +620,54 @@ class TracingServiceTest(unittest.TestCase):
         assert grandchild.span_id == 'span-grandchild'
         assert grandchild.children == []
 
+    def test_tree_nodes_carry_their_category_and_kind(self):
+        base_time = datetime.datetime(
+            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+
+        def span(span_id, parent, category='', kind=''):
+            return SpanRecord(
+                timestamp=base_time,
+                trace_id='trace-123',
+                request_uuid='12345678-1234-5678-1234-567812345678',
+                span_id=span_id,
+                span_name=span_id,
+                service_name='ai-gateway',
+                duration=1_000_000,
+                status_code='Unset',
+                parent_span_id=parent,
+                route_name='test-route',
+                api_key_uuid='',
+                api_key_name='',
+                group_uuid='',
+                group_name='',
+                operation_category=category,
+                span_kind=kind,
+            )
+
+        self.otel_traces_dao.get_spans_by_trace_id = MagicMock(
+            return_value=[
+                span('root', '', 'endpoint', 'workflow'),
+                span('auth', 'root', 'auth', 'task'),
+                span('invoke', 'root', 'invocation', 'task'),
+                span('bare', 'root'),
+            ]
+        )
+
+        tree = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
+
+        assert (tree.operation_category, tree.span_kind) == ('endpoint', 'workflow')
+        children = {c.span_id: c for c in tree.children}
+        assert children['auth'].operation_category == 'auth'
+        assert children['invoke'].operation_category == 'invocation'
+        assert children['invoke'].span_kind == 'task'
+        # A span with no such attribute answers None, not an empty string.
+        assert children['bare'].operation_category is None
+        assert children['bare'].span_kind is None
+        # Both fields come with the spans already read: no query per span.
+        self.otel_traces_dao.get_spans_by_trace_id.assert_called_once()
+        self.otel_traces_dao.get_span_by_trace_and_span_id.assert_not_called()
+
     def test_tree_nodes_carry_their_start_offset_from_the_root(self):
         base_time = datetime.datetime(
             2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc

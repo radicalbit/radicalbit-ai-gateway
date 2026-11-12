@@ -37,6 +37,7 @@ _INPUT_TOKENS_ATTR = "SpanAttributes['gen_ai.usage.input_tokens']"
 _OPERATION_CATEGORY_ATTR = (
     "SpanAttributes['traceloop.association.properties.rb.gateway.operation_category']"
 )
+_SPAN_KIND_ATTR = "SpanAttributes['traceloop.span.kind']"
 _TAGS_ATTR = "SpanAttributes['traceloop.association.properties.tags']"
 # Tags are stamped as one comma-joined "key=value,..." string (see
 # set_trace_attributes) since SpanAttributes values are scalar - splitByChar
@@ -93,6 +94,8 @@ _SPAN_FIELD_NAMES = [
     'output_tokens',
     'input_tokens',
     'tags',
+    'operation_category',
+    'span_kind',
 ]
 _SPAN_DETAIL_FIELD_NAMES = [
     'timestamp',
@@ -314,6 +317,8 @@ class OtelTracesDAO:
                 literal_column(_OUTPUT_TOKENS_ATTR).label('output_tokens'),
                 literal_column(_INPUT_TOKENS_ATTR).label('input_tokens'),
                 literal_column(_TAGS_EXPR).label('tags'),
+                literal_column(_OPERATION_CATEGORY_ATTR).label('operation_category'),
+                literal_column(_SPAN_KIND_ATTR).label('span_kind'),
             )
             .select_from(OtelTraces)
             .where(

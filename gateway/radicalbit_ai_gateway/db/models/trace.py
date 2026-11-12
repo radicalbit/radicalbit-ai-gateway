@@ -94,6 +94,9 @@ class SpanRecord(BaseModel):
     output_tokens: str | None = None
     input_tokens: str | None = None
     tags: list[str] = Field(default_factory=list)
+    # Empty when the span carries no such attribute
+    operation_category: str = ''
+    span_kind: str = ''
     # Additional fields for span detail
     span_attributes: dict = Field(default_factory=dict)
     status_message: str | None = None
