@@ -162,6 +162,25 @@ def test_decision_cost_is_shown_for_every_way_a_route_calls_a_decision_model(
     assert has_decision_models is expected
 
 
+@pytest.mark.parametrize(
+    ('route', 'expected'),
+    [
+        ('semantic-routed', True),
+        ('semantic-cached', True),
+        ('llm-routed', False),
+        ('plain', False),
+    ],
+)
+def test_embedding_cost_is_shown_for_every_way_a_route_calls_an_embedding_model(
+    config, route, expected
+):
+    _, _, has_embedding_models, *_ = config.get_route_feature_flags(
+        config.routes[route]
+    )
+
+    assert has_embedding_models is expected
+
+
 def test_used_models_carry_names_and_own_lists_stay_as_configured(config):
     out = EventService._build_route_config_out(config.routes['decision-judged'], config)
 

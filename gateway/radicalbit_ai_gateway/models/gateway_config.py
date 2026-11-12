@@ -203,16 +203,15 @@ class GatewayConfig(BaseModel):
             has_semantic_cache, has_transcription_models, has_decision_models)
 
         """
+        model_ids = self.route_model_ids(route_config)
         has_chat_models = bool(route_config.chat_models)
         has_judges = self.has_judge_guardrail(route_config)
-        has_embedding_models = (
-            route_config.embedding_models is not None
-            and len(route_config.embedding_models) > 0
-        )
+        # Semantic routing bills embedding cost too, not only served models.
+        has_embedding_models = bool(model_ids.embedding)
         has_semantic_cache = isinstance(route_config.caching, SemanticCaching)
         has_transcription_models = bool(route_config.transcription_models)
         # Judges and routing bill decision cost too, not only served models.
-        has_decision_models = bool(self.route_model_ids(route_config).decision)
+        has_decision_models = bool(model_ids.decision)
         return (
             has_chat_models,
             has_judges,
