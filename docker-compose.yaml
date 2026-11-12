@@ -13,7 +13,7 @@ services:
     build: .
     container_name: gateway
     ports:
-      - 9000:9000
+      - 127.0.0.1:9000:9000
     develop:
       watch:
         - path: ./gateway/radicalbit_ai_gateway
@@ -80,7 +80,7 @@ services:
     image: postgres:15
     container_name: postgres
     ports:
-      - 5432:5432
+      - 127.0.0.1:5432:5432
     environment:
       POSTGRES_DB: radicalbit
       POSTGRES_PASSWORD: postgres
@@ -119,7 +119,7 @@ services:
     image: adminer:5.4.1-standalone
     container_name: adminer
     ports:
-      - 8090:8080
+      - 127.0.0.1:8090:8080
     depends_on:
       postgres:
         condition: service_healthy
@@ -128,7 +128,7 @@ services:
     image: valkey/valkey:8.1.4
     container_name: valkey
     ports:
-      - 6379:6379
+      - 127.0.0.1:6379:6379
     command: valkey-server --appendonly yes
     volumes:
       - valkey-data:/data
@@ -142,7 +142,7 @@ services:
     image: valkey/valkey-bundle:8.1.4
     container_name: valkey-cache
     ports:
-      - 6380:6379
+      - 127.0.0.1:6380:6379
     command: valkey-server --appendonly yes
     volumes:
       - valkey-cache-data:/data
@@ -162,14 +162,14 @@ services:
       - RI_REDIS_PORT_CACHE=6379
     restart: always
     ports:
-      - "5540:5540"
+      - "127.0.0.1:5540:5540"
 
   clickhouse:
     image: clickhouse/clickhouse-server:25.12
     container_name: clickhouse
     ports:
-      - "8123:8123"  # HTTP interface
-      - "9002:9000"  # Native client
+      - "127.0.0.1:8123:8123"  # HTTP interface
+      - "127.0.0.1:9002:9000"  # Native client
     healthcheck:
       test: ["CMD", "clickhouse-client", "--host", "localhost"]
       interval: 5s
@@ -188,7 +188,7 @@ services:
     image: ghcr.io/caioricciuti/ch-ui:1.6.4
     restart: always
     ports:
-      - "5521:5521"
+      - "127.0.0.1:5521:5521"
     environment:
       VITE_CLICKHOUSE_URL: "http://localhost:8123"
       VITE_CLICKHOUSE_USER: "default"
