@@ -18,7 +18,7 @@ function LiveColumnTitle({ title }) {
     <div className="flex items-center gap-2">
       {title}
 
-      <InfoPopover content={LIVE_HELP}>
+      <InfoPopover childClassName="flex" content={LIVE_HELP}>
         <Pin noMargins size="micro" type="animated" />
 
         <span className="sr-only">{LIVE_HELP}</span>
