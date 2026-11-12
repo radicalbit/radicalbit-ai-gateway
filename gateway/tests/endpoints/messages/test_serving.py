@@ -51,7 +51,7 @@ async def test_an_empty_stream_sends_nothing():
 async def test_unexpected_failure_before_streaming_is_a_500_api_error():
     served = await _served(RuntimeError('secret internals'))
 
-    [(body, status_code)] = served
+    [(body, status_code, _)] = served
     assert status_code == 500
     assert json.loads(body) == {
         'type': 'error',
@@ -62,7 +62,7 @@ async def test_unexpected_failure_before_streaming_is_a_500_api_error():
 async def test_gateway_error_before_streaming_keeps_its_status_and_message():
     served = await _served(GatewayBadRequest('Route x has no chat models defined'))
 
-    [(body, status_code)] = served
+    [(body, status_code, _)] = served
     assert status_code == 400
     assert json.loads(body)['error'] == {
         'type': 'invalid_request_error',
@@ -73,7 +73,7 @@ async def test_gateway_error_before_streaming_keeps_its_status_and_message():
 async def test_upstream_refusal_before_streaming_is_relayed_as_sent():
     served = await _served(ModelInvokerUpstreamError('no', 529, OVERLOADED))
 
-    [(body, status_code)] = served
+    [(body, status_code, _)] = served
     assert status_code == 529
     assert json.loads(body) == OVERLOADED
 

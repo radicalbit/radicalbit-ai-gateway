@@ -63,7 +63,7 @@ def _next_sequence_number(frame: str, current: int) -> int:
 
 def serve_stream(
     frames: AsyncIterator[str],
-) -> AsyncIterator[str | tuple[str, int]]:
+) -> AsyncIterator[str | tuple[str, int, dict[str, str]]]:
     """Send a Responses stream to the client (see ``streams.serve_stream``):
     an error after the first frame ends the stream with an ``error`` event
     that follows the last frame's sequence number.

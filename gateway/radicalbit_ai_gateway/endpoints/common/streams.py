@@ -2,19 +2,22 @@
 
 from collections.abc import AsyncIterator, Callable, Iterable
 
+from radicalbit_ai_gateway.utils.exceptions import limit_scope_headers
+
 
 async def serve_stream(
     frames: AsyncIterator[str],
     *,
     refusal: Callable[[Exception], tuple[str, int]],
     stream_error: Callable[[Exception], str],
-) -> AsyncIterator[str | tuple[str, int]]:
+) -> AsyncIterator[str | tuple[str, int, dict[str, str]]]:
     """Send ``frames`` to the client.
 
     Nothing is sent before the first frame arrives, so a call that fails
     before streaming gets an HTTP error status: ``refusal`` returns its body
-    and status, sent as a ``(body, status)`` item (see
-    ``StreamingResponseWithStatusCode``). After that, the 200 is sent: an
+    and status, sent as a ``(body, status, headers)`` item (see
+    ``StreamingResponseWithStatusCode``); the headers name the limit scope
+    that blocked, if a limit did. After that, the 200 is sent: an
     error ends the stream with the frame ``stream_error`` returns.
 
     Both run in the ``except`` block that caught the error.
@@ -24,7 +27,7 @@ async def serve_stream(
     except StopAsyncIteration:
         return
     except Exception as exc:
-        yield refusal(exc)
+        yield (*refusal(exc), limit_scope_headers(exc))
         return
 
     try:

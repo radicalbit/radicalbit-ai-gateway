@@ -1177,7 +1177,7 @@ def test_a_responses_request_over_its_limit_is_not_served_from_the_cache(gateway
 
     assert first.status_code == 200
     assert second.status_code == 429
-    assert _cache_headers(second) == {}
+    assert _cache_headers(second) == {'X-RB-AIGATEWAY-LIMIT-SCOPE': 'route'}
     assert gateway.cache_events() == []
 
 

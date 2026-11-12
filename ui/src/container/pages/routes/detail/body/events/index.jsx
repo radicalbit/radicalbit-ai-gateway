@@ -6,16 +6,12 @@ import {
 import { useParams } from 'react-router-dom';
 import Caching from './items/caching';
 import useGetCachingItem from './items/caching/use-get-caching-items';
-import DurationLimiting from './items/duration-limiting';
-import useGetDurationLimitingItem from './items/duration-limiting/use-get-duration-limiting-items';
 import Fallbacks from './items/fallbacks';
 import useGetFallbacksItem from './items/fallbacks/use-get-fallbacks-items';
 import Guardrails from './items/guardrails';
 import useGetGuardrailsItem from './items/guardrails/use-get-guardrails-items';
-import RateLimiting from './items/rate-limiting';
-import useGetRateLimitingItem from './items/rate-limiting/use-get-rate-limiting-items';
-import TokensLimiting from './items/tokens-limiting';
-import useGetTokensLimitingItem from './items/tokens-limiting/use-get-tokens-limiting-items';
+import Limits from './items/limits';
+import useGetLimitsItem from './items/limits/use-get-limits-item';
 
 function Events() {
   const { name } = useParams();
@@ -25,9 +21,7 @@ function Events() {
   const cachingItem = useGetCachingItem();
   const fallbackItem = useGetFallbacksItem();
   const guardrailItem = useGetGuardrailsItem();
-  const rateLimitingItem = useGetRateLimitingItem();
-  const tokenLimitingItem = useGetTokensLimitingItem();
-  const durationLimitingItem = useGetDurationLimitingItem();
+  const limitsItem = useGetLimitsItem();
 
   if (isLoading) {
     return <IsLoading />;
@@ -59,18 +53,8 @@ function Events() {
     },
     {
       key: 4,
-      children: <RateLimiting />,
-      ...rateLimitingItem,
-    },
-    {
-      key: 5,
-      children: <TokensLimiting />,
-      ...tokenLimitingItem,
-    },
-    {
-      key: 6,
-      children: <DurationLimiting />,
-      ...durationLimitingItem,
+      children: <Limits />,
+      ...limitsItem,
     },
   ].filter((item) => !item.hidden);
 

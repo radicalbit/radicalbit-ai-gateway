@@ -53,6 +53,16 @@ MCP_ENTITY_COLUMNS: dict[str, McpEntityColumn] = {
 }
 
 
+# The ATTRIBUTES a limit event records to name the limit that fired.
+LIMIT_ATTRIBUTES = (
+    'limit_scope',
+    'category',
+    'window_seconds',
+    'maximum',
+    'consumption',
+)
+
+
 class EventDAO:
     def __init__(self, database: ClickHouseDatabase):
         self.db = database
@@ -671,15 +681,13 @@ class EventDAO:
             'where',
             'parameters',
             'behavior',
+            *LIMIT_ATTRIBUTES,
         ]
         event_types = [
             'FALLBACK',
             'GUARDRAIL',
-            'RATE_LIMIT',
-            'TOKEN_INPUT_LIMIT',
-            'TOKEN_OUTPUT_LIMIT',
-            'AUDIO_DURATION_LIMIT',
             'CACHE_HIT',
+            *LIMIT_BLOCK_EVENT_TYPES,
         ]
         row_number_col = (
             F.row_number()
@@ -699,6 +707,11 @@ class EventDAO:
             self.T.c['GUARDRAIL_WHERE'].label('where'),
             self.T.c['GUARDRAIL_PARAMS'].label('parameters'),
             self.T.c['GUARDRAIL_BEHAVIOR'].label('behavior'),
+            *(
+                # A missing map key reads as '', so it becomes NULL.
+                F.nullIf(self._attribute(attribute), '').label(attribute)
+                for attribute in LIMIT_ATTRIBUTES
+            ),
             row_number_col,
         ]
 
@@ -728,6 +741,7 @@ class EventDAO:
             subquery_stmt.c['where'],
             subquery_stmt.c['parameters'],
             subquery_stmt.c['behavior'],
+            *(subquery_stmt.c[attribute] for attribute in LIMIT_ATTRIBUTES),
         ]
 
         final_stmt = (

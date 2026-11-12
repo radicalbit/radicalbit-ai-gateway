@@ -43,7 +43,7 @@ def _error_body(exc: Exception) -> tuple[dict, int]:
 
 def serve_stream(
     frames: AsyncIterator[str],
-) -> AsyncIterator[str | tuple[str, int]]:
+) -> AsyncIterator[str | tuple[str, int, dict[str, str]]]:
     """Send a Messages stream to the client (see ``streams.serve_stream``):
     an error after the first frame ends the stream with an ``error`` event.
     """

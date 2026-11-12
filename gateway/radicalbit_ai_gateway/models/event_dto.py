@@ -17,6 +17,7 @@ from radicalbit_ai_gateway.db.models.event import (
     RequestStats,
     SemanticCacheCostData,
 )
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 
@@ -76,6 +77,35 @@ class DurationLimitEventDetailDTO(BaseEventDetailDTO):
     """DTO for AUDIO_DURATION_LIMIT event type."""
 
     event_type: Literal['AUDIO_DURATION_LIMIT']
+
+
+class LimitEventDetailDTO(BaseEventDetailDTO):
+    """A limit blocked a request: which scope, which limit, how far it was.
+
+    ``limit_scope`` says whether a route, a credential or the project's budget
+    blocked it. ``category`` is the limiter's scenario (``request_rate``,
+    ``token_input``, ``token_output``, ``audio_duration``, ``budget``).
+    ``window_seconds``, ``maximum`` and ``consumption`` are None on events
+    recorded before limit events carried them.
+    """
+
+    event_type: Literal[
+        'RATE_LIMIT',
+        'TOKEN_INPUT_LIMIT',
+        'TOKEN_OUTPUT_LIMIT',
+        'AUDIO_DURATION_LIMIT',
+        'BUDGET_LIMIT',
+        'CREDENTIAL_RATE_LIMIT',
+        'CREDENTIAL_TOKEN_INPUT_LIMIT',
+        'CREDENTIAL_TOKEN_OUTPUT_LIMIT',
+        'CREDENTIAL_BUDGET_LIMIT',
+        'PROJECT_BUDGET_LIMIT',
+    ]
+    limit_scope: LimitScope
+    category: str
+    window_seconds: int | None = None
+    maximum: float | None = None
+    consumption: float | None = None
 
 
 class CacheHitEventDetailDTO(BaseEventDetailDTO):
@@ -447,6 +477,7 @@ class LastNEvents(BaseModel):
         default_factory=list
     )
     cache_triggered: list[CacheHitEventDetailDTO] | None = Field(default_factory=list)
+    limits: list[LimitEventDetailDTO] = Field(default_factory=list)
 
     @staticmethod
     def create_dto(
@@ -457,6 +488,7 @@ class LastNEvents(BaseModel):
         token_output_limit: list[TokenOutputLimitEventDetailDTO],
         duration_limit: list[DurationLimitEventDetailDTO],
         cache_triggered: list[CacheHitEventDetailDTO],
+        limits: list[LimitEventDetailDTO],
         route_config: GatewayRouteConfig,
     ) -> 'LastNEvents':
         return LastNEvents(
@@ -475,6 +507,7 @@ class LastNEvents(BaseModel):
             cache_triggered=cache_triggered
             if route_config.caching is not None
             else None,
+            limits=limits,
         )
 
     model_config = ConfigDict(

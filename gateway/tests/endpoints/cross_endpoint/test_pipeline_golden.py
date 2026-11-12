@@ -336,7 +336,7 @@ GOLDEN = [
         {
             'status': 429,
             'body': {'error': {'message': 'Input token limit exceeded: 3 tokens per 1 minute. Please retry after 60 seconds.', 'type': 'rate_limit_error', 'param': None, 'code': 'token_limit_rate_limited'}},
-            'headers': {},
+            'headers': {'X-RB-AIGATEWAY-LIMIT-SCOPE': 'route'},
             'upstream': [],
             'events': [('TOKEN_INPUT_LIMIT',)],
             'request_event': ('limited', 429, 'HANDLED_ERROR', 'InputTokenLimitExceeded', False),
@@ -350,7 +350,7 @@ GOLDEN = [
         {
             'status': 429,
             'body': {'error': {'message': 'Input token limit exceeded: 3 tokens per 1 minute. Please retry after 60 seconds.', 'type': 'rate_limit_error', 'param': None, 'code': 'token_limit_rate_limited'}},
-            'headers': {},
+            'headers': {'X-RB-AIGATEWAY-LIMIT-SCOPE': 'route'},
             'upstream': [],
             'events': [('TOKEN_INPUT_LIMIT',)],
             'request_event': ('limited', 429, 'HANDLED_ERROR', 'InputTokenLimitExceeded', True),
@@ -366,7 +366,7 @@ GOLDEN = [
         {
             'status': 429,
             'body': {'error': {'message': 'Input token limit exceeded: 3 tokens per 1 minute. Please retry after 60 seconds.', 'type': 'rate_limit_error', 'param': None, 'code': 'token_limit_rate_limited'}},
-            'headers': {},
+            'headers': {'X-RB-AIGATEWAY-LIMIT-SCOPE': 'route'},
             'upstream': [],
             'events': [('TOKEN_INPUT_LIMIT',)],
             'request_event': ('limited', 429, 'HANDLED_ERROR', 'InputTokenLimitExceeded', False),
@@ -380,7 +380,7 @@ GOLDEN = [
         {
             'status': 429,
             'body': {'error': {'message': 'Input token limit exceeded: 3 tokens per 1 minute. Please retry after 60 seconds.', 'type': 'rate_limit_error', 'param': None, 'code': 'token_limit_rate_limited'}},
-            'headers': {},
+            'headers': {'X-RB-AIGATEWAY-LIMIT-SCOPE': 'route'},
             'upstream': [],
             'events': [('TOKEN_INPUT_LIMIT',)],
             'request_event': ('limited', 429, 'HANDLED_ERROR', 'InputTokenLimitExceeded', False),
@@ -396,7 +396,7 @@ GOLDEN = [
         {
             'status': 429,
             'body': {'error': {'message': 'Input token limit exceeded: 3 tokens per 1 minute. Please retry after 60 seconds.', 'type': 'rate_limit_error', 'param': None, 'code': 'token_limit_rate_limited'}},
-            'headers': {},
+            'headers': {'X-RB-AIGATEWAY-LIMIT-SCOPE': 'route'},
             'upstream': [],
             'events': [('TOKEN_INPUT_LIMIT',)],
             'request_event': ('limited', 429, 'HANDLED_ERROR', 'InputTokenLimitExceeded', False),
@@ -410,7 +410,7 @@ GOLDEN = [
         {
             'status': 429,
             'body': {'error': {'message': 'Input token limit exceeded: 3 tokens per 1 minute. Please retry after 60 seconds.', 'type': 'rate_limit_error', 'param': None, 'code': 'token_limit_rate_limited'}},
-            'headers': {},
+            'headers': {'X-RB-AIGATEWAY-LIMIT-SCOPE': 'route'},
             'upstream': [],
             'events': [('TOKEN_INPUT_LIMIT',)],
             'request_event': ('embed_limited', 429, 'HANDLED_ERROR', 'InputTokenLimitExceeded', False),
@@ -426,7 +426,7 @@ GOLDEN = [
         {
             'status': 429,
             'body': {'error': {'message': 'Audio duration limit exceeded: 1.0 seconds per 1 minute. Please retry after 60 seconds.', 'type': 'rate_limit_error', 'param': 'audio_limited', 'code': 'audio_duration_rate_limited'}},
-            'headers': {},
+            'headers': {'X-RB-AIGATEWAY-LIMIT-SCOPE': 'route'},
             'upstream': [],
             'events': [('AUDIO_DURATION_LIMIT',)],
             'request_event': ('audio_limited', 429, 'HANDLED_ERROR', 'AudioDurationLimitExceeded', False),
@@ -442,7 +442,7 @@ GOLDEN = [
         {
             'status': 429,
             'body': {'error': {'message': 'Audio duration limit exceeded: 1.0 seconds per 1 minute. Please retry after 60 seconds.', 'type': 'rate_limit_error', 'param': 'audio_limited', 'code': 'audio_duration_rate_limited'}},
-            'headers': {},
+            'headers': {'X-RB-AIGATEWAY-LIMIT-SCOPE': 'route'},
             'upstream': [],
             'events': [('AUDIO_DURATION_LIMIT',)],
             'request_event': ('audio_limited', 429, 'HANDLED_ERROR', 'AudioDurationLimitExceeded', True),

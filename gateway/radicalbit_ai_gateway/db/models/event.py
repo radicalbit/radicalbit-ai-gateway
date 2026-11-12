@@ -87,6 +87,11 @@ class EventDetails(Base):
     behavior: str | None = None
     api_key_name: str = 'fake-name'
     api_key_active: bool = True
+    limit_scope: str | None = None
+    category: str | None = None
+    window_seconds: int | None = None
+    maximum: float | None = None
+    consumption: float | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()

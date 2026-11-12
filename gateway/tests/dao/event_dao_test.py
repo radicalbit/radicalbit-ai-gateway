@@ -9,6 +9,7 @@ from radicalbit_ai_gateway.db.models.event import (
     CostData,
     Counters,
     DetailedCostBreakdown,
+    EventDetails,
     LastEventFallback,
     LastEventGuardrail,
     MostExpensiveRoute,
@@ -242,6 +243,96 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
     def setUpClass(cls):
         super().setUpClass()
         cls.event_dao = EventDAO(cls.db)
+
+    def test_get_latest_n_per_event_type_reads_limit_blocks(self):
+        """A limit block carries the scope and category that blocked it; a
+        warning (LIMIT_THRESHOLD) is no block. A row recorded before blocks
+        carried their attributes reads as before.
+        """
+        route = 'route-limits'
+
+        def at(hour):
+            return datetime.datetime(2025, 10, 13, hour, tzinfo=UTC)
+
+        def limit(scope, category):
+            return {
+                'limit_scope': scope,
+                'category': category,
+                'window_seconds': '3600',
+                'maximum': '10.0',
+                'consumption': '10.5',
+            }
+
+        self.insert(
+            [
+                _ev(
+                    'BUDGET_LIMIT',
+                    route,
+                    at(10),
+                    api_key_uuid=KEY_1,
+                    **limit('route', 'budget'),
+                ),
+                _ev(
+                    'CREDENTIAL_RATE_LIMIT',
+                    route,
+                    at(11),
+                    api_key_uuid=KEY_1,
+                    **limit('credential', 'request_rate'),
+                ),
+                _ev(
+                    'PROJECT_BUDGET_LIMIT',
+                    route,
+                    at(12),
+                    api_key_uuid=KEY_1,
+                    **limit('project', 'budget'),
+                ),
+                _ev(
+                    'LIMIT_THRESHOLD',
+                    route,
+                    at(13),
+                    api_key_uuid=KEY_1,
+                    threshold_percentage='80',
+                    **limit('credential', 'budget'),
+                ),
+                _ev('RATE_LIMIT', route, at(14), api_key_uuid=KEY_1),
+            ]
+        )
+
+        def block(event_type, hour, scope, category):
+            return EventDetails(
+                timestamp=at(hour),
+                api_key_uuid=KEY_1,
+                route_name=route,
+                event_type=event_type,
+                target='',
+                fallback='',
+                name='',
+                type='',
+                where='',
+                parameters='',
+                behavior='',
+                api_key_name='fake',
+                limit_scope=scope,
+                category=category,
+                window_seconds=3600,
+                maximum=10.0,
+                consumption=10.5,
+            )
+
+        assert self.event_dao.get_latest_n_per_event_type(
+            None, route, 10, at(0), at(23)
+        ) == [
+            block('BUDGET_LIMIT', 10, 'route', 'budget'),
+            block('CREDENTIAL_RATE_LIMIT', 11, 'credential', 'request_rate'),
+            block('PROJECT_BUDGET_LIMIT', 12, 'project', 'budget'),
+            db_mock.get_event_detail(
+                timestamp=at(14),
+                api_key_uuid=KEY_1,
+                route_name=route,
+                event_type='RATE_LIMIT',
+                api_key_name='fake',
+            ),
+        ]
 
     def test_get_costs_chart_data_by_granularity_and_group_by(self):
         """Token costs are summed per (bucket, entity), ordered by both."""

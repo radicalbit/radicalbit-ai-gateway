@@ -54,6 +54,7 @@ def _retry(stats: WindowStats) -> str:
 def _route_requests(w, attempted, stats, identity) -> AppError:
     route = identity.route_name
     return RequestRateLimitExceeded(
+        limit_scope=w.scope,
         message=(
             f'Request rate limit exceeded: {w.shown_value} requests per '
             f'{w.shown_window}.' + _retry(stats)
@@ -74,6 +75,7 @@ def _route_requests(w, attempted, stats, identity) -> AppError:
 
 def _route_input_tokens(w, attempted, stats, identity) -> AppError:
     return InputTokenLimitExceeded(
+        limit_scope=w.scope,
         message=(
             f'Input token limit exceeded: {w.shown_value} tokens per '
             f'{w.shown_window}.' + _retry(stats)
@@ -96,6 +98,7 @@ def _route_input_tokens(w, attempted, stats, identity) -> AppError:
 
 def _route_output_tokens(w, attempted, stats, identity) -> AppError:
     return OutputTokenLimitExceeded(
+        limit_scope=w.scope,
         message=(
             f'Output token limit exceeded: {w.shown_value} tokens per '
             f'{w.shown_window}.' + _retry(stats)
@@ -119,6 +122,7 @@ def _route_cost(w, attempted, stats, identity) -> AppError:
     return BudgetLimitExceededError(
         f'Budget limit exceeded: {format_usd(w.shown_value)} per '
         f'{w.shown_window} on route "{route}".' + _retry(stats),
+        limit_scope=w.scope,
         log_message=(
             '[BUDGET LIMIT] '
             f'[route={route}] '
@@ -137,6 +141,7 @@ def _route_cost(w, attempted, stats, identity) -> AppError:
 def _route_audio_seconds(w, attempted, stats, identity) -> AppError:
     route = identity.route_name
     return AudioDurationLimitExceeded(
+        limit_scope=w.scope,
         message=(
             f'Audio duration limit exceeded: {w.shown_value} '
             f'seconds per {w.shown_window}.' + _retry(stats)
@@ -158,6 +163,7 @@ def _route_audio_seconds(w, attempted, stats, identity) -> AppError:
 
 def _credential_requests(w, attempted, stats, identity) -> AppError:
     return RequestRateLimitExceeded(
+        limit_scope=w.scope,
         message=(
             f'Credential rate limit exceeded: {w.shown_value:g} '
             f'requests per {w.shown_window} on credential '
@@ -178,6 +184,7 @@ def _credential_requests(w, attempted, stats, identity) -> AppError:
 
 def _credential_input_tokens(w, attempted, stats, identity) -> AppError:
     return InputTokenLimitExceeded(
+        limit_scope=w.scope,
         message=(
             f'Credential input token limit exceeded: {w.shown_value:g} '
             f'tokens per {w.shown_window} on credential '
@@ -196,6 +203,7 @@ def _credential_input_tokens(w, attempted, stats, identity) -> AppError:
 
 def _credential_output_tokens(w, attempted, stats, identity) -> AppError:
     return OutputTokenLimitExceeded(
+        limit_scope=w.scope,
         message=(
             f'Credential output token limit exceeded: {w.shown_value:g} '
             f'tokens per {w.shown_window} on credential '
@@ -214,6 +222,7 @@ def _credential_output_tokens(w, attempted, stats, identity) -> AppError:
 
 def _credential_cost(w, attempted, stats, identity) -> AppError:
     return BudgetLimitExceededError(
+        limit_scope=w.scope,
         message=(
             f'Credential budget limit exceeded: {format_usd(w.shown_value)} '
             f'per {w.shown_window} on credential '
@@ -232,6 +241,7 @@ def _credential_cost(w, attempted, stats, identity) -> AppError:
 
 def _project_cost(w, attempted, stats, identity) -> AppError:
     return BudgetLimitExceededError(
+        limit_scope=w.scope,
         message=(
             f'Project budget limit exceeded: {format_usd(w.shown_value)} '
             f'per {w.shown_window} on project '

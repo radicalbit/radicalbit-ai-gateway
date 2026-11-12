@@ -452,6 +452,8 @@ async def test_block(scope, category, events, metrics):
     assert error.status_code == 429
     assert error.client_message == message
     assert error.log_message == log_message
+    # Who blocked: the 429 names it in the X-RB-AIGATEWAY-LIMIT-SCOPE header.
+    assert error.limit_scope == scope
     if error_type in (RequestRateLimitExceeded, AudioDurationLimitExceeded):
         assert error.param == ROUTE
 

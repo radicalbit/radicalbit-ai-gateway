@@ -1,4 +1,5 @@
 import LimitsSummary from '@Components/limits/limits-summary';
+import LiveColumnTitle from '@Components/limits/live-column-title';
 import { useRegisterVisibleRow, useVisibleRowUuids } from '@Components/limits/visible-rows-context';
 import Lucide from '@Components/lucide';
 import ConfigStatusTag from '@Container/pages/projects/components/config-status-tag';
@@ -67,7 +68,7 @@ const getColumns = () => [
   },
 
   {
-    title: 'Budget',
+    title: <LiveColumnTitle title="Budget" />,
     dataIndex: 'limits',
     key: 'budget',
     render: (limits, { routeBudgets, uuid }) => <BudgetCell limits={limits} routeBudgets={routeBudgets} uuid={uuid} />,

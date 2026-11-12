@@ -248,14 +248,14 @@ class TestServeStream:
             raise ModelInvokerUpstreamError('too long', 400, body)
             yield
 
-        assert await _collect(serve_stream(frames())) == [(json.dumps(body), 400)]
+        assert await _collect(serve_stream(frames())) == [(json.dumps(body), 400, {})]
 
     async def test_gateway_failure_before_streaming_is_an_http_error(self):
         async def frames():
             raise GatewayBadRequest('nope')
             yield
 
-        ((body, status),) = await _collect(serve_stream(frames()))
+        ((body, status, _),) = await _collect(serve_stream(frames()))
 
         assert status == 400
         assert json.loads(body)['error']['message'] == 'nope'

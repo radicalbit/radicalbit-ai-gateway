@@ -22,6 +22,7 @@ from radicalbit_ai_gateway.db.models.event import (
     CostData,
     Counters,
     DetailedCostBreakdown,
+    EventDetails,
     InvocationChartDataPoint,
     LastEventFallback,
     LastEventGuardrail,
@@ -62,6 +63,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     GuardrailEventDetailDTO,
     InvocationChartDataDTO,
     LastNEvents,
+    LimitEventDetailDTO,
     ModelInvocationDTO,
     RateLimitEventDetailDTO,
     RouteCostDTO,
@@ -538,8 +540,116 @@ class EventServiceTest(unittest.TestCase):
                     target=None,
                 )
             ],
+            limits=[
+                LimitEventDetailDTO(
+                    timestamp=datetime.datetime(
+                        2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
+                    ),
+                    api_key_uuid=api_key_uuid,
+                    route_name='route-A',
+                    api_key_name='fake-name',
+                    event_type='RATE_LIMIT',
+                    limit_scope='route',
+                    category='request_rate',
+                )
+            ],
         )
         assert res == expected
+
+    def test_get_latest_n_per_event_type_lists_limit_blocks_newest_first(self):
+        """Every limit block, whatever its scope, lands in `limits`, newest
+        first and capped at n. A row recorded before limits named their
+        scope gets it, and its category, from the event type.
+        """
+        key = uuid.UUID(int=7)
+
+        def at(hour: int) -> datetime.datetime:
+            return datetime.datetime(2025, 10, 13, hour, tzinfo=datetime.timezone.utc)
+
+        def row(event_type: str, hour: int, **limit) -> EventDetails:
+            return EventDetails(
+                timestamp=at(hour),
+                api_key_uuid=key,
+                route_name='route-A',
+                event_type=event_type,
+                **limit,
+            )
+
+        budget = {'window_seconds': 86400, 'maximum': 40.0, 'consumption': 40.5}
+        self.event_dao.get_latest_n_per_event_type = MagicMock(
+            return_value=[
+                row('GUARDRAIL', 13),
+                row(
+                    'CREDENTIAL_BUDGET_LIMIT',
+                    12,
+                    limit_scope='credential',
+                    category='budget',
+                    **budget,
+                ),
+                row('RATE_LIMIT', 11),
+                row(
+                    'PROJECT_BUDGET_LIMIT',
+                    14,
+                    limit_scope='project',
+                    category='budget',
+                    **budget,
+                ),
+                row(
+                    'BUDGET_LIMIT',
+                    9,
+                    limit_scope='route',
+                    category='budget',
+                    **budget,
+                ),
+            ]
+        )
+        self.key_service.get_names_by_uuids = MagicMock(return_value={key: 'alice'})
+
+        res = self.event_service.get_latest_n_per_event_type(
+            self.TEST_PROJECT_UUID, self.gateway_config, 'route-A', 3, None, None
+        )
+
+        def block(event_type: str, hour: int, **limit) -> LimitEventDetailDTO:
+            return LimitEventDetailDTO(
+                timestamp=at(hour),
+                api_key_uuid=key,
+                route_name='route-A',
+                api_key_name='alice',
+                event_type=event_type,
+                **limit,
+            )
+
+        assert res.limits == [
+            block(
+                'PROJECT_BUDGET_LIMIT',
+                14,
+                limit_scope='project',
+                category='budget',
+                **budget,
+            ),
+            block(
+                'CREDENTIAL_BUDGET_LIMIT',
+                12,
+                limit_scope='credential',
+                category='budget',
+                **budget,
+            ),
+            block('RATE_LIMIT', 11, limit_scope='route', category='request_rate'),
+        ]
+
+    def test_get_latest_n_per_event_type_limits_present_without_route_limiting(self):
+        """Credential and project limits apply whatever the route config
+        says, so `limits` is a list even when the route limits nothing.
+        """
+        self.event_dao.get_latest_n_per_event_type = MagicMock(return_value=[])
+        self.key_service.get_names_by_uuids = MagicMock(return_value={})
+
+        res = self.event_service.get_latest_n_per_event_type(
+            self.TEST_PROJECT_UUID, self.gateway_config, 'route-A', 10, None, None
+        )
+
+        assert res.limits == []
+        assert res.model_dump(by_alias=True, exclude_none=True)['limits'] == []
 
     def test_get_latest_n_per_event_type_duration_limit(self):
         """AUDIO_DURATION_LIMIT events populate duration_limit when the route
