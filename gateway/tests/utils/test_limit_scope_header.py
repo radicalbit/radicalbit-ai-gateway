@@ -36,7 +36,6 @@ async def _answer(error):
     return await rate_limit_exceeded_handler(_request(), error)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('error', 'scope', 'code'),
     [
@@ -70,7 +69,6 @@ async def test_a_429_names_the_scope_that_blocked(error, scope, code):
     assert json.loads(response.body)['error']['code'] == code
 
 
-@pytest.mark.asyncio
 async def test_a_429_without_a_scope_has_no_scope_header():
     response = await _answer(OutputTokenLimitExceeded('blocked'))
 

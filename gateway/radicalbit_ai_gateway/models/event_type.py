@@ -26,20 +26,8 @@ class EventType(str, Enum):
     REQUEST = 'REQUEST'
 
 
-# The events a limit records when it blocks a request, each with the scope and
-# category it names, for rows recorded before the event carried them.
-# LIMIT_THRESHOLD is not one: it warns, it does not block.
-LIMIT_BLOCK_EVENTS: dict[str, tuple[str, str]] = {
-    EventType.RATE_LIMIT.value: ('route', 'request_rate'),
-    EventType.TOKEN_INPUT_LIMIT.value: ('route', 'token_input'),
-    EventType.TOKEN_OUTPUT_LIMIT.value: ('route', 'token_output'),
-    EventType.AUDIO_DURATION_LIMIT.value: ('route', 'audio_duration'),
-    EventType.BUDGET_LIMIT.value: ('route', 'budget'),
-    EventType.CREDENTIAL_RATE_LIMIT.value: ('credential', 'request_rate'),
-    EventType.CREDENTIAL_TOKEN_INPUT_LIMIT.value: ('credential', 'token_input'),
-    EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT.value: ('credential', 'token_output'),
-    EventType.CREDENTIAL_BUDGET_LIMIT.value: ('credential', 'budget'),
-    EventType.PROJECT_BUDGET_LIMIT.value: ('project', 'budget'),
-}
-# Every event type a limit records when it blocks a request.
-LIMIT_BLOCK_EVENT_TYPES: tuple[str, ...] = tuple(LIMIT_BLOCK_EVENTS)
+# The events a limit leaves when it blocks a request: route, credential or
+# project; rate, token, duration or budget. LIMIT_THRESHOLD is only a warning.
+LIMIT_BLOCK_EVENT_TYPES: tuple[str, ...] = tuple(
+    t.value for t in EventType if t.value.endswith('_LIMIT')
+)

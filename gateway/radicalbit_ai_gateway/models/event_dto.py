@@ -17,6 +17,7 @@ from radicalbit_ai_gateway.db.models.event import (
     RequestStats,
     SemanticCacheCostData,
 )
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 
@@ -100,7 +101,7 @@ class LimitEventDetailDTO(BaseEventDetailDTO):
         'CREDENTIAL_BUDGET_LIMIT',
         'PROJECT_BUDGET_LIMIT',
     ]
-    limit_scope: Literal['route', 'credential', 'project']
+    limit_scope: LimitScope
     category: str
     window_seconds: int | None = None
     maximum: float | None = None

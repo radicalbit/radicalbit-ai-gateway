@@ -17,6 +17,7 @@ from radicalbit_ai_gateway.db.models.event import (
 )
 from radicalbit_ai_gateway.limiting.limits import shared_limits
 from radicalbit_ai_gateway.limiting.windows import Category, Window
+from radicalbit_ai_gateway.limiting.wording import BLOCKS
 from radicalbit_ai_gateway.models.event_dto import (
     CacheHitEventDetailDTO,
     ChartDataSeriesDTO,
@@ -46,7 +47,8 @@ from radicalbit_ai_gateway.models.event_dto import (
     WindowProgressBarDTO,
     WindowStatus,
 )
-from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENTS, EventType
+from radicalbit_ai_gateway.models.event_payload import LimitScope
+from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_config_out import GatewayRouteConfigOut
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
@@ -64,6 +66,12 @@ from radicalbit_ai_gateway.utils.chart_utils import (
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+# The scope and category of each event a limit records when it blocks, for
+# rows recorded before the event carried them.
+_BLOCKED_BY: dict[str, tuple[LimitScope, Category]] = {
+    block.event_type.value: key for key, block in BLOCKS.items()
+}
 
 
 class EventService:
@@ -409,7 +417,7 @@ class EventService:
             resolved_name = _resolved_key_name(event.api_key_uuid)
             event = self.clean_model_empty_strings(event)
 
-            if event.event_type in LIMIT_BLOCK_EVENTS:
+            if event.event_type in _BLOCKED_BY:
                 limits.append(self._limit_event_detail(event, resolved_name))
 
             match event.event_type:
@@ -529,7 +537,7 @@ class EventService:
         """Name the limit that blocked, falling back on the event type for
         scope and category when the row predates ``limit_scope``.
         """
-        scope, category = LIMIT_BLOCK_EVENTS[event.event_type]
+        scope, category = _BLOCKED_BY[event.event_type]
         return LimitEventDetailDTO(
             timestamp=event.timestamp,
             api_key_uuid=event.api_key_uuid,
