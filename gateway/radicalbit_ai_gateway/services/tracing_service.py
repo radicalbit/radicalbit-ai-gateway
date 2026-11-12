@@ -282,6 +282,8 @@ class TracingService:
                 created_at=int(span.timestamp.timestamp()),
                 start_offset_ms=(span.timestamp - root_span.timestamp)
                 / timedelta(milliseconds=1),
+                operation_category=span.operation_category or None,
+                span_kind=span.span_kind or None,
                 children=[build_tree(child) for child in children],
             )
 

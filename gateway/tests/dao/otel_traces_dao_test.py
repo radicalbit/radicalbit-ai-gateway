@@ -151,6 +151,35 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         ]
         assert by_category_and_span(False, **EMPTY_WINDOW) == []
 
+    def test_get_spans_by_trace_id_reads_category_and_kind(self):
+        self.insert(
+            [
+                _span(
+                    T0,
+                    trace_id='trace-cat',
+                    span_id='span-invoke',
+                    span_attributes={
+                        CATEGORY: 'invocation',
+                        'traceloop.span.kind': 'task',
+                    },
+                ),
+                _span(T0 + SEC, trace_id='trace-cat', span_id='span-bare'),
+            ]
+        )
+
+        spans = {
+            s.span_id: s
+            for s in self.otel_traces_dao.get_spans_by_trace_id(
+                TEST_PROJECT_UUID, 'trace-cat'
+            )
+        }
+
+        assert spans['span-invoke'].operation_category == 'invocation'
+        assert spans['span-invoke'].span_kind == 'task'
+        # A missing map key reads as an empty string.
+        assert spans['span-bare'].operation_category == ''
+        assert spans['span-bare'].span_kind == ''
+
     def test_get_spans_by_trace_id(self):
         meta = _meta('test-route', KEY_1, 'test-key', GROUP_1, 'test-group')
         self.insert(
