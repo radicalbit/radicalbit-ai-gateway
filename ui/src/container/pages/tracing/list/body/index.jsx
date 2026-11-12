@@ -4,13 +4,14 @@ import usePersistProjectUuid from '@Hooks/use-persist-project-uuid';
 import usePersistQueryParams from '@Hooks/use-persistence-query-params';
 import { Tabs, Void } from '@radicalbit/radicalbit-design-system';
 import { FolderOpen } from 'lucide-react';
-import { useEffect, useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
 import Dashboard from './dashboard';
 import Filters from './filters';
 import ProjectFilter from './project-filter';
 import Requests from './requests';
+import './_styles.less';
 
 const PERSISTED_KEYS = ['routes', 'requestType', 'preset', 'from', 'to'];
 const STORAGE_KEY = 'rbit-gw-tracing';
@@ -72,6 +73,8 @@ function NoProjectSelected() {
 }
 
 function ProjectSelected() {
+  const containerRef = useRef(null);
+  const filtersRef = useRef(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab');
   const activeKey = TAB_KEYS.includes(tab) ? tab : TRACING_LIST_TABS.dashboard.key;
@@ -81,37 +84,57 @@ function ProjectSelected() {
     setSearchParams(searchParams);
   };
 
+  useStickyFiltersSize(containerRef, filtersRef);
+
   if (activeKey === TRACING_LIST_TABS.requests.key) {
     return (
-      <>
-        <Tabs
-          activeKey={activeKey}
-          items={items}
-          onChange={handleOnChange}
-          sticky
-        />
+      <div className="flex flex-col gap-5" ref={containerRef}>
+        <div className="c-observability__filters flex flex-col gap-5" ref={filtersRef}>
+          <Tabs activeKey={activeKey} items={items} onChange={handleOnChange} />
 
-        <Filters />
+          <Filters />
+        </div>
 
         <Requests />
-      </>
+      </div>
     );
   }
 
   return (
-    <>
-      <Tabs
-        activeKey={activeKey}
-        items={items}
-        onChange={handleOnChange}
-        sticky
-      />
+    <div className="flex flex-col gap-5" ref={containerRef}>
+      <div className="c-observability__filters flex flex-col gap-5" ref={filtersRef}>
+        <Tabs activeKey={activeKey} items={items} onChange={handleOnChange} />
 
-      <Filters />
+        <Filters />
+      </div>
 
       <Dashboard />
-    </>
+    </div>
   );
+}
+
+function useStickyFiltersSize(containerRef, filtersRef) {
+  useEffect(() => {
+    const container = containerRef.current;
+    const filters = filtersRef.current;
+    const scroller = container?.closest('.ant-layout-content');
+
+    if (!container || !filters || !scroller) {
+      return undefined;
+    }
+
+    const handleOnResize = () => {
+      container.style.setProperty('--observability-filters-height', `${filters.offsetHeight}px`);
+      container.style.setProperty('--observability-viewport-height', `${scroller.clientHeight}px`);
+    };
+
+    const observer = new ResizeObserver(handleOnResize);
+
+    observer.observe(filters);
+    observer.observe(scroller);
+
+    return () => observer.disconnect();
+  }, [containerRef, filtersRef]);
 }
 
 const useInitLayoutConfigurations = () => {

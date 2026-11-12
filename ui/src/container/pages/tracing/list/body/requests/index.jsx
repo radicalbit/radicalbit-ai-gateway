@@ -32,11 +32,11 @@ function Requests() {
   if (isLoading) {
     return (
       <div className="flex flex-row flex-wrap items-start gap-4">
-        <div className="min-w-0 flex-[1_1_420px]">
+        <div className="c-observability__pane">
           <Board main={<Skeleton active block />} width="100%" />
         </div>
 
-        <div className="min-w-0 flex-[1_1_420px]">
+        <div className="c-observability__pane">
           <Board main={<Skeleton active block />} width="100%" />
         </div>
       </div>
@@ -57,11 +57,11 @@ function Requests() {
 
   return (
     <div className="flex flex-row flex-wrap items-start gap-4">
-      <div className="min-w-0 flex-[1_1_420px]">
+      <div className="c-observability__pane">
         <RequestsList />
       </div>
 
-      <div className="min-w-0 flex-[1_1_420px]">
+      <div className="c-observability__pane c-observability__panel">
         <RequestPanel />
       </div>
     </div>
