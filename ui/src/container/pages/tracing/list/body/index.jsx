@@ -10,7 +10,7 @@ import { useSearchParams } from 'react-router-dom';
 import Dashboard from './dashboard';
 import Filters from './filters';
 import ProjectFilter from './project-filter';
-import Tracing from './tracing';
+import Requests from './requests';
 
 const PERSISTED_KEYS = ['routes', 'requestType', 'preset', 'from', 'to'];
 const STORAGE_KEY = 'rbit-gw-tracing';
@@ -20,11 +20,13 @@ const TRACING_LIST_TABS = {
     key: 'dashboard',
     label: 'Dashboard',
   },
-  tracing: {
-    key: 'tracing',
-    label: 'Tracing',
+  requests: {
+    key: 'requests',
+    label: 'Requests',
   },
 };
+
+const TAB_KEYS = Object.keys(TRACING_LIST_TABS);
 
 const items = [
   {
@@ -32,8 +34,8 @@ const items = [
     label: TRACING_LIST_TABS.dashboard.label,
   },
   {
-    key: TRACING_LIST_TABS.tracing.key,
-    label: TRACING_LIST_TABS.tracing.label,
+    key: TRACING_LIST_TABS.requests.key,
+    label: TRACING_LIST_TABS.requests.label,
   },
 ];
 
@@ -61,7 +63,7 @@ function NoProjectSelected() {
     <div className="flex justify-center items-center h-full">
       <Void
         actions={<ProjectFilter id={projectId} />}
-        description="Select a project to view tracing data"
+        description="Select a project to view its requests"
         image={<Lucide icon={FolderOpen} />}
         title="No project selected"
       />
@@ -71,12 +73,30 @@ function NoProjectSelected() {
 
 function ProjectSelected() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeKey = searchParams.get('tab') ?? 'dashboard';
+  const tab = searchParams.get('tab');
+  const activeKey = TAB_KEYS.includes(tab) ? tab : TRACING_LIST_TABS.dashboard.key;
 
   const handleOnChange = (key) => {
     searchParams.set('tab', key);
     setSearchParams(searchParams);
   };
+
+  if (activeKey === TRACING_LIST_TABS.requests.key) {
+    return (
+      <>
+        <Tabs
+          activeKey={activeKey}
+          items={items}
+          onChange={handleOnChange}
+          sticky
+        />
+
+        <Filters />
+
+        <Requests />
+      </>
+    );
+  }
 
   return (
     <>
@@ -89,9 +109,7 @@ function ProjectSelected() {
 
       <Filters />
 
-      {activeKey === 'dashboard' && <Dashboard />}
-
-      {activeKey === 'tracing' && <Tracing />}
+      <Dashboard />
     </>
   );
 }
