@@ -10,7 +10,7 @@ import LimitConsumption from './limit-consumption';
 const TRIGGER = ['hover', 'focus'];
 
 const STATUS_CLASS_NAMES = {
-  ok: '',
+  ok: 'opacity-70',
   warning: 'text-[var(--coo-warning)]',
   critical: 'text-[var(--coo-error)]',
 };
@@ -37,7 +37,6 @@ function LimitsSummary({
   const title = withCategory ? 'Limits' : 'Budgets';
   const contentOnManage = onManage ? handleOnManage : undefined;
   const neverReachedCount = limits.filter((limit) => getLimitWarnings(warnings, limit).length).length;
-  const neverReached = neverReachedCount ? <span className="text-[var(--coo-warning)]">{` · ${neverReachedCount} never reached`}</span> : false;
 
   return (
     <Popover
@@ -49,27 +48,44 @@ function LimitsSummary({
       title={<strong>{title}</strong>}
       trigger={TRIGGER}
     >
-      <span>
-        <HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>
+      <span className="inline-flex flex-col">
+        <span>
+          <HtmlAnchor onClick={handleOnClick}>{count}</HtmlAnchor>
+        </span>
 
-        <Used consumption={consumption} limits={limits} />
-
-        {neverReached}
+        <Details consumption={consumption} limits={limits} neverReachedCount={neverReachedCount} />
       </span>
     </Popover>
   );
 }
 
-function Used({ consumption, limits }) {
+// The second line, like a subtitle: how much of the most consumed limit is used, and how many are never reached.
+function Details({ consumption, limits, neverReachedCount }) {
   const mostConsumed = getMostConsumed(limits, consumption);
   const percentage = mostConsumed?.percentage;
   const status = mostConsumed?.status;
 
-  if (!mostConsumed) {
-    return false;
+  const neverReached = `${neverReachedCount} never reached`;
+
+  if (mostConsumed && neverReachedCount) {
+    return (
+      <small>
+        <span className={STATUS_CLASS_NAMES[status]}>{`up to ${percentage}% used`}</span>
+
+        <span className="text-[var(--coo-warning)]">{` · ${neverReached}`}</span>
+      </small>
+    );
   }
 
-  return <span className={STATUS_CLASS_NAMES[status]}>{` · up to ${percentage}% used`}</span>;
+  if (mostConsumed) {
+    return <small className={STATUS_CLASS_NAMES[status]}>{`up to ${percentage}% used`}</small>;
+  }
+
+  if (neverReachedCount) {
+    return <small className="text-[var(--coo-warning)]">{neverReached}</small>;
+  }
+
+  return false;
 }
 
 function Content({ consumption, limits, onManage, warnings, withCategory }) {

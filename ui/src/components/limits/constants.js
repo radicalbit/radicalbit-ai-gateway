@@ -91,6 +91,8 @@ export const DUPLICATE_ROW_ERROR = 'Same limit as a row above.';
 
 export const EDIT_MAX_NOTE = 'Changing only the max keeps what was already consumed in this window.';
 
+export const EDIT_CATEGORY_NOTE = 'The category can\'t be changed: delete this limit and add a new one.';
+
 export const EDIT_WINDOW_NOTE = 'A new window type or window restarts the counter: what was already consumed is not carried over.';
 
 export const COUNTER_RESTARTS_NOTE = 'The counter restarts: what was already consumed in the current window is not carried over.';

@@ -1,5 +1,5 @@
 import Lucide from '@Components/lucide';
-import { WINDOW_TYPE_HELP } from '@Components/limits/constants';
+import { EDIT_CATEGORY_NOTE, WINDOW_TYPE_HELP } from '@Components/limits/constants';
 import EditNote from '@Components/limits/edit-note';
 import LimitFields from '@Components/limits/limit-fields';
 import { useFormbitContext } from '@radicalbit/formbit';
@@ -36,6 +36,8 @@ function EditScreen() {
         <span className="text-xs opacity-70">{WINDOW_TYPE_HELP}</span>
 
         <LimitFields isCategoryLocked limit={row} onChange={handleOnChange} />
+
+        <span className="text-xs opacity-70">{EDIT_CATEGORY_NOTE}</span>
 
         <EditNote isWindowChanged={isWindowChanged} />
 
