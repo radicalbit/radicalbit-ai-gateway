@@ -3,6 +3,7 @@ import { forwardRef } from 'react';
 import './_styles.less';
 
 const SIZE_CLASSNAMES = {
+  sm: 'w-3.5 h-3.5',
   md: 'w-5 h-5',
 };
 

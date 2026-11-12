@@ -1,6 +1,8 @@
 import { formatMs, formatTimestamp } from '@Src/helpers/column-formatters';
 import formatCost from '@Src/helpers/format-cost';
-import { Pin, TextWithBold } from '@radicalbit/radicalbit-design-system';
+import {
+  NewHeader, Pin, SectionTitle, TextWithBold,
+} from '@radicalbit/radicalbit-design-system';
 import { CredentialLink } from './entity-links';
 import RequestIcons from './request-icons';
 import RequestTypeCell from './request-type-cell';
@@ -28,29 +30,37 @@ function RequestRow({ request }) {
   const { label, type } = STATUS_PINS[requestStatus] ?? UNKNOWN_STATUS_PIN;
 
   return (
-    <div className="flex flex-col gap-1 px-4 py-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span aria-label={label} role="img">
-          <Pin size="micro" type={type} />
-        </span>
+    <NewHeader
+      details={{ one: <span className="text-xs">{formatTimestamp(createdAt)}</span> }}
+      padding="all"
+      title={(
+        <SectionTitle
+          size="small"
+          subtitle={(
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={LABEL_PROPS} />
 
-        <strong>{routeName}</strong>
+              <TextWithBold bold={formatMs(durationMs)} size="small" text="Duration" textProps={LABEL_PROPS} />
 
-        <RequestTypeCell requestType={requestType} />
+              <TextWithBold bold={formatCost(cost)} size="small" text="Cost" textProps={LABEL_PROPS} />
+            </div>
+          )}
+          title={(
+            <div className="flex items-center gap-2">
+              <strong>{routeName}</strong>
 
-        <RequestIcons icons={icons} />
-
-        <span className="ml-auto text-xs">{formatTimestamp(createdAt)}</span>
-      </div>
-
-      <div className="flex flex-wrap gap-x-4 gap-y-1 pl-4">
-        <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={LABEL_PROPS} />
-
-        <TextWithBold bold={formatMs(durationMs)} size="small" text="Duration" textProps={LABEL_PROPS} />
-
-        <TextWithBold bold={formatCost(cost)} size="small" text="Cost" textProps={LABEL_PROPS} />
-      </div>
-    </div>
+              <RequestTypeCell requestType={requestType} />
+            </div>
+          )}
+          titlePrefix={(
+            <span aria-label={label} role="img">
+              <Pin size="micro" type={type} />
+            </span>
+          )}
+          titleSuffix={<RequestIcons icons={icons} />}
+        />
+      )}
+    />
   );
 }
 
