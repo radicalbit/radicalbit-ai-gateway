@@ -30,6 +30,7 @@ class ChatModel(ABC):
 
     async def ainvoke(self, input: Sequence[BaseMessage], **kwargs: Any) -> AIMessage:  # noqa: A002
         messages = list(input)
+        kwargs = self._adapt_kwargs(kwargs)
         trace = ChatTrace.start(self, messages, kwargs)
         try:
             message = await self._agenerate(messages, **kwargs)
@@ -49,6 +50,7 @@ class ChatModel(ABC):
         **kwargs: Any,
     ) -> AsyncIterator[AIMessageChunk]:
         messages = list(input)
+        kwargs = self._adapt_kwargs(kwargs)
         trace = ChatTrace.start(self, messages, kwargs, stream=True)
         run_id = _run_id()
         # The provider's chunks, without the closing one added here.
@@ -76,6 +78,13 @@ class ChatModel(ABC):
             raise
         if trace:
             trace.end_stream(chunks)
+
+    def _adapt_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Return the call's OpenAI-style kwargs as this provider takes them.
+
+        The span sees the adapted kwargs. By default they pass unchanged.
+        """
+        return kwargs
 
     @abstractmethod
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
@@ -148,6 +157,45 @@ class ChatModel(ABC):
         """Call the provider's Responses API in streaming mode; yield its events."""
         raise NotImplementedError(
             f'{type(self).__name__} does not serve the Responses API'
+        )
+
+    # ── Native Anthropic Messages API ────────────────────────────────────
+    # A provider that serves the Messages API takes a client's request body as
+    # is. Such a provider implements ``_ainvoke_native_messages`` and
+    # ``_astream_native_messages``. ``headers`` are the client's
+    # ``anthropic-version`` and ``anthropic-beta`` headers.
+
+    def supports_native_messages(self) -> bool:
+        """Whether this model can serve a Messages API request body as is."""
+        return False
+
+    async def ainvoke_native_messages(
+        self, body: dict, headers: dict[str, str]
+    ) -> dict:
+        """Send a Messages API request body and return the message object."""
+        return await self._ainvoke_native_messages(body, headers)
+
+    async def astream_native_messages(
+        self, body: dict, headers: dict[str, str]
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Send a streaming Messages API request; yield ``(event, data)`` pairs."""
+        async for event, data in self._astream_native_messages(body, headers):
+            yield event, data
+
+    async def _ainvoke_native_messages(
+        self, body: dict, headers: dict[str, str]
+    ) -> dict:
+        """Call the provider's Messages API and return the message object."""
+        raise NotImplementedError(
+            f'{type(self).__name__} does not serve the Messages API'
+        )
+
+    def _astream_native_messages(
+        self, body: dict, headers: dict[str, str]
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Call the provider's Messages API in streaming mode; yield its events."""
+        raise NotImplementedError(
+            f'{type(self).__name__} does not serve the Messages API'
         )
 
     def bind_tools(self, tools: list[dict], tool_choice: Any = None) -> 'ChatModel':

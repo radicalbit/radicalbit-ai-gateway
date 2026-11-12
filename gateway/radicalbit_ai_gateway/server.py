@@ -1,29 +1,23 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
-import json
 import logging.config
 import os
-from typing import Annotated
 from urllib.parse import urlparse
-from uuid import UUID
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from httpx_aiohttp import HttpxAiohttpClient
-from openai.types import CreateEmbeddingResponse
-from openai.types.embedding_create_params import EmbeddingCreateParams
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_client import start_http_server
 from starlette.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp
 from traceloop.sdk import Traceloop
-from traceloop.sdk.decorators import workflow
 
-from radicalbit_ai_gateway.ai_gateway import GatewayRoute
 from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
 from radicalbit_ai_gateway.alerting.alert_store import build_alert_store
 from radicalbit_ai_gateway.alerting.alert_window_scheduler import (
@@ -44,29 +38,33 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.database import Database
+from radicalbit_ai_gateway.endpoints.chat_completions.route import ChatCompletionsRoute
+from radicalbit_ai_gateway.endpoints.common.admission import Admission
+from radicalbit_ai_gateway.endpoints.decision.route import DecisionRoute
+from radicalbit_ai_gateway.endpoints.embeddings.route import EmbeddingsRoute
+from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
+from radicalbit_ai_gateway.endpoints.messages.errors import with_messages_error_shapes
+from radicalbit_ai_gateway.endpoints.messages.route import MessagesRoute
+from radicalbit_ai_gateway.endpoints.responses.route import ResponsesRoute
+from radicalbit_ai_gateway.endpoints.transcriptions.route import TranscriptionsRoute
 from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
-from radicalbit_ai_gateway.limiting.project_budget_limiter import (
-    load_project_budget_limiter,
-)
+from radicalbit_ai_gateway.gateway_route.factory import build_project_route_registrar
+from radicalbit_ai_gateway.limiter.storage.shared import close_limit_storage
 from radicalbit_ai_gateway.llm.tracing import TRACELOOP_INSTRUMENTS
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
-from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
-from radicalbit_ai_gateway.models.chat_request import convert_openai_messages
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
-from radicalbit_ai_gateway.responses.serving import serve_stream
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.routes.configs_route import ConfigsRoute, ConfigsRouteConfig
 from radicalbit_ai_gateway.routes.dashboard_route import DashboardRoute
-from radicalbit_ai_gateway.routes.decision_route import DecisionRoute
 from radicalbit_ai_gateway.routes.group_route import GroupRoute
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
-from radicalbit_ai_gateway.routes.mcp_route import McpRoute
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
+from radicalbit_ai_gateway.routes.requests_route import RequestsRoute
 from radicalbit_ai_gateway.routes.secrets_route import SecretsRoute, SecretsRouteConfig
 from radicalbit_ai_gateway.routes.tag_route import TagRoute
 from radicalbit_ai_gateway.routes.tracing_route import TracingRoute
@@ -84,18 +82,10 @@ from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.services.mcp_usage_service import McpUsageService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.services.request_event_service import RequestEventService
+from radicalbit_ai_gateway.services.requests_service import RequestsService
 from radicalbit_ai_gateway.services.secret_service import SecretService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import (
-    get_gateway_routes,
-    get_request_uuid,
-)
-from radicalbit_ai_gateway.utils.endpoint_helpers import (
-    otel_metrics_decorator,
-    set_api_key_uuid,
-    set_early_project_trace_attributes,
-)
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
     AlertRuleInvalidEventError,
@@ -103,15 +93,11 @@ from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleNotFoundError,
     AlertRuleUnsupportedTimeAggregationError,
     ApiKeyError,
-    AppError,
     AudioDurationLimitExceeded,
     AuthRegistryError,
     BudgetLimitExceeded,
-    GatewayBadRequest,
     GatewayError,
-    GatewayNotFoundError,
     GuardrailError,
-    InvalidApiKey,
     JudgeInternalError,
     McpTransportError,
     ModelInvokerError,
@@ -126,41 +112,16 @@ from radicalbit_ai_gateway.utils.exceptions import (
     gateway_exception_handler,
     guardrail_exception_handler,
     judge_exception_handler,
-    limit_scope_headers,
     mcp_transport_exception_handler,
     model_invoker_exception_handler,
     rate_limit_exceeded_handler,
     secrets_backend_exception_handler,
     token_limiter_exception_handler,
     unhandled_exception_handler,
-)
-from radicalbit_ai_gateway.utils.gateway_route_factory import (
-    build_project_route_registrar,
+    validation_error_param,
 )
 from radicalbit_ai_gateway.utils.logging_hooks import apply_log_filters
-from radicalbit_ai_gateway.utils.open_ai_types import (
-    CompletionCreateParams,
-    ResponseCreateParamsCustom,
-    TranscriptionCreateParamsCustom,
-)
-from radicalbit_ai_gateway.utils.request_context import (
-    get_current_credential_limiter,
-    get_current_request_tags,
-    reset_route_context,
-    set_current_project_budget_limiter,
-    set_current_route_config,
-)
-from radicalbit_ai_gateway.utils.streaming_response import (
-    StreamingResponseWithStatusCode,
-)
 from radicalbit_ai_gateway.utils.telemetry_hooks import get_exporter_wrappers
-from radicalbit_ai_gateway.utils.trace_attributes import (
-    OperationCategory,
-    ensure_endpoint_category,
-    in_request_trace,
-    set_operation_category,
-    set_trace_attributes,
-)
 
 app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
@@ -236,10 +197,12 @@ tracing_service = TracingService(
     key_service=key_service,
     group_service=group_service,
 )
-mcp_service = McpService(
-    upstream_client=McpUpstreamClient(),
-    group_service=group_service,
+requests_service = RequestsService(
+    request_event_dao=request_event_dao,
+    event_dao=event_dao,
+    otel_traces_dao=otel_traces_dao,
 )
+mcp_service = McpService(upstream_client=McpUpstreamClient())
 mcp_usage_service = McpUsageService(
     event_dao=event_dao,
     key_service=key_service,
@@ -263,6 +226,7 @@ alert_dispatcher = AlertDispatcher(
     store=build_alert_store(app_config.redis_config.redis_url),
 )
 set_alert_dispatcher(alert_dispatcher)
+admission = Admission(group_service, project_budget_limit_dao)
 
 
 @asynccontextmanager
@@ -363,10 +327,29 @@ async def lifespan(app: FastAPI):
     database.reset_connection()
     ch_database.reset_connection()
     await httpx_aiohttp_client.aclose()
+    await close_limit_storage()
     server.shutdown()
 
 
-app = FastAPI(
+class GatewayApp(FastAPI):
+    """The gateway's FastAPI app.
+
+    Every exception handler answers ``/v1/messages`` in the Messages API shape,
+    plugins' handlers included. The handlers are wrapped when the middleware
+    stack is built, at the first request: a handler added later has no effect
+    anyway, so none is missed.
+    """
+
+    def build_middleware_stack(self) -> ASGIApp:
+        handlers = self.exception_handlers
+        self.exception_handlers = with_messages_error_shapes(handlers)
+        try:
+            return super().build_middleware_stack()
+        finally:
+            self.exception_handlers = handlers
+
+
+app = GatewayApp(
     title='Radicalbit AI Gateway',
     description='A FastAPI server for the Radicalbit AI Gateway',
     version='0.1.0',
@@ -407,6 +390,13 @@ app.include_router(
 app.include_router(
     TracingRoute.get_tracing_router(
         tracing_service=tracing_service,
+        project_service=project_service,
+    ),
+    prefix=prefix,
+)
+app.include_router(
+    RequestsRoute.get_requests_router(
+        requests_service=requests_service,
         project_service=project_service,
     ),
     prefix=prefix,
@@ -469,11 +459,9 @@ app.include_router(
     AlertRuleRoute.get_alert_rule_router(alert_rule_service), prefix=prefix
 )
 # Root-level like /v1/... (NOT under /public/api/v1): inbound MCP proxy.
-app.include_router(McpRoute.get_mcp_router(mcp_service))
+app.include_router(McpRoute.get_mcp_router(mcp_service, admission))
 # Root-level like /v1/...: Typesafe's decision endpoint, passed through.
-app.include_router(
-    DecisionRoute.get_decision_router(group_service, project_budget_limit_dao)
-)
+app.include_router(DecisionRoute.get_decision_router(admission))
 app.include_router(
     GroupRoute.get_group_router(group_service, project_service),
     prefix=prefix,
@@ -496,10 +484,11 @@ app.include_router(
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = [{'loc': e.get('loc'), 'type': e.get('type')} for e in exc.errors()]
     logger.error('Validation error: %s', errors)
+    # Messages API clients get theirs in Anthropic's format: see GatewayApp.
     if request.url.path.startswith('/v1/responses'):
         # Responses API clients read errors in OpenAI's format.
         first = exc.errors()[0] if exc.errors() else {}
-        param = '.'.join(str(part) for part in (first.get('loc') or ())[1:]) or None
+        param = validation_error_param(first) or None
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={
@@ -520,16 +509,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         # already consumed the body stream by the time validation fails.
         body = ''
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         # exc.errors() can contain raw exception objects (e.g. the ctx.error of
         # a model_validator that raised ValueError), which plain json.dumps
         # cannot serialize — jsonable_encoder handles those.
         content=jsonable_encoder({'detail': exc.errors(), 'body': body}),
     )
-
-
-async def get_ai_gateway_dependency(request: Request):
-    return await get_gateway_routes(request)
 
 
 @app.get('/health')
@@ -542,681 +527,14 @@ async def health_check():
     }
 
 
-# This endpoint must follow the openai standard
-# https://platform.openai.com/docs/api-reference/chat/create
-@app.post(
-    '/v1/chat/completions',
-)
-@otel_metrics_decorator
-@workflow(name='chat_completions')
-@ensure_endpoint_category
-@reset_route_context
-async def chat_completions(
-    request: Request,
-    completion_create_params: CompletionCreateParams,
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    route_key = completion_create_params.get('model', 'unknown')
-    route = gateway_routes.get(route_key)
-
-    set_early_project_trace_attributes(request, route_key, route)
-
-    if route is None:
-        raise GatewayBadRequest(
-            f'The route name [{route_key}] was not found in the config'
-        )
-    route_name = route.gateway_route_config.route_name
-    # Publish the route config for per-route log filtering (cleared by the decorator).
-    set_current_route_config(route.gateway_route_config)
-    # Mark the root workflow span with ENDPOINT category
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    # Set early trace attributes
-    set_trace_attributes(
-        request_uuid=request_uuid,
-        route_name=route_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    ctx = RequestEventContext.get_or_create(request)
-    ctx.route_name = route_name
-    ctx.is_streaming = bool(completion_create_params.get('stream'))
-    set_operation_category(OperationCategory.AUTH)
-    key_details = await set_api_key_uuid(
-        request, route.project_uuid, route.project_name
-    )
-
-    # Set auth-related trace attributes
-    set_trace_attributes(
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        project_uuid=route.project_uuid,
-        project_name=route.project_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    logger.debug('Chat completion request: %s', completion_create_params)
-    request.state.otel_route_name = route_name
-
-    client_host = request.client.host if request.client else 'unknown'
-    logger.debug(
-        'Received request: method=%s path=%s client=%s',
-        request.method,
-        request.url.path,
-        client_host,
-    )
-    logger.debug('Received completion_create_params: %s', completion_create_params)
-    messages = list(completion_create_params.get('messages'))
-    logger.debug('Messages: %s', messages)
-
-    tools = list(completion_create_params.get('tools') or [])
-    logger.debug('Tools: %s', tools)
-
-    tool_choice = completion_create_params.get('tool_choice', 'auto')
-    known_keys = {'model', 'messages', 'tools', 'tool_choice'}
-    extra_params = {
-        key: value
-        for key, value in completion_create_params.items()
-        if key not in known_keys
-    }
-    logger.debug('Received params: %s', extra_params)
-
-    logger.info('Invoked route name: %s', route_name)
-    if not group_service.check_key_uuid_for_route(
-        route_key, UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey(f'API Key not associated with route {route_name}')
-
-    ctx.project_uuid = route.project_uuid
-    ctx.project_name = route.project_name
-    set_current_project_budget_limiter(
-        load_project_budget_limiter(
-            route.project_uuid, route.project_name, project_budget_limit_dao
-        )
-    )
-
-    # Checked before route/project limits: decides which error is reported
-    # when both would block.
-    credential_limiter = get_current_credential_limiter()
-    if credential_limiter:
-        set_operation_category(OperationCategory.LIMITING)
-        await credential_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            route_name=route_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    if route.request_rate_limiter:
-        set_operation_category(OperationCategory.LIMITING)
-        await route.request_rate_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            group_uuid=key_details.group_uuid,
-            api_key_name=key_details.api_key_name,
-            group_name=key_details.group_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    chat_messages = convert_openai_messages(messages)
-    if completion_create_params.get('stream'):
-        prepared = await route.prepare_stream(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            api_key_name=key_details.api_key_name,
-            messages=chat_messages,
-            route_name=route_name,
-            tools=tools,
-            tool_choice=tool_choice,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            **extra_params,
-        )
-
-        if route.has_output_guardrails():
-            # Perform full buffering and checking BEFORE starting the stream response
-            chunks, headers = await route.invoke_stream_buffered(
-                prepared=prepared,
-                request_uuid=request_uuid,
-                api_key_uuid=key_details.api_key_uuid,
-                api_key_name=key_details.api_key_name,
-                route_name=route_name,
-                tools=tools,
-                tool_choice=tool_choice,
-                group_uuid=key_details.group_uuid,
-                group_name=key_details.group_name,
-                **extra_params,
-            )
-
-            async def event_generator():
-                for chunk in chunks:
-                    chunk_json = chunk.model_dump_json(exclude_none=True)
-                    logger.debug('Streaming chunk: %s', chunk_json)
-                    yield f'data: {chunk_json}\n\n'
-                logger.debug('Streaming finished (Buffered): [DONE]')
-                yield 'data: [DONE]\n\n'
-
-        else:
-            # Standard streaming (Low Latency)
-            headers = {}
-            if prepared.guardrails_block_triggered:
-                headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] = 'true'
-                headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-TRIGGERED'] = 'true'
-            if prepared.guardrails_input_triggered:
-                headers['X-RB-AIGATEWAY-GUARDRAILS-WARN'] = 'true'
-                headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-WARN'] = 'true'
-            if prepared.cached_response:
-                headers['X-RB-AIGATEWAY-CACHE-HIT'] = 'true'
-
-            async def event_generator():
-                try:
-                    async for chunk in route.invoke_stream(
-                        prepared=prepared,
-                        request_uuid=request_uuid,
-                        api_key_uuid=key_details.api_key_uuid,
-                        api_key_name=key_details.api_key_name,
-                        route_name=route_name,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        group_uuid=key_details.group_uuid,
-                        group_name=key_details.group_name,
-                        **extra_params,
-                    ):
-                        chunk_json = chunk.model_dump_json(exclude_none=True)
-                        logger.debug('Streaming chunk: %s', chunk_json)
-                        yield f'data: {chunk_json}\n\n'
-                    logger.debug('Streaming finished: [DONE]')
-                    yield 'data: [DONE]\n\n'
-                except AppError as exc:
-                    error_body = json.dumps(
-                        {
-                            'error': {
-                                'message': exc.client_message,
-                                'type': 'model_invoker_error',
-                                'param': None,
-                                'code': exc.status_code,
-                            }
-                        }
-                    )
-                    yield error_body, exc.status_code
-                except Exception:
-                    logger.exception('Unhandled error during streaming')
-                    error_body = json.dumps(
-                        {
-                            'error': {
-                                'message': 'Unhandled error during streaming',
-                                'type': 'internal_error',
-                                'param': None,
-                                'code': 500,
-                            }
-                        }
-                    )
-                    yield error_body, 500
-
-        set_operation_category(OperationCategory.ENDPOINT)
-        return StreamingResponseWithStatusCode(
-            in_request_trace(event_generator()),
-            media_type='text/event-stream',
-            headers=headers,
-        )
-
-    invoke_response = await route.invoke(
-        request_uuid=request_uuid,
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        messages=chat_messages,
-        route_name=route_name,
-        tools=tools,
-        tool_choice=tool_choice,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        **extra_params,
-    )
-    # Log the response we are about to send
-    logger.info('Invoke response: %s', invoke_response.content)
-
-    # Extract model name from response for metrics
-    model_name = None
-    try:
-        if hasattr(invoke_response.content, 'model'):
-            model_name = invoke_response.content.model
-        elif isinstance(invoke_response.content, dict):
-            model_name = invoke_response.content.get('model')
-    except Exception:
-        model_name = None
-
-    # Set model name in request state for the decorator
-    request.state.otel_model_name = model_name
-
-    set_operation_category(OperationCategory.ENDPOINT)
-    return JSONResponse(
-        content=jsonable_encoder(invoke_response.content),
-        headers=invoke_response.headers,
-    )
-
-
-# This endpoint must follow the openai standard
-@app.post(
-    '/v1/embeddings',
-    response_model=CreateEmbeddingResponse,
-    response_model_exclude_none=True,
-)
-@otel_metrics_decorator
-@workflow(name='embeddings')
-@ensure_endpoint_category
-async def embeddings(
-    request: Request,
-    embedding_create_params: EmbeddingCreateParams,
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    route_key = embedding_create_params.get('model')
-    route = gateway_routes.get(route_key)
-
-    set_early_project_trace_attributes(request, route_key, route)
-
-    if route is None:
-        raise GatewayBadRequest(
-            f'The route name [{route_key}] was not found in the config'
-        )
-    route_name = route.gateway_route_config.route_name
-    input_texts = embedding_create_params.get('input')
-
-    # Mark the root workflow span with ENDPOINT category
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    # Set early trace attributes
-    set_trace_attributes(
-        request_uuid=request_uuid,
-        route_name=route_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    # Populate request event context first (before auth, so route_name is always captured)
-    ctx = RequestEventContext.get_or_create(request)
-    ctx.route_name = route_name
-    ctx.is_streaming = False
-
-    # Validate API key after context is populated
-    set_operation_category(OperationCategory.AUTH)
-    key_details = await set_api_key_uuid(
-        request, route.project_uuid, route.project_name
-    )
-
-    # Set auth-related trace attributes
-    set_trace_attributes(
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        project_uuid=route.project_uuid,
-        project_name=route.project_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    if isinstance(input_texts, str):
-        input_texts = [input_texts]
-
-    if not group_service.check_key_uuid_for_route(
-        route_key, UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey('Incorrect API key provided.')
-
-    ctx.project_uuid = route.project_uuid
-    ctx.project_name = route.project_name
-    set_current_project_budget_limiter(
-        load_project_budget_limiter(
-            route.project_uuid, route.project_name, project_budget_limit_dao
-        )
-    )
-
-    # Check and count request rate limits BEFORE any processing. Credential
-    # limit first: decides which error is reported when both would block.
-    credential_limiter = get_current_credential_limiter()
-    if credential_limiter:
-        await credential_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            route_name=route_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    if route.request_rate_limiter:
-        await route.request_rate_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            group_uuid=key_details.group_uuid,
-            api_key_name=key_details.api_key_name,
-            group_name=key_details.group_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    set_operation_category(OperationCategory.ENDPOINT)
-    return await route.invoke_embeddings(
-        request_uuid=request_uuid,
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        route_name=route_name,
-        input_texts=input_texts,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-    )
-
-
-@app.post('/v1/audio/transcriptions')
-@otel_metrics_decorator
-@workflow(name='audio_transcriptions')
-@ensure_endpoint_category
-async def audio_transcriptions(
-    request: Request,
-    transcription_params: Annotated[TranscriptionCreateParamsCustom, Form()],
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    route_key = transcription_params.model
-    route = gateway_routes.get(route_key)
-
-    set_early_project_trace_attributes(request, route_key, route)
-
-    if route is None:
-        raise GatewayBadRequest(
-            f'The route name [{route_key}] was not found in the config'
-        )
-    route_name = route.gateway_route_config.route_name
-
-    # Mark the root workflow span with ENDPOINT category
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    # Set early trace attributes
-    set_trace_attributes(
-        request_uuid=request_uuid,
-        route_name=route_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    # Populate request event context first (before auth, so route_name is always captured)
-    ctx = RequestEventContext.get_or_create(request)
-    ctx.route_name = route_name
-    ctx.is_streaming = transcription_params.stream
-
-    # Validate API key after context is populated
-    set_operation_category(OperationCategory.AUTH)
-    key_details = await set_api_key_uuid(
-        request, route.project_uuid, route.project_name
-    )
-
-    # Set auth-related trace attributes
-    set_trace_attributes(
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        project_uuid=route.project_uuid,
-        project_name=route.project_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    if not group_service.check_key_uuid_for_route(
-        route_key, UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey('Incorrect API key provided.')
-
-    ctx.project_uuid = route.project_uuid
-    ctx.project_name = route.project_name
-    set_current_project_budget_limiter(
-        load_project_budget_limiter(
-            route.project_uuid, route.project_name, project_budget_limit_dao
-        )
-    )
-    request.state.otel_route_name = route_name
-
-    # Check and count request rate limits BEFORE any processing. Credential
-    # limit first: decides which error is reported when both would block.
-    credential_limiter = get_current_credential_limiter()
-    if credential_limiter:
-        await credential_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            route_name=route_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    if route.request_rate_limiter:
-        await route.request_rate_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            group_uuid=key_details.group_uuid,
-            api_key_name=key_details.api_key_name,
-            group_name=key_details.group_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    file = transcription_params.file
-    content = await file.read()
-
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    if transcription_params.stream:
-
-        async def event_generator():
-            try:
-                async for event in route.invoke_transcription_stream(
-                    request_uuid=request_uuid,
-                    api_key_uuid=key_details.api_key_uuid,
-                    api_key_name=key_details.api_key_name,
-                    group_uuid=key_details.group_uuid,
-                    group_name=key_details.group_name,
-                    route_name=route_name,
-                    audio_bytes=content,
-                    filename=file.filename or 'audio',
-                    content_type=file.content_type,
-                    language=transcription_params.language,
-                    prompt=transcription_params.prompt,
-                    temperature=transcription_params.temperature,
-                ):
-                    event_json = event.model_dump_json(exclude_none=True)
-                    logger.debug('Streaming transcription event: %s', event_json)
-                    yield f'data: {event_json}\n\n'
-                logger.debug('Streaming finished: [DONE]')
-                yield 'data: [DONE]\n\n'
-            except AppError as exc:
-                error_body = json.dumps(
-                    {
-                        'error': {
-                            'message': exc.client_message,
-                            'type': 'model_invoker_error',
-                            'param': None,
-                            'code': exc.status_code,
-                        }
-                    }
-                )
-                yield error_body, exc.status_code, limit_scope_headers(exc)
-            except Exception:
-                logger.exception('Unhandled error during transcription streaming')
-                error_body = json.dumps(
-                    {
-                        'error': {
-                            'message': 'Unhandled error during streaming',
-                            'type': 'internal_error',
-                            'param': None,
-                            'code': 500,
-                        }
-                    }
-                )
-                yield error_body, 500
-
-        return StreamingResponseWithStatusCode(
-            in_request_trace(event_generator()), media_type='text/event-stream'
-        )
-
-    result = await route.invoke_transcription(
-        request_uuid=request_uuid,
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        route_name=route_name,
-        audio_bytes=content,
-        filename=file.filename or 'audio',
-        content_type=file.content_type,
-        requested_response_format=transcription_params.response_format,
-        language=transcription_params.language,
-        prompt=transcription_params.prompt,
-        temperature=transcription_params.temperature,
-    )
-
-    return JSONResponse(content=jsonable_encoder(result))
-
-
-# This endpoint follows the OpenAI Responses API standard:
-# https://platform.openai.com/docs/api-reference/responses
-# A request is served by a model that serves the Responses API, as the client
-# sent it once the route's policies applied.
-@app.post('/v1/responses')
-@otel_metrics_decorator
-@workflow(name='responses')
-@ensure_endpoint_category
-@reset_route_context
-async def responses(
-    request: Request,
-    response_create_params: ResponseCreateParamsCustom,
-    gateway_routes: dict[str, GatewayRoute] = Depends(get_ai_gateway_dependency),
-    request_uuid: str = Depends(get_request_uuid),
-):
-    # Mark the root workflow span with ENDPOINT category
-    set_operation_category(OperationCategory.ENDPOINT)
-
-    route_key = response_create_params.get('model', 'unknown')
-    route = gateway_routes.get(route_key)
-
-    set_early_project_trace_attributes(request, route_key, route)
-
-    if route is None:
-        raise GatewayBadRequest(
-            f'The route name [{route_key}] was not found in the config'
-        )
-    route_name = route.gateway_route_config.route_name
-    # Publish the route config for per-route log filtering (cleared by the decorator).
-    # Logged after resolution so the request dump is subject to that filtering.
-    set_current_route_config(route.gateway_route_config)
-    logger.debug('Responses API request: %s', response_create_params)
-    request.state.otel_route_name = route_name
-
-    # Set early trace attributes
-    set_trace_attributes(
-        request_uuid=request_uuid,
-        route_name=route_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    is_stream = bool(response_create_params.get('stream'))
-    ctx = RequestEventContext.get_or_create(request)
-    ctx.route_name = route_name
-    ctx.is_streaming = is_stream
-
-    set_operation_category(OperationCategory.AUTH)
-    key_details = await set_api_key_uuid(
-        request, route.project_uuid, route.project_name
-    )
-
-    # Set auth-related trace attributes
-    set_trace_attributes(
-        api_key_uuid=key_details.api_key_uuid,
-        api_key_name=key_details.api_key_name,
-        group_uuid=key_details.group_uuid,
-        group_name=key_details.group_name,
-        project_uuid=route.project_uuid,
-        project_name=route.project_name,
-        tags=list(get_current_request_tags()),
-    )
-
-    # The request as the client sent it: the gateway's policies apply to it,
-    # then it goes upstream.
-    body = await request.json()
-
-    logger.info('Invoked route name (responses): %s', route_name)
-
-    if not group_service.check_key_uuid_for_route(
-        route_key, UUID(key_details.api_key_uuid)
-    ):
-        raise InvalidApiKey(f'API Key not associated with route {route_name}')
-
-    ctx.project_uuid = route.project_uuid
-    ctx.project_name = route.project_name
-    set_current_project_budget_limiter(
-        load_project_budget_limiter(
-            route.project_uuid, route.project_name, project_budget_limit_dao
-        )
-    )
-
-    # Checked before route/project limits: decides which error is reported
-    # when both would block.
-    credential_limiter = get_current_credential_limiter()
-    if credential_limiter:
-        set_operation_category(OperationCategory.LIMITING)
-        await credential_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            group_uuid=key_details.group_uuid,
-            group_name=key_details.group_name,
-            route_name=route_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    if route.request_rate_limiter:
-        set_operation_category(OperationCategory.LIMITING)
-        await route.request_rate_limiter.check_and_count_request(
-            request_uuid=request_uuid,
-            api_key_uuid=key_details.api_key_uuid,
-            group_uuid=key_details.group_uuid,
-            api_key_name=key_details.api_key_name,
-            group_name=key_details.group_name,
-            project_uuid=route.project_uuid,
-            project_name=route.project_name,
-        )
-
-    identity = {
-        'request_uuid': request_uuid,
-        'api_key_uuid': key_details.api_key_uuid,
-        'api_key_name': key_details.api_key_name,
-        'group_uuid': key_details.group_uuid,
-        'group_name': key_details.group_name,
-    }
-    prepared = await route.prepare_responses(body=body, **identity)
-
-    if is_stream:
-        frames, headers = await route.open_responses_stream(prepared)
-        set_operation_category(OperationCategory.ENDPOINT)
-        return StreamingResponseWithStatusCode(
-            in_request_trace(serve_stream(frames)),
-            media_type='text/event-stream',
-            headers=headers,
-        )
-
-    response_obj, headers = await route.invoke_responses(prepared)
-    set_operation_category(OperationCategory.ENDPOINT)
-    return JSONResponse(content=response_obj, headers=headers)
-
-
-# The Responses API endpoints the gateway does not serve yet: those on stored
-# responses (retrieve, delete, cancel, input_items), compact and input_tokens.
-@app.api_route('/v1/responses/{path:path}', methods=['GET', 'POST', 'DELETE'])
-async def responses_unsupported(request: Request, path: str):
-    raise GatewayNotFoundError(
-        f'{request.method} /v1/responses/{path} is not supported by the gateway yet'
-    )
+# Root-level like /v1/...: the OpenAI-compatible proxy endpoints. Included
+# after /health and before the static catch-all, and the responses router last
+# so its /v1/responses/{path:path} catch-all shadows none of the others.
+app.include_router(ChatCompletionsRoute.get_chat_completions_router(admission))
+app.include_router(EmbeddingsRoute.get_embeddings_router(admission))
+app.include_router(TranscriptionsRoute.get_transcriptions_router(admission))
+app.include_router(ResponsesRoute.get_responses_router(admission))
+app.include_router(MessagesRoute.get_messages_router(admission))
 
 
 # mount static files application (https://fastapi.tiangolo.com/tutorial/static-files/)

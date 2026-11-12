@@ -1,6 +1,6 @@
 import datetime
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 from uuid import UUID
 
@@ -11,7 +11,6 @@ from tests.common.mocked_gateway_config import (
     get_default_cache_config,
     get_default_gateway,
     get_default_gateway_with_caching,
-    get_gateway_with_judge_and_semantic_cache,
     get_gateway_with_routing,
     get_global_guardrails,
 )
@@ -33,13 +32,14 @@ from radicalbit_ai_gateway.db.models.event import (
     RequestStats,
     RouteCostData,
     RouteDetailedCostBreakdown,
-    SemanticCacheCostData,
     TokenChartDataPoint,
     TokensCounter,
 )
+from radicalbit_ai_gateway.limiter import ScenarioType, WindowConfig
 from radicalbit_ai_gateway.limiter.window_config import WindowStats
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
+from radicalbit_ai_gateway.limiting.windows import Category, Window
 from radicalbit_ai_gateway.models.auth_dto import KeyOut
-from radicalbit_ai_gateway.models.caching import SemanticCaching
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.event_dto import (
     Cache,
@@ -73,6 +73,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     UsageCostsDTO,
     WindowStatus,
 )
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
@@ -86,19 +87,18 @@ from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 
 
 class EventServiceTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.event_dao: EventDAO = MagicMock(spec_set=EventDAO)
-        cls.request_event_dao: RequestEventDAO = MagicMock(spec_set=RequestEventDAO)
-        cls.key_service: KeyService = MagicMock(spec_set=KeyService)
-        cls.group_service: GroupService = MagicMock(spec_set=GroupService)
+    def setUp(self):
+        self.event_dao: EventDAO = MagicMock(spec_set=EventDAO)
+        self.request_event_dao: RequestEventDAO = MagicMock(spec_set=RequestEventDAO)
+        self.key_service: KeyService = MagicMock(spec_set=KeyService)
+        self.group_service: GroupService = MagicMock(spec_set=GroupService)
 
         global_guardrails = get_global_guardrails()
 
         gw_a = get_default_gateway_with_caching(route_name='route-A')
         gw_b = get_default_gateway_with_caching(route_name='route-B')
 
-        cls.gateway_config = GatewayConfig(
+        self.gateway_config = GatewayConfig(
             chat_models=gw_a.chat_models,
             embedding_models=gw_a.embedding_models,
             routes={
@@ -109,31 +109,33 @@ class EventServiceTest(unittest.TestCase):
             cache=get_default_cache_config(),
         )
 
-        cls.TEST_PROJECT_UUID = uuid.UUID('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
-        cls.TEST_PROJECT_NAME = 'test'
+        self.TEST_PROJECT_UUID = uuid.UUID('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+        self.TEST_PROJECT_NAME = 'test'
 
-        cls.event_service = EventService(
-            event_dao=cls.event_dao,
-            request_event_dao=cls.request_event_dao,
-            key_service=cls.key_service,
-            group_service=cls.group_service,
+        self.event_service = EventService(
+            event_dao=self.event_dao,
+            request_event_dao=self.request_event_dao,
+            key_service=self.key_service,
+            group_service=self.group_service,
         )
 
-        cls.gateway_config_with_routing = get_gateway_with_routing(route_name='route-R')
-        cls.event_service_routing = EventService(
-            event_dao=cls.event_dao,
-            request_event_dao=cls.request_event_dao,
-            key_service=cls.key_service,
-            group_service=cls.group_service,
+        self.gateway_config_with_routing = get_gateway_with_routing(
+            route_name='route-R'
         )
-        cls.routing_model_counters = [
+        self.event_service_routing = EventService(
+            event_dao=self.event_dao,
+            request_event_dao=self.request_event_dao,
+            key_service=self.key_service,
+            group_service=self.group_service,
+        )
+        self.routing_model_counters = [
             ModelInvocationCounter(model_id='openai', value=3),
             ModelInvocationCounter(model_id='azure', value=2),
         ]
 
-        cls.dev_key_uuid = uuid.uuid4()
-        cls.data_key_uuid = uuid.uuid4()
-        cls.counters = Counters(
+        self.dev_key_uuid = uuid.uuid4()
+        self.data_key_uuid = uuid.uuid4()
+        self.counters = Counters(
             guardrail_value=2,
             fallback_value=3,
             rate_limit_triggered=2,
@@ -141,7 +143,7 @@ class EventServiceTest(unittest.TestCase):
             token_output_limit_triggered=0,
             cache_triggered=1,
         )
-        cls.counters_per_route = Counters(
+        self.counters_per_route = Counters(
             guardrail_value=4,
             fallback_value=1,
             rate_limit_triggered=2,
@@ -149,7 +151,7 @@ class EventServiceTest(unittest.TestCase):
             token_output_limit_triggered=0,
             cache_triggered=3,
         )
-        cls.tokens_counter = [
+        self.tokens_counter = [
             TokensCounter(
                 event_type='OUTPUT_TOKEN_PROCESSED',
                 route_name='route-A',
@@ -199,17 +201,17 @@ class EventServiceTest(unittest.TestCase):
                 value=47,
             ),
         ]
-        cls.get_last_event_details_fallback = LastEventFallback(
+        self.get_last_event_details_fallback = LastEventFallback(
             route_name='route-A',
             target='gpt-4.1',
             fallback='llama3.1',
             timestamp=datetime.datetime(
                 2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
             ),
-            api_key_uuid=cls.dev_key_uuid,
+            api_key_uuid=self.dev_key_uuid,
             api_key_name='dev',
         )
-        cls.get_last_event_details_guardrail = LastEventGuardrail(
+        self.get_last_event_details_guardrail = LastEventGuardrail(
             route_name='route-A',
             name='PRESIDIO',
             where='INPUT',
@@ -218,10 +220,10 @@ class EventServiceTest(unittest.TestCase):
             timestamp=datetime.datetime(
                 2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
             ),
-            api_key_uuid=cls.data_key_uuid,
+            api_key_uuid=self.data_key_uuid,
             api_key_name='data',
         )
-        cls.mocks = [cls.event_dao]
+        self.mocks = [self.event_dao]
 
     def test_total_counter(self):
         def get_event_details_side_effect(
@@ -1016,17 +1018,23 @@ class EventServiceTest(unittest.TestCase):
         res = self.event_service.get_costs_chart_data_by_route(
             entity_column='API_KEY_UUID',
             entity_value=key_uuid,
-            route_names=None,
+            route_names=['route-A', 'route-B'],
             _from=base_time - datetime.timedelta(hours=1),
             _to=base_time + datetime.timedelta(hours=2),
             project_uuid=self.TEST_PROJECT_UUID,
         )
 
-        self.event_dao.get_costs_chart_data_by_route.assert_called_once()
-        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args.kwargs
-        assert call_kwargs['project_uuid'] == self.TEST_PROJECT_UUID
-        assert call_kwargs['entity_column'] == 'API_KEY_UUID'
-        assert call_kwargs['entity_value'] == key_uuid
+        self.event_dao.get_costs_chart_data_by_route.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID,
+            entity_column='API_KEY_UUID',
+            entity_value=key_uuid,
+            route_names=['route-A', 'route-B'],
+            _from=base_time - datetime.timedelta(hours=1),
+            _to=base_time + datetime.timedelta(hours=2),
+            granularity='hours',
+            timezone_offset_seconds=0,
+            tags=None,
+        )
 
         assert res.granularity == 'hours'
         assert len(res.data) == 2
@@ -1053,664 +1061,6 @@ class EventServiceTest(unittest.TestCase):
         assert res == CostChartDataDTO(
             granularity='weeks', timestamp=[], data=[], total=0.0
         )
-
-    def test_get_costs_chart_data_by_route_model(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        mocked_chart_data = [
-            CostChartDataPoint(
-                bucket=base_time, group_by_value='route-A', total_cost=42.0
-            ),
-        ]
-        self.event_dao.get_costs_chart_data_by_route = MagicMock(
-            return_value=mocked_chart_data
-        )
-
-        res = self.event_service.get_costs_chart_data_by_route(
-            entity_column='MODEL_ID',
-            entity_value='gpt-4o',
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            project_uuid=self.TEST_PROJECT_UUID,
-        )
-
-        call_kwargs = self.event_dao.get_costs_chart_data_by_route.call_args.kwargs
-        assert call_kwargs['project_uuid'] == self.TEST_PROJECT_UUID
-        assert call_kwargs['entity_column'] == 'MODEL_ID'
-        assert call_kwargs['entity_value'] == 'gpt-4o'
-        assert len(res.data) == 1
-        assert res.data[0].name == 'route-A'
-        assert res.total == 42.0
-
-    def test_get_costs_chart_data_by_route_with_route_names_filter(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        key_uuid = '550e8400-e29b-41d4-a716-446655440001'
-        mocked_chart_data = [
-            CostChartDataPoint(
-                bucket=base_time, group_by_value='route-A', total_cost=50.0
-            ),
-        ]
-        self.event_dao.get_costs_chart_data_by_route = MagicMock(
-            return_value=mocked_chart_data
-        )
-
-        self.event_service.get_costs_chart_data_by_route(
-            entity_column='API_KEY_UUID',
-            entity_value=key_uuid,
-            route_names=['route-A', 'route-B'],
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            project_uuid=self.TEST_PROJECT_UUID,
-        )
-
-        call_args = self.event_dao.get_costs_chart_data_by_route.call_args.kwargs
-        assert call_args['route_names'] == ['route-A', 'route-B']
-
-    def test_get_summary_costs(self):
-        base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
-        mocked_chart_data = CostData(
-            input_cost=10,
-            output_cost=20,
-            total_cost=30,
-        )
-        mocked_detailed_breakdown = DetailedCostBreakdown(
-            chat_input_direct=10,
-            chat_input_cached=0,
-            chat_input_judges=0,
-            chat_input_judges_cached=0,
-            chat_output_direct=20,
-            chat_output_judges=0,
-            embedding_input_total=0,
-            embedding_input_direct=0,
-            embedding_input_semantic_cache=0,
-        )
-        self.event_dao.get_summary_costs = MagicMock(return_value=mocked_chart_data)
-        self.event_dao.get_detailed_cost_breakdown = MagicMock(
-            return_value=mocked_detailed_breakdown
-        )
-        expected = CostDataDTO(
-            input_cost=10,
-            output_cost=20,
-            total_cost=30,
-            total=30,
-            totals=TotalCostDTO(input=10, cached_input=0, output=20, saved=None),
-            chat_models=ChatModelsCostDTO(
-                input=ChatModelsInputBreakdownDTO(total=10, direct=10, judges=None),
-                cached_input=ChatModelsCachedInputBreakdownDTO(
-                    total=0, direct=0, judges=None
-                ),
-                output=ChatModelsOutputBreakdownDTO(total=20, direct=20, judges=None),
-                total=30,
-            ),
-            embedding_models=EmbeddingModelsCostDTO(
-                input=EmbeddingInputBreakdownDTO(
-                    total=0, embedding=0, semantic_cache=None
-                ),
-                total=0,
-            ),
-        )
-        res = self.event_service.get_summary_costs(
-            route_names=['route-A'],
-            _from=None,
-            _to=base_time + datetime.timedelta(days=7),
-            _with_saved_tokens=False,
-            project_uuid=self.TEST_PROJECT_UUID,
-            config=self.gateway_config,
-        )
-        assert res is not None
-        assert res == expected
-
-    def test_get_summary_costs_with_cache(self):
-        base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
-        mocked_chart_data = CostData(
-            input_cost=10,
-            output_cost=20,
-            total_cost=30,
-            cache_triggered=2,
-            cache_saved_tokens_input=10,
-            cache_saved_tokens_output=20,
-            saved_amount_input=0.0044,
-            saved_amount_output=0.0088,
-            total_cached_tokens=30,
-            total_saved_amount=0.0132,
-        )
-        mocked_detailed_breakdown = DetailedCostBreakdown(
-            chat_input_direct=10,
-            chat_input_cached=0,
-            chat_input_judges=0,
-            chat_input_judges_cached=0,
-            chat_output_direct=20,
-            chat_output_judges=0,
-            embedding_input_total=0,
-            embedding_input_direct=0,
-            embedding_input_semantic_cache=0,
-        )
-        expected = CostDataDTO(
-            input_cost=10,
-            output_cost=20,
-            total_cost=30,
-            cache_triggered=2,
-            cache_saved_tokens_input=10,
-            cache_saved_tokens_output=20,
-            saved_amount_input=0.0044,
-            saved_amount_output=0.0088,
-            total_cached_tokens=30,
-            total_saved_amount=0.0132,
-            total=30,
-            totals=TotalCostDTO(input=10, cached_input=0, output=20, saved=0.0132),
-            chat_models=ChatModelsCostDTO(
-                input=ChatModelsInputBreakdownDTO(total=10, direct=10, judges=None),
-                cached_input=ChatModelsCachedInputBreakdownDTO(
-                    total=0, direct=0, judges=None
-                ),
-                output=ChatModelsOutputBreakdownDTO(total=20, direct=20, judges=None),
-                total=30,
-            ),
-            embedding_models=EmbeddingModelsCostDTO(
-                input=EmbeddingInputBreakdownDTO(
-                    total=0, embedding=0, semantic_cache=None
-                ),
-                total=0,
-            ),
-        )
-        self.event_dao.get_summary_costs = MagicMock(return_value=mocked_chart_data)
-        self.event_dao.get_detailed_cost_breakdown = MagicMock(
-            return_value=mocked_detailed_breakdown
-        )
-        res = self.event_service.get_summary_costs(
-            route_names=['route-A'],
-            _from=None,
-            _to=base_time + datetime.timedelta(days=7),
-            _with_saved_tokens=True,
-            project_uuid=self.TEST_PROJECT_UUID,
-            config=self.gateway_config,
-        )
-        assert res is not None
-        assert res == expected
-
-    def test_get_summary_costs_with_semantic_cache(self):
-        base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
-
-        # Mock the gateway config to have semantic caching enabled
-        semantic_caching = SemanticCaching(
-            enabled=True,
-            type='semantic',
-            ttl=3600,
-            embedding_model_id='text-embedding-3-small',
-            similarity_threshold=0.8,
-            distance_metric='cosine',
-            dim=1536,
-        )
-
-        # Create a new event service with semantic caching
-        gateway_config_with_semantic = GatewayConfig(
-            chat_models=self.gateway_config.chat_models,
-            embedding_models=self.gateway_config.embedding_models,
-            routes={
-                'route-A': self.gateway_config.routes['route-A'].model_copy(
-                    update={'caching': semantic_caching}
-                ),
-            },
-            guardrails=self.gateway_config.guardrails,
-            cache=self.gateway_config.cache,
-        )
-
-        event_service_with_semantic = EventService(
-            event_dao=self.event_dao,
-            key_service=self.key_service,
-            group_service=self.group_service,
-            request_event_dao=self.request_event_dao,
-        )
-
-        # Mock cost data from regular cache
-        mocked_cost_data = CostData(
-            input_cost=10.0,
-            output_cost=20.0,
-            total_cost=30.0,
-            cache_triggered=2,
-            cache_saved_tokens_input=10,
-            cache_saved_tokens_output=20,
-            saved_amount_input=0.0044,
-            saved_amount_output=0.0088,
-            total_cached_tokens=30,
-            total_saved_amount=0.0132,
-        )
-
-        # Mock semantic cache cost data
-        mocked_semantic_cache_data = SemanticCacheCostData(
-            embedding_inference_cost=0.005,
-            cache_triggered=3,
-            cache_saved_tokens_input=15,
-            cache_saved_tokens_output=25,
-            llm_input_request_savings=0.006,
-            llm_output_request_savings=0.012,
-            llm_total_request_savings=0.018,
-            total_cached_tokens=40,
-            net_savings=0.013,  # llm_total_request_savings - embedding_inference_cost
-        )
-
-        # Mock detailed breakdown - includes semantic cache embedding costs
-        mocked_detailed_breakdown = DetailedCostBreakdown(
-            chat_input_direct=6,
-            chat_input_cached=2,
-            chat_input_judges=0,
-            chat_input_judges_cached=0,
-            chat_output_direct=20,
-            chat_output_judges=0,
-            embedding_input_total=2.005,  # Includes semantic cache embedding cost
-            embedding_input_direct=2,
-            embedding_input_semantic_cache=0.005,
-        )
-
-        expected = CostDataDTO(
-            input_cost=10.005,  # 10.0 + embedding_inference_cost (0.005)
-            output_cost=20.0,
-            total_cost=30.005,  # 30.0 + embedding_inference_cost (0.005)
-            cache_triggered=5,
-            cache_saved_tokens_input=25,
-            cache_saved_tokens_output=45,
-            saved_amount_input=0.0104,
-            saved_amount_output=0.0208,
-            total_cached_tokens=70,
-            total_saved_amount=0.0262,  # 0.0132 + net_savings (0.013)
-            total=30.005,  # chat_models.total (30) + embedding_models.total (2.005)
-            totals=TotalCostDTO(
-                input=6.0
-                + 2.005,  # chat_models.input.total (6) + embedding_models.input.total (2.005)
-                cached_input=2,  # chat_models.cached_input.total
-                output=20,  # chat_models.output.total
-                saved=0.0262,  # total_saved_amount
-            ),
-            chat_models=ChatModelsCostDTO(
-                input=ChatModelsInputBreakdownDTO(total=6, direct=6, judges=None),
-                cached_input=ChatModelsCachedInputBreakdownDTO(
-                    total=2, direct=2, judges=None
-                ),
-                output=ChatModelsOutputBreakdownDTO(total=20, direct=20, judges=None),
-                total=28,
-            ),
-            embedding_models=EmbeddingModelsCostDTO(
-                input=EmbeddingInputBreakdownDTO(
-                    total=2.005, embedding=2, semantic_cache=0.005
-                ),
-                total=2.005,
-            ),
-        )
-
-        self.event_dao.get_summary_costs = MagicMock(return_value=mocked_cost_data)
-        self.event_dao.get_semantic_cache_details = MagicMock(
-            return_value=mocked_semantic_cache_data
-        )
-        self.event_dao.get_detailed_cost_breakdown = MagicMock(
-            return_value=mocked_detailed_breakdown
-        )
-
-        res = event_service_with_semantic.get_summary_costs(
-            route_names=['route-A'],
-            _from=None,
-            _to=base_time + datetime.timedelta(days=7),
-            _with_saved_tokens=True,
-            project_uuid=self.TEST_PROJECT_UUID,
-            config=gateway_config_with_semantic,
-        )
-
-        assert res is not None
-        assert res == expected
-
-    def test_get_summary_costs_with_semantic_cache_zero_embedding_cost(self):
-        """Test semantic cache when embedding cost is zero (shouldn't add to total)."""
-        base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
-
-        semantic_caching = SemanticCaching(
-            enabled=True,
-            type='semantic',
-            ttl=3600,
-            embedding_model_id='text-embedding-3-small',
-            similarity_threshold=0.8,
-            distance_metric='cosine',
-            dim=1536,
-        )
-
-        gateway_config_with_semantic = GatewayConfig(
-            chat_models=self.gateway_config.chat_models,
-            embedding_models=self.gateway_config.embedding_models,
-            routes={
-                'route-A': self.gateway_config.routes['route-A'].model_copy(
-                    update={'caching': semantic_caching}
-                ),
-            },
-            guardrails=self.gateway_config.guardrails,
-            cache=self.gateway_config.cache,
-        )
-
-        event_service_with_semantic = EventService(
-            event_dao=self.event_dao,
-            key_service=self.key_service,
-            group_service=self.group_service,
-            request_event_dao=self.request_event_dao,
-        )
-
-        mocked_cost_data = CostData(
-            input_cost=10.0,
-            output_cost=20.0,
-            total_cost=30.0,
-            cache_triggered=2,
-            saved_amount_input=0.01,
-            saved_amount_output=0.02,
-            total_saved_amount=0.03,
-        )
-
-        # Semantic cache with zero embedding cost
-        mocked_semantic_cache_data = SemanticCacheCostData(
-            embedding_inference_cost=0.0,
-            cache_triggered=1,
-            llm_input_request_savings=0.005,
-            llm_output_request_savings=0.010,
-            llm_total_request_savings=0.015,
-            net_savings=0.015,  # Same as llm_total since embedding cost is 0
-        )
-
-        # Detailed breakdown with zero embedding cost
-        mocked_detailed_breakdown = DetailedCostBreakdown(
-            chat_input_direct=8,
-            chat_input_cached=2,
-            chat_input_judges=0,
-            chat_input_judges_cached=0,
-            chat_output_direct=20,
-            chat_output_judges=0,
-            embedding_input_total=0,
-            embedding_input_direct=0,
-            embedding_input_semantic_cache=0,
-        )
-
-        expected = CostDataDTO(
-            input_cost=10.0,  # No embedding cost added (0.0 is falsy)
-            output_cost=20.0,
-            total_cost=30.0,  # No embedding cost added
-            cache_triggered=3,
-            saved_amount_input=0.015,
-            saved_amount_output=0.030,
-            total_saved_amount=0.045,
-            total=30,  # chat_models.total (8 + 2 + 20) + embedding_models.total (0)
-            totals=TotalCostDTO(input=8, cached_input=2, output=20, saved=0.045),
-            chat_models=ChatModelsCostDTO(
-                input=ChatModelsInputBreakdownDTO(total=8, direct=8, judges=None),
-                cached_input=ChatModelsCachedInputBreakdownDTO(
-                    total=2, direct=2, judges=None
-                ),
-                output=ChatModelsOutputBreakdownDTO(total=20, direct=20, judges=None),
-                total=30,  # input (8) + cached_input (2) + output (20)
-            ),
-            embedding_models=EmbeddingModelsCostDTO(
-                input=EmbeddingInputBreakdownDTO(
-                    total=0, embedding=0, semantic_cache=0
-                ),
-                total=0,
-            ),
-        )
-
-        self.event_dao.get_summary_costs = MagicMock(return_value=mocked_cost_data)
-        self.event_dao.get_semantic_cache_details = MagicMock(
-            return_value=mocked_semantic_cache_data
-        )
-        self.event_dao.get_detailed_cost_breakdown = MagicMock(
-            return_value=mocked_detailed_breakdown
-        )
-
-        res = event_service_with_semantic.get_summary_costs(
-            route_names=['route-A'],
-            _from=None,
-            _to=base_time + datetime.timedelta(days=7),
-            _with_saved_tokens=False,
-            project_uuid=self.TEST_PROJECT_UUID,
-            config=gateway_config_with_semantic,
-        )
-
-        assert res is not None
-        assert res == expected
-
-    def test_get_summary_costs_semantic_cache_none_optional_fields(self):
-        """Test semantic cache when optional fields are None."""
-        base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
-
-        semantic_caching = SemanticCaching(
-            enabled=True,
-            type='semantic',
-            ttl=3600,
-            embedding_model_id='text-embedding-3-small',
-            similarity_threshold=0.8,
-            distance_metric='cosine',
-            dim=1536,
-        )
-
-        gateway_config_with_semantic = GatewayConfig(
-            chat_models=self.gateway_config.chat_models,
-            embedding_models=self.gateway_config.embedding_models,
-            routes={
-                'route-A': self.gateway_config.routes['route-A'].model_copy(
-                    update={'caching': semantic_caching}
-                ),
-            },
-            guardrails=self.gateway_config.guardrails,
-            cache=self.gateway_config.cache,
-        )
-
-        event_service_with_semantic = EventService(
-            event_dao=self.event_dao,
-            key_service=self.key_service,
-            group_service=self.group_service,
-            request_event_dao=self.request_event_dao,
-        )
-
-        # Base cost data without cache fields populated
-        mocked_cost_data = CostData(
-            input_cost=10.0,
-            output_cost=20.0,
-            total_cost=30.0,
-        )
-
-        # Semantic cache with only embedding cost (no savings yet)
-        mocked_semantic_cache_data = SemanticCacheCostData(
-            embedding_inference_cost=0.002,
-            cache_triggered=0,
-            llm_input_request_savings=None,
-            llm_output_request_savings=None,
-            llm_total_request_savings=None,
-            net_savings=None,
-        )
-
-        # Detailed breakdown with embedding cost
-        mocked_detailed_breakdown = DetailedCostBreakdown(
-            chat_input_direct=8,
-            chat_input_cached=0,
-            chat_input_judges=0,
-            chat_input_judges_cached=0,
-            chat_output_direct=20,
-            chat_output_judges=0,
-            embedding_input_total=0.002,
-            embedding_input_direct=0,
-            embedding_input_semantic_cache=0.002,
-        )
-
-        expected = CostDataDTO(
-            input_cost=10.002,
-            output_cost=20.0,
-            total_cost=30.002,
-            cache_triggered=None,  # Not populated in base, semantic has 0
-            saved_amount_input=None,
-            saved_amount_output=None,
-            total_saved_amount=None,
-            total=28.002,  # chat_models.total (28) + embedding_models.total (0.002)
-            totals=TotalCostDTO(
-                input=8.002,  # chat_models.input.total (8) + embedding_models.input.total (0.002)
-                cached_input=0,  # chat_models.cached_input.total
-                output=20,  # chat_models.output.total
-                saved=None,
-            ),
-            chat_models=ChatModelsCostDTO(
-                input=ChatModelsInputBreakdownDTO(total=8, direct=8, judges=None),
-                cached_input=ChatModelsCachedInputBreakdownDTO(
-                    total=0, direct=0, judges=None
-                ),
-                output=ChatModelsOutputBreakdownDTO(total=20, direct=20, judges=None),
-                total=28,
-            ),
-            embedding_models=EmbeddingModelsCostDTO(
-                input=EmbeddingInputBreakdownDTO(
-                    total=0.002, embedding=0, semantic_cache=0.002
-                ),
-                total=0.002,
-            ),
-        )
-
-        self.event_dao.get_summary_costs = MagicMock(return_value=mocked_cost_data)
-        self.event_dao.get_semantic_cache_details = MagicMock(
-            return_value=mocked_semantic_cache_data
-        )
-        self.event_dao.get_detailed_cost_breakdown = MagicMock(
-            return_value=mocked_detailed_breakdown
-        )
-
-        res = event_service_with_semantic.get_summary_costs(
-            route_names=['route-A'],
-            _from=None,
-            _to=base_time + datetime.timedelta(days=7),
-            _with_saved_tokens=False,
-            project_uuid=self.TEST_PROJECT_UUID,
-            config=gateway_config_with_semantic,
-        )
-
-        assert res is not None
-        assert res == expected
-
-    def test_get_summary_costs_all_features_enabled(self):
-        """Test CostDataDTO with all features enabled: chat models, judges, embedding models, semantic cache."""
-        base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
-
-        # Use helper to get gateway with JUDGE guardrail and semantic caching
-        gw = get_gateway_with_judge_and_semantic_cache(route_name='route-full')
-
-        event_service_full = EventService(
-            event_dao=self.event_dao,
-            key_service=self.key_service,
-            group_service=self.group_service,
-            request_event_dao=self.request_event_dao,
-        )
-
-        # Mock cost data with cache fields
-        mocked_cost_data = CostData(
-            input_cost=15.0,
-            output_cost=25.0,
-            total_cost=40.0,
-            cache_triggered=5,
-            cache_saved_tokens_input=100,
-            cache_saved_tokens_output=200,
-            saved_amount_input=0.02,
-            saved_amount_output=0.04,
-            total_cached_tokens=300,
-            total_saved_amount=0.06,
-        )
-
-        # Mock semantic cache data with embedding cost
-        mocked_semantic_cache_data = SemanticCacheCostData(
-            embedding_inference_cost=0.003,
-            cache_triggered=3,
-            cache_saved_tokens_input=50,
-            cache_saved_tokens_output=75,
-            llm_input_request_savings=0.01,
-            llm_output_request_savings=0.02,
-            llm_total_request_savings=0.03,
-            net_savings=0.027,
-        )
-
-        # Mock detailed breakdown with ALL features populated
-        mocked_detailed_breakdown = DetailedCostBreakdown(
-            chat_input_direct=8.0,
-            chat_input_cached=2.0,
-            chat_input_judges=3.0,  # Judge input costs
-            chat_input_judges_cached=1.0,  # Judge cached input costs
-            chat_output_direct=20.0,
-            chat_output_judges=5.0,  # Judge output costs
-            embedding_input_total=0.503,  # Includes semantic cache embedding cost
-            embedding_input_direct=0.5,
-            embedding_input_semantic_cache=0.003,
-        )
-
-        expected = CostDataDTO(
-            input_cost=15.003,  # 15.0 + embedding_inference_cost (0.003)
-            output_cost=25.0,
-            total_cost=40.003,  # 40.0 + embedding_inference_cost (0.003)
-            cache_triggered=8,  # 5 + 3
-            cache_saved_tokens_input=150,  # 100 + 50
-            cache_saved_tokens_output=275,  # 200 + 75
-            saved_amount_input=0.03,  # 0.02 + 0.01
-            saved_amount_output=0.06,  # 0.04 + 0.02
-            total_cached_tokens=300,  # From mocked_cost_data (not combined with semantic cache)
-            total_saved_amount=0.087,  # 0.06 + 0.027
-            total=39.503,  # chat_models.total (39) + embedding_models.total (0.503)
-            totals=TotalCostDTO(
-                input=11.503,  # chat_models.input.total (11) + embedding_models.input.total (0.503)
-                cached_input=3.0,  # chat_models.cached_input.total (2 + 1)
-                output=25.0,  # chat_models.output.total
-                saved=0.087,  # total_saved_amount
-            ),
-            chat_models=ChatModelsCostDTO(
-                input=ChatModelsInputBreakdownDTO(
-                    total=11.0,
-                    direct=8.0,
-                    judges=3.0,  # Judges populated!
-                ),
-                cached_input=ChatModelsCachedInputBreakdownDTO(
-                    total=3.0,
-                    direct=2.0,
-                    judges=1.0,  # Judges populated!
-                ),
-                output=ChatModelsOutputBreakdownDTO(
-                    total=25.0,
-                    direct=20.0,
-                    judges=5.0,  # Judges populated!
-                ),
-                total=39.0,  # 11 + 3 + 25
-            ),
-            embedding_models=EmbeddingModelsCostDTO(
-                input=EmbeddingInputBreakdownDTO(
-                    total=0.503,
-                    embedding=0.5,
-                    semantic_cache=0.003,  # Semantic cache populated!
-                ),
-                total=0.503,
-            ),
-        )
-
-        self.event_dao.get_summary_costs = MagicMock(return_value=mocked_cost_data)
-        self.event_dao.get_semantic_cache_details = MagicMock(
-            return_value=mocked_semantic_cache_data
-        )
-        self.event_dao.get_detailed_cost_breakdown = MagicMock(
-            return_value=mocked_detailed_breakdown
-        )
-
-        res = event_service_full.get_summary_costs(
-            route_names=['route-full'],
-            _from=None,
-            _to=base_time + datetime.timedelta(days=7),
-            _with_saved_tokens=True,
-            project_uuid=self.TEST_PROJECT_UUID,
-            config=gw,
-        )
-
-        assert res is not None
-        assert res == expected
-        # Verify judges fields are populated (not None)
-        assert res.chat_models.input.judges == 3.0
-        assert res.chat_models.cached_input.judges == 1.0
-        assert res.chat_models.output.judges == 5.0
-        # Verify semantic_cache field is populated (not None)
-        assert res.embedding_models.input.semantic_cache == 0.003
 
     def test_get_chart_data_multiple_models(self):
         base_time = datetime.datetime(
@@ -1998,33 +1348,6 @@ class EventServiceTest(unittest.TestCase):
         )
         assert res == expected
 
-    def test_get_all_routes_costs_forwards_tags_to_event_dao(self):
-        self.event_dao.get_all_routes_summary_costs = MagicMock(return_value=[])
-        self.event_dao.get_all_routes_detailed_cost_breakdown = MagicMock(
-            return_value=[]
-        )
-
-        tags = ['env=prod', 'cost_center=retail']
-        self.event_service.get_all_routes_costs(
-            _from=None,
-            _to=None,
-            _with_saved_tokens=False,
-            project_uuid=self.TEST_PROJECT_UUID,
-            config=self.gateway_config,
-            tags=tags,
-        )
-
-        self.event_dao.get_all_routes_summary_costs.assert_called_once_with(
-            project_uuid=self.TEST_PROJECT_UUID,
-            _from=None,
-            _to=None,
-            _with_saved_tokens=False,
-            tags=tags,
-        )
-        self.event_dao.get_all_routes_detailed_cost_breakdown.assert_called_once_with(
-            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
-        )
-
     def test_get_total_counter_forwards_tags_to_both_daos(self):
         """get_total_counter blends EventDAO and RequestEventDAO calls; both
         must receive the same tags filter.
@@ -2071,12 +1394,25 @@ class EventServiceTest(unittest.TestCase):
             return_value=[]
         )
 
+        tags = ['env=prod', 'cost_center=retail']
         res = self.event_service.get_all_routes_costs(
             _from=None,
             _to=None,
             _with_saved_tokens=False,
             project_uuid=self.TEST_PROJECT_UUID,
             config=self.gateway_config,
+            tags=tags,
+        )
+
+        self.event_dao.get_all_routes_summary_costs.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID,
+            _from=None,
+            _to=None,
+            _with_saved_tokens=False,
+            tags=tags,
+        )
+        self.event_dao.get_all_routes_detailed_cost_breakdown.assert_called_once_with(
+            project_uuid=self.TEST_PROJECT_UUID, _from=None, _to=None, tags=tags
         )
         zero_cost_dto = CostDataDTO(
             total=0.0,
@@ -2219,57 +1555,6 @@ class EventServiceTest(unittest.TestCase):
             routes=[
                 RouteCostDTO(route_name='route-A', summary=route_a_cost_dto),
                 RouteCostDTO(route_name='route-B', summary=route_b_cost_dto),
-            ],
-        )
-        assert res == expected
-
-    def test_get_all_routes_costs_no_routes_with_events(self):
-        """Test when no routes have any events"""
-
-        # Mock batch DAO methods - return empty lists (no routes with events)
-        self.event_dao.get_all_routes_summary_costs = MagicMock(return_value=[])
-        self.event_dao.get_all_routes_detailed_cost_breakdown = MagicMock(
-            return_value=[]
-        )
-
-        res = self.event_service.get_all_routes_costs(
-            _from=None,
-            _to=None,
-            _with_saved_tokens=False,
-            project_uuid=self.TEST_PROJECT_UUID,
-            config=self.gateway_config,
-        )
-
-        zero_cost_dto = CostDataDTO(
-            total=0.0,
-            totals=TotalCostDTO(input=0.0, cached_input=0.0, output=0.0, saved=0.0),
-            chat_models=ChatModelsCostDTO(
-                input=ChatModelsInputBreakdownDTO(total=0.0, direct=0.0, judges=None),
-                cached_input=ChatModelsCachedInputBreakdownDTO(
-                    total=0.0, direct=0.0, judges=None
-                ),
-                output=ChatModelsOutputBreakdownDTO(total=0.0, direct=0.0, judges=None),
-                total=0.0,
-            ),
-            embedding_models=EmbeddingModelsCostDTO(
-                input=EmbeddingInputBreakdownDTO(
-                    total=0.0, embedding=0.0, semantic_cache=None
-                ),
-                total=0.0,
-            ),
-            cache_triggered=0,
-            saved_amount_input=0.0,
-            saved_amount_output=0.0,
-            total_saved_amount=0.0,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            total_cached_tokens=None,
-        )
-        expected = UsageCostsDTO(
-            total=0.0,
-            routes=[
-                RouteCostDTO(route_name='route-A', summary=zero_cost_dto),
-                RouteCostDTO(route_name='route-B', summary=zero_cost_dto),
             ],
         )
         assert res == expected
@@ -2825,7 +2110,6 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config_with_routing,
         )
 
-        assert res.routing is not None
         assert res.routing.value == 5
         assert len(res.routing.model_invocations) == 2
         assert (
@@ -2857,7 +2141,6 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config_with_routing,
         )
 
-        assert res.routing is not None
         assert res.routing.value == 0
         assert res.routing.model_invocations == []
 
@@ -2886,7 +2169,6 @@ class EventServiceTest(unittest.TestCase):
             project_name=self.TEST_PROJECT_NAME,
         )
 
-        assert res.metrics.routing is not None
         assert res.metrics.routing.value == 5
         assert len(res.metrics.routing.model_invocations) == 2
         assert (
@@ -2898,7 +2180,8 @@ class EventServiceTest(unittest.TestCase):
             in res.metrics.routing.model_invocations
         )
         assert res.metrics.total_requests == 12
-        assert res.metrics.request_error_percentage == round(2 / 12 * 100, 2)
+        with pytest.deprecated_call():
+            assert res.metrics.request_error_percentage == round(2 / 12 * 100, 2)
         assert res.metrics.fallbacks is None
         assert res.metrics.guardrails is None
 
@@ -2930,7 +2213,6 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config,
         )
 
-        assert res is not None
         assert res.name == 'route-A'
         assert res.increment_percentage == 0.0
         assert res.chart.total == 100.0
@@ -2939,23 +2221,22 @@ class EventServiceTest(unittest.TestCase):
 
     def test_get_most_expensive_route_with_chart_data(self):
         self.event_dao.get_most_expensive_route = MagicMock(
-            return_value=MostExpensiveRoute(route_name='route-A', total_cost=150.0)
+            return_value=MostExpensiveRoute(route_name='route-A', total_cost=600.0)
         )
 
         _from = datetime.datetime(2025, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
         _to = datetime.datetime(2025, 1, 1, 3, 0, 0, tzinfo=datetime.timezone.utc)
+        buckets = [_from + datetime.timedelta(hours=h) for h in range(4)]
 
-        # 3-hour range -> granularity='hours'
-        # Buckets at hour 0, 1, 2
-        bucket_0 = datetime.datetime(2025, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-        bucket_1 = datetime.datetime(2025, 1, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
-        bucket_2 = datetime.datetime(2025, 1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
-
-        chart_points = [
-            MostExpensiveChartData(bucket=bucket_0, cost=50),
-            MostExpensiveChartData(bucket=bucket_2, cost=100),
-        ]
-        self.event_dao.get_cost_chart_data = MagicMock(return_value=chart_points)
+        # 3-hour range -> granularity='hours', 4 buckets; bucket 1 has no data.
+        # increment = ((300 - 200) / 200) * 100 = 50.0 over the last two buckets
+        self.event_dao.get_cost_chart_data = MagicMock(
+            return_value=[
+                MostExpensiveChartData(bucket=buckets[0], cost=100),
+                MostExpensiveChartData(bucket=buckets[2], cost=200),
+                MostExpensiveChartData(bucket=buckets[3], cost=300),
+            ]
+        )
 
         res = self.event_service.get_most_expensive_route(
             _from=_from,
@@ -2964,59 +2245,12 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config,
         )
 
-        assert res is not None
         assert res.name == 'route-A'
         assert res.chart.granularity == 'hours'
-        assert res.chart.total == 150
-        # bucket_1 has no data -> should be 0
-        assert len(res.chart.data) == len(res.chart.timestamp)
-        ts_0 = int(bucket_0.timestamp())
-        ts_1 = int(bucket_1.timestamp())
-        ts_2 = int(bucket_2.timestamp())
-        assert ts_0 in res.chart.timestamp
-        assert ts_1 in res.chart.timestamp
-        assert ts_2 in res.chart.timestamp
-        idx_0 = res.chart.timestamp.index(ts_0)
-        idx_1 = res.chart.timestamp.index(ts_1)
-        idx_2 = res.chart.timestamp.index(ts_2)
-        assert res.chart.data[idx_0] == 50
-        assert res.chart.data[idx_1] == 0
-        assert res.chart.data[idx_2] == 100
-
-    def test_get_most_expensive_route_increment_percentage(self):
-        self.event_dao.get_most_expensive_route = MagicMock(
-            return_value=MostExpensiveRoute(route_name='route-B', total_cost=650.0)
-        )
-
-        _from = datetime.datetime(2025, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-        _to = datetime.datetime(2025, 1, 1, 3, 0, 0, tzinfo=datetime.timezone.utc)
-
-        bucket_0 = datetime.datetime(2025, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-        bucket_1 = datetime.datetime(2025, 1, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
-        bucket_2 = datetime.datetime(2025, 1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
-        bucket_3 = datetime.datetime(2025, 1, 1, 3, 0, 0, tzinfo=datetime.timezone.utc)
-
-        # generate_chart_timestamps produces 4 buckets: [0h, 1h, 2h, 3h]
-        # Data covers all 4 buckets so the last two are (200, 300)
-        # increment = ((300 - 200) / 200) * 100 = 50.0
-        chart_points = [
-            MostExpensiveChartData(bucket=bucket_0, cost=100),
-            MostExpensiveChartData(bucket=bucket_1, cost=50),
-            MostExpensiveChartData(bucket=bucket_2, cost=200),
-            MostExpensiveChartData(bucket=bucket_3, cost=300),
-        ]
-        self.event_dao.get_cost_chart_data = MagicMock(return_value=chart_points)
-
-        res = self.event_service.get_most_expensive_route(
-            _from=_from,
-            _to=_to,
-            project_uuid=self.TEST_PROJECT_UUID,
-            config=self.gateway_config,
-        )
-
-        assert res is not None
+        assert res.chart.total == 600
+        assert res.chart.timestamp == [int(b.timestamp()) for b in buckets]
+        assert res.chart.data == [100, 0, 200, 300]
         assert res.increment_percentage == 50.0
-        assert res.chart.total == 650
 
     def test_get_most_expensive_route_no_date_filters(self):
         self.event_dao.get_most_expensive_route = MagicMock(
@@ -3036,7 +2270,6 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config,
         )
 
-        assert res is not None
         assert res.name == 'route-A'
         assert res.chart.total == 50
         # Single data point -> increment_percentage should be 0.0
@@ -3060,11 +2293,20 @@ class TestGetRouteLimitsProgress:
         )
         return m
 
-    def _make_item_mock(self, limit: int, window_seconds: int) -> MagicMock:
-        item = MagicMock()
-        item.limit = limit
-        item.window_seconds = window_seconds
-        return item
+    @pytest.fixture(autouse=True)
+    def _limiters(self):
+        """Give each window the limiter mock made for it."""
+        # Keyed by the route name: each window gets a unique one.
+        self._limiter_by_key = {}
+        with patch.object(
+            Window,
+            'limiter',
+            autospec=True,
+            side_effect=lambda window, storage: self._limiter_by_key[
+                window.config.route_name
+            ],
+        ):
+            yield
 
     def _make_gateway_route(
         self,
@@ -3081,54 +2323,36 @@ class TestGetRouteLimitsProgress:
         duration_remaining: int | None = None,
         window_seconds: int = 3600,
     ) -> MagicMock:
+        windows = []
+        for category, limit, remaining in (
+            (Category.COST, budget_limit, budget_remaining),
+            (Category.INPUT_TOKENS, token_input_limit, token_input_remaining),
+            (Category.OUTPUT_TOKENS, token_output_limit, token_output_remaining),
+            (Category.REQUESTS, rate_limit, rate_remaining),
+            (Category.AUDIO_SECONDS, duration_limit, duration_remaining),
+        ):
+            if limit is None:
+                continue
+            window = Window(
+                scope=LimitScope.ROUTE,
+                category=category,
+                config=WindowConfig.from_parts(
+                    limit=limit,
+                    window=window_seconds,
+                    project_uuid='project',
+                    route_name=uuid.uuid4().hex,
+                    scenario_type=ScenarioType(category.value),
+                ),
+                aligned=False,
+                shown_value=limit,
+                shown_window=window_seconds,
+            )
+            self._limiter_by_key[window.config.route_name] = self._make_limiter_mock(
+                limit, remaining
+            )
+            windows.append(window)
         route = MagicMock()
-
-        bl = MagicMock()
-        if budget_limit is not None:
-            bl.limiter = self._make_limiter_mock(budget_limit, budget_remaining)
-            bl.item = self._make_item_mock(budget_limit, window_seconds)
-        else:
-            bl.limiter = None
-            bl.item = None
-        route.budget_limiter = bl
-
-        tl = MagicMock()
-        if token_input_limit is not None:
-            tl.input_limiter = self._make_limiter_mock(
-                token_input_limit, token_input_remaining
-            )
-            tl.input_item = self._make_item_mock(token_input_limit, window_seconds)
-        else:
-            tl.input_limiter = None
-            tl.input_item = None
-        if token_output_limit is not None:
-            tl.output_limiter = self._make_limiter_mock(
-                token_output_limit, token_output_remaining
-            )
-            tl.output_item = self._make_item_mock(token_output_limit, window_seconds)
-        else:
-            tl.output_limiter = None
-            tl.output_item = None
-        route.token_limiter = tl
-
-        rl = MagicMock()
-        if rate_limit is not None:
-            rl.limiter = self._make_limiter_mock(rate_limit, rate_remaining)
-            rl.item = self._make_item_mock(rate_limit, window_seconds)
-        else:
-            rl.limiter = None
-            rl.item = None
-        route.request_rate_limiter = rl
-
-        dl = MagicMock()
-        if duration_limit is not None:
-            dl.limiter = self._make_limiter_mock(duration_limit, duration_remaining)
-            dl.item = self._make_item_mock(duration_limit, window_seconds)
-        else:
-            dl.limiter = None
-            dl.item = None
-        route.duration_limiter = dl
-
+        route.route_limits = RouteLimits(tuple(windows))
         return route
 
     def _make_service(self):
@@ -3168,7 +2392,6 @@ class TestGetRouteLimitsProgress:
         entry = result[0]
         assert entry.route_name == 'my-route'
         pb = entry.progress_bar
-        assert pb is not None
         assert pb.budget.window_size == pytest.approx(10.0)
         assert pb.budget.window_filled_size == pytest.approx(7.0)
         assert pb.budget.window_filled_percentage == pytest.approx(70.0)
@@ -3189,62 +2412,18 @@ class TestGetRouteLimitsProgress:
         assert pb.duration.window_filled_percentage == pytest.approx(50.0)
 
     @pytest.mark.asyncio
-    async def test_only_rate_limiter(self):
-        """Only rate bar is non-None when only rate limiter is configured."""
-        routes = {
-            'test/my-route': self._make_gateway_route(rate_limit=50, rate_remaining=50)
-        }
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None
-        )
-
-        pb = result[0].progress_bar
-        assert pb is not None
-        assert pb.rate is not None
-        assert pb.budget is None
-        assert pb.token_input is None
-        assert pb.token_output is None
-        assert pb.duration is None
-
-    @pytest.mark.asyncio
-    async def test_no_limiters_gives_none_progress_bar(self):
-        """progress_bar is None when no limiters are configured."""
-        routes = {'test/my-route': self._make_gateway_route()}
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None
-        )
-
-        assert len(result) == 1
-        assert result[0].route_name == 'my-route'
-        assert result[0].progress_bar is None
-
-    @pytest.mark.asyncio
     async def test_filter_by_route_names(self):
-        """Only the specified route_names are included in the result."""
+        """Only the specified route_names are included; unknown ones are skipped."""
         routes = {
             'test/route-a': self._make_gateway_route(rate_limit=10, rate_remaining=10),
             'test/route-b': self._make_gateway_route(rate_limit=20, rate_remaining=20),
             'test/route-c': self._make_gateway_route(rate_limit=30, rate_remaining=30),
         }
         result = await self._make_service().get_route_limits_progress(
-            routes, 'test', ['route-a', 'route-c']
+            routes, 'test', ['route-a', 'route-c', 'ghost-route']
         )
 
-        names = {r.route_name for r in result}
-        assert names == {'route-a', 'route-c'}
-
-    @pytest.mark.asyncio
-    async def test_unknown_route_name_skipped(self):
-        """Unknown names in route_names filter are silently skipped."""
-        routes = {
-            'test/real-route': self._make_gateway_route(rate_limit=10, rate_remaining=5)
-        }
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', ['real-route', 'ghost-route']
-        )
-
-        assert len(result) == 1
-        assert result[0].route_name == 'real-route'
+        assert sorted(r.route_name for r in result) == ['route-a', 'route-c']
 
     @pytest.mark.asyncio
     async def test_budget_converted_from_micro_units(self):
@@ -3266,124 +2445,58 @@ class TestGetRouteLimitsProgress:
         assert budget.window_filled_size == pytest.approx(used)
         assert budget.window_filled_percentage == pytest.approx(50.0)
 
-    @pytest.mark.asyncio
-    async def test_filter_window_statuses_none_returns_all(self):
-        """window_statuses=None returns all routes unchanged."""
-        routes = {
-            'test/route-a': self._make_gateway_route(
-                rate_limit=100, rate_remaining=100
+    # Each route is None (no limiter, so no progress_bar) or (rate_remaining,
+    # expected rate window_status) on a 100-request window:
+    # <=70% filled is OK, <=90% WARNING, above CRITICAL.
+    @pytest.mark.parametrize(
+        ('window_statuses', 'routes', 'expected'),
+        [
+            (None, {'a': (100, WindowStatus.OK), 'b': None}, {'a', 'b'}),
+            ([WindowStatus.OK], {'a': None}, {'a'}),
+            ([WindowStatus.OK], {'a': (30, WindowStatus.OK)}, {'a'}),
+            ([WindowStatus.OK], {'a': (20, WindowStatus.WARNING)}, set()),
+            ([WindowStatus.WARNING], {'a': (20, WindowStatus.WARNING)}, {'a'}),
+            ([WindowStatus.WARNING], {'a': None}, set()),
+            ([WindowStatus.CRITICAL], {'a': (5, WindowStatus.CRITICAL)}, {'a'}),
+            ([WindowStatus.CRITICAL], {'a': (50, WindowStatus.OK)}, set()),
+            (
+                [WindowStatus.OK, WindowStatus.WARNING],
+                {
+                    'ok': None,
+                    'warning': (20, WindowStatus.WARNING),
+                    'critical': (5, WindowStatus.CRITICAL),
+                },
+                {'ok', 'warning'},
             ),
-            'test/route-b': self._make_gateway_route(),
+        ],
+    )
+    async def test_filter_window_statuses(self, window_statuses, routes, expected):
+        gateway_routes = {
+            f'test/{name}': self._make_gateway_route()
+            if spec is None
+            else self._make_gateway_route(rate_limit=100, rate_remaining=spec[0])
+            for name, spec in routes.items()
         }
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None, window_statuses=None
-        )
-        assert len(result) == 2
 
-    @pytest.mark.asyncio
-    async def test_filter_window_statuses_ok_includes_no_progress_bar(self):
-        """Routes with no progress_bar are included when window_statuses=[ok]."""
-        routes = {'test/route-a': self._make_gateway_route()}
         result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None, window_statuses=[WindowStatus.OK]
+            gateway_routes, 'test', None, window_statuses=window_statuses
         )
-        assert len(result) == 1
-        assert result[0].route_name == 'route-a'
-        assert result[0].progress_bar is None
 
-    @pytest.mark.asyncio
-    async def test_filter_window_statuses_ok_includes_all_ok_windows(self):
-        """Routes where all windows are OK pass the ok filter."""
-        # 70% filled → OK (≤70%)
-        routes = {
-            'test/route-a': self._make_gateway_route(rate_limit=100, rate_remaining=30)
-        }
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None, window_statuses=[WindowStatus.OK]
-        )
-        assert len(result) == 1
-        assert result[0].progress_bar.rate.window_status == WindowStatus.OK
-
-    @pytest.mark.asyncio
-    async def test_filter_window_statuses_ok_excludes_warning_route(self):
-        """Routes with a WARNING window are excluded when only ok is requested."""
-        # 80% filled → WARNING (70 < x ≤ 90%)
-        routes = {
-            'test/route-a': self._make_gateway_route(rate_limit=100, rate_remaining=20)
-        }
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None, window_statuses=[WindowStatus.OK]
-        )
-        assert len(result) == 0
-
-    @pytest.mark.asyncio
-    async def test_filter_window_statuses_warning_includes_warning_route(self):
-        """Routes with at least one WARNING window are included."""
-        # 80% filled → WARNING
-        routes = {
-            'test/route-a': self._make_gateway_route(rate_limit=100, rate_remaining=20)
-        }
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None, window_statuses=[WindowStatus.WARNING]
-        )
-        assert len(result) == 1
-        assert result[0].progress_bar.rate.window_status == WindowStatus.WARNING
-
-    @pytest.mark.asyncio
-    async def test_filter_window_statuses_warning_excludes_no_progress_bar(self):
-        """Routes with no progress_bar are excluded when only warning is requested."""
-        routes = {'test/route-a': self._make_gateway_route()}
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None, window_statuses=[WindowStatus.WARNING]
-        )
-        assert len(result) == 0
-
-    @pytest.mark.asyncio
-    async def test_filter_window_statuses_critical_includes_critical_route(self):
-        """Routes with at least one CRITICAL window are included."""
-        # 95% filled → CRITICAL (>90%)
-        routes = {
-            'test/route-a': self._make_gateway_route(rate_limit=100, rate_remaining=5)
-        }
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None, window_statuses=[WindowStatus.CRITICAL]
-        )
-        assert len(result) == 1
-        assert result[0].progress_bar.rate.window_status == WindowStatus.CRITICAL
-
-    @pytest.mark.asyncio
-    async def test_filter_window_statuses_critical_excludes_ok_route(self):
-        """Routes with only OK windows are excluded when only critical is requested."""
-        routes = {
-            'test/route-a': self._make_gateway_route(rate_limit=100, rate_remaining=50)
-        }
-        result = await self._make_service().get_route_limits_progress(
-            routes, 'test', None, window_statuses=[WindowStatus.CRITICAL]
-        )
-        assert len(result) == 0
-
-    @pytest.mark.asyncio
-    async def test_filter_window_statuses_multiple_values_union(self):
-        """[ok, warning] returns routes matching either condition."""
-        routes = {
-            'test/ok-route': self._make_gateway_route(),  # no progress_bar → ok
-            'test/warning-route': self._make_gateway_route(
-                rate_limit=100, rate_remaining=20
-            ),  # 80% → WARNING
-            'test/critical-route': self._make_gateway_route(
-                rate_limit=100, rate_remaining=5
-            ),  # 95% → CRITICAL
-        }
-        result = await self._make_service().get_route_limits_progress(
-            routes,
-            'test',
-            None,
-            window_statuses=[WindowStatus.OK, WindowStatus.WARNING],
-        )
-        names = {r.route_name for r in result}
-        assert 'ok-route' in names
-        assert 'warning-route' in names
-        assert 'critical-route' not in names
+        assert {r.route_name for r in result} == expected
+        for r in result:
+            spec = routes[r.route_name]
+            if spec is None:
+                assert r.progress_bar is None
+            else:
+                pb = r.progress_bar
+                assert pb.rate.window_status == spec[1]
+                # Only the configured limiter has a bar
+                assert (pb.budget, pb.token_input, pb.token_output, pb.duration) == (
+                    None,
+                    None,
+                    None,
+                    None,
+                )
 
 
 class TestDecisionModelsUsage:
@@ -3417,26 +2530,6 @@ class TestDecisionModelsUsage:
             group_service=MagicMock(spec_set=GroupService),
         )
 
-    def test_summary_costs_include_decision_spend(self):
-        event_dao = MagicMock(spec_set=EventDAO)
-        event_dao.get_summary_costs.return_value = CostData(
-            input_cost=0.0, output_cost=0.0, total_cost=0.0
-        )
-        event_dao.get_detailed_cost_breakdown.return_value = DetailedCostBreakdown(
-            chat_input_direct=1.0, decision_input=0.25
-        )
-
-        res = self._service(event_dao).get_summary_costs(
-            project_uuid=uuid.uuid4(),
-            config=self._config(),
-            route_names=['agent'],
-        )
-
-        assert res.decision_models.input == 0.25
-        assert res.decision_models.total == 0.25
-        assert res.totals.input == 1.25
-        assert res.total == 1.25
-
     def test_summary_costs_without_decision_routes_have_no_decision_breakdown(self):
         event_dao = MagicMock(spec_set=EventDAO)
         event_dao.get_summary_costs.return_value = CostData(
@@ -3454,29 +2547,23 @@ class TestDecisionModelsUsage:
 
         assert res.decision_models is None
 
-    def test_all_routes_costs_show_zero_only_where_configured(self):
+    @pytest.mark.parametrize('spend', [0.0, 0.25])
+    def test_all_routes_costs_show_decision_spend_only_where_configured(self, spend):
         event_dao = MagicMock(spec_set=EventDAO)
         event_dao.get_all_routes_summary_costs.return_value = []
-        event_dao.get_all_routes_detailed_cost_breakdown.return_value = []
+        event_dao.get_all_routes_detailed_cost_breakdown.return_value = (
+            [RouteDetailedCostBreakdown(route_name='agent', decision_input=spend)]
+            if spend
+            else []
+        )
 
         res = self._service(event_dao).get_all_routes_costs(
             project_uuid=uuid.uuid4(), config=self._config()
         )
 
         by_route = {r.route_name: r.summary for r in res.routes}
-        assert by_route['agent'].decision_models.input == 0.0
-        assert by_route['agent'].decision_models.total == 0.0
+        assert by_route['agent'].decision_models.input == spend
+        assert by_route['agent'].decision_models.total == spend
         assert by_route['chat'].decision_models is None
-
-    def test_all_routes_costs_add_decision_spend_to_grand_total(self):
-        event_dao = MagicMock(spec_set=EventDAO)
-        event_dao.get_all_routes_summary_costs.return_value = []
-        event_dao.get_all_routes_detailed_cost_breakdown.return_value = [
-            RouteDetailedCostBreakdown(route_name='agent', decision_input=0.25)
-        ]
-
-        res = self._service(event_dao).get_all_routes_costs(
-            project_uuid=uuid.uuid4(), config=self._config()
-        )
-
-        assert res.total == 0.25
+        # Decision spend is part of the grand total
+        assert res.total == spend

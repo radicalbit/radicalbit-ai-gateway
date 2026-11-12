@@ -220,6 +220,11 @@ async def test_span_is_a_client_child_of_the_current_span(spans):
     assert attributes['traceloop.workflow.name'] == ''
     assert attributes['traceloop.entity.path'] == ''
     assert 'gen_ai.task.status' not in attributes
+    # No finish reason, no server: the model gives neither.
+    assert 'gen_ai.response.finish_reasons' not in attributes
+    assert _output(span)['finish_reason'] == ''
+    assert 'server.address' not in attributes
+    assert 'server.port' not in attributes
 
 
 async def test_usage_and_response_model_reach_the_metrics(spans, metrics):
@@ -400,14 +405,6 @@ async def test_finish_reason_mapping(spans, raw, reported):
     assert _output(span)['finish_reason'] == reported
 
 
-async def test_no_finish_reason(spans):
-    await _Model(AIMessage('ok'), model='m').ainvoke(MESSAGES)
-
-    span = _only_span(spans)
-    assert 'gen_ai.response.finish_reasons' not in span.attributes
-    assert _output(span)['finish_reason'] == ''
-
-
 # ── Request params ───────────────────────────────────────────────────────────
 
 
@@ -430,16 +427,9 @@ async def test_call_params_are_reported_when_the_model_has_none(spans, metrics):
     # As with LangChain, constructor params without a model reset the span's
     # request model; the call's model still names the reply in the metrics.
     assert attributes['gen_ai.request.model'] == 'unknown'
+    assert attributes['gen_ai.response.model'] == 'unknown'
     duration_attributes = _points(metrics)['gen_ai.client.operation.duration'][0][0]
     assert duration_attributes['gen_ai.response.model'] == 'm-call'
-
-
-async def test_unknown_request_model(spans):
-    await _Model(AIMessage('ok')).ainvoke(MESSAGES)
-
-    attributes = _only_span(spans).attributes
-    assert attributes['gen_ai.request.model'] == 'unknown'
-    assert attributes['gen_ai.response.model'] == 'unknown'
 
 
 async def test_nested_constructor_params(spans):
@@ -1784,14 +1774,6 @@ async def test_server_of_the_call(spans, url, address, port):
     assert attributes['server.port'] == port
 
 
-async def test_no_server_when_the_model_has_none(spans):
-    await _Model(reply=AIMessage('Hi'), model='m').ainvoke(MESSAGES)
-
-    attributes = _only_span(spans).attributes
-    assert 'server.address' not in attributes
-    assert 'server.port' not in attributes
-
-
 async def test_a_failing_server_hook_does_not_stop_the_trace(spans):
     class _Broken(_Model):
         def _server_url(self) -> str | None:
@@ -1863,9 +1845,9 @@ def test_provider_server_urls(monkeypatch, spec, settings, url):
     for name in ('OPENAI_API_BASE', 'ANTHROPIC_API_URL', 'ANTHROPIC_BASE_URL'):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv('MISTRAL_BASE_URL', raising=False)
-    model = init_chat_model(
-        spec, api_key='sk', http_async_client=HttpxAiohttpClient(), **settings
-    )
+    if not spec.startswith(('anthropic:', 'mistralai:')):
+        settings = {**settings, 'http_async_client': HttpxAiohttpClient()}
+    model = init_chat_model(spec, api_key='sk', **settings)
 
     assert model._server_url() == url
 

@@ -156,3 +156,37 @@ def test_valid_model_with_no_prompt_fields_allows_defaults():
     assert model.prompt is None
     assert model.prompt_ref is None
     assert model.role == 'system'
+
+
+@pytest.mark.parametrize(
+    ('name', 'per_second', 'per_audio_token'),
+    [
+        ('openai/gpt-4o-transcribe', Decimal('0.0001'), Decimal('0.0000025')),
+        ('openai/whisper-1', Decimal('0.0001'), 0),
+    ],
+)
+def test_transcription_prices_from_file(name, per_second, per_audio_token):
+    model = Model(model_id='t', model=name, credentials={'api_key': 'k'})
+
+    assert model.input_cost_per_second == per_second
+    assert model.input_cost_per_audio_token == per_audio_token
+
+
+@pytest.mark.parametrize(
+    ('configured', 'expected_1h'),
+    [({}, None), ({'input_cache_creation_1h_cost_per_million_tokens': 9}, Decimal(9))],
+    ids=['from_file', 'configured_wins'],
+)
+def test_cache_write_prices(configured, expected_1h):
+    model = Model(
+        model_id='c',
+        model='anthropic/claude-sonnet-4-5',
+        credentials={'api_key': 'k'},
+        **configured,
+    )
+
+    assert model.input_cache_creation_5m_cost_per_million_tokens > 0
+    if expected_1h is None:
+        assert model.input_cache_creation_1h_cost_per_million_tokens > 0
+    else:
+        assert model.input_cache_creation_1h_cost_per_million_tokens == expected_1h

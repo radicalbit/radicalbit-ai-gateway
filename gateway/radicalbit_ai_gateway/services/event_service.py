@@ -15,7 +15,8 @@ from radicalbit_ai_gateway.db.models.event import (
     LastEventGuardrail,
     TokensCounter,
 )
-from radicalbit_ai_gateway.limiting.window_progress import window_progress_bar
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiting.windows import Category, Window
 from radicalbit_ai_gateway.models.event_dto import (
     CacheHitEventDetailDTO,
     ChartDataSeriesDTO,
@@ -1175,7 +1176,7 @@ class EventService:
             total += (
                 cost_dto.total
                 if cost_dto.total is not None
-                else cost_dto.total_cost or 0.0
+                else cost_data.total_cost or 0.0
             )
 
             route_dtos.append(RouteCostDTO(route_name=route_name, summary=cost_dto))
@@ -1255,12 +1256,10 @@ class EventService:
         )
 
     @staticmethod
-    async def _get_progress_bar(
-        limiter, item, is_budget: bool = False
-    ) -> WindowProgressBarDTO | None:
-        if limiter is None or item is None:
+    async def _get_progress_bar(window: Window | None) -> WindowProgressBarDTO | None:
+        if window is None:
             return None
-        return await window_progress_bar(limiter, item, is_budget=is_budget)
+        return await shared_limits.progress(window)
 
     async def get_route_limits_progress(
         self,
@@ -1284,11 +1283,7 @@ class EventService:
         async def _get_route_progress(
             route_name: str, gateway_route
         ) -> RouteProgressBarDTO:
-            token_limiter = gateway_route.token_limiter
-            budget_limiter = gateway_route.budget_limiter
-            req_rate_limiter = gateway_route.request_rate_limiter
-            duration_limiter = gateway_route.duration_limiter
-
+            route_limits = gateway_route.route_limits
             (
                 budget_bar,
                 token_input_bar,
@@ -1296,27 +1291,16 @@ class EventService:
                 rate_bar,
                 duration_bar,
             ) = await asyncio.gather(
-                self._get_progress_bar(
-                    getattr(budget_limiter, 'limiter', None),
-                    getattr(budget_limiter, 'item', None),
-                    is_budget=True,
-                ),
-                self._get_progress_bar(
-                    getattr(token_limiter, 'input_limiter', None),
-                    getattr(token_limiter, 'input_item', None),
-                ),
-                self._get_progress_bar(
-                    getattr(token_limiter, 'output_limiter', None),
-                    getattr(token_limiter, 'output_item', None),
-                ),
-                self._get_progress_bar(
-                    getattr(req_rate_limiter, 'limiter', None),
-                    getattr(req_rate_limiter, 'item', None),
-                ),
-                self._get_progress_bar(
-                    getattr(duration_limiter, 'limiter', None),
-                    getattr(duration_limiter, 'item', None),
-                ),
+                *(
+                    self._get_progress_bar(route_limits.window(category))
+                    for category in (
+                        Category.COST,
+                        Category.INPUT_TOKENS,
+                        Category.OUTPUT_TOKENS,
+                        Category.REQUESTS,
+                        Category.AUDIO_SECONDS,
+                    )
+                )
             )
 
             has_any = any(

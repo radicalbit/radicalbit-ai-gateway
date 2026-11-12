@@ -819,80 +819,6 @@ class DecisionModelsCostDTO(BaseModel):
 
 
 class CostDataDTO(BaseModel):
-    input_cost: Annotated[
-        float,
-        Field(
-            default=0,
-            deprecated='Deprecated after the new cost breakdown implementation.',
-        ),
-    ]
-    output_cost: Annotated[
-        float,
-        Field(
-            default=0,
-            deprecated='Deprecated after the new cost breakdown implementation.',
-        ),
-    ]
-    total_cost: Annotated[
-        float,
-        Field(
-            default=0,
-            deprecated='Deprecated after the new cost breakdown implementation.',
-        ),
-    ]
-
-    cache_triggered: Annotated[
-        int | None,
-        Field(
-            default=None,
-            deprecated='Deprecated after the new cost breakdown implementation.',
-        ),
-    ]
-    cache_saved_tokens_input: Annotated[
-        int | None,
-        Field(
-            default=None,
-            deprecated='Deprecated after the new cost breakdown implementation.',
-        ),
-    ]
-    cache_saved_tokens_output: Annotated[
-        int | None,
-        Field(
-            default=None,
-            deprecated='Deprecated after the new cost breakdown implementation.',
-        ),
-    ]
-    saved_amount_input: Annotated[
-        float | None,
-        Field(
-            default=None,
-            deprecated='Deprecated after the new cost breakdown implementation.',
-        ),
-    ]
-    saved_amount_output: Annotated[
-        float | None,
-        Field(
-            default=None,
-            deprecated='Deprecated after the new cost breakdown implementation.',
-        ),
-    ]
-    total_cached_tokens: Annotated[
-        int | None,
-        Field(
-            default=None,
-            deprecated='Deprecated after the new cost breakdown implementation.',
-        ),
-    ]
-    total_saved_amount: Annotated[
-        float | None,
-        Field(
-            default=None,
-            deprecated='Deprecated after the new cost breakdown implementation',
-        ),
-    ]
-
-    # === New Fields (Current recommended structure) ===
-
     total: float | None = Field(
         default=None,
         description='Grand total of all costs',
@@ -935,78 +861,12 @@ class CostDataDTO(BaseModel):
         has_transcription_models: bool = False,
         has_decision_models: bool = False,
     ) -> 'CostDataDTO':
-        cache_triggered: int | None = None
-        input_cost = cost_data.input_cost
-        total_cost = cost_data.total_cost
-        cache_saved_tokens_input: int | None = None
-        cache_saved_tokens_output: int | None = None
-        total_cached_tokens: int | None = None
-        saved_amount_input: float | None = None
-        saved_amount_output: float | None = None
+        # The saved amount feeds totals.saved.
         total_saved_amount: float | None = None
-
-        if cost_data.cache_triggered is not None:
-            cache_triggered = cost_data.cache_triggered
-            if semantic_cache_cost_data and semantic_cache_cost_data.cache_triggered:
-                cache_triggered += semantic_cache_cost_data.cache_triggered
-
-        if cost_data.cache_saved_tokens_input is not None:
-            cache_saved_tokens_input = cost_data.cache_saved_tokens_input
-            if (
-                semantic_cache_cost_data
-                and semantic_cache_cost_data.cache_saved_tokens_input
-            ):
-                cache_saved_tokens_input += (
-                    semantic_cache_cost_data.cache_saved_tokens_input
-                )
-
-        if cost_data.cache_saved_tokens_output is not None:
-            cache_saved_tokens_output = cost_data.cache_saved_tokens_output
-            if (
-                semantic_cache_cost_data
-                and semantic_cache_cost_data.cache_saved_tokens_output
-            ):
-                cache_saved_tokens_output += (
-                    semantic_cache_cost_data.cache_saved_tokens_output
-                )
-
-        if cost_data.total_cached_tokens is not None:
-            total_cached_tokens = cost_data.total_cached_tokens
-            if (
-                semantic_cache_cost_data
-                and semantic_cache_cost_data.total_cached_tokens
-            ):
-                total_cached_tokens += semantic_cache_cost_data.total_cached_tokens
-
-        if cost_data.saved_amount_input is not None:
-            saved_amount_input = cost_data.saved_amount_input
-            if (
-                semantic_cache_cost_data
-                and semantic_cache_cost_data.llm_input_request_savings
-            ):
-                saved_amount_input += semantic_cache_cost_data.llm_input_request_savings
-
-        if cost_data.saved_amount_output is not None:
-            saved_amount_output = cost_data.saved_amount_output
-            if (
-                semantic_cache_cost_data
-                and semantic_cache_cost_data.llm_output_request_savings
-            ):
-                saved_amount_output += (
-                    semantic_cache_cost_data.llm_output_request_savings
-                )
-
         if cost_data.total_saved_amount is not None:
             total_saved_amount = cost_data.total_saved_amount
             if semantic_cache_cost_data and semantic_cache_cost_data.net_savings:
                 total_saved_amount += semantic_cache_cost_data.net_savings
-
-        if (
-            semantic_cache_cost_data
-            and semantic_cache_cost_data.embedding_inference_cost
-        ):
-            input_cost += semantic_cache_cost_data.embedding_inference_cost
-            total_cost += semantic_cache_cost_data.embedding_inference_cost
 
         # Build new nested breakdown structure
         total_dto: TotalCostDTO | None = None
@@ -1134,16 +994,6 @@ class CostDataDTO(BaseModel):
             total_all = chat_total + embed_total + transcription_total + decision_total
 
         return CostDataDTO(
-            input_cost=input_cost,
-            output_cost=cost_data.output_cost,
-            total_cost=total_cost,
-            cache_triggered=cache_triggered,
-            cache_saved_tokens_input=cache_saved_tokens_input,
-            cache_saved_tokens_output=cache_saved_tokens_output,
-            total_cached_tokens=total_cached_tokens,
-            saved_amount_input=saved_amount_input,
-            saved_amount_output=saved_amount_output,
-            total_saved_amount=total_saved_amount,
             total=total_all,
             totals=total_dto,
             chat_models=chat_models_cost,

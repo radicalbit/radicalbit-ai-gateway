@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -15,6 +15,7 @@ from radicalbit_ai_gateway.db.models.event import (
     Counters,
     DetailedCostBreakdown,
     EventDetails,
+    EventsSummary,
     InvocationChartDataPoint,
     LastEventFallback,
     LastEventGuardrail,
@@ -29,7 +30,11 @@ from radicalbit_ai_gateway.db.models.event import (
     TokensCounter,
 )
 from radicalbit_ai_gateway.db.tables.event_table import Event
-from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENTS
+from radicalbit_ai_gateway.models.event_type import (
+    LIMIT_BLOCK_EVENT_TYPES,
+    LIMIT_BLOCK_EVENTS,
+    EventType,
+)
 from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
@@ -844,6 +849,86 @@ class EventDAO:
                 for row_tuple in res
             ]
 
+    @staticmethod
+    def _distinct(condition: ColumnElement, *values: ColumnElement) -> ColumnElement:
+        """Collect the distinct `values` tuples of the events matching `condition`."""
+        return F.groupUniqArrayIf(F.tuple(*values), condition)
+
+    def _attribute(self, key: str) -> ColumnElement:
+        """Read one ATTRIBUTES entry, '' when the event has no such key."""
+        return F.arrayElement(self.ATTRIBUTES, key)
+
+    def get_request_summaries(
+        self,
+        project_uuid: UUID,
+        request_uuids: list[str],
+        date_from: date,
+        date_to: date,
+    ) -> dict[str, EventsSummary]:
+        """Aggregate the events of a page of requests, one row per request.
+
+        One query for the whole page, bounded to `[date_from, date_to]` on
+        DATE so ClickHouse prunes partitions. Requests with no event are
+        absent from the result.
+        """
+        if not request_uuids:
+            return {}
+
+        T = self.T
+        processed_tokens = T.c['EVENT_TYPE'].in_(
+            ['INPUT_TOKEN_PROCESSED', 'OUTPUT_TOKEN_PROCESSED']
+        )
+        conditions = [
+            T.c['REQUEST_UUID'].in_(request_uuids),
+            T.c['DATE'] >= date_from,
+            T.c['DATE'] <= date_to,
+        ]
+        self._add_project_filter(conditions, project_uuid)
+        columns = [
+            F.sumIf(T.c['VALUE'], processed_tokens).label('total_tokens'),
+            F.sumIf(T.c['COST'], processed_tokens).label('cost'),
+            self._distinct(
+                T.c['EVENT_TYPE'] == 'GUARDRAIL',
+                T.c['GUARDRAIL_NAME'],
+                T.c['GUARDRAIL_BEHAVIOR'],
+                T.c['GUARDRAIL_WHERE'],
+            ).label('guardrails'),
+            self._distinct(T.c['EVENT_TYPE'] == 'CACHE_HIT', T.c['CACHE_TYPE']).label(
+                'cache_hits'
+            ),
+            self._distinct(
+                T.c['EVENT_TYPE'] == 'FALLBACK', T.c['TARGET'], T.c['FALLBACK']
+            ).label('fallbacks'),
+            self._distinct(
+                T.c['EVENT_TYPE'] == 'ROUTING',
+                T.c['ROUTING_NAME'],
+                T.c['ROUTING_SELECTED_MODEL_ID'],
+            ).label('routings'),
+            self._distinct(
+                T.c['EVENT_TYPE'].in_(
+                    [*LIMIT_BLOCK_EVENT_TYPES, EventType.LIMIT_THRESHOLD.value]
+                ),
+                T.c['EVENT_TYPE'],
+                self._attribute('limit_scope'),
+                self._attribute('category'),
+                self._attribute('threshold_percentage'),
+            ).label('limits'),
+        ]
+        stmt = (
+            select(T.c['REQUEST_UUID'], *columns)
+            .select_from(Event)
+            .where(*conditions)
+            .group_by(T.c['REQUEST_UUID'])
+        )
+
+        with self.db.begin_session() as session:
+            return {
+                str(row[0]): EventsSummary.model_validate(
+                    {c.name: value for c, value in zip(columns, row[1:])}
+                )
+                for row in session.execute(stmt).all()
+            }
+
     def get_summary_costs(
         self,
         project_uuid: UUID,
@@ -1571,3 +1656,62 @@ class EventDAO:
             granularity=granularity,
             timezone_offset_seconds=timezone_offset_seconds,
         )
+
+    def get_request_events(
+        self,
+        project_uuid: UUID,
+        request_uuid: UUID,
+        date_from: date,
+        date_to: date,
+    ) -> list[dict]:
+        """Every event of one request, oldest first.
+
+        Bounded to `[date_from, date_to]` on DATE so ClickHouse prunes
+        partitions. GUARDRAIL_PARAMS is not read, and the `parameters` copy
+        of it is dropped from ATTRIBUTES: guardrail parameters never leave.
+        """
+        T = self.T
+        columns = [
+            'EVENT_TYPE',
+            'TIMESTAMP',
+            'VALUE',
+            'COST',
+            'MODEL_ID',
+            'MODEL_TYPE',
+            'IS_CACHED_TOKENS',
+            'CACHE_TYPE',
+            'TARGET',
+            'FALLBACK',
+            'GUARDRAIL_NAME',
+            'GUARDRAIL_TYPE',
+            'GUARDRAIL_WHERE',
+            'GUARDRAIL_BEHAVIOR',
+            'IS_JUDGE',
+            'IS_ROUTING',
+            'ROUTING_NAME',
+            'ROUTING_SELECTED_MODEL_ID',
+            'MCP_METHOD',
+            'MCP_ALIAS',
+            'MCP_TARGET',
+            'ATTRIBUTES',
+        ]
+        conditions = [
+            T.c['REQUEST_UUID'] == str(request_uuid),
+            T.c['DATE'] >= date_from,
+            T.c['DATE'] <= date_to,
+        ]
+        self._add_project_filter(conditions, project_uuid)
+        stmt = (
+            select(*(T.c[c].label(c.lower()) for c in columns))
+            .select_from(Event)
+            .where(*conditions)
+            .order_by(T.c['TIMESTAMP'])
+        )
+
+        with self.db.begin_session() as session:
+            events = [row._asdict() for row in session.execute(stmt).all()]
+        for event in events:
+            event['attributes'] = {
+                k: v for k, v in event['attributes'].items() if k != 'parameters'
+            }
+        return events

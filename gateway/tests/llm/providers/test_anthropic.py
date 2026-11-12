@@ -124,11 +124,13 @@ async def test_configured_params_reach_the_body():
     }
 
 
+@pytest.mark.filterwarnings('ignore:WARNING! .* is not default parameter')
 async def test_unknown_params_are_sent_as_is():
     _, requests = await invoke(model(service_tier='auto'), [canned.anthropic_message()])
     assert requests[0]['body']['service_tier'] == 'auto'
 
 
+@pytest.mark.filterwarnings('ignore:WARNING! .* is not default parameter')
 async def test_unknown_param_the_sdk_rejects_raises_type_error():
     with pytest.raises(TypeError):
         await invoke(model(api_version='2024'), [canned.anthropic_message()])
@@ -1311,6 +1313,8 @@ async def test_thinking_and_citation_replies_keep_their_blocks():
     }
 
 
+# The provider sends a float where the SDK types an int.
+@pytest.mark.filterwarnings('ignore:Pydantic serializer warnings')
 async def test_usage_with_non_integer_cache_creation_breakdown():
     usage = {
         'input_tokens': 5,

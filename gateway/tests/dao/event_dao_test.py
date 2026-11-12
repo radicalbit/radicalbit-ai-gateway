@@ -6,14 +6,236 @@ from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.models.event import (
+    CostData,
     Counters,
+    DetailedCostBreakdown,
     EventDetails,
     LastEventFallback,
     LastEventGuardrail,
-    MostExpensiveChartData,
     MostExpensiveRoute,
+    RouteCostData,
+    RouteDetailedCostBreakdown,
+    SemanticCacheCostData,
     TokensCounter,
 )
+
+UTC = datetime.timezone.utc
+H = datetime.timedelta(hours=1)
+D = datetime.timedelta(days=1)
+KEY_0 = uuid.UUID(int=0)
+KEY_1 = uuid.UUID(int=1)
+# Base-data timestamps: the 14th is also get_sample_event's default timestamp.
+OCT_14 = datetime.datetime(2025, 10, 14, 12, 58, 36, 931873, tzinfo=UTC)
+OCT_13 = OCT_14 - D
+OCT_12 = OCT_14 - 2 * D
+# Most cost scenarios happen at noon on 2025-01-10.
+NOON = datetime.datetime(2025, 1, 10, 12, 0, 0, tzinfo=UTC)
+FUTURE = datetime.datetime.now(UTC) + 200 * D
+INPUT = 'INPUT_TOKEN_PROCESSED'
+OUTPUT = 'OUTPUT_TOKEN_PROCESSED'
+CACHE_IN = 'CACHE_INPUT_TOKENS'
+CACHE_OUT = 'CACHE_OUTPUT_TOKENS'
+HIT = 'CACHE_HIT'
+INVOCATION = 'MODEL_INVOCATION'
+
+
+def _ev(event_type, route='rb-gateway', at=NOON, cost=0.0, **kwargs):
+    return db_mock.get_sample_event(
+        event_type=event_type, route_name=route, timestamp=at, cost=cost, **kwargs
+    )
+
+
+class EventDAOCountersTest(DatabaseIntegrationClickhouse):
+    """Read-only queries over one data set, seeded once for the class."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.event_dao = EventDAO(cls.db)
+        DatabaseIntegrationClickhouse.clean(cls)
+        key = {'api_key_uuid': KEY_0}
+        tokens = [
+            (INPUT, 'route-A', 100, 'model-A'),
+            (INPUT, 'route-A', 150, 'model-A'),
+            (INPUT, 'route-B', 150, 'model-A'),
+            (OUTPUT, 'route-A', 75, 'model-B'),
+            (OUTPUT, 'route-A', 75, 'model-B'),
+            (OUTPUT, 'route-B', 75, 'model-B'),
+            (CACHE_IN, 'route-A', 2, 'model-A'),
+            (CACHE_IN, 'route-A', 45, 'model-A'),
+            (CACHE_OUT, 'route-A', 60, 'model-B'),
+            (CACHE_IN, 'route-B', 2, 'model-A'),
+            (CACHE_IN, 'route-B', 45, 'model-A'),
+            (CACHE_OUT, 'route-B', 60, 'model-B'),
+        ]
+        DatabaseIntegrationClickhouse.insert(
+            cls,
+            [
+                _ev(
+                    'GUARDRAIL',
+                    'route-A',
+                    OCT_14,
+                    name='PRESIDIO',
+                    type='READACT',
+                    where='INPUT',
+                    parameters='PARAMS',
+                    behavior='BLOCK',
+                    **key,
+                ),
+                _ev('GUARDRAIL', 'route-B', OCT_12, **key),
+                _ev('FALLBACK', 'route-A', OCT_13, **key),
+                _ev(
+                    'FALLBACK',
+                    'route-A',
+                    OCT_14,
+                    target='gpt-4.1',
+                    fallback='llama3.1',
+                    **key,
+                ),
+                _ev('FALLBACK', 'route-B', OCT_12, **key),
+                _ev('RATE_LIMIT', 'route-A', OCT_13, **key),
+                _ev('RATE_LIMIT', 'route-B', OCT_12, **key),
+                _ev(HIT, 'route-A', OCT_13, **key),
+                *[
+                    _ev(kind, route, OCT_14, value=value, model_id=model)
+                    for kind, route, value, model in tokens
+                ],
+            ],
+        )
+
+    def tearDown(self) -> None:
+        pass  # read-only tests share the class seed
+
+    @classmethod
+    def tearDownClass(cls):
+        DatabaseIntegrationClickhouse.clean(cls)
+        super().tearDownClass()
+
+    def test_counters_and_last_events(self):
+        dao = self.event_dao
+        assert dao.get_all_counters(None, None, None) == Counters(
+            guardrail_value=2,
+            fallback_value=3,
+            rate_limit_triggered=2,
+            cache_triggered=1,
+        )
+        assert dao.get_all_counters_by_route(
+            None, route_name='route-A', _from=None, _to=None
+        ) == Counters(
+            guardrail_value=1,
+            fallback_value=2,
+            rate_limit_triggered=1,
+            cache_triggered=1,
+        )
+        guardrail = LastEventGuardrail(
+            route_name='route-A',
+            name='PRESIDIO',
+            where='INPUT',
+            type='READACT',
+            behavior='BLOCK',
+            timestamp=OCT_14,
+            api_key_uuid=KEY_0,
+            api_key_name='fake',
+        )
+        fallback = LastEventFallback(
+            route_name='route-A',
+            target='gpt-4.1',
+            fallback='llama3.1',
+            timestamp=OCT_14,
+            api_key_uuid=KEY_0,
+            api_key_name='fake',
+        )
+        for event_type, expected in (('GUARDRAIL', guardrail), ('FALLBACK', fallback)):
+            assert (
+                dao.get_last_event(None, event_type=event_type, _from=None, _to=None)
+                == expected
+            )
+            assert (
+                dao.get_last_event_route(
+                    None,
+                    event_type=event_type,
+                    route_name='route-A',
+                    _from=None,
+                    _to=None,
+                )
+                == expected
+            )
+
+    def test_get_tokens_by_model(self):
+        def counter(event_type, route, model, value):
+            return TokensCounter(
+                event_type=event_type, route_name=route, model_id=model, value=value
+            )
+
+        route_a = [
+            counter(OUTPUT, 'route-A', 'model-B', 150),
+            counter(CACHE_IN, 'route-A', 'model-A', 47),
+            counter(INPUT, 'route-A', 'model-A', 250),
+            counter(CACHE_OUT, 'route-A', 'model-B', 60),
+        ]
+        route_b = [
+            counter(INPUT, 'route-B', 'model-A', 150),
+            counter(CACHE_OUT, 'route-B', 'model-B', 60),
+            counter(OUTPUT, 'route-B', 'model-B', 75),
+            counter(CACHE_IN, 'route-B', 'model-A', 47),
+        ]
+
+        def ordered(counters):
+            return sorted(
+                counters, key=lambda x: (x.event_type, x.route_name, x.model_id)
+            )
+
+        assert ordered(self.event_dao.get_tokens_by_model(None, None, None)) == (
+            ordered(route_a + route_b)
+        )
+        assert ordered(
+            self.event_dao.get_tokens_by_model_per_route(None, 'route-A', None, None)
+        ) == ordered(route_a)
+
+    def test_get_latest_n_per_event_type(self):
+        _from = OCT_13 - H
+        _to = OCT_14 + H
+
+        def detail(at, event_type, **kwargs):
+            return db_mock.get_event_detail(
+                timestamp=at,
+                route_name='route-A',
+                event_type=event_type,
+                api_key_name='fake',
+                **kwargs,
+            )
+
+        cache_hit = detail(OCT_13, HIT)
+        latest_fallback = detail(
+            OCT_14, 'FALLBACK', target='gpt-4.1', fallback='llama3.1'
+        )
+        guardrail = detail(
+            OCT_14,
+            'GUARDRAIL',
+            name='PRESIDIO',
+            type='READACT',
+            where='INPUT',
+            parameters='PARAMS',
+            behavior='BLOCK',
+        )
+        rate_limit = detail(OCT_13, 'RATE_LIMIT')
+        latest_n = self.event_dao.get_latest_n_per_event_type
+        assert latest_n(None, 'route-A', 10, _from, _to) == [
+            cache_hit,
+            latest_fallback,
+            detail(OCT_13, 'FALLBACK'),
+            guardrail,
+            rate_limit,
+        ]
+        # n caps the rows per event type, keeping the most recent.
+        assert latest_n(None, 'route-A', 1, _from, _to) == [
+            cache_hit,
+            latest_fallback,
+            guardrail,
+            rate_limit,
+        ]
+        assert latest_n(None, 'route-C', 10, _from, _to) == []
+        assert latest_n(None, 'route-A', 10, FUTURE + H, FUTURE) == []
 
 
 class EventDAOTest(DatabaseIntegrationClickhouse):
@@ -22,409 +244,17 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
         super().setUpClass()
         cls.event_dao = EventDAO(cls.db)
 
-    def _insert_test_data(self):
-        to_insert = [
-            db_mock.get_sample_event(
-                event_type='GUARDRAIL',
-                route_name='route-A',
-                timestamp=datetime.datetime(
-                    2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                api_key_uuid=uuid.UUID(int=0),
-                name='PRESIDIO',
-                type='READACT',
-                where='INPUT',
-                parameters='PARAMS',
-                behavior='BLOCK',
-            ),
-            db_mock.get_sample_event(
-                event_type='GUARDRAIL',
-                route_name='route-B',
-                timestamp=datetime.datetime(
-                    2025, 10, 12, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                api_key_uuid=uuid.UUID(int=0),
-            ),
-            db_mock.get_sample_event(
-                event_type='FALLBACK',
-                route_name='route-A',
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                api_key_uuid=uuid.UUID(int=0),
-            ),
-            db_mock.get_sample_event(
-                event_type='FALLBACK',
-                route_name='route-A',
-                timestamp=datetime.datetime(
-                    2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                api_key_uuid=uuid.UUID(int=0),
-                target='gpt-4.1',
-                fallback='llama3.1',
-            ),
-            db_mock.get_sample_event(
-                event_type='FALLBACK',
-                route_name='route-B',
-                timestamp=datetime.datetime(
-                    2025, 10, 12, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                api_key_uuid=uuid.UUID(int=0),
-            ),
-            db_mock.get_sample_event(
-                event_type='RATE_LIMIT',
-                route_name='route-A',
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                api_key_uuid=uuid.UUID(int=0),
-            ),
-            db_mock.get_sample_event(
-                event_type='RATE_LIMIT',
-                route_name='route-B',
-                timestamp=datetime.datetime(
-                    2025, 10, 12, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                api_key_uuid=uuid.UUID(int=0),
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                route_name='route-A',
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                api_key_uuid=uuid.UUID(int=0),
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                value=100,
-                model_id='model-A',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                value=150,
-                model_id='model-A',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-B',
-                value=150,
-                model_id='model-A',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                value=75,
-                model_id='model-B',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                value=75,
-                model_id='model-B',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-B',
-                value=75,
-                model_id='model-B',
-            ),
-            db_mock.get_sample_event(
-                route_name='route-A',
-                event_type='CACHE_INPUT_TOKENS',
-                value=2,
-                model_id='model-A',
-            ),
-            db_mock.get_sample_event(
-                route_name='route-A',
-                event_type='CACHE_INPUT_TOKENS',
-                value=45,
-                model_id='model-A',
-            ),
-            db_mock.get_sample_event(
-                route_name='route-A',
-                event_type='CACHE_OUTPUT_TOKENS',
-                value=60,
-                model_id='model-B',
-            ),
-            db_mock.get_sample_event(
-                route_name='route-B',
-                event_type='CACHE_INPUT_TOKENS',
-                value=2,
-                model_id='model-A',
-            ),
-            db_mock.get_sample_event(
-                route_name='route-B',
-                event_type='CACHE_INPUT_TOKENS',
-                value=45,
-                model_id='model-A',
-            ),
-            db_mock.get_sample_event(
-                route_name='route-B',
-                event_type='CACHE_OUTPUT_TOKENS',
-                value=60,
-                model_id='model-B',
-            ),
-        ]
-        self.insert(to_insert)
-
-    def setUp(self):
-        self._insert_test_data()
-
-    def tearDown(self) -> None:
-        return super().tearDown()
-
-    def test_get_all_counters(self):
-        res = self.event_dao.get_all_counters(None, None, None)
-        assert res is not None
-        assert res == Counters(
-            guardrail_value=2,
-            fallback_value=3,
-            rate_limit_triggered=2,
-            token_input_limit_triggered=0,
-            token_output_limit_triggered=0,
-            cache_triggered=1,
-        )
-
-    def test_get_last_event_guardrail(self):
-        res = self.event_dao.get_last_event(
-            None, event_type='GUARDRAIL', _from=None, _to=None
-        )
-        assert res is not None
-        assert res == LastEventGuardrail(
-            route_name='route-A',
-            name='PRESIDIO',
-            where='INPUT',
-            type='READACT',
-            behavior='BLOCK',
-            timestamp=datetime.datetime(
-                2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-            ),
-            api_key_uuid=uuid.UUID('00000000-0000-0000-0000-000000000000'),
-            api_key_name='fake',
-        )
-
-    def test_get_last_event_fallback(self):
-        res = self.event_dao.get_last_event(
-            None, event_type='FALLBACK', _from=None, _to=None
-        )
-        assert res is not None
-        assert res == LastEventFallback(
-            route_name='route-A',
-            target='gpt-4.1',
-            fallback='llama3.1',
-            timestamp=datetime.datetime(
-                2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-            ),
-            api_key_uuid=uuid.UUID('00000000-0000-0000-0000-000000000000'),
-            api_key_name='fake',
-        )
-
-    def test_get_tokens_by_model(self):
-        res = self.event_dao.get_tokens_by_model(None, None, None)
-        expected = [
-            TokensCounter(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                model_id='model-B',
-                value=150,
-            ),
-            TokensCounter(
-                event_type='CACHE_INPUT_TOKENS',
-                route_name='route-A',
-                model_id='model-A',
-                value=47,
-            ),
-            TokensCounter(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                model_id='model-A',
-                value=250,
-            ),
-            TokensCounter(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-B',
-                model_id='model-A',
-                value=150,
-            ),
-            TokensCounter(
-                event_type='CACHE_OUTPUT_TOKENS',
-                route_name='route-A',
-                model_id='model-B',
-                value=60,
-            ),
-            TokensCounter(
-                event_type='CACHE_OUTPUT_TOKENS',
-                route_name='route-B',
-                model_id='model-B',
-                value=60,
-            ),
-            TokensCounter(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-B',
-                model_id='model-B',
-                value=75,
-            ),
-            TokensCounter(
-                event_type='CACHE_INPUT_TOKENS',
-                route_name='route-B',
-                model_id='model-A',
-                value=47,
-            ),
-        ]
-        assert res is not None
-        sort_key = lambda x: (x.event_type, x.route_name, x.model_id, x.value)
-        assert sorted(res, key=sort_key) == sorted(expected, key=sort_key)
-
-    def test_get_tokens_by_model_per_route(self):
-        res = self.event_dao.get_tokens_by_model_per_route(None, 'route-A', None, None)
-        expected = [
-            TokensCounter(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                model_id='model-B',
-                value=150,
-            ),
-            TokensCounter(
-                event_type='CACHE_INPUT_TOKENS',
-                route_name='route-A',
-                model_id='model-A',
-                value=47,
-            ),
-            TokensCounter(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                model_id='model-A',
-                value=250,
-            ),
-            TokensCounter(
-                event_type='CACHE_OUTPUT_TOKENS',
-                route_name='route-A',
-                model_id='model-B',
-                value=60,
-            ),
-        ]
-        sort_key = lambda x: (x.event_type, x.route_name, x.model_id, x.value)
-        assert res is not None
-        assert sorted(res, key=sort_key) == sorted(expected, key=sort_key)
-
-    def test_get_all_counters_per_route(self):
-        res = self.event_dao.get_all_counters_by_route(
-            None, route_name='route-A', _from=None, _to=None
-        )
-        assert res is not None
-        assert res == Counters(
-            guardrail_value=1,
-            fallback_value=2,
-            rate_limit_triggered=1,
-            token_input_limit_triggered=0,
-            token_output_limit_triggered=0,
-            cache_triggered=1,
-        )
-
-    def test_get_last_event_guardrail_per_route(self):
-        res = self.event_dao.get_last_event_route(
-            None, event_type='GUARDRAIL', route_name='route-A', _from=None, _to=None
-        )
-        assert res is not None
-        assert res == LastEventGuardrail(
-            route_name='route-A',
-            timestamp=datetime.datetime(
-                2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-            ),
-            api_key_uuid=uuid.UUID(int=0),
-            name='PRESIDIO',
-            type='READACT',
-            where='INPUT',
-            behavior='BLOCK',
-            api_key_name='fake',
-        )
-
-    def test_get_last_event_fallback_per_route(self):
-        res = self.event_dao.get_last_event_route(
-            None, event_type='FALLBACK', route_name='route-A', _from=None, _to=None
-        )
-        assert res is not None
-        assert res == LastEventFallback(
-            route_name='route-A',
-            timestamp=datetime.datetime(
-                2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-            ),
-            api_key_uuid=uuid.UUID(int=0),
-            target='gpt-4.1',
-            fallback='llama3.1',
-            api_key_name='fake',
-        )
-
-    def test_get_latest_n_per_event_type(self):
-        _to = datetime.datetime(
-            2025, 10, 14, 13, 58, 36, 931873, tzinfo=datetime.timezone.utc
-        )
-        _from = datetime.datetime(
-            2025, 10, 13, 11, 58, 36, 931873, tzinfo=datetime.timezone.utc
-        )
-        res = self.event_dao.get_latest_n_per_event_type(
-            None, 'route-A', 10, _from, _to
-        )
-        assert res is not None
-        assert len(res) == 5
-        assert res == [
-            db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                route_name='route-A',
-                event_type='CACHE_HIT',
-                api_key_name='fake',
-            ),
-            db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                route_name='route-A',
-                event_type='FALLBACK',
-                target='gpt-4.1',
-                fallback='llama3.1',
-                api_key_name='fake',
-            ),
-            db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                route_name='route-A',
-                event_type='FALLBACK',
-                api_key_name='fake',
-            ),
-            db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 14, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                route_name='route-A',
-                event_type='GUARDRAIL',
-                name='PRESIDIO',
-                type='READACT',
-                where='INPUT',
-                parameters='PARAMS',
-                behavior='BLOCK',
-                api_key_name='fake',
-            ),
-            db_mock.get_event_detail(
-                timestamp=datetime.datetime(
-                    2025, 10, 13, 12, 58, 36, 931873, tzinfo=datetime.timezone.utc
-                ),
-                route_name='route-A',
-                event_type='RATE_LIMIT',
-                api_key_name='fake',
-            ),
-        ]
-
     def test_get_latest_n_per_event_type_reads_limit_blocks(self):
-        def at(hour: int) -> datetime.datetime:
-            return datetime.datetime(2025, 10, 13, hour, tzinfo=datetime.timezone.utc)
+        """A limit block carries the scope and category that blocked it; a
+        warning (LIMIT_THRESHOLD) is no block. A row recorded before blocks
+        carried their attributes reads as before.
+        """
+        route = 'route-limits'
 
-        def limit_attributes(scope: str, category: str) -> dict[str, str]:
+        def at(hour):
+            return datetime.datetime(2025, 10, 13, hour, tzinfo=UTC)
+
+        def limit(scope, category):
             return {
                 'limit_scope': scope,
                 'category': category,
@@ -433,58 +263,46 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
                 'consumption': '10.5',
             }
 
-        key = uuid.UUID(int=7)
         self.insert(
             [
-                db_mock.get_sample_event(
-                    event_type='BUDGET_LIMIT',
-                    route_name='route-limits',
-                    timestamp=at(10),
-                    api_key_uuid=key,
-                    **limit_attributes('route', 'budget'),
+                _ev(
+                    'BUDGET_LIMIT',
+                    route,
+                    at(10),
+                    api_key_uuid=KEY_1,
+                    **limit('route', 'budget'),
                 ),
-                db_mock.get_sample_event(
-                    event_type='CREDENTIAL_RATE_LIMIT',
-                    route_name='route-limits',
-                    timestamp=at(11),
-                    api_key_uuid=key,
-                    **limit_attributes('credential', 'request_rate'),
+                _ev(
+                    'CREDENTIAL_RATE_LIMIT',
+                    route,
+                    at(11),
+                    api_key_uuid=KEY_1,
+                    **limit('credential', 'request_rate'),
                 ),
-                db_mock.get_sample_event(
-                    event_type='PROJECT_BUDGET_LIMIT',
-                    route_name='route-limits',
-                    timestamp=at(12),
-                    api_key_uuid=key,
-                    **limit_attributes('project', 'budget'),
+                _ev(
+                    'PROJECT_BUDGET_LIMIT',
+                    route,
+                    at(12),
+                    api_key_uuid=KEY_1,
+                    **limit('project', 'budget'),
                 ),
-                db_mock.get_sample_event(
-                    event_type='LIMIT_THRESHOLD',
-                    route_name='route-limits',
-                    timestamp=at(13),
-                    api_key_uuid=key,
+                _ev(
+                    'LIMIT_THRESHOLD',
+                    route,
+                    at(13),
+                    api_key_uuid=KEY_1,
                     threshold_percentage='80',
-                    **limit_attributes('credential', 'budget'),
+                    **limit('credential', 'budget'),
                 ),
-                db_mock.get_sample_event(
-                    event_type='RATE_LIMIT',
-                    route_name='route-limits',
-                    timestamp=at(14),
-                    api_key_uuid=key,
-                ),
+                _ev('RATE_LIMIT', route, at(14), api_key_uuid=KEY_1),
             ]
         )
 
-        res = self.event_dao.get_latest_n_per_event_type(
-            None, 'route-limits', 10, at(0), at(23)
-        )
-
-        def block(
-            event_type: str, hour: int, scope: str, category: str
-        ) -> EventDetails:
+        def block(event_type, hour, scope, category):
             return EventDetails(
                 timestamp=at(hour),
-                api_key_uuid=key,
-                route_name='route-limits',
+                api_key_uuid=KEY_1,
+                route_name=route,
                 event_type=event_type,
                 target='',
                 fallback='',
@@ -501,2915 +319,723 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
                 consumption=10.5,
             )
 
-        assert res == [
+        assert self.event_dao.get_latest_n_per_event_type(
+            None, route, 10, at(0), at(23)
+        ) == [
             block('BUDGET_LIMIT', 10, 'route', 'budget'),
             block('CREDENTIAL_RATE_LIMIT', 11, 'credential', 'request_rate'),
             block('PROJECT_BUDGET_LIMIT', 12, 'project', 'budget'),
             db_mock.get_event_detail(
                 timestamp=at(14),
-                api_key_uuid=key,
-                route_name='route-limits',
+                api_key_uuid=KEY_1,
+                route_name=route,
                 event_type='RATE_LIMIT',
                 api_key_name='fake',
             ),
         ]
 
-    def test_get_latest_n_per_event_type_empty(self):
-        now = datetime.datetime.now(datetime.timezone.utc)
-        _from = now + datetime.timedelta(hours=1)
-        res = self.event_dao.get_latest_n_per_event_type(
-            None, 'route-A', 10, _from, now
-        )
-        assert res == []
-
-    def test_get_latest_n_per_event_type_wrong_route_name(self):
-        _to = datetime.datetime(
-            2025, 10, 14, 13, 58, 36, 931873, tzinfo=datetime.timezone.utc
-        )
-        _from = datetime.datetime(
-            2025, 10, 13, 11, 58, 36, 931873, tzinfo=datetime.timezone.utc
-        )
-        res = self.event_dao.get_latest_n_per_event_type(
-            None, 'route-C', 10, _from, _to
-        )
-        assert res == []
-
-    def test_get_chart_data_hourly_granularity_by_api_key(self):
-        api_key_1 = uuid.UUID(int=1)
-        api_key_2 = uuid.UUID(int=2)
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 30, 45, tzinfo=datetime.timezone.utc
-        )
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,  # 10:30
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.0005,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(minutes=30),  # 11:00
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.000010,
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 11:30
-                api_key_uuid=api_key_2,
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.0003,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1, minutes=15),  # 11:45
-                api_key_uuid=api_key_2,
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.0000007,
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=3, minutes=30),
-                api_key_uuid=api_key_2,
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.025,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=3, minutes=45),
-                api_key_uuid=api_key_2,
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.000006,
-            ),
+    def test_get_costs_chart_data_by_granularity_and_group_by(self):
+        """Token costs are summed per (bucket, entity), ordered by both."""
+        key_1, key_2 = uuid.UUID(int=1), uuid.UUID(int=2)
+        group_1, group_2 = uuid.UUID(int=11), uuid.UUID(int=12)
+        k1, k2, g1, g2 = str(key_1), str(key_2), str(group_1), str(group_2)
+        # Powers of two keep the float sums exact.
+        events = [
+            # (timestamp, event_type, api key, group, model, cost)
+            ((2025, 1, 6, 10, 30), 'INPUT', key_1, group_1, 'gpt-4', 1.0),
+            ((2025, 1, 6, 10, 45), 'OUTPUT', key_2, group_2, 'gpt-3.5', 2.0),
+            ((2025, 1, 6, 11, 15), 'OUTPUT', key_1, group_1, 'gpt-4', 4.0),
+            ((2025, 1, 7, 9, 0), 'INPUT', key_2, group_1, 'gpt-4', 8.0),
+            ((2025, 1, 14, 9, 0), 'INPUT', key_1, group_2, 'gpt-3.5', 16.0),
+            ((2025, 2, 3, 9, 0), 'OUTPUT', key_2, group_2, 'gpt-4', 32.0),
         ]
-        self.insert(test_events)
-        _from = base_time - datetime.timedelta(hours=2)
-        _to = _from + datetime.timedelta(hours=12)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'hours', 'keys'
-        )
-        assert res is not None
-        assert len(res) == 4
-        assert res[0].bucket == datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        assert res[0].group_by_value == str(api_key_1)
-        assert res[0].total_cost == 0.0005
-
-        assert res[1].bucket == datetime.datetime(
-            2025, 1, 8, 11, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        assert res[1].group_by_value == str(api_key_1)
-        assert res[1].total_cost == 0.000010
-
-        assert res[2].bucket == datetime.datetime(
-            2025, 1, 8, 11, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        assert res[2].group_by_value == str(api_key_2)
-        assert res[2].total_cost == 0.0003007
-
-        assert res[3].bucket == datetime.datetime(
-            2025, 1, 8, 14, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        assert res[3].group_by_value == str(api_key_2)
-        assert res[3].total_cost == 0.025006
-
-    def test_get_chart_data_hourly_granularity_by_group_name(self):
-        group_1_uuid = uuid.UUID(int=1)
-        group_2_uuid = uuid.UUID(int=2)
-        base_time = datetime.datetime(
-            2025, 1, 8, 14, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_uuid=uuid.UUID(int=1),
-                api_key_name='key-1',
-                group_uuid=group_1_uuid,
-                group_name='group-1',
-                cost=0.20,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(minutes=45),
-                api_key_uuid=uuid.UUID(int=2),
-                api_key_name='key-2',
-                group_uuid=group_2_uuid,
-                group_name='group-2',
-                cost=0.15,
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                api_key_uuid=uuid.UUID(int=3),
-                api_key_name='key-3',
-                group_uuid=group_1_uuid,
-                group_name='group-1',
-                cost=0.12,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'hours', 'groups'
-        )
-
-        assert res is not None
-        assert len(res) == 3
-        assert res[0].bucket == base_time
-        assert res[0].group_by_value == str(group_1_uuid)
-        assert res[0].total_cost == 0.20
-
-        assert res[1].bucket == base_time
-        assert res[1].group_by_value == str(group_2_uuid)
-        assert res[1].total_cost == 0.15
-
-        assert res[2].bucket == base_time + datetime.timedelta(hours=1)
-        assert res[2].group_by_value == str(group_1_uuid)
-        assert res[2].total_cost == 0.12
-
-    def test_get_chart_data_daily_granularity_by_api_key(self):
-        api_key_1 = uuid.UUID(int=1)
-        api_key_2 = uuid.UUID(int=2)
-        base_time = datetime.datetime(2025, 1, 8, 0, 0, 0, tzinfo=datetime.timezone.utc)
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=5),
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=1.50,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=18),
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=2.25,
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=1, hours=8),
-                api_key_uuid=api_key_2,
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.80,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(days=3)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'days', 'keys'
-        )
-
-        assert res is not None
-        assert len(res) == 2
-        assert res[0].bucket == base_time
-        assert res[0].group_by_value == str(api_key_1)
-        assert res[0].total_cost == 3.75
-
-        assert res[1].bucket == base_time + datetime.timedelta(days=1)
-        assert res[1].group_by_value == str(api_key_2)
-        assert res[1].total_cost == 0.80
-
-    def test_get_chart_data_weekly_granularity_by_group_name(self):
-        group_1_uuid = uuid.UUID(int=1)
-        group_2_uuid = uuid.UUID(int=2)
-        base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=1),
-                api_key_uuid=uuid.UUID(int=1),
-                api_key_name='key-1',
-                group_uuid=group_1_uuid,
-                group_name='group-1',
-                cost=10.50,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=3),
-                api_key_uuid=uuid.UUID(int=2),
-                api_key_name='key-2',
-                group_uuid=group_2_uuid,
-                group_name='group-2',
-                cost=8.75,
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=8),
-                api_key_uuid=uuid.UUID(int=3),
-                api_key_name='key-3',
-                group_uuid=group_1_uuid,
-                group_name='group-1',
-                cost=12.00,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(days=60)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'weeks', 'groups'
-        )
-        assert res is not None
-        assert len(res) == 3
-        assert res[0].group_by_value == str(group_1_uuid)
-        assert res[0].total_cost == 10.50
-
-        assert res[1].group_by_value == str(group_2_uuid)
-        assert res[1].total_cost == 8.75
-
-        assert res[2].group_by_value == str(group_1_uuid)
-        assert res[2].total_cost == 12.00
-
-    def test_get_chart_data_monthly_granularity_by_api_key(self):
-        base_time = datetime.datetime(
-            2025, 1, 15, 0, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_uuid=uuid.UUID(int=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=10.50,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=40),
-                api_key_uuid=uuid.UUID(int=2),
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=2),
-                group_name='group-2',
-                cost=8.75,
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=70),
-                api_key_uuid=uuid.UUID(int=3),
-                api_key_name='key-3',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=12.00,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(days=400)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'months', 'keys'
-        )
-        assert res is not None
-        assert len(res) == 3
-        assert res[0].group_by_value == str(uuid.UUID(int=1))
-        assert res[0].total_cost == 10.50
-
-        assert res[1].group_by_value == str(uuid.UUID(int=2))
-        assert res[1].total_cost == 8.75
-
-        assert res[2].group_by_value == str(uuid.UUID(int=3))
-        assert res[2].total_cost == 12.00
-
-    def test_get_chart_data_empty_result(self):
-        base_time = datetime.datetime(2025, 1, 8, 0, 0, 0, tzinfo=datetime.timezone.utc)
-
-        _from = base_time + datetime.timedelta(days=100)
-        _to = base_time + datetime.timedelta(days=101)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'hours', 'keys'
-        )
-
-        assert res is not None
-        assert len(res) == 0
-
-    def test_get_chart_data_filters_by_time_range(self):
-        """Test that only data within _from and _to range is returned."""
-        api_key_1 = uuid.UUID(int=1)
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_events = [
-            # Event BEFORE the range (should NOT be included)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time - datetime.timedelta(hours=2),  # 10:00
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-            ),
-            # Event AT the start of the range (should be included)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,  # 12:00
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-            ),
-            # Event INSIDE the range (should be included)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.30,
-            ),
-            # Event AT the end of the range (should be included)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=2),  # 14:00
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.40,
-            ),
-            # Event AFTER the range (should NOT be included)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=3),  # 15:00
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.50,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time  # 12:00
-        _to = base_time + datetime.timedelta(hours=2)  # 14:00
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'hours', 'keys'
-        )
-
-        assert res is not None
-        # Should have 3 buckets: 12:00, 13:00, 14:00
-        assert len(res) == 3
-
-        for point in res:
-            assert point.bucket >= base_time, (
-                f'Bucket {point.bucket} is before _from {base_time}'
-            )
-            assert point.bucket <= _to, f'Bucket {point.bucket} is after _to {_to}'
-
-        total_cost = sum(point.total_cost for point in res)
-        assert total_cost == 0.90, f'Expected total cost 0.90, got {total_cost}'
-
-    def test_get_chart_data_no_route_filter(self):
-        """route_names=None returns data from all routes, aggregated per bucket and group_by."""
-        api_key_1 = uuid.UUID(int=1)
-        base_time = datetime.datetime(
-            2025, 2, 1, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=1.0,
-                route_name='route-X',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=2.0,
-                route_name='route-Y',
-            ),
-        ]
-        self.insert(test_events)
-        _from = base_time - datetime.timedelta(hours=1)
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, None, _from, _to, 'hours', 'keys'
-        )
-
-        assert res is not None
-        # Both events share the same bucket and api_key — aggregated into 1 row
-        assert len(res) == 1
-        assert res[0].group_by_value == str(api_key_1)
-        assert res[0].total_cost == 3.0
-
-    def test_get_chart_data_filters_by_multiple_routes(self):
-        """route_names=['route-A', 'route-B'] includes both routes and excludes others."""
-        api_key_1 = uuid.UUID(int=1)
-        base_time = datetime.datetime(
-            2025, 2, 2, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=1.0,
-                route_name='route-A',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=2.0,
-                route_name='route-B',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_uuid=api_key_1,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=5.0,
-                route_name='route-C',
-            ),
-        ]
-        self.insert(test_events)
-        _from = base_time - datetime.timedelta(hours=1)
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['route-A', 'route-B'], _from, _to, 'hours', 'keys'
-        )
-
-        assert res is not None
-        # route-A (1.0) and route-B (2.0) aggregated into 1 row; route-C (5.0) excluded
-        assert len(res) == 1
-        assert res[0].group_by_value == str(api_key_1)
-        assert res[0].total_cost == 3.0
-
-    def test_summary_cost(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # Event BEFORE the range (should NOT be included)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time - datetime.timedelta(hours=2),  # 10:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-            ),
-            # Event AT the start of the range (should be included)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,  # 12:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-            ),
-            # Event INSIDE the range (should be included)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.30,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 14:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 14:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-            ),
-            # Event AT the end of the range (should be included)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=2),  # 14:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.40,
-            ),
-            # Event AFTER the range (should NOT be included)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=3),  # 15:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.50,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time  # 12:00
-        _to = base_time + datetime.timedelta(hours=2)  # 14:00
-
-        res = self.event_dao.get_summary_costs(
-            None, ['rb-gateway'], _from, _to, False, False
-        )
-        assert res is not None
-        assert res.input_cost == 0.60
-        assert res.output_cost == 0.30
-        assert res.total_cost == 0.90
-        assert res.cache_triggered is None
-        assert res.cache_saved_tokens_input is None
-        assert res.cache_saved_tokens_output is None
-        assert res.saved_amount_input is None
-        assert res.saved_amount_output is None
-
-    def test_summary_cost_only_semantic(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.50,
-                cache_type='semantic',
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time  # 12:00
-        _to = base_time + datetime.timedelta(hours=2)  # 14:00
-
-        res = self.event_dao.get_summary_costs(
-            None, ['rb-gateway'], _from, _to, False, False
-        )
-        assert res is not None
-        assert res.input_cost == 0
-        assert res.output_cost == 0
-        assert res.total_cost == 0
-        assert res.cache_triggered is None
-        assert res.cache_saved_tokens_input is None
-        assert res.cache_saved_tokens_output is None
-        assert res.saved_amount_input is None
-        assert res.saved_amount_output is None
-
-    def test_summary_cost_with_cache_and_tokens(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # Event BEFORE the range (should NOT be included)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time - datetime.timedelta(hours=2),  # 10:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time - datetime.timedelta(hours=2),  # 10:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-            ),
-            # Event AT the start of the range (should be included)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,  # 12:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time,  # 12:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.15,
-                value=40,
-            ),
-            # Event INSIDE the range (should be included)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.30,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_OUTPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.40,
-                value=100,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time + datetime.timedelta(hours=2),  # 14:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-            ),
-            # Event AT the end of the range (should be included)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=2),  # 14:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.40,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=2),  # 14:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-                value=3,
-            ),
-            # Event AFTER the range (should NOT be included)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=3),  # 15:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.50,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_OUTPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=3),  # 15:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.50,
-                value=1000,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time  # 12:00
-        _to = base_time + datetime.timedelta(hours=2)  # 14:00
-
-        res = self.event_dao.get_summary_costs(
-            None, ['rb-gateway'], _from, _to, True, True
-        )
-        assert res is not None
-        assert res.input_cost == 0.60
-        assert res.output_cost == 0.30
-        assert res.total_cost == 0.90
-        assert res.cache_triggered == 2
-        assert res.cache_saved_tokens_input == 43
-        assert res.cache_saved_tokens_output == 100
-        assert res.saved_amount_input == 0.25
-        assert res.saved_amount_output == 0.40
-
-    def test_get_semantic_cache_details(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-                value=40,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-                value=40,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='CACHE_OUTPUT_TOKENS',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.40,
-                value=160,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=2),
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=2),
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=2),
-                event_type='CACHE_OUTPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.60,
-                value=240,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time + datetime.timedelta(hours=2),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=2),
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=2),  # 14:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=2),
-                event_type='CACHE_OUTPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=2),  # 14:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.60,
-                value=240,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=3),
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=3),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=3),
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=3),  # 15:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=3),
-                event_type='CACHE_OUTPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=3),  # 15:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-        ]
-        self.insert(test_events)
-        _from = base_time  # 12:00
-        _to = base_time + datetime.timedelta(hours=2)  # 14:00
-
-        res = self.event_dao.get_semantic_cache_details(
-            None, ['rb-gateway'], _from, _to, False
-        )
-        assert res.cache_triggered == 3
-        assert res.llm_input_request_savings == 0.50
-        assert res.llm_output_request_savings == 1.60
-        assert res.llm_total_request_savings == 2.10
-        assert res.embedding_inference_cost == 0.30
-        assert res.net_savings == 1.80
-        assert res.cache_saved_tokens_input is None
-        assert res.cache_saved_tokens_output is None
-        assert res.total_cached_tokens is None
-
-    def test_get_semantic_cache_details_with_tokens(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time + datetime.timedelta(hours=2),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time + datetime.timedelta(minutes=2),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-                value=40,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-                value=40,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='CACHE_OUTPUT_TOKENS',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-                value=30,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=2),
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=2),
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=2),
-                event_type='CACHE_OUTPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=60,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=2),
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=2),  # 14:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=3),
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=3),  # 13:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=3),
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time + datetime.timedelta(hours=3),  # 15:00
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-                value=80,
-                cache_type='semantic',
-            ),
-        ]
-        self.insert(test_events)
-        _from = base_time  # 12:00
-        _to = base_time + datetime.timedelta(hours=2)  # 14:00
-
-        res = self.event_dao.get_semantic_cache_details(
-            None, ['rb-gateway'], _from, _to, True
-        )
-        assert res.cache_triggered == 4
-        assert res.llm_input_request_savings == 0.50
-        assert res.llm_output_request_savings == 0.30
-        assert res.llm_total_request_savings == 0.80
-        assert res.embedding_inference_cost == 0.30
-        assert res.net_savings == 0.50
-        assert res.cache_saved_tokens_input == 200
-        assert res.cache_saved_tokens_output == 90
-        assert res.total_cached_tokens == 290
-
-    def test_get_semantic_cache_details_no_data(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.50,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time  # 12:00
-        _to = base_time + datetime.timedelta(hours=2)  # 14:00
-
-        res = self.event_dao.get_semantic_cache_details(
-            None, ['rb-gateway'], _from, _to, False
-        )
-        assert res is not None
-        assert res.embedding_inference_cost == 0
-        assert res.llm_total_request_savings == 0
-        assert res.net_savings == 0
-        assert res.cache_saved_tokens_input is None
-        assert res.cache_saved_tokens_output is None
-
-    def test_summary_cost_filters_cache_type(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # Events without cache_type - should be included
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.10,
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.20,
-            ),
-            # Events with cache_type='exact' - should be included
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.15,
-                cache_type='exact',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.25,
-                cache_type='exact',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='CACHE_HIT',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cache_type='exact',
-            ),
-            # Events with cache_type='semantic' - should be excluded
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=1.00,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=2.00,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                request_uuid=uuid.UUID(int=1),
-                event_type='CACHE_HIT',
-                timestamp=base_time,
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cache_type='semantic',
-            ),
-        ]
-        self.insert(test_events)
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_summary_costs(
-            None, ['rb-gateway'], _from, _to, False, False
-        )
-        assert res is not None
-        # Should only include events without cache_type (0.10 + 0.15) and with cache_type='exact'
-        assert res.input_cost == 0.25  # 0.10 (no cache_type) + 0.15 (exact)
-        assert res.output_cost == 0.45  # 0.20 (no cache_type) + 0.25 (exact)
-        assert res.total_cost == 0.70  # 0.25 + 0.45
-        # Semantic cache events (1.00 + 2.00 = 3.00) should be excluded
-
-    def test_get_chart_data_hourly_granularity_by_model_name(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 30, 45, tzinfo=datetime.timezone.utc
-        )
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,  # 10:30
-                api_key_uuid=uuid.UUID(int=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.0005,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(minutes=30),  # 11:00
-                api_key_uuid=uuid.UUID(int=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.000010,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),  # 11:30
-                api_key_uuid=uuid.UUID(int=2),
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.0003,
-                model_id='gpt-3.5-turbo',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1, minutes=15),  # 11:45
-                api_key_uuid=uuid.UUID(int=2),
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.0000007,
-                model_id='gpt-3.5-turbo',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=3, minutes=30),
-                api_key_uuid=uuid.UUID(int=2),
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.025,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=3, minutes=45),
-                api_key_uuid=uuid.UUID(int=2),
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.000006,
-                model_id='gpt-4',
-            ),
-        ]
-        self.insert(test_events)
-        _from = base_time - datetime.timedelta(hours=2)
-        _to = _from + datetime.timedelta(hours=12)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'hours', 'models'
-        )
-        assert res is not None
-        assert len(res) == 4
-        assert res[0].bucket == datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        assert res[0].group_by_value == 'gpt-4'
-        assert res[0].total_cost == 0.0005
-
-        assert res[1].bucket == datetime.datetime(
-            2025, 1, 8, 11, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        assert res[1].group_by_value == 'gpt-3.5-turbo'
-        assert res[1].total_cost == 0.0003007
-
-        assert res[2].bucket == datetime.datetime(
-            2025, 1, 8, 11, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        assert res[2].group_by_value == 'gpt-4'
-        assert res[2].total_cost == 0.000010
-
-        assert res[3].bucket == datetime.datetime(
-            2025, 1, 8, 14, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        assert res[3].group_by_value == 'gpt-4'
-        assert res[3].total_cost == 0.025006
-
-    def test_get_chart_data_daily_granularity_by_model_name(self):
-        base_time = datetime.datetime(2025, 1, 8, 0, 0, 0, tzinfo=datetime.timezone.utc)
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=5),
-                api_key_uuid=uuid.UUID(int=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=1.50,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=18),
-                api_key_uuid=uuid.UUID(int=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=2.25,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=1, hours=8),
-                api_key_uuid=uuid.UUID(int=2),
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=0.80,
-                model_id='gpt-3.5-turbo',
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(days=3)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'days', 'models'
-        )
-
-        assert res is not None
-        assert len(res) == 2
-        assert res[0].bucket == base_time
-        assert res[0].group_by_value == 'gpt-4'
-        assert res[0].total_cost == 3.75
-
-        assert res[1].bucket == base_time + datetime.timedelta(days=1)
-        assert res[1].group_by_value == 'gpt-3.5-turbo'
-        assert res[1].total_cost == 0.80
-
-    def test_get_chart_data_weekly_granularity_by_model_name(self):
-        base_time = datetime.datetime(2025, 1, 6, 0, 0, 0, tzinfo=datetime.timezone.utc)
-
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=1),
-                api_key_uuid=uuid.UUID(int=1),
-                api_key_name='key-1',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=10.50,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=3),
-                api_key_uuid=uuid.UUID(int=2),
-                api_key_name='key-2',
-                group_uuid=uuid.UUID(int=2),
-                group_name='group-2',
-                cost=8.75,
-                model_id='gpt-3.5-turbo',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(days=8),
-                api_key_uuid=uuid.UUID(int=3),
-                api_key_name='key-3',
-                group_uuid=uuid.UUID(int=1),
-                group_name='group-1',
-                cost=12.00,
-                model_id='gpt-4',
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(days=60)
-
-        res = self.event_dao.get_costs_chart_data(
-            None, ['rb-gateway'], _from, _to, 'weeks', 'models'
-        )
-        assert res is not None
-        assert len(res) == 3
-        # Week 1: contains gpt-4 (10.50) and gpt-3.5-turbo (8.75), sorted alphabetically
-        assert res[0].bucket == datetime.datetime(2025, 1, 6, 0, 0)
-        assert res[0].group_by_value == 'gpt-3.5-turbo'
-        assert res[0].total_cost == 8.75
-
-        assert res[1].bucket == datetime.datetime(2025, 1, 6, 0, 0)
-        assert res[1].group_by_value == 'gpt-4'
-        assert res[1].total_cost == 10.50
-
-        # Week 2: contains only gpt-4 (12.00)
-        assert res[2].bucket == datetime.datetime(2025, 1, 13, 0, 0)
-        assert res[2].group_by_value == 'gpt-4'
-        assert res[2].total_cost == 12.00
-
-    def test_get_token_chart_data(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                route_name='rb-gateway',
-                value=100,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                route_name='rb-gateway',
-                value=150,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                route_name='rb-gateway',
-                value=50,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                route_name='rb-gateway',
-                value=75,
-                model_id='gpt-4',
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
-
-        res = self.event_dao.get_token_chart_data(
-            None, ['rb-gateway'], _from, _to, 'hours', 0
-        )
-        assert res is not None
-        assert len(res) == 4
-        assert res[0].bucket == base_time
-        assert res[0].event_type == 'INPUT_TOKEN_PROCESSED'
-        assert res[0].total_tokens == 100
-        assert res[1].bucket == base_time
-        assert res[1].event_type == 'OUTPUT_TOKEN_PROCESSED'
-        assert res[1].total_tokens == 50
-        assert res[2].bucket == base_time + datetime.timedelta(hours=1)
-        assert res[2].event_type == 'INPUT_TOKEN_PROCESSED'
-        assert res[2].total_tokens == 150
-        assert res[3].bucket == base_time + datetime.timedelta(hours=1)
-        assert res[3].event_type == 'OUTPUT_TOKEN_PROCESSED'
-        assert res[3].total_tokens == 75
-
-    def test_get_token_chart_data_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
-
-        res = self.event_dao.get_token_chart_data(
-            None, ['rb-gateway'], _from, _to, 'hours', 0
-        )
-        assert res is not None
-        assert len(res) == 0
-
-    def test_get_all_routes_summary_costs(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-X',
-                timestamp=base_time,
-                cost=0.20,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-X',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                cost=0.30,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                route_name='route-X',
-                timestamp=base_time + datetime.timedelta(hours=1),
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-Y',
-                timestamp=base_time,
-                cost=0.10,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-Y',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                cost=0.15,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
-
-        res = self.event_dao.get_all_routes_summary_costs(None, _from, _to, False)
-        assert res is not None
-        by_route = {r.route_name: r for r in res}
-        assert 'route-X' in by_route
-        assert by_route['route-X'].input_cost == 0.20
-        assert by_route['route-X'].output_cost == 0.30
-        assert by_route['route-X'].total_cost == 0.50
-        assert by_route['route-X'].cache_triggered == 1
-        assert by_route['route-X'].saved_amount_input == 0
-        assert by_route['route-X'].saved_amount_output == 0
-        assert by_route['route-X'].total_saved_amount == 0
-        assert 'route-Y' in by_route
-        assert by_route['route-Y'].input_cost == 0.10
-        assert by_route['route-Y'].output_cost == 0.15
-        assert by_route['route-Y'].total_cost == 0.25
-        assert by_route['route-Y'].cache_triggered == 0
-        assert by_route['route-Y'].saved_amount_input == 0
-        assert by_route['route-Y'].saved_amount_output == 0
-        assert by_route['route-Y'].total_saved_amount == 0
-
-    def test_get_all_routes_summary_costs_empty(self):
-        now = datetime.datetime.now(datetime.timezone.utc)
-        _from = now + datetime.timedelta(hours=100)
-        _to = _from + datetime.timedelta(hours=1)
-        res = self.event_dao.get_all_routes_summary_costs(None, _from, _to, False)
-        assert res is not None
-        assert len(res) == 0
-
-    def test_get_all_routes_summary_costs_semantic_breakdown(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # Regular input (no cache_type)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-Z',
-                timestamp=base_time,
-                cost=0.10,
-            ),
-            # Semantic input (embedding inference)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-Z',
-                timestamp=base_time,
-                cost=1.00,
-                cache_type='semantic',
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-        res = self.event_dao.get_all_routes_summary_costs(None, _from, _to, False)
-        by_route = {r.route_name: r for r in res}
-        assert 'route-Z' in by_route
-        # input_cost includes ALL INPUT_TOKEN_PROCESSED (no cache_type filter)
-        assert by_route['route-Z'].input_cost == 1.10
-        assert by_route['route-Z'].output_cost == 0
-        assert by_route['route-Z'].total_cost == 1.10
-        # semantic breakdown
-        assert by_route['route-Z'].embedding_inference_cost == 1.00
-        assert by_route['route-Z'].llm_input_request_savings == 0
-        assert by_route['route-Z'].llm_output_request_savings == 0
-        assert by_route['route-Z'].llm_total_request_savings == 0
-
-    def test_get_all_routes_summary_costs_with_exact_and_semantic_cache(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # Regular tokens
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-W',
-                timestamp=base_time,
-                cost=0.50,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-W',
-                timestamp=base_time,
-                cost=0.30,
-            ),
-            # Exact cache savings
-            db_mock.get_sample_event(
-                event_type='CACHE_INPUT_TOKENS',
-                route_name='route-W',
-                timestamp=base_time,
-                cost=0.10,
-                value=20,
-                cache_type='exact',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_OUTPUT_TOKENS',
-                route_name='route-W',
-                timestamp=base_time,
-                cost=0.05,
-                value=10,
-                cache_type='exact',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                route_name='route-W',
-                timestamp=base_time,
-                cache_type='exact',
-            ),
-            # Semantic cache savings
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-W',
-                timestamp=base_time,
-                cost=0.20,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_INPUT_TOKENS',
-                route_name='route-W',
-                timestamp=base_time,
-                cost=0.15,
-                value=30,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_OUTPUT_TOKENS',
-                route_name='route-W',
-                timestamp=base_time,
-                cost=0.25,
-                value=50,
-                cache_type='semantic',
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_HIT',
-                route_name='route-W',
-                timestamp=base_time,
-                cache_type='semantic',
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-        res = self.event_dao.get_all_routes_summary_costs(None, _from, _to, False)
-        by_route = {r.route_name: r for r in res}
-        assert 'route-W' in by_route
-        r = by_route['route-W']
-        # input_cost includes all INPUT_TOKEN_PROCESSED (regular + semantic)
-        assert r.input_cost == 0.70  # 0.50 + 0.20
-        assert r.output_cost == 0.30
-        assert r.total_cost == 1.00  # 0.70 + 0.30
-        assert r.cache_triggered == 2  # exact + semantic
-        # exact cache breakdown
-        assert r.partial_saved_amount_input == 0.10
-        assert r.partial_saved_amount_output == 0.05
-        assert r.partial_saved_amount == 0.15
-        # semantic cache breakdown
-        assert r.llm_input_request_savings == 0.15
-        assert r.llm_output_request_savings == 0.25
-        assert r.llm_total_request_savings == 0.40
-        assert r.embedding_inference_cost == 0.20
-        # combined saved amounts
-        assert r.saved_amount_input == 0.25  # 0.10 (exact) + 0.15 (semantic)
-        assert r.saved_amount_output == 0.30  # 0.05 (exact) + 0.25 (semantic)
-        # total_saved = partial_saved + (llm_total - embedding_cost)
-        assert r.total_saved_amount == 0.35  # 0.15 + (0.40 - 0.20)
-
-    def test_get_all_routes_summary_costs_with_saved_tokens(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-T',
-                timestamp=base_time,
-                cost=0.50,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_INPUT_TOKENS',
-                route_name='route-T',
-                timestamp=base_time,
-                cost=0.10,
-                value=40,
-            ),
-            db_mock.get_sample_event(
-                event_type='CACHE_OUTPUT_TOKENS',
-                route_name='route-T',
-                timestamp=base_time,
-                cost=0.05,
-                value=60,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_all_routes_summary_costs(None, _from, _to, True)
-        by_route = {r.route_name: r for r in res}
-        assert 'route-T' in by_route
-        r = by_route['route-T']
-        assert r.cache_saved_tokens_input == 40
-        assert r.cache_saved_tokens_output == 60
-        assert r.total_cached_tokens == 100
-
-    def test_detailed_cost_breakdown(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # Chat model - standard input (non-cached, non-judge)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=1.0,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=False,
-            ),
-            # Chat model - cached input (non-judge)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.5,
-                model_type='chat-model',
-                is_cached_tokens=True,
-                is_judge=False,
-            ),
-            # Chat model - judge input (standard)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.3,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=True,
-            ),
-            # Chat model - judge input (cached)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.2,
-                model_type='chat-model',
-                is_cached_tokens=True,
-                is_judge=True,
-            ),
-            # Chat model - output (non-judge)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=2.0,
-                model_type='chat-model',
-                is_judge=False,
-            ),
-            # Chat model - output (judge)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.8,
-                model_type='chat-model',
-                is_judge=True,
-            ),
-            # Embedding model - direct input
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.4,
-                model_type='embeddings',
-                cache_type='',
-            ),
-            # Embedding model - semantic cache input
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.6,
-                model_type='embeddings',
-                cache_type='semantic',
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_detailed_cost_breakdown(
-            None, ['rb-gateway'], _from, _to
-        )
-        assert res is not None
-        # Chat input standard (non-cached, non-judge): 1.0
-        assert res.chat_input_direct == 1.0
-        # Chat input cached (cached non-judge): 0.5
-        assert res.chat_input_cached == 0.5
-        # Chat input judges (not cached, judge): 0.3
-        assert res.chat_input_judges == 0.3
-        # Chat input judges cached: 0.2
-        assert res.chat_input_judges_cached == 0.2
-        # Chat output (non-judge): 2.0
-        assert res.chat_output_direct == 2.0
-        # Chat output judges: 0.8
-        assert res.chat_output_judges == 0.8
-        # Embedding input: 0.4 + 0.6 = 1.0
-        assert res.embedding_input_total == 1.0
-        # Embedding input direct: 0.4
-        assert res.embedding_input_direct == 0.4
-        # Embedding input semantic cache: 0.6
-        assert res.embedding_input_semantic_cache == 0.6
-
-    def test_detailed_cost_breakdown_transcription(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # whisper-1 style: duration-based input
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.000825,
-                model_type='transcription',
-                cache_type='duration',
-            ),
-            # gpt-4o-transcribe style: audio-token input
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.000492,
-                model_type='transcription',
-                cache_type='audio',
-            ),
-            # gpt-4o-transcribe style: text-token input
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.0000125,
-                model_type='transcription',
-                cache_type='',
-            ),
-            # gpt-4o-transcribe style: output tokens
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.00038,
-                model_type='transcription',
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_detailed_cost_breakdown(
-            None, ['rb-gateway'], _from, _to
-        )
-        assert res is not None
-        assert res.transcription_duration == 0.000825
-        assert res.transcription_audio == 0.000492
-        assert res.transcription_text == 0.0000125
-        assert res.transcription_output == 0.00038
-
-    def test_detailed_cost_breakdown_decision(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # decision call: input only, output recorded at $0
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.0000109,
-                model_type='decision_model',
-                cache_type='',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=0.0,
-                model_type='decision_model',
-            ),
-            # exact cache hit on a decision request: cached tokens at $0
-            db_mock.get_sample_event(
-                event_type='CACHE_INPUT_TOKENS',
-                timestamp=base_time,
-                value=260,
-                cost=0.0,
-                model_id='jev',
-                cache_type='exact',
-            ),
-            # chat input must not leak into the decision column
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                cost=1.0,
-                model_type='chat-model',
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_detailed_cost_breakdown(
-            None, ['rb-gateway'], _from, _to
-        )
-        assert res.decision_input == 0.0000109
-        assert res.chat_input_direct == 1.0
-
-    def test_costs_chart_by_model_includes_decision_cost(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
         self.insert(
             [
                 db_mock.get_sample_event(
-                    event_type='INPUT_TOKEN_PROCESSED',
-                    timestamp=base_time,
+                    event_type=f'{kind}_TOKEN_PROCESSED',
+                    timestamp=datetime.datetime(*ts, tzinfo=UTC),
+                    api_key_uuid=key,
+                    group_uuid=group,
+                    model_id=model,
+                    cost=cost,
+                )
+                for ts, kind, key, group, model, cost in events
+            ]
+        )
+        _from = datetime.datetime(2025, 1, 6, tzinfo=UTC)
+        _to = datetime.datetime(2025, 3, 1, tzinfo=UTC)
+
+        cases = {
+            ('hours', 'keys'): [
+                ((2025, 1, 6, 10), k1, 1.0),
+                ((2025, 1, 6, 10), k2, 2.0),
+                ((2025, 1, 6, 11), k1, 4.0),
+                ((2025, 1, 7, 9), k2, 8.0),
+                ((2025, 1, 14, 9), k1, 16.0),
+                ((2025, 2, 3, 9), k2, 32.0),
+            ],
+            ('hours', 'groups'): [
+                ((2025, 1, 6, 10), g1, 1.0),
+                ((2025, 1, 6, 10), g2, 2.0),
+                ((2025, 1, 6, 11), g1, 4.0),
+                ((2025, 1, 7, 9), g1, 8.0),
+                ((2025, 1, 14, 9), g2, 16.0),
+                ((2025, 2, 3, 9), g2, 32.0),
+            ],
+            ('hours', 'models'): [
+                ((2025, 1, 6, 10), 'gpt-3.5', 2.0),
+                ((2025, 1, 6, 10), 'gpt-4', 1.0),
+                ((2025, 1, 6, 11), 'gpt-4', 4.0),
+                ((2025, 1, 7, 9), 'gpt-4', 8.0),
+                ((2025, 1, 14, 9), 'gpt-3.5', 16.0),
+                ((2025, 2, 3, 9), 'gpt-4', 32.0),
+            ],
+            ('days', 'keys'): [
+                ((2025, 1, 6), k1, 5.0),
+                ((2025, 1, 6), k2, 2.0),
+                ((2025, 1, 7), k2, 8.0),
+                ((2025, 1, 14), k1, 16.0),
+                ((2025, 2, 3), k2, 32.0),
+            ],
+            ('days', 'models'): [
+                ((2025, 1, 6), 'gpt-3.5', 2.0),
+                ((2025, 1, 6), 'gpt-4', 5.0),
+                ((2025, 1, 7), 'gpt-4', 8.0),
+                ((2025, 1, 14), 'gpt-3.5', 16.0),
+                ((2025, 2, 3), 'gpt-4', 32.0),
+            ],
+            ('weeks', 'groups'): [
+                ((2025, 1, 6), g1, 13.0),
+                ((2025, 1, 6), g2, 2.0),
+                ((2025, 1, 13), g2, 16.0),
+                ((2025, 2, 3), g2, 32.0),
+            ],
+            ('weeks', 'models'): [
+                ((2025, 1, 6), 'gpt-3.5', 2.0),
+                ((2025, 1, 6), 'gpt-4', 13.0),
+                ((2025, 1, 13), 'gpt-3.5', 16.0),
+                ((2025, 2, 3), 'gpt-4', 32.0),
+            ],
+            ('months', 'keys'): [
+                ((2025, 1, 1), k1, 21.0),
+                ((2025, 1, 1), k2, 10.0),
+                ((2025, 2, 1), k2, 32.0),
+            ],
+        }
+        for (granularity, group_by), expected in cases.items():
+            with self.subTest(granularity=granularity, group_by=group_by):
+                res = self.event_dao.get_costs_chart_data(
+                    None, ['rb-gateway'], _from, _to, granularity, group_by
+                )
+                # Week and month buckets come back as naive dates.
+                tz = None if granularity in ('weeks', 'months') else UTC
+                assert [(r.bucket, r.group_by_value, r.total_cost) for r in res] == [
+                    (datetime.datetime(*bucket, tzinfo=tz), value, cost)
+                    for bucket, value, cost in expected
+                ]
+
+    def test_get_costs_chart_data_filters(self):
+        k1 = str(KEY_1)
+        feb_2 = datetime.datetime(2025, 2, 2, 10, 0, 0, tzinfo=UTC)
+        jan_20 = NOON + 10 * D
+        key = {'api_key_uuid': KEY_1}
+        self.insert(
+            [
+                # Time range: 10:00 and 15:00 fall outside [12:00, 14:00].
+                _ev(INPUT, at=NOON - 2 * H, cost=0.10, **key),
+                _ev(INPUT, at=NOON, cost=0.20, **key),
+                _ev(OUTPUT, at=NOON + H, cost=0.30, **key),
+                _ev(INPUT, at=NOON + 2 * H, cost=0.40, **key),
+                _ev(OUTPUT, at=NOON + 3 * H, cost=0.50, **key),
+                # Route filters.
+                _ev(INPUT, 'route-A', feb_2, 1.0, **key),
+                _ev(INPUT, 'route-B', feb_2, 2.0, **key),
+                _ev(INPUT, 'route-C', feb_2, 5.0, **key),
+                # Decision calls are costed per model like chat calls.
+                _ev(
+                    INPUT,
+                    at=jan_20,
                     cost=0.25,
                     model_id='jev',
                     model_type='decision_model',
                 ),
-                db_mock.get_sample_event(
-                    event_type='INPUT_TOKEN_PROCESSED',
-                    timestamp=base_time,
-                    cost=1.0,
-                    model_id='gpt',
-                    model_type='chat-model',
+                _ev(
+                    INPUT, at=jan_20, cost=1.0, model_id='gpt', model_type='chat-model'
                 ),
             ]
         )
 
-        res = self.event_dao.get_costs_chart_data(
-            None,
-            ['rb-gateway'],
-            base_time,
-            base_time + datetime.timedelta(hours=1),
-            'hours',
-            'models',
+        def chart(routes, _from, _to, group_by='keys'):
+            res = self.event_dao.get_costs_chart_data(
+                None, routes, _from, _to, 'hours', group_by
+            )
+            return [(r.bucket, r.group_by_value, r.total_cost) for r in res]
+
+        assert chart(['rb-gateway'], NOON, NOON + 2 * H) == [
+            (NOON, k1, 0.20),
+            (NOON + H, k1, 0.30),
+            (NOON + 2 * H, k1, 0.40),
+        ]
+        assert chart(['route-A', 'route-B'], feb_2 - H, feb_2 + H) == [(feb_2, k1, 3.0)]
+        assert chart(None, feb_2 - H, feb_2 + H) == [(feb_2, k1, 8.0)]
+        assert chart(['rb-gateway'], jan_20, jan_20 + H, 'models') == [
+            (jan_20, 'gpt', 1.0),
+            (jan_20, 'jev', 0.25),
+        ]
+        assert chart(['rb-gateway'], FUTURE, FUTURE + D) == []
+
+    def test_get_summary_costs(self):
+        self.insert(
+            [
+                # sum-plain: only [12:00, 14:00] counts; cache hits need cache_enabled.
+                _ev(INPUT, 'sum-plain', NOON - 2 * H, 0.10),
+                _ev(INPUT, 'sum-plain', NOON, 0.20),
+                _ev(OUTPUT, 'sum-plain', NOON + H, 0.30),
+                _ev(HIT, 'sum-plain', NOON + H),
+                _ev(HIT, 'sum-plain', NOON + H),
+                _ev(INPUT, 'sum-plain', NOON + 2 * H, 0.40),
+                _ev(OUTPUT, 'sum-plain', NOON + 3 * H, 0.50),
+                # sum-semantic: semantic-cache costs are not request costs.
+                _ev(OUTPUT, 'sum-semantic', NOON + H, 0.50, cache_type='semantic'),
+                # sum-cache: cache savings and saved tokens.
+                _ev(INPUT, 'sum-cache', NOON - 2 * H, 0.10),
+                _ev(CACHE_IN, 'sum-cache', NOON - 2 * H, 0.10),
+                _ev(INPUT, 'sum-cache', NOON, 0.20),
+                _ev(CACHE_IN, 'sum-cache', NOON, 0.15, value=40),
+                _ev(OUTPUT, 'sum-cache', NOON + H, 0.30),
+                _ev(CACHE_OUT, 'sum-cache', NOON + H, 0.40, value=100),
+                _ev(HIT, 'sum-cache', NOON + H),
+                _ev(HIT, 'sum-cache', NOON + 2 * H),
+                _ev(INPUT, 'sum-cache', NOON + 2 * H, 0.40),
+                _ev(CACHE_IN, 'sum-cache', NOON + 2 * H, 0.10, value=3),
+                _ev(OUTPUT, 'sum-cache', NOON + 3 * H, 0.50),
+                _ev(CACHE_OUT, 'sum-cache', NOON + 3 * H, 0.50, value=1000),
+                # sum-cache-type: no cache type and 'exact' count, 'semantic' not.
+                _ev(INPUT, 'sum-cache-type', cost=0.10),
+                _ev(OUTPUT, 'sum-cache-type', cost=0.20),
+                _ev(INPUT, 'sum-cache-type', cost=0.15, cache_type='exact'),
+                _ev(OUTPUT, 'sum-cache-type', cost=0.25, cache_type='exact'),
+                _ev(HIT, 'sum-cache-type', cache_type='exact'),
+                _ev(INPUT, 'sum-cache-type', cost=1.00, cache_type='semantic'),
+                _ev(OUTPUT, 'sum-cache-type', cost=2.00, cache_type='semantic'),
+                _ev(HIT, 'sum-cache-type', cache_type='semantic'),
+            ]
         )
 
-        by_model = {p.group_by_value: p.total_cost for p in res}
-        assert by_model == {'gpt': 1.0, 'jev': 0.25}
+        def summary(route, cache_enabled=False, with_tokens=False):
+            return self.event_dao.get_summary_costs(
+                None, [route], NOON, NOON + 2 * H, cache_enabled, with_tokens
+            )
 
-    def test_get_all_routes_detailed_cost_breakdown(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
+        assert summary('sum-plain') == CostData(
+            input_cost=0.60, output_cost=0.30, total_cost=0.90
         )
-        test_events = [
-            # route-A: chat model events
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                timestamp=base_time,
-                cost=1.0,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=False,
+        assert summary('sum-semantic') == CostData()
+        assert summary('sum-cache', True, True) == CostData(
+            input_cost=0.60,
+            output_cost=0.30,
+            total_cost=0.90,
+            cache_triggered=2,
+            saved_amount_input=0.25,
+            saved_amount_output=0.40,
+            total_saved_amount=0.65,
+            cache_saved_tokens_input=43,
+            cache_saved_tokens_output=100,
+            total_cached_tokens=143,
+        )
+        assert summary('sum-cache-type') == CostData(
+            input_cost=0.25, output_cost=0.45, total_cost=0.70
+        )
+
+    def test_get_semantic_cache_details(self):
+        sem = {'cache_type': 'semantic'}
+        self.insert(
+            [
+                # sem-costs: [12:00, 14:00] counts, 15:00 does not.
+                _ev(INPUT, 'sem-costs', NOON, 0.10, value=40, **sem),
+                _ev(HIT, 'sem-costs', NOON, **sem),
+                _ev(CACHE_IN, 'sem-costs', NOON, 0.10, value=40, **sem),
+                _ev(CACHE_OUT, 'sem-costs', NOON, 0.40, value=160, **sem),
+                _ev(INPUT, 'sem-costs', NOON + H, 0.20, value=80, **sem),
+                _ev(HIT, 'sem-costs', NOON + H, **sem),
+                _ev(CACHE_IN, 'sem-costs', NOON + H, 0.20, value=80, **sem),
+                _ev(CACHE_OUT, 'sem-costs', NOON + H, 0.60, value=240, **sem),
+                _ev(HIT, 'sem-costs', NOON + 2 * H, **sem),
+                _ev(CACHE_IN, 'sem-costs', NOON + 2 * H, 0.20, value=80, **sem),
+                _ev(CACHE_OUT, 'sem-costs', NOON + 2 * H, 0.60, value=240, **sem),
+                _ev(INPUT, 'sem-costs', NOON + 3 * H, 0.20, value=80, **sem),
+                _ev(CACHE_IN, 'sem-costs', NOON + 3 * H, 0.20, value=80, **sem),
+                _ev(CACHE_OUT, 'sem-costs', NOON + 3 * H, 0.20, value=80, **sem),
+                # sem-tokens: saved tokens.
+                _ev(HIT, 'sem-tokens', NOON + H, **sem),
+                _ev(HIT, 'sem-tokens', NOON + 2 * H, **sem),
+                _ev(HIT, 'sem-tokens', NOON + datetime.timedelta(minutes=2), **sem),
+                _ev(HIT, 'sem-tokens', NOON, **sem),
+                _ev(INPUT, 'sem-tokens', NOON, 0.10, value=40, **sem),
+                _ev(CACHE_IN, 'sem-tokens', NOON, 0.10, value=40, **sem),
+                _ev(CACHE_OUT, 'sem-tokens', NOON, 0.10, value=30, **sem),
+                _ev(INPUT, 'sem-tokens', NOON + H, 0.20, value=80, **sem),
+                _ev(CACHE_IN, 'sem-tokens', NOON + H, 0.20, value=80, **sem),
+                _ev(CACHE_OUT, 'sem-tokens', NOON + H, 0.20, value=60, **sem),
+                _ev(CACHE_IN, 'sem-tokens', NOON + 2 * H, 0.20, value=80, **sem),
+                _ev(INPUT, 'sem-tokens', NOON + 3 * H, 0.20, value=80, **sem),
+                _ev(CACHE_IN, 'sem-tokens', NOON + 3 * H, 0.20, value=80, **sem),
+                # sem-none: no semantic-cache event at all.
+                _ev(INPUT, 'sem-none', NOON + H, 0.50),
+            ]
+        )
+
+        def details(route, with_tokens=False):
+            return self.event_dao.get_semantic_cache_details(
+                None, [route], NOON, NOON + 2 * H, with_tokens
+            )
+
+        assert details('sem-costs') == SemanticCacheCostData(
+            cache_triggered=3,
+            llm_input_request_savings=0.50,
+            llm_output_request_savings=1.60,
+            llm_total_request_savings=2.10,
+            embedding_inference_cost=0.30,
+            net_savings=1.80,
+        )
+        assert details('sem-tokens', True) == SemanticCacheCostData(
+            cache_triggered=4,
+            llm_input_request_savings=0.50,
+            llm_output_request_savings=0.30,
+            llm_total_request_savings=0.80,
+            embedding_inference_cost=0.30,
+            net_savings=0.50,
+            cache_saved_tokens_input=200,
+            cache_saved_tokens_output=90,
+            total_cached_tokens=290,
+        )
+        assert details('sem-none') == SemanticCacheCostData(
+            cache_triggered=0,
+            llm_input_request_savings=0,
+            llm_output_request_savings=0,
+            llm_total_request_savings=0,
+            embedding_inference_cost=0,
+            net_savings=0,
+        )
+
+    def test_get_all_routes_summary_costs(self):
+        self.insert(
+            [
+                _ev(INPUT, 'route-X', NOON, 0.20),
+                _ev(OUTPUT, 'route-X', NOON + H, 0.30),
+                _ev(HIT, 'route-X', NOON + H),
+                _ev(INPUT, 'route-Y', NOON, 0.10),
+                _ev(OUTPUT, 'route-Y', NOON + H, 0.15),
+                # route-Z: input cost includes semantic (embedding) input.
+                _ev(INPUT, 'route-Z', cost=0.10),
+                _ev(INPUT, 'route-Z', cost=1.00, cache_type='semantic'),
+                # route-W: exact and semantic cache side by side.
+                _ev(INPUT, 'route-W', cost=0.50),
+                _ev(OUTPUT, 'route-W', cost=0.30),
+                _ev(CACHE_IN, 'route-W', cost=0.10, value=20, cache_type='exact'),
+                _ev(CACHE_OUT, 'route-W', cost=0.05, value=10, cache_type='exact'),
+                _ev(HIT, 'route-W', cache_type='exact'),
+                _ev(INPUT, 'route-W', cost=0.20, cache_type='semantic'),
+                _ev(CACHE_IN, 'route-W', cost=0.15, value=30, cache_type='semantic'),
+                _ev(CACHE_OUT, 'route-W', cost=0.25, value=50, cache_type='semantic'),
+                _ev(HIT, 'route-W', cache_type='semantic'),
+                # route-T: saved tokens without a cache type.
+                _ev(INPUT, 'route-T', cost=0.50),
+                _ev(CACHE_IN, 'route-T', cost=0.10, value=40),
+                _ev(CACHE_OUT, 'route-T', cost=0.05, value=60),
+            ]
+        )
+
+        def route(name, **fields):
+            zeros = dict.fromkeys(
+                [
+                    'cache_triggered',
+                    'partial_saved_amount_input',
+                    'partial_saved_amount_output',
+                    'partial_saved_amount',
+                    'llm_input_request_savings',
+                    'llm_output_request_savings',
+                    'llm_total_request_savings',
+                    'embedding_inference_cost',
+                    'saved_amount_input',
+                    'saved_amount_output',
+                    'total_saved_amount',
+                ],
+                0,
+            )
+            return RouteCostData(route_name=name, **{**zeros, **fields})
+
+        expected = [
+            route(
+                'route-T',
+                input_cost=0.50,
+                total_cost=0.50,
+                partial_saved_amount_input=0.10,
+                partial_saved_amount_output=0.05,
+                partial_saved_amount=0.15,
+                saved_amount_input=0.10,
+                saved_amount_output=0.05,
+                total_saved_amount=0.15,
             ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-A',
-                timestamp=base_time,
-                cost=2.0,
-                model_type='chat-model',
-                is_judge=False,
+            route(
+                'route-W',
+                input_cost=0.70,
+                output_cost=0.30,
+                total_cost=1.00,
+                cache_triggered=2,
+                partial_saved_amount_input=0.10,
+                partial_saved_amount_output=0.05,
+                partial_saved_amount=0.15,
+                llm_input_request_savings=0.15,
+                llm_output_request_savings=0.25,
+                llm_total_request_savings=0.40,
+                embedding_inference_cost=0.20,
+                saved_amount_input=0.25,
+                saved_amount_output=0.30,
+                # partial_saved + (llm_total - embedding_cost)
+                total_saved_amount=0.35,
             ),
-            # route-B: chat model with judges
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-B',
-                timestamp=base_time,
-                cost=0.3,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=True,
+            route(
+                'route-X',
+                input_cost=0.20,
+                output_cost=0.30,
+                total_cost=0.50,
+                cache_triggered=1,
             ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-B',
-                timestamp=base_time,
-                cost=0.8,
-                model_type='chat-model',
-                is_judge=True,
-            ),
-            # route-C: embeddings
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-C',
-                timestamp=base_time,
-                cost=0.4,
-                model_type='embeddings',
-                cache_type='',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-C',
-                timestamp=base_time,
-                cost=0.6,
-                model_type='embeddings',
-                cache_type='semantic',
-            ),
-            # route-D: transcription
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-D',
-                timestamp=base_time,
-                cost=0.000825,
-                model_type='transcription',
-                cache_type='duration',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-D',
-                timestamp=base_time,
-                cost=0.00038,
-                model_type='transcription',
-            ),
-            # route-E: decision
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-E',
-                timestamp=base_time,
-                cost=0.0000109,
-                model_type='decision_model',
+            route('route-Y', input_cost=0.10, output_cost=0.15, total_cost=0.25),
+            route(
+                'route-Z',
+                input_cost=1.10,
+                total_cost=1.10,
+                embedding_inference_cost=1.00,
+                total_saved_amount=-1.00,
             ),
         ]
-        self.insert(test_events)
 
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
+        def summaries(with_tokens, _from=NOON, _to=NOON + 2 * H):
+            res = self.event_dao.get_all_routes_summary_costs(
+                None, _from, _to, with_tokens
+            )
+            return sorted(res, key=lambda r: r.route_name)
 
-        res = self.event_dao.get_all_routes_detailed_cost_breakdown(None, _from, _to)
-        assert res is not None
-        by_route = {r.route_name: r for r in res}
-
-        # route-A: chat only
-        assert 'route-A' in by_route
-        assert by_route['route-A'].chat_input_direct == 1.0
-        assert by_route['route-A'].chat_input_cached == 0.0
-        assert by_route['route-A'].chat_input_judges == 0.0
-        assert by_route['route-A'].chat_input_judges_cached == 0.0
-        assert by_route['route-A'].chat_output_direct == 2.0
-        assert by_route['route-A'].chat_output_judges == 0.0
-        assert by_route['route-A'].embedding_input_total == 0.0
-        assert by_route['route-A'].embedding_input_direct == 0.0
-        assert by_route['route-A'].embedding_input_semantic_cache == 0.0
-
-        # route-B: chat with judges
-        assert 'route-B' in by_route
-        # chat_input_direct excludes judge events (non-judge only): 0.0
-        assert by_route['route-B'].chat_input_direct == 0.0
-        assert by_route['route-B'].chat_input_cached == 0.0
-        assert by_route['route-B'].chat_input_judges == 0.3
-        assert by_route['route-B'].chat_input_judges_cached == 0.0
-        # chat_output_direct excludes judge outputs (non-judge only): 0.0
-        assert by_route['route-B'].chat_output_direct == 0.0
-        assert by_route['route-B'].chat_output_judges == 0.8
-        assert by_route['route-B'].embedding_input_total == 0.0
-        assert by_route['route-B'].embedding_input_direct == 0.0
-        assert by_route['route-B'].embedding_input_semantic_cache == 0.0
-
-        # route-C: embeddings
-        assert 'route-C' in by_route
-        assert by_route['route-C'].chat_input_direct == 0.0
-        assert by_route['route-C'].chat_input_cached == 0.0
-        assert by_route['route-C'].chat_input_judges == 0.0
-        assert by_route['route-C'].chat_input_judges_cached == 0.0
-        assert by_route['route-C'].chat_output_direct == 0.0
-        assert by_route['route-C'].chat_output_judges == 0.0
-        assert by_route['route-C'].embedding_input_total == 1.0
-        assert by_route['route-C'].embedding_input_direct == 0.4
-        assert by_route['route-C'].embedding_input_semantic_cache == 0.6
-        assert by_route['route-C'].transcription_duration == 0.0
-        assert by_route['route-C'].transcription_output == 0.0
-
-        # route-D: transcription — confirms the field_names/columns alignment
-        # (chat/embedding fields must stay 0 for this route)
-        assert 'route-D' in by_route
-        assert by_route['route-D'].chat_input_direct == 0.0
-        assert by_route['route-D'].embedding_input_total == 0.0
-        assert by_route['route-D'].transcription_duration == 0.000825
-        assert by_route['route-D'].transcription_audio == 0.0
-        assert by_route['route-D'].transcription_text == 0.0
-        assert by_route['route-D'].transcription_output == 0.00038
-        assert by_route['route-D'].decision_input == 0.0
-
-        # route-E: decision, the last column, must not shift the others
-        assert by_route['route-E'].decision_input == 0.0000109
-        assert by_route['route-E'].transcription_output == 0.0
-        assert by_route['route-E'].chat_input_direct == 0.0
-
-    def test_get_all_routes_detailed_cost_breakdown_empty(self):
-        now = datetime.datetime.now(datetime.timezone.utc)
-        _from = now + datetime.timedelta(hours=100)
-        _to = _from + datetime.timedelta(hours=1)
-        res = self.event_dao.get_all_routes_detailed_cost_breakdown(None, _from, _to)
-        assert res is not None
-        assert len(res) == 0
-
-    def test_get_all_routes_detailed_cost_breakdown_complex(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # Chat model - standard input (non-cached, non-judge)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-complex',
-                timestamp=base_time,
-                cost=1.0,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=False,
-            ),
-            # Chat model - cached input (non-judge)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-complex',
-                timestamp=base_time,
-                cost=0.5,
-                model_type='chat-model',
-                is_cached_tokens=True,
-                is_judge=False,
-            ),
-            # Chat model - judge input (standard)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-complex',
-                timestamp=base_time,
-                cost=0.3,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=True,
-            ),
-            # Chat model - judge input (cached)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-complex',
-                timestamp=base_time,
-                cost=0.2,
-                model_type='chat-model',
-                is_cached_tokens=True,
-                is_judge=True,
-            ),
-            # Chat model - output (non-judge)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-complex',
-                timestamp=base_time,
-                cost=2.0,
-                model_type='chat-model',
-                is_judge=False,
-            ),
-            # Chat model - output (judge)
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-complex',
-                timestamp=base_time,
-                cost=0.8,
-                model_type='chat-model',
-                is_judge=True,
-            ),
-            # Embedding model - direct input
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-complex',
-                timestamp=base_time,
-                cost=0.4,
-                model_type='embeddings',
-                cache_type='',
-            ),
-            # Embedding model - semantic cache input
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-complex',
-                timestamp=base_time,
-                cost=0.6,
-                model_type='embeddings',
-                cache_type='semantic',
-            ),
+        assert summaries(False) == expected
+        tokens = {
+            'route-T': (40, 60, 100),
+            'route-W': (50, 60, 110),
+            'route-X': (0, 0, 0),
+            'route-Y': (0, 0, 0),
+            'route-Z': (0, 0, 0),
+        }
+        assert summaries(True) == [
+            r.model_copy(
+                update=dict(
+                    zip(
+                        [
+                            'cache_saved_tokens_input',
+                            'cache_saved_tokens_output',
+                            'total_cached_tokens',
+                        ],
+                        tokens[r.route_name],
+                    )
+                )
+            )
+            for r in expected
         ]
-        self.insert(test_events)
+        assert summaries(False, FUTURE, FUTURE + H) == []
 
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_all_routes_detailed_cost_breakdown(None, _from, _to)
-        assert res is not None
-        assert len(res) == 1
-        by_route = {r.route_name: r for r in res}
-        assert 'route-complex' in by_route
-        # Chat input standard (non-cached, non-judge): 1.0
-        assert by_route['route-complex'].chat_input_direct == 1.0
-        # Chat input cached (non-judge): 0.5
-        assert by_route['route-complex'].chat_input_cached == 0.5
-        # Chat input judges (not cached): 0.3
-        assert by_route['route-complex'].chat_input_judges == 0.3
-        # Chat input judges cached: 0.2
-        assert by_route['route-complex'].chat_input_judges_cached == 0.2
-        # Chat output (non-judge): 2.0
-        assert by_route['route-complex'].chat_output_direct == 2.0
-        # Chat output judges: 0.8
-        assert by_route['route-complex'].chat_output_judges == 0.8
-        # Embedding input: 0.4 + 0.6 = 1.0
-        assert by_route['route-complex'].embedding_input_total == 1.0
-        # Embedding input direct: 0.4
-        assert by_route['route-complex'].embedding_input_direct == 0.4
-        # Embedding input semantic cache: 0.6
-        assert by_route['route-complex'].embedding_input_semantic_cache == 0.6
-
-    def test_get_all_routes_detailed_cost_breakdown_time_filtering(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # Event in range
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-time',
-                timestamp=base_time,
-                cost=1.0,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=False,
-            ),
-            # Event outside range (too early)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-time',
-                timestamp=base_time - datetime.timedelta(hours=2),
-                cost=2.0,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=False,
-            ),
-            # Event outside range (too late)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-time',
-                timestamp=base_time + datetime.timedelta(hours=2),
-                cost=3.0,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=False,
-            ),
+    def test_detailed_cost_breakdown(self):
+        chat = [
+            # (event type, cost, is_cached_tokens, is_judge)
+            (INPUT, 1.0, False, False),
+            (INPUT, 0.5, True, False),
+            (INPUT, 0.3, False, True),
+            (INPUT, 0.2, True, True),
+            (OUTPUT, 2.0, False, False),
+            (OUTPUT, 0.8, False, True),
         ]
-        self.insert(test_events)
-
-        _from = base_time - datetime.timedelta(hours=1)
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_all_routes_detailed_cost_breakdown(None, _from, _to)
-        assert res is not None
-        assert len(res) == 1
-        # Only the event at base_time (1.0) should be included
-        assert res[0].chat_input_direct == 1.0
-
-    def test_get_all_routes_detailed_cost_breakdown_no_time_filter(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
+        cm = {'model_type': 'chat-model'}
+        emb = {'model_type': 'embeddings'}
+        tr = {'model_type': 'transcription'}
+        dm = {'model_type': 'decision_model'}
+        self.insert(
+            [
+                # det-full: every chat and embedding column at once.
+                *[
+                    _ev(
+                        kind,
+                        'det-full',
+                        cost=cost,
+                        is_cached_tokens=c,
+                        is_judge=j,
+                        **cm,
+                    )
+                    for kind, cost, c, j in chat
+                ],
+                _ev(INPUT, 'det-full', cost=0.4, cache_type='', **emb),
+                _ev(INPUT, 'det-full', cost=0.6, cache_type='semantic', **emb),
+                # det-transcription: duration, audio, text and output columns.
+                _ev(
+                    INPUT,
+                    'det-transcription',
+                    cost=0.000825,
+                    cache_type='duration',
+                    **tr,
+                ),
+                _ev(
+                    INPUT, 'det-transcription', cost=0.000492, cache_type='audio', **tr
+                ),
+                _ev(INPUT, 'det-transcription', cost=0.0000125, cache_type='', **tr),
+                _ev(OUTPUT, 'det-transcription', cost=0.00038, **tr),
+                # det-decision: input only; exact cache hits and chat input
+                # must not leak into the decision column.
+                _ev(INPUT, 'det-decision', cost=0.0000109, cache_type='', **dm),
+                _ev(OUTPUT, 'det-decision', cost=0.0, **dm),
+                _ev(
+                    CACHE_IN,
+                    'det-decision',
+                    value=260,
+                    model_id='jev',
+                    cache_type='exact',
+                ),
+                _ev(INPUT, 'det-decision', cost=1.0, **cm),
+                # One route per column family for the all-routes query.
+                _ev(INPUT, 'route-A', cost=1.0, **cm),
+                _ev(OUTPUT, 'route-A', cost=2.0, **cm),
+                _ev(INPUT, 'route-B', cost=0.3, is_judge=True, **cm),
+                _ev(OUTPUT, 'route-B', cost=0.8, is_judge=True, **cm),
+                _ev(INPUT, 'route-C', cost=0.4, cache_type='', **emb),
+                _ev(INPUT, 'route-C', cost=0.6, cache_type='semantic', **emb),
+                _ev(INPUT, 'route-D', cost=0.000825, cache_type='duration', **tr),
+                _ev(OUTPUT, 'route-D', cost=0.00038, **tr),
+                _ev(INPUT, 'route-E', cost=0.0000109, **dm),
+                # route-time: only the noon event is inside [11:00, 13:00].
+                _ev(INPUT, 'route-time', NOON - 2 * H, 2.0, **cm),
+                _ev(INPUT, 'route-time', NOON, 1.0, **cm),
+                _ev(INPUT, 'route-time', NOON + 2 * H, 3.0, **cm),
+                # route-all: the output falls outside the window.
+                _ev(INPUT, 'route-all', NOON, 1.0, **cm),
+                _ev(OUTPUT, 'route-all', NOON + 2 * H, 2.0, **cm),
+            ]
         )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-all',
-                timestamp=base_time,
-                cost=1.0,
-                model_type='chat-model',
-                is_cached_tokens=False,
-                is_judge=False,
+        _from, _to = NOON - H, NOON + H
+        full = DetailedCostBreakdown(
+            chat_input_direct=1.0,
+            chat_input_cached=0.5,
+            chat_input_judges=0.3,
+            chat_input_judges_cached=0.2,
+            chat_output_direct=2.0,
+            chat_output_judges=0.8,
+            embedding_input_total=1.0,
+            embedding_input_direct=0.4,
+            embedding_input_semantic_cache=0.6,
+        )
+        transcription = DetailedCostBreakdown(
+            transcription_duration=0.000825,
+            transcription_audio=0.000492,
+            transcription_text=0.0000125,
+            transcription_output=0.00038,
+        )
+        decision = DetailedCostBreakdown(
+            decision_input=0.0000109, chat_input_direct=1.0
+        )
+        assert {
+            route: self.event_dao.get_detailed_cost_breakdown(None, [route], _from, _to)
+            for route in ('det-full', 'det-transcription', 'det-decision')
+        } == {
+            'det-full': full,
+            'det-transcription': transcription,
+            'det-decision': decision,
+        }
+
+        def breakdown(name, base=None, **fields):
+            base_fields = base.model_dump() if base else {}
+            return RouteDetailedCostBreakdown(
+                route_name=name, **{**base_fields, **fields}
+            )
+
+        in_window = [
+            breakdown('det-decision', decision),
+            breakdown('det-full', full),
+            breakdown('det-transcription', transcription),
+            breakdown('route-A', chat_input_direct=1.0, chat_output_direct=2.0),
+            breakdown('route-B', chat_input_judges=0.3, chat_output_judges=0.8),
+            breakdown(
+                'route-C',
+                embedding_input_total=1.0,
+                embedding_input_direct=0.4,
+                embedding_input_semantic_cache=0.6,
             ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-all',
-                timestamp=base_time + datetime.timedelta(hours=2),
-                cost=2.0,
-                model_type='chat-model',
-                is_judge=False,
+            breakdown(
+                'route-D', transcription_duration=0.000825, transcription_output=0.00038
             ),
+            breakdown('route-E', decision_input=0.0000109),
         ]
-        self.insert(test_events)
 
-        # Use None for time parameters - returns all data
-        res = self.event_dao.get_all_routes_detailed_cost_breakdown(None, None, None)
-        assert res is not None
-        by_route = {r.route_name: r for r in res}
-        # Should have route-all plus the common test data routes (route-A, route-B)
-        assert 'route-all' in by_route
-        assert by_route['route-all'].chat_input_direct == 1.0
-        assert by_route['route-all'].chat_output_direct == 2.0
+        def all_routes(_from, _to):
+            res = self.event_dao.get_all_routes_detailed_cost_breakdown(
+                None, _from, _to
+            )
+            return sorted(res, key=lambda r: r.route_name)
 
-    def test_get_invocation_chart_data_hourly(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time,
-                route_name='inv-route',
-                value=1,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(minutes=30),
-                route_name='inv-route',
-                value=1,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                route_name='inv-route',
-                value=1,
-                model_id='gpt-3.5-turbo',
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(hours=1, minutes=15),
-                route_name='inv-route',
-                value=1,
-                model_id='gpt-4',
-            ),
+        assert all_routes(_from, _to) == [
+            *in_window,
+            breakdown('route-all', chat_input_direct=1.0),
+            breakdown('route-time', chat_input_direct=1.0),
         ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
-
-        res = self.event_dao.get_invocation_chart_data(
-            None, ['inv-route'], _from, _to, 'hours', include_models=True
-        )
-        assert res is not None
-        assert len(res) == 3
-        # 10:00 bucket: gpt-4 has 2 invocations
-        assert res[0].bucket == base_time
-        assert res[0].group_by_value == 'gpt-4'
-        assert res[0].value == 2
-        # 11:00 bucket: gpt-3.5-turbo has 1 invocation
-        assert res[1].bucket == base_time + datetime.timedelta(hours=1)
-        assert res[1].group_by_value == 'gpt-3.5-turbo'
-        assert res[1].value == 1
-        # 11:00 bucket: gpt-4 has 1 invocation
-        assert res[2].bucket == base_time + datetime.timedelta(hours=1)
-        assert res[2].group_by_value == 'gpt-4'
-        assert res[2].value == 1
-
-    def test_get_invocation_chart_data_daily(self):
-        base_time = datetime.datetime(2025, 1, 8, 0, 0, 0, tzinfo=datetime.timezone.utc)
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(hours=5),
-                route_name='inv-route-d',
-                value=1,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(hours=18),
-                route_name='inv-route-d',
-                value=1,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(days=1, hours=8),
-                route_name='inv-route-d',
-                value=1,
-                model_id='gpt-3.5-turbo',
-            ),
+        assert all_routes(None, None) == [
+            *in_window,
+            breakdown('route-all', chat_input_direct=1.0, chat_output_direct=2.0),
+            breakdown('route-time', chat_input_direct=6.0),
         ]
-        self.insert(test_events)
+        assert all_routes(FUTURE, FUTURE + H) == []
 
-        _from = base_time
-        _to = base_time + datetime.timedelta(days=3)
-
-        res = self.event_dao.get_invocation_chart_data(
-            None, ['inv-route-d'], _from, _to, 'days', include_models=True
+    def test_get_token_chart_data(self):
+        t0 = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=UTC)
+        self.insert(
+            [
+                _ev(INPUT, at=t0, value=100, model_id='gpt-4'),
+                _ev(INPUT, at=t0 + H, value=150, model_id='gpt-4'),
+                _ev(OUTPUT, at=t0, value=50, model_id='gpt-4'),
+                _ev(OUTPUT, at=t0 + H, value=75, model_id='gpt-4'),
+            ]
         )
-        assert res is not None
-        assert len(res) == 2
-        assert res[0].bucket == base_time
-        assert res[0].group_by_value == 'gpt-4'
-        assert res[0].value == 2
-        assert res[1].bucket == base_time + datetime.timedelta(days=1)
-        assert res[1].group_by_value == 'gpt-3.5-turbo'
-        assert res[1].value == 1
 
-    def test_get_invocation_chart_data_filters_by_route(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time,
-                route_name='inv-route-1',
-                value=1,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time,
-                route_name='inv-route-2',
-                value=1,
-                model_id='gpt-4',
-            ),
+        def chart(_from, _to):
+            res = self.event_dao.get_token_chart_data(
+                None, ['rb-gateway'], _from, _to, 'hours', 0
+            )
+            return [(r.bucket, r.event_type, r.total_tokens) for r in res]
+
+        assert chart(t0, t0 + 2 * H) == [
+            (t0, INPUT, 100),
+            (t0, OUTPUT, 50),
+            (t0 + H, INPUT, 150),
+            (t0 + H, OUTPUT, 75),
         ]
-        self.insert(test_events)
+        assert chart(t0 - D, t0 - D + 2 * H) == []
 
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
+    def test_get_invocation_chart_data(self):
+        t0 = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=UTC)
+        day = datetime.datetime(2025, 1, 8, tzinfo=UTC)
+        m = datetime.timedelta(minutes=1)
 
-        res = self.event_dao.get_invocation_chart_data(
-            None, ['inv-route-1'], _from, _to, 'hours', include_models=True
+        def inv(route, at, model='gpt-4', event_type=INVOCATION, value=1):
+            return _ev(event_type, route, at, value=value, model_id=model)
+
+        self.insert(
+            [
+                inv('inv-route', t0),
+                inv('inv-route', t0 + 30 * m),
+                inv('inv-route', t0 + H, 'gpt-3.5-turbo'),
+                inv('inv-route', t0 + H + 15 * m),
+                inv('inv-route-d', day + 5 * H),
+                inv('inv-route-d', day + 18 * H),
+                inv('inv-route-d', day + D + 8 * H, 'gpt-3.5-turbo'),
+                inv('inv-route-1', t0),
+                inv('inv-route-2', t0),
+                inv('inv-route-t', t0 - 2 * H),
+                inv('inv-route-t', t0),
+                inv('inv-route-t', t0 + 3 * H),
+                # Only MODEL_INVOCATION events count.
+                inv('inv-route-f', t0),
+                inv('inv-route-f', t0, event_type=INPUT, value=100),
+                inv('inv-route-f', t0, event_type=OUTPUT, value=50),
+                inv('inv-route-no-model', t0),
+                inv('inv-route-no-model', t0 + 30 * m),
+                inv('inv-route-no-model', t0 + 45 * m, 'gpt-3.5-turbo'),
+                inv('inv-route-no-model', t0 + H),
+            ]
         )
-        assert res is not None
-        assert len(res) == 1
-        assert res[0].value == 1
 
-    def test_get_invocation_chart_data_filters_by_time_range(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # Before range
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time - datetime.timedelta(hours=2),
-                route_name='inv-route-t',
-                value=1,
-                model_id='gpt-4',
-            ),
-            # In range
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time,
-                route_name='inv-route-t',
-                value=1,
-                model_id='gpt-4',
-            ),
-            # After range
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(hours=3),
-                route_name='inv-route-t',
-                value=1,
-                model_id='gpt-4',
-            ),
+        def chart(route, _to, granularity='hours', include_models=True, _from=t0):
+            res = self.event_dao.get_invocation_chart_data(
+                None, [route], _from, _to, granularity, include_models=include_models
+            )
+            return [(r.bucket, r.group_by_value, r.value) for r in res]
+
+        assert chart('inv-route', t0 + 2 * H) == [
+            (t0, 'gpt-4', 2),
+            (t0 + H, 'gpt-3.5-turbo', 1),
+            (t0 + H, 'gpt-4', 1),
         ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_invocation_chart_data(
-            None, ['inv-route-t'], _from, _to, 'hours', include_models=True
-        )
-        assert res is not None
-        assert len(res) == 1
-        assert res[0].value == 1
-
-    def test_get_invocation_chart_data_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        _from = base_time + datetime.timedelta(days=100)
-        _to = _from + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_invocation_chart_data(
-            None, ['inv-route-empty'], _from, _to, 'hours', include_models=True
-        )
-        assert res is not None
-        assert len(res) == 0
-
-    def test_get_invocation_chart_data_ignores_other_event_types(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time,
-                route_name='inv-route-f',
-                value=1,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                route_name='inv-route-f',
-                value=100,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                timestamp=base_time,
-                route_name='inv-route-f',
-                value=50,
-                model_id='gpt-4',
-            ),
+        assert chart('inv-route-d', day + 3 * D, 'days', _from=day) == [
+            (day, 'gpt-4', 2),
+            (day + D, 'gpt-3.5-turbo', 1),
         ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_invocation_chart_data(
-            None, ['inv-route-f'], _from, _to, 'hours', include_models=True
-        )
-        assert res is not None
-        assert len(res) == 1
-        assert res[0].value == 1
-
-    def test_get_invocation_chart_data_without_models(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time,
-                route_name='inv-route-no-model',
-                value=1,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(minutes=30),
-                route_name='inv-route-no-model',
-                value=1,
-                model_id='gpt-4',
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(minutes=45),
-                route_name='inv-route-no-model',
-                value=1,
-                model_id='gpt-3.5-turbo',
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                route_name='inv-route-no-model',
-                value=1,
-                model_id='gpt-4',
-            ),
+        assert chart('inv-route-1', t0 + H) == [(t0, 'gpt-4', 1)]
+        assert chart('inv-route-t', t0 + H) == [(t0, 'gpt-4', 1)]
+        assert chart('inv-route-f', t0 + H) == [(t0, 'gpt-4', 1)]
+        # Without model grouping, all models in a bucket are summed together.
+        assert chart('inv-route-no-model', t0 + 2 * H, include_models=False) == [
+            (t0, 'all', 3),
+            (t0 + H, 'all', 1),
         ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
-
-        res = self.event_dao.get_invocation_chart_data(
-            None, ['inv-route-no-model'], _from, _to, 'hours', include_models=False
-        )
-        assert res is not None
-        # Without model grouping, all models in same bucket are summed together
-        assert len(res) == 2
-        # 10:00 bucket: 3 total invocations (2 gpt-4 + 1 gpt-3.5-turbo)
-        assert res[0].bucket == base_time
-        assert res[0].group_by_value == 'all'
-        assert res[0].value == 3
-        # 11:00 bucket: 1 invocation
-        assert res[1].bucket == base_time + datetime.timedelta(hours=1)
-        assert res[1].group_by_value == 'all'
-        assert res[1].value == 1
+        assert chart('inv-route', FUTURE + H, _from=FUTURE) == []
 
     def test_get_most_expensive_route(self):
-        base_time = datetime.datetime(
-            2025, 1, 10, 12, 0, 0, tzinfo=datetime.timezone.utc
+        jan_11 = NOON + D
+        jan_12 = NOON + 2 * D
+        self.insert(
+            [
+                # exp: A = 3.0, B = 5.0, C = 1.0.
+                _ev(INPUT, 'exp-A', cost=1.0),
+                _ev(OUTPUT, 'exp-A', cost=2.0),
+                _ev(INPUT, 'exp-B', cost=2.5),
+                _ev(OUTPUT, 'exp-B', cost=2.5),
+                _ev(INPUT, 'exp-C', cost=1.0),
+                # tf: out-of-range events would flip the winner.
+                _ev(INPUT, 'tf-A', jan_11, 1.0),
+                _ev(INPUT, 'tf-A', jan_11 - 5 * H, 10.0),
+                _ev(INPUT, 'tf-B', jan_11, 2.0),
+                _ev(INPUT, 'tf-B', jan_11 + 5 * H, 20.0),
+                # nf: without a time filter both events count.
+                _ev(INPUT, 'nf', jan_12, 3.0),
+                _ev(OUTPUT, 'nf', jan_12 + 30 * D, 4.0),
+            ]
         )
-        test_events = [
-            # route-exp-A: total cost = 3.0
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-exp-A',
-                timestamp=base_time,
-                cost=1.0,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-exp-A',
-                timestamp=base_time,
-                cost=2.0,
-            ),
-            # route-exp-B: total cost = 5.0 (highest)
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-exp-B',
-                timestamp=base_time,
-                cost=2.5,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-exp-B',
-                timestamp=base_time,
-                cost=2.5,
-            ),
-            # route-exp-C: total cost = 1.0
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-exp-C',
-                timestamp=base_time,
-                cost=1.0,
-            ),
+        most = self.event_dao.get_most_expensive_route
+        assert {
+            'exp': most(None, ['exp-A', 'exp-B', 'exp-C'], NOON, NOON + H),
+            'tf': most(None, ['tf-A', 'tf-B'], jan_11 - H, jan_11 + H),
+            'nf': most(None, ['nf'], None, None),
+            'empty': most(None, ['route-x'], FUTURE, FUTURE + H),
+            'no_routes': most(None, [], None, None),
+        } == {
+            'exp': MostExpensiveRoute(route_name='exp-B', total_cost=5.0),
+            'tf': MostExpensiveRoute(route_name='tf-B', total_cost=2.0),
+            'nf': MostExpensiveRoute(route_name='nf', total_cost=7.0),
+            'empty': None,
+            'no_routes': None,
+        }
+
+    def test_get_cost_chart_data(self):
+        feb_1 = datetime.datetime(2025, 2, 1, 10, 0, 0, tzinfo=UTC)
+        self.insert(
+            [
+                _ev(INPUT, 'chart-cost', feb_1, 1.0),
+                _ev(OUTPUT, 'chart-cost', feb_1 + datetime.timedelta(minutes=30), 2.0),
+                _ev(INPUT, 'chart-cost', feb_1 + H, 3.0),
+                _ev(INPUT, 'chart-r1', feb_1, 5.0),
+                _ev(INPUT, 'chart-r2', feb_1, 10.0),
+                _ev(INPUT, 'chart-time', feb_1, 1.0),
+                _ev(INPUT, 'chart-time', feb_1 - 5 * H, 100.0),
+                _ev(INPUT, 'chart-time', feb_1 + 5 * H, 100.0),
+                # Non-token events are excluded.
+                _ev(INPUT, 'chart-evt', feb_1, 1.0),
+                _ev('RATE_LIMIT', 'chart-evt', feb_1, 50.0),
+                _ev(INVOCATION, 'chart-evt', feb_1, 50.0),
+            ]
+        )
+
+        def chart(route, _from=feb_1, _to=feb_1 + H):
+            res = self.event_dao.get_cost_chart_data(None, route, _from, _to, 'hours')
+            return [(r.bucket, r.cost) for r in res]
+
+        assert chart('chart-cost', _to=feb_1 + 2 * H) == [
+            (feb_1, 3.0),
+            (feb_1 + H, 3.0),
         ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_most_expensive_route(
-            None, ['route-exp-A', 'route-exp-B', 'route-exp-C'], _from, _to
-        )
-        assert res is not None
-        assert isinstance(res, MostExpensiveRoute)
-        assert res.route_name == 'route-exp-B'
-        assert res.total_cost == 5.0
-
-    def test_get_most_expensive_route_with_time_filter(self):
-        base_time = datetime.datetime(
-            2025, 1, 11, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # In range: route-exp-tf-A cost=1.0
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-exp-tf-A',
-                timestamp=base_time,
-                cost=1.0,
-            ),
-            # Out of range (before): route-exp-tf-A cost=10.0
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-exp-tf-A',
-                timestamp=base_time - datetime.timedelta(hours=5),
-                cost=10.0,
-            ),
-            # In range: route-exp-tf-B cost=2.0
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-exp-tf-B',
-                timestamp=base_time,
-                cost=2.0,
-            ),
-            # Out of range (after): route-exp-tf-B cost=20.0
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-exp-tf-B',
-                timestamp=base_time + datetime.timedelta(hours=5),
-                cost=20.0,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time - datetime.timedelta(hours=1)
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_most_expensive_route(
-            None, ['route-exp-tf-A', 'route-exp-tf-B'], _from, _to
-        )
-        assert res is not None
-        # Only in-range events: route-exp-tf-B has 2.0 > route-exp-tf-A has 1.0
-        assert res.route_name == 'route-exp-tf-B'
-        assert res.total_cost == 2.0
-
-    def test_get_most_expensive_route_empty(self):
-        now = datetime.datetime.now(datetime.timezone.utc)
-        _from = now + datetime.timedelta(days=200)
-        _to = _from + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_most_expensive_route(None, ['route-x'], _from, _to)
-        assert res is None
-
-    def test_get_most_expensive_route_no_filter(self):
-        base_time = datetime.datetime(
-            2025, 1, 12, 12, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-exp-nf',
-                timestamp=base_time,
-                cost=3.0,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-exp-nf',
-                timestamp=base_time + datetime.timedelta(days=30),
-                cost=4.0,
-            ),
-        ]
-        self.insert(test_events)
-
-        res = self.event_dao.get_most_expensive_route(
-            None, ['route-exp-nf'], None, None
-        )
-        assert res is not None
-        assert res.route_name == 'route-exp-nf'
-        assert res.total_cost > 0
-
-    def test_get_cost_chart_data_hourly(self):
-        base_time = datetime.datetime(
-            2025, 2, 1, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-chart-cost',
-                timestamp=base_time,
-                cost=1.0,
-            ),
-            db_mock.get_sample_event(
-                event_type='OUTPUT_TOKEN_PROCESSED',
-                route_name='route-chart-cost',
-                timestamp=base_time + datetime.timedelta(minutes=30),
-                cost=2.0,
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-chart-cost',
-                timestamp=base_time + datetime.timedelta(hours=1),
-                cost=3.0,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=2)
-
-        res = self.event_dao.get_cost_chart_data(
-            None, 'route-chart-cost', _from, _to, 'hours'
-        )
-        assert res is not None
-        assert len(res) == 2
-        assert all(isinstance(r, MostExpensiveChartData) for r in res)
-        # First bucket: 10:00 — cost = 1.0 + 2.0 = 3.0
-        assert res[0].bucket == base_time
-        assert res[0].cost == 3.0
-        # Second bucket: 11:00 — cost = 3.0
-        assert res[1].bucket == base_time + datetime.timedelta(hours=1)
-        assert res[1].cost == 3.0
-
-    def test_get_cost_chart_data_filters_by_route(self):
-        base_time = datetime.datetime(
-            2025, 2, 2, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-chart-r1',
-                timestamp=base_time,
-                cost=5.0,
-            ),
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-chart-r2',
-                timestamp=base_time,
-                cost=10.0,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_cost_chart_data(
-            None, 'route-chart-r1', _from, _to, 'hours'
-        )
-        assert res is not None
-        assert len(res) == 1
-        assert res[0].cost == 5.0
-
-    def test_get_cost_chart_data_filters_by_time(self):
-        base_time = datetime.datetime(
-            2025, 2, 3, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            # In range
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-chart-time',
-                timestamp=base_time,
-                cost=1.0,
-            ),
-            # Before range
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-chart-time',
-                timestamp=base_time - datetime.timedelta(hours=5),
-                cost=100.0,
-            ),
-            # After range
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-chart-time',
-                timestamp=base_time + datetime.timedelta(hours=5),
-                cost=100.0,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time - datetime.timedelta(hours=1)
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_cost_chart_data(
-            None, 'route-chart-time', _from, _to, 'hours'
-        )
-        assert res is not None
-        assert len(res) == 1
-        assert res[0].cost == 1.0
-
-    def test_get_cost_chart_data_empty(self):
-        now = datetime.datetime.now(datetime.timezone.utc)
-        _from = now + datetime.timedelta(days=200)
-        _to = _from + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_cost_chart_data(
-            None, 'route-chart-empty', _from, _to, 'hours'
-        )
-        assert res is not None
-        assert len(res) == 0
-
-    def test_get_cost_chart_data_ignores_non_token_events(self):
-        base_time = datetime.datetime(
-            2025, 2, 4, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_events = [
-            db_mock.get_sample_event(
-                event_type='INPUT_TOKEN_PROCESSED',
-                route_name='route-chart-evt',
-                timestamp=base_time,
-                cost=1.0,
-            ),
-            # Non-token events should be excluded
-            db_mock.get_sample_event(
-                event_type='RATE_LIMIT',
-                route_name='route-chart-evt',
-                timestamp=base_time,
-                cost=50.0,
-            ),
-            db_mock.get_sample_event(
-                event_type='MODEL_INVOCATION',
-                route_name='route-chart-evt',
-                timestamp=base_time,
-                cost=50.0,
-            ),
-        ]
-        self.insert(test_events)
-
-        _from = base_time
-        _to = base_time + datetime.timedelta(hours=1)
-
-        res = self.event_dao.get_cost_chart_data(
-            None, 'route-chart-evt', _from, _to, 'hours'
-        )
-        assert res is not None
-        assert len(res) == 1
-        assert res[0].cost == 1.0
+        assert chart('chart-r1') == [(feb_1, 5.0)]
+        assert chart('chart-time', feb_1 - H) == [(feb_1, 1.0)]
+        assert chart('chart-evt') == [(feb_1, 1.0)]
+        assert chart('chart-cost', FUTURE, FUTURE + H) == []

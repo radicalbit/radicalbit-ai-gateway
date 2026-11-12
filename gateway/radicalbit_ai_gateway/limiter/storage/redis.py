@@ -95,6 +95,31 @@ class RedisStorage(Storage):
         returned_window_id = result[1].decode('utf-8')
         return new_value, returned_window_id
 
+    async def get_many(self, keys: list[str]) -> list[int | None]:
+        """Get several counters in one pipelined round trip."""
+        async with self._client.pipeline(transaction=False) as pipe:
+            for key in keys:
+                pipe.hget(key, 'count')
+            values = await pipe.execute()
+        return [None if value is None else int(value) for value in values]
+
+    async def increment_many(
+        self, increments: list[tuple[str, int, int, int]]
+    ) -> list[tuple[int, str]]:
+        """Increment several counters in one round trip, as one transaction
+        (MULTI/EXEC): a connection lost before EXEC applies none of them,
+        never some, so a request's counters stay consistent with each other.
+        """
+        async with self._client.pipeline(transaction=True) as pipe:
+            for key, amount, ttl_seconds, window_start in increments:
+                await self._script(
+                    keys=[key],
+                    args=[amount, ttl_seconds, str(uuid.uuid4()), window_start],
+                    client=pipe,
+                )
+            results = await pipe.execute()
+        return [(int(value), window_id.decode('utf-8')) for value, window_id in results]
+
     async def delete(self, key: str) -> None:
         """Delete a key's counter, if present."""
         await self._client.delete(key)

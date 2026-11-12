@@ -41,3 +41,5 @@ LIMIT_BLOCK_EVENTS: dict[str, tuple[str, str]] = {
     EventType.CREDENTIAL_BUDGET_LIMIT.value: ('credential', 'budget'),
     EventType.PROJECT_BUDGET_LIMIT.value: ('project', 'budget'),
 }
+# Every event type a limit records when it blocks a request.
+LIMIT_BLOCK_EVENT_TYPES: tuple[str, ...] = tuple(LIMIT_BLOCK_EVENTS)

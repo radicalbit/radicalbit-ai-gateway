@@ -1,7 +1,9 @@
+import atexit
+import functools
 from typing import TypeVar
 import unittest
 
-from testcontainers.postgres import PostgresContainer
+from testcontainers.community.postgres import PostgresContainer
 
 from radicalbit_ai_gateway.db import database
 from radicalbit_ai_gateway.db.database import Database
@@ -10,11 +12,21 @@ from radicalbit_ai_gateway.utils.app_config import DBConfig
 T = TypeVar('T')
 
 
+@functools.cache
+def _postgres() -> PostgresContainer:
+    """Start one Postgres for the test run: starting one takes seconds, and
+    each test class creates and drops its own schema in it.
+    """
+    container = PostgresContainer(image='postgres:15')
+    container.start()
+    atexit.register(container.stop)
+    return container
+
+
 class DatabaseIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.postgres_container = PostgresContainer(image='postgres:15')
-        cls.postgres_container.start()
+        cls.postgres_container = _postgres()
         cls.db_conf = DBConfig()
         cls.db = Database(conf=cls.db_conf)
         cls.db._db_url = cls.postgres_container.get_connection_url()
@@ -30,8 +42,9 @@ class DatabaseIntegration(unittest.TestCase):
         database.BaseTable.metadata.drop_all(cls.db._engine)
         # Sanitize possible duplicated/reflected UNIQUE constraints left in metadata
         cls._sanitize_unique_constraints()
+        # Close the pooled connections: reset_connection only drops the engine.
+        cls.db._engine.dispose()
         cls.db.reset_connection()
-        cls.postgres_container.stop()
 
     @classmethod
     def _sanitize_unique_constraints(cls) -> None:
