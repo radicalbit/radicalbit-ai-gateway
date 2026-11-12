@@ -380,6 +380,18 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
             [f'trace-{r}' for r in (*expected, 'unknown')]
         ) == {f'trace-{r}': stats for r, stats in expected.items()}
 
+    def test_span_lookups_by_trace_id_keep_to_the_date_window(self):
+        def root(trace_id, at):
+            return _span(at, trace_id=trace_id, parent_span_id='', status_code='Error')
+
+        self.insert([root('trace-in', T0), root('trace-out', T0 - 3 * D)])
+        trace_ids = ['trace-in', 'trace-out']
+        window = ((T0 - D).date(), T0.date())
+        dao = self.otel_traces_dao
+
+        assert set(dao.get_spans_stats_by_trace_ids(trace_ids, *window)) == {'trace-in'}
+        assert dao.get_root_span_error_by_trace_ids(trace_ids, *window) == {'trace-in'}
+
     def test_get_traces_chart_data(self):
         def root(trace_id, at, status='Unset'):
             return _span(at, trace_id=trace_id, span_id='root', status_code=status)

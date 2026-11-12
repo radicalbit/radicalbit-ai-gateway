@@ -9,10 +9,12 @@ from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.models.event import (
     CostData,
+    Counters,
     DetailedCostBreakdown,
     EventDetails,
     LastEventFallback,
     LastEventGuardrail,
+    RequestStats,
     TokensCounter,
 )
 from radicalbit_ai_gateway.limiting.limits import shared_limits
@@ -146,91 +148,63 @@ class EventService:
             )
         return tokens_counter_dto
 
-    def _get_metrics_per_route(
+    def _get_metrics_of_routes(
         self,
         project_uuid: UUID,
         config: GatewayConfig,
-        route_name: str,
+        route_names: list[str],
         _from: datetime | None,
         _to: datetime | None,
         tags: list[str] | None = None,
-    ):
-        counters = self.event_dao.get_all_counters_by_route(
-            project_uuid=project_uuid,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
+    ) -> dict[str, EventsDTO]:
+        """Return the metrics of each route, keyed by route name.
+
+        Each kind of metric is read once for all the routes, so the number of
+        queries does not grow with the number of routes.
+        """
+        counters = self.event_dao.get_counters_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
+        )
+        tokens_counter = self.event_dao.get_tokens_by_model_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
+        )
+        last_events = self.event_dao.get_last_events_of_routes(
+            project_uuid,
+            [EventType.GUARDRAIL, EventType.FALLBACK],
+            route_names,
+            _from,
+            _to,
             tags=tags,
         )
-        tokens_counter = self.event_dao.get_tokens_by_model_per_route(
-            project_uuid=project_uuid,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
+        routing_model_counters = self.event_dao.get_routing_model_counters_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
         )
-        last_event_guardrail = self.event_dao.get_last_event_route(
-            project_uuid=project_uuid,
-            event_type=EventType.GUARDRAIL,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
+        request_stats = self.request_event_dao.get_request_stats_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
         )
-        last_event_fallback = self.event_dao.get_last_event_route(
-            project_uuid=project_uuid,
-            event_type=EventType.FALLBACK,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
-        )
-        routing_model_counters = self.event_dao.get_routing_model_counters(
-            project_uuid=project_uuid,
-            _from=_from,
-            _to=_to,
-            route_name=route_name,
-            tags=tags,
-        )
-        request_stats = self.request_event_dao.get_request_stats_by_route(
-            project_uuid=project_uuid,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
-        )
-        error_details = self.request_event_dao.get_error_breakdown(
-            project_uuid=project_uuid,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
+        error_details = self.request_event_dao.get_error_breakdown_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
         )
 
-        tokens_counter_dto = self._calculate_token_metrics(
-            tokens_counter=tokens_counter, route_name=route_name
-        )
+        # One name lookup for the last events of every route.
+        self._resolve_last_event_key_names(list(last_events.values()))
 
-        if last_event_guardrail:
-            assert isinstance(last_event_guardrail, LastEventGuardrail)
-        if last_event_fallback:
-            assert isinstance(last_event_fallback, LastEventFallback)
-
-        self._resolve_last_event_key_names(
-            [e for e in [last_event_guardrail, last_event_fallback] if e]
-        )
-
-        return EventsDTO.from_dao_per_route(
-            config=config,
-            route_name=route_name,
-            counters=counters,
-            tokens_counter_dto=tokens_counter_dto,
-            last_event_guardrail=last_event_guardrail,
-            last_event_fallback=last_event_fallback,
-            routing_model_counters=routing_model_counters,
-            request_stats=request_stats,
-            error_details=error_details,
-        )
+        return {
+            route_name: EventsDTO.from_dao_per_route(
+                config=config,
+                route_name=route_name,
+                counters=counters.get(route_name, Counters()),
+                tokens_counter_dto=self._calculate_token_metrics(
+                    tokens_counter=tokens_counter, route_name=route_name
+                ),
+                last_event_guardrail=last_events.get((route_name, EventType.GUARDRAIL)),
+                last_event_fallback=last_events.get((route_name, EventType.FALLBACK)),
+                routing_model_counters=routing_model_counters.get(route_name, []),
+                request_stats=request_stats.get(route_name, RequestStats()),
+                error_details=error_details.get(route_name, []),
+            )
+            for route_name in route_names
+        }
 
     def get_total_counter(
         self,
@@ -246,18 +220,11 @@ class EventService:
         counters = self.event_dao.get_all_counters(
             project_uuid=project_uuid, _from=_from, _to=_to, tags=tags
         )
-        last_event_guardrail = self.event_dao.get_last_event(
-            project_uuid=project_uuid,
-            event_type=EventType.GUARDRAIL,
-            _from=_from,
-            _to=_to,
-            tags=tags,
-        )
-        last_event_fallback = self.event_dao.get_last_event(
-            project_uuid=project_uuid,
-            event_type=EventType.FALLBACK,
-            _from=_from,
-            _to=_to,
+        last_events = self.event_dao.get_last_events(
+            project_uuid,
+            [EventType.GUARDRAIL, EventType.FALLBACK],
+            _from,
+            _to,
             tags=tags,
         )
         routing_model_counters = self.event_dao.get_routing_model_counters(
@@ -275,27 +242,50 @@ class EventService:
             route_name=None,
         )
 
-        if last_event_guardrail:
-            assert isinstance(last_event_guardrail, LastEventGuardrail)
-        if last_event_fallback:
-            assert isinstance(last_event_fallback, LastEventFallback)
-
         # TODO: Implement soft delete for keys in Postgres (deleted_at column)
         # so that deleted keys still have resolvable names, removing the need for this fallback.
-        self._resolve_last_event_key_names(
-            [e for e in [last_event_guardrail, last_event_fallback] if e]
-        )
+        self._resolve_last_event_key_names(list(last_events.values()))
 
         return EventsDTO.from_dao_global(
             config=config,
             counters=counters,
             tokens_counter_dto=tokens_counter_dto,
-            last_event_guardrail=last_event_guardrail,
-            last_event_fallback=last_event_fallback,
+            last_event_guardrail=last_events.get(EventType.GUARDRAIL),
+            last_event_fallback=last_events.get(EventType.FALLBACK),
             routing_model_counters=routing_model_counters,
             request_stats=request_stats,
             error_details=error_details,
         )
+
+    def _get_routes_out(
+        self,
+        project_uuid: UUID,
+        project_name: str,
+        config: GatewayConfig,
+        route_names: list[str],
+        include_groups: bool,
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None,
+    ) -> list[GatewayRouteOut]:
+        metrics = self._get_metrics_of_routes(
+            project_uuid, config, route_names, _from, _to, tags=tags
+        )
+        return [
+            GatewayRouteOut(
+                route_name=route_name,
+                configuration=self._build_route_config_out(
+                    config.routes[route_name], config
+                ),
+                metrics=metrics[route_name],
+                groups=self.group_service.get_all_groups_by_route(
+                    project_name, route_name
+                )
+                if include_groups
+                else None,
+            )
+            for route_name in route_names
+        ]
 
     def get_total_counter_per_route(
         self,
@@ -307,30 +297,16 @@ class EventService:
         _to: datetime | None,
         tags: list[str] | None = None,
     ) -> list[GatewayRouteOut]:
-        routes_out = []
-        for route_name, route_config in config.routes.items():
-            configuration = self._build_route_config_out(route_config, config)
-            groups = None
-            if include_groups:
-                groups = self.group_service.get_all_groups_by_route(
-                    project_name, route_name
-                )
-            routes_out.append(
-                GatewayRouteOut(
-                    route_name=route_name,
-                    configuration=configuration,
-                    metrics=self._get_metrics_per_route(
-                        project_uuid=project_uuid,
-                        config=config,
-                        route_name=route_name,
-                        _from=_from,
-                        _to=_to,
-                        tags=tags,
-                    ),
-                    groups=groups,
-                )
-            )
-        return routes_out
+        return self._get_routes_out(
+            project_uuid,
+            project_name,
+            config,
+            list(config.routes),
+            include_groups,
+            _from,
+            _to,
+            tags,
+        )
 
     def get_counter_per_route(
         self,
@@ -343,26 +319,17 @@ class EventService:
         _to: datetime | None,
         tags: list[str] | None = None,
     ) -> GatewayRouteOut:
-        route_config = config.routes[route_name]
-        configuration = self._build_route_config_out(route_config, config)
-        groups = None
-        if include_groups:
-            groups = self.group_service.get_all_groups_by_route(
-                project_name, route_name
-            )
-        return GatewayRouteOut(
-            route_name=route_name,
-            configuration=configuration,
-            metrics=self._get_metrics_per_route(
-                project_uuid=project_uuid,
-                config=config,
-                route_name=route_name,
-                _from=_from,
-                _to=_to,
-                tags=tags,
-            ),
-            groups=groups,
+        [route_out] = self._get_routes_out(
+            project_uuid,
+            project_name,
+            config,
+            [route_name],
+            include_groups,
+            _from,
+            _to,
+            tags,
         )
+        return route_out
 
     def get_latest_n_per_event_type(
         self,

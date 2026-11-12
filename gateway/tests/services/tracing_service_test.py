@@ -729,6 +729,56 @@ class TracingServiceTest(unittest.TestCase):
 
     # --- get_traces (list) tests ---
 
+    def test_get_traces_bounds_the_span_lookups_to_the_page_dates(self):
+        # Two traces whose root spans are three days apart.
+        first = datetime.datetime(2025, 1, 5, 23, 0, tzinfo=datetime.timezone.utc)
+        last = datetime.datetime(2025, 1, 8, 10, 0, tzinfo=datetime.timezone.utc)
+        rows = []
+        for trace_id, created_at in [('trace-old', first), ('trace-new', last)]:
+            row = MagicMock()
+            row.trace_id = trace_id
+            row.request_uuid = None
+            row.route_name = 'my-route'
+            row.group_name = None
+            row.group_uuid = None
+            row.api_key_name = None
+            row.api_key_uuid = None
+            row.duration_ms = 10.0
+            row.tags = []
+            row.request_type = None
+            row.created_at = created_at
+            rows.append(row)
+        mock_page = MagicMock(spec=Page)
+        mock_page.items = rows
+        mock_page.total = 2
+        self.otel_traces_dao.get_root_traces_paginated = MagicMock(
+            return_value=mock_page
+        )
+        self.otel_traces_dao.get_spans_stats_by_trace_ids = MagicMock(return_value={})
+        self.otel_traces_dao.get_root_span_error_by_trace_ids = MagicMock(
+            return_value=set()
+        )
+
+        self.tracing_service.get_traces(
+            project_uuid=PROJECT_UUID,
+            route_names=None,
+            group_uuids=None,
+            key_uuids=None,
+            _from=None,
+            _to=None,
+            params=Params(page=1, size=50),
+        )
+
+        # One day of margin each side, for a trace that crossed midnight.
+        window = (datetime.date(2025, 1, 4), datetime.date(2025, 1, 9))
+        trace_ids = ['trace-old', 'trace-new']
+        self.otel_traces_dao.get_spans_stats_by_trace_ids.assert_called_once_with(
+            trace_ids, *window
+        )
+        self.otel_traces_dao.get_root_span_error_by_trace_ids.assert_called_once_with(
+            trace_ids, *window
+        )
+
     def test_get_traces(self):
         base_time = datetime.datetime(
             2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc

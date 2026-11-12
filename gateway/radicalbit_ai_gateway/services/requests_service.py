@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi_pagination import Page, Params
@@ -9,7 +9,11 @@ from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.models.event import EventsSummary
-from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENT_TYPES, EventType
+from radicalbit_ai_gateway.models.event_type import (
+    LIMIT_BLOCK_EVENT_TYPES,
+    PROCESSED_TOKEN_EVENT_TYPES,
+    EventType,
+)
 from radicalbit_ai_gateway.models.guardrails import GuardrailBehaviorType
 from radicalbit_ai_gateway.models.request_dto import (
     CacheTooltip,
@@ -26,6 +30,10 @@ from radicalbit_ai_gateway.models.request_dto import (
 )
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus, RequestType
 from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
+
+# The window the Requests list reads when the caller gives no start: without
+# one ClickHouse cannot prune partitions and scans every day of every project.
+DEFAULT_REQUESTS_WINDOW = timedelta(hours=24)
 
 
 def _enum_or_none(enum_cls, value):
@@ -201,6 +209,13 @@ class RequestsService:
         tags: list[str] | None = None,
         request_types: list[RequestType] | None = None,
     ) -> Page[RequestDTO]:
+        """One page of the project's requests, newest first.
+
+        With no `_from`, the list covers the `DEFAULT_REQUESTS_WINDOW` that
+        ends at `_to`, or now.
+        """
+        if _from is None:
+            _from = (_to or datetime.now(timezone.utc)) - DEFAULT_REQUESTS_WINDOW
         requests_page = self.request_event_dao.get_requests_paginated(
             project_uuid,
             route_names,
@@ -253,16 +268,17 @@ class RequestsService:
         events = self.event_dao.get_request_events(
             project_uuid, row.request_uuid, date_from, date_to
         )
-        # Same totals as the request's row in the list, by the same rule.
-        summary = self.event_dao.get_request_summaries(
-            project_uuid, [key], date_from, date_to
-        ).get(key, EventsSummary())
+        # Same totals as the request's row in the list, by the same rule,
+        # summed over the events already read instead of a second query.
+        token_events = [
+            e for e in events if e['event_type'] in PROCESSED_TOKEN_EVENT_TYPES
+        ]
 
         return RequestDetailDTO(
             **_request_fields(row),
             trace_id=trace_ids.get(key),
-            total_tokens=summary.total_tokens,
-            cost=summary.cost,
+            total_tokens=sum(e['value'] for e in token_events),
+            cost=sum(e['cost'] for e in token_events),
             is_streaming=row.is_streaming,
             events=[_event_dto(event) for event in events],
         )
