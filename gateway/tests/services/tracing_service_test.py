@@ -653,6 +653,8 @@ class TracingServiceTest(unittest.TestCase):
                 span('bare', 'root'),
             ]
         )
+        # The DAO mock is shared by the class: start this one clean.
+        self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock()
 
         tree = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
 
