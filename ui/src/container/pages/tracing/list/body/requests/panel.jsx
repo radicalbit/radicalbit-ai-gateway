@@ -2,12 +2,13 @@ import HtmlAnchor from '@Components/html-anchor';
 import InfoPopover from '@Components/info-popover';
 import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
-import { formatInt, formatMs } from '@Src/helpers/column-formatters';
+import { formatInt, formatMs, formatTimestamp } from '@Src/helpers/column-formatters';
 import formatCost from '@Src/helpers/format-cost';
 import { useGetRequestByIdVertical, useGetRequestsWithRange } from '@State/requests/vertical-hooks';
 import {
   Board,
   Button,
+  NewHeader,
   Skeleton,
   Tag,
   TextWithBold,
@@ -134,6 +135,8 @@ function SummaryTags({ tags }) {
 }
 
 function StepByStep({ request }) {
+  const createdAt = request?.createdAt;
+
   const steps = requestSteps(request);
   const eventCount = steps.length - 1;
   const eventLabel = eventCount === 1 ? '· 1 event' : `· ${eventCount} events`;
@@ -150,7 +153,13 @@ function StepByStep({ request }) {
   return (
     <Board
       footer={<TraceLink request={request} />}
-      header={<TextWithBold bold={eventLabel} boldProps={LABEL_PROPS} text={<strong>Step by step</strong>} />}
+      header={(
+        <NewHeader
+          details={{ one: formatTimestamp(createdAt) }}
+          padding="none"
+          title={<TextWithBold bold={eventLabel} boldProps={LABEL_PROPS} text={<strong>Step by step</strong>} />}
+        />
+      )}
       main={<Timeline items={items} mode="start" titleSpan={3} />}
       width="100%"
     />
