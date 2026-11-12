@@ -1,9 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
 
-from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
-from radicalbit_ai_gateway.limiting.duration_limiter import DurationLimiter
-from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
-from radicalbit_ai_gateway.limiting.token_limiter import TokenLimiter
 from radicalbit_ai_gateway.models.caching import Caching, SemanticCaching
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.limiting import (
@@ -84,32 +80,3 @@ class GatewayRouteConfig(BaseModel):
         default=None,
         description='Governance of the OpenAI Responses API on this route.',
     )
-
-    def get_token_limiter(self, project_uuid: str) -> TokenLimiter:
-        return TokenLimiter(
-            project_uuid=project_uuid,
-            route_name=self.route_name,
-            input_config=getattr(self.token_limiting, 'input', None),
-            output_config=getattr(self.token_limiting, 'output', None),
-        )
-
-    def get_budget_limiter(self, project_uuid: str) -> BudgetLimiter:
-        return BudgetLimiter(
-            project_uuid=project_uuid,
-            route_name=self.route_name,
-            config=self.budget_limiting,
-        )
-
-    def get_rate_limiter(self, project_uuid: str) -> RequestRateLimiter:
-        return RequestRateLimiter(
-            project_uuid=project_uuid,
-            route_name=self.route_name,
-            rate_limiting_config=self.rate_limiting,
-        )
-
-    def get_duration_limiter(self, project_uuid: str) -> DurationLimiter:
-        return DurationLimiter(
-            project_uuid=project_uuid,
-            route_name=self.route_name,
-            config=self.duration_limiting,
-        )

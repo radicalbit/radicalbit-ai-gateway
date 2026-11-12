@@ -3,7 +3,6 @@ import contextlib
 from dataclasses import dataclass
 import json
 import logging
-import time
 
 import httpx
 from opentelemetry import trace
@@ -13,15 +12,25 @@ from opentelemetry.semconv._incubating.attributes import (
 from opentelemetry.semconv_ai import SpanAttributes
 from traceloop.sdk.decorators import task
 
+from radicalbit_ai_gateway.invocation.errors import Surface, exhausted
+from radicalbit_ai_gateway.invocation.fallback_chain import (
+    CallContext,
+    Candidate,
+    Failure,
+    FallbackChain,
+    Refused,
+    Reply,
+    TryNext,
+    candidates,
+)
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
+from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.exceptions import (
-    ModelInvokerBadGateway,
-    ModelInvokerBadRequest,
-)
+from radicalbit_ai_gateway.utils.exceptions import ModelInvokerBadRequest
 from radicalbit_ai_gateway.utils.parse_provider_and_model import (
     parse_provider_and_model,
 )
@@ -178,54 +187,42 @@ class DecisionModelInvoker(ModelInvoker):
     @task(name='decide')
     async def decide(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         model_id: str,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> DecisionResponse:
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Decision model {model_id} not defined')
         model, upstream, fallbacks = self.model_map[model_id]
         _set_decision_request_attributes(body, model_id)
 
-        start_time = time.monotonic()
-        # The target first, then its fallbacks, each with its own retries.
-        response: httpx.Response | None = None
-        model_invoked = model
-        fallback_triggered = False
-        previous = model
-        for candidate, candidate_upstream in [(model, upstream), *fallbacks]:
-            if candidate is not model:
+        chain_candidates = candidates((model, upstream), fallbacks)
+        call = Call(
+            identity=identity,
+            model_type=DECISION_MODEL_TYPE,
+            target_model_id=model_id,
+        )
+
+        async def ask(candidate: Candidate) -> Reply:
+            if candidate.is_fallback:
                 logger.warning(
                     'Decision model %s failed. Falling back to %s',
-                    previous.model_id,
-                    candidate.model_id,
+                    chain_candidates[candidate.position - 1].model.model_id,
+                    candidate.model.model_id,
                 )
-                fallback_triggered = True
-            previous = candidate
-            candidate_response = await self._call_with_retries(
-                candidate, candidate_upstream, body
+            response = await self._call_with_retries(
+                candidate.model, candidate.client, body
             )
-            if candidate_response is None:
-                continue
-            # Keep the last real response: it is returned if the chain runs out.
-            response, model_invoked = candidate_response, candidate
-            if not _is_transient(candidate_response):
-                break
-        _set_decision_fallback_attributes(model_invoked.model_id, fallback_triggered)
-        if response is None:
-            raise ModelInvokerBadGateway(
-                f'No decision model answered for route {route_name}'
+            if response is None:
+                raise TryNext
+            if _is_transient(response):
+                # The last real response is returned if the chain runs out.
+                raise TryNext(last_resort=Reply((response, candidate)))
+            _set_decision_fallback_attributes(
+                candidate.model.model_id, candidate.is_fallback
             )
-        latency_ms = (time.monotonic() - start_time) * 1000
-
-        if response.is_success:
+            if not response.is_success:
+                raise Refused(_relayed(response))
             payload = self._parse_json(response, model_id)
             input_tokens = billed_input_tokens(payload)
             _set_decision_response_attributes(payload, input_tokens)
@@ -233,40 +230,34 @@ class DecisionModelInvoker(ModelInvoker):
             if payload:
                 # The client sees the gateway model-id, not Typesafe's version.
                 content = json.dumps(
-                    {**payload, 'model': model_invoked.model_id}
+                    {**payload, 'model': candidate.model.model_id}
                 ).encode('utf-8')
             # Typesafe bills input tokens only: output is recorded as 0.
-            self._record_metrics(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                group_uuid=group_uuid,
-                route_name=route_name,
-                target_model_id=model.model_id,
-                model=model_invoked,
-                latency_ms=latency_ms,
-                model_type=DECISION_MODEL_TYPE,
-                token_input_count=input_tokens,
-                token_output_count=0,
-                fallback_triggered=fallback_triggered,
-                project_uuid=project_uuid,
-                project_name=project_name,
+            return Reply(
+                DecisionResponse(
+                    status_code=response.status_code,
+                    content=content,
+                    media_type=response.headers.get('content-type'),
+                    input_tokens=input_tokens,
+                    model_invoked=candidate.model,
+                ),
+                usage=Tokens(input=input_tokens, output=0),
             )
 
-            return DecisionResponse(
-                status_code=response.status_code,
-                content=content,
-                media_type=response.headers.get('content-type'),
-                input_tokens=input_tokens,
-                model_invoked=model_invoked,
-            )
+        def on_exhausted(failures: list[Failure]) -> DecisionResponse:
+            fallback_tried = failures[-1].candidate.is_fallback
+            last_resorts = [f.last_resort for f in failures if f.last_resort]
+            if not last_resorts:
+                _set_decision_fallback_attributes(model.model_id, fallback_tried)
+                raise exhausted(Surface.DECISION, identity.route_name, [])
+            response, candidate = last_resorts[-1].value
+            _set_decision_fallback_attributes(candidate.model.model_id, fallback_tried)
+            return _relayed(response)
 
-        return DecisionResponse(
-            status_code=response.status_code,
-            content=response.content,
-            media_type=response.headers.get('content-type'),
-        )
+        return await FallbackChain(
+            chain_candidates,
+            CallContext(call=call, recorder=self.recorder, on_exhausted=on_exhausted),
+        ).call(ask)
 
     async def call(self, model_id: str, body: dict) -> httpx.Response | None:
         """Call one decision model with retries: no fallbacks, no metrics.
@@ -277,32 +268,6 @@ class DecisionModelInvoker(ModelInvoker):
             raise ModelInvokerBadRequest(f'Decision model {model_id} not defined')
         model, upstream, _ = self.model_map[model_id]
         return await self._call_with_retries(model, upstream, body)
-
-    def record_judge_call(
-        self,
-        model_id: str,
-        target_model_id: str,
-        input_tokens: int,
-        latency_ms: float,
-        identity: dict[str, str],
-    ) -> Model:
-        """Record a decision judge call as judge spend. Return the model.
-
-        Input tokens only, at the model's input price: output is recorded as 0.
-        """
-        model = self.model_map[model_id][0]
-        self._record_metrics(
-            **identity,
-            target_model_id=target_model_id,
-            model=model,
-            latency_ms=latency_ms,
-            model_type=DECISION_MODEL_TYPE,
-            token_input_count=input_tokens,
-            token_output_count=0,
-            fallback_triggered=model_id != target_model_id,
-            is_judge=True,
-        )
-        return model
 
     async def _call_with_retries(
         self, model: Model, upstream: DecisionUpstream, body: dict
@@ -349,3 +314,12 @@ class DecisionModelInvoker(ModelInvoker):
             logger.warning('Decision model %s returned a non-JSON body', model_id)
             return {}
         return payload if isinstance(payload, dict) else {}
+
+
+def _relayed(response: httpx.Response) -> DecisionResponse:
+    """Return Typesafe's response as the client gets it, unchanged."""
+    return DecisionResponse(
+        status_code=response.status_code,
+        content=response.content,
+        media_type=response.headers.get('content-type'),
+    )

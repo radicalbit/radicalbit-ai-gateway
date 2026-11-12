@@ -17,10 +17,10 @@ from radicalbit_ai_gateway.models.group_limiting import (
     GroupLimitsIn,
 )
 from radicalbit_ai_gateway.route_meta import route_meta
+from radicalbit_ai_gateway.routes.dependencies import get_route_configs
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.project_service import ProjectService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import get_route_configs
 
 app_config = get_app_config()
 

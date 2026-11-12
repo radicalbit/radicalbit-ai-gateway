@@ -1,12 +1,25 @@
 from collections.abc import Awaitable, Callable
 import logging
 import time
+from typing import NoReturn
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
+from radicalbit_ai_gateway.invocation.fallback_chain import (
+    CallContext,
+    Candidate,
+    Failure,
+    FallbackChain,
+    Reply,
+    Spent,
+    TryNext,
+    candidates,
+)
+from radicalbit_ai_gateway.invocation.recorder import Call, Recorder
 from radicalbit_ai_gateway.llm.chat_model import StructuredChatModel
-from radicalbit_ai_gateway.llm.factory import init_chat_model
+from radicalbit_ai_gateway.llm.factory import build_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessage, BaseMessage, HumanMessage
 from radicalbit_ai_gateway.llm.prompts import PromptTemplate
+from radicalbit_ai_gateway.llm.usage import legacy_cached_tokens
 from radicalbit_ai_gateway.metrics.define_metrics import (
     fallbacks_triggered_counter,
     invocations_latency_histogram,
@@ -28,6 +41,7 @@ from radicalbit_ai_gateway.models.judge_invocation_result import JudgeInvocation
 from radicalbit_ai_gateway.models.judge_result import JudgeResult
 from radicalbit_ai_gateway.models.judge_runtime_config import JudgeRuntimeConfig
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -41,22 +55,12 @@ from radicalbit_ai_gateway.utils.judge import (
     extract_judge_result,
     extract_media_blocks_for_judge,
 )
-from radicalbit_ai_gateway.utils.parse_provider_and_model import (
-    parse_provider_and_model,
-)
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 # Counts a judge call on the limiters: (model that answered, input, output tokens).
 JudgeUsageCounter = Callable[[Model, int, int], Awaitable[None]]
-
-
-class _UsageCountError(Exception):
-    """A limiter failed to count a judge call. The judge did not fail.
-
-    Raised from the limiter error, so the fallback code can let it through.
-    """
 
 
 class JudgeEngine:
@@ -153,88 +157,62 @@ class JudgeEngine:
         count_usage: JudgeUsageCounter | None = None,
         **kwargs,
     ) -> JudgeResult:
-        _media = media_blocks or []
-        try:
-            return await self._invoke_and_record_metrics(
-                model=primary_model,
-                judge_runtime_config=judge_runtime_config,
-                content=content,
-                prompt_template=prompt_template,
-                media_blocks=_media,
-                cost_service=cost_service,
-                count_usage=count_usage,
-                **kwargs,
-            )
-        except _UsageCountError as err:
-            # Not a judge failure: no fallback, the limiter error goes up as is.
-            raise err.__cause__ from None
-        except (JudgeOutputTruncatedError, JudgeParsingError) as judge_err:
-            logger.warning('Primary judge failed with recoverable error: %s', judge_err)
-            primary_err = judge_err
-            if not fallback_model:
-                logger.error('No fallback model defined. Raising judge error.')
-                raise
-        except Exception as err:
-            # Unexpected errors (network, auth, etc.) - try fallback or raise
-            logger.warning('Primary model failed with unexpected error: %s', err)
-            primary_err = err
-            if not fallback_model:
-                logger.error('No fallback model defined. Raising judge error.')
-                raise JudgeInternalError(
-                    f'Primary judge model failed: {err}',
-                    log_message=f'Primary judge model failed unexpectedly: {err}',
-                    model_id=primary_model.model_id,
-                ) from err
+        """Ask the judge model, then the fallback if it fails or gives no
+        valid answer.
+        """
 
-        # Fallback execution
-        try:
-            logger.info(
-                'Attempting fallback model %s after primary model %s failed',
-                fallback_model.model_id,
-                primary_model.model_id,
-            )
-            return await self._invoke_and_record_metrics(
-                model=fallback_model,
-                judge_runtime_config=judge_runtime_config,
-                content=content,
-                prompt_template=prompt_template,
-                media_blocks=_media,
-                fallback_triggerd=True,
-                target_model_id=primary_model.model_id,
-                cost_service=cost_service,
-                count_usage=count_usage,
-                **kwargs,
-            )
-        except _UsageCountError as err:
-            raise err.__cause__ from None
-        except (JudgeOutputTruncatedError, JudgeParsingError) as fallback_err:
-            logger.error(
-                'Both primary and fallback judges failed: primary=%s | fallback=%s',
-                str(primary_err),
-                str(fallback_err),
-            )
-            raise JudgeInternalError(
-                'Both primary and fallback judge models failed to produce valid output',
-                log_message=(
-                    f'Both primary and fallback judges failed: '
-                    f'primary={primary_err}, fallback={fallback_err}'
+        async def judge(candidate: Candidate) -> Reply:
+            if candidate.is_fallback:
+                logger.info(
+                    'Attempting fallback model %s after primary model %s failed',
+                    fallback_model.model_id,
+                    primary_model.model_id,
+                )
+            try:
+                return Reply(
+                    await self._invoke_and_record_metrics(
+                        model=candidate.model,
+                        judge_runtime_config=judge_runtime_config,
+                        content=content,
+                        prompt_template=prompt_template,
+                        media_blocks=media_blocks or [],
+                        fallback_triggerd=candidate.is_fallback,
+                        target_model_id=(
+                            primary_model.model_id if candidate.is_fallback else ''
+                        ),
+                        cost_service=cost_service,
+                        count_usage=count_usage,
+                        **kwargs,
+                    )
+                )
+            except (JudgeOutputTruncatedError, JudgeParsingError) as judge_err:
+                # A reply that cannot be read was recorded: it spent tokens.
+                if not candidate.is_fallback:
+                    logger.warning(
+                        'Primary judge failed with recoverable error: %s', judge_err
+                    )
+                raise TryNext(judge_err, spent=True) from judge_err
+
+        def log_failure(candidate: Candidate, error: BaseException) -> None:
+            if not candidate.is_fallback:
+                logger.warning('Primary model failed with unexpected error: %s', error)
+
+        models = [primary_model, *([fallback_model] if fallback_model else [])]
+        chain = FallbackChain(
+            candidates((models[0], None), [(m, None) for m in models[1:]]),
+            CallContext(
+                call=Call(
+                    identity=_identity(kwargs),
+                    model_type='chat-model',
+                    target_model_id=primary_model.model_id,
+                    is_judge=True,
                 ),
-                model_id=fallback_model.model_id,
-            ) from fallback_err
-        except Exception as fallback_err:
-            logger.error(
-                'Both primary and fallback models failed: %s | %s',
-                str(primary_err),
-                str(fallback_err),
-            )
-            raise JudgeInternalError(
-                'Both primary and fallback judge models failed',
-                log_message=(
-                    f'Both primary and fallback models failed: '
-                    f'primary={primary_err}, fallback={fallback_err}'
-                ),
-                model_id=fallback_model.model_id,
-            ) from fallback_err
+                recorder=Recorder(cost_service),
+                on_failure=log_failure,
+                on_exhausted=lambda failures: _judge_failed(models, failures),
+            ),
+        )
+        return await chain.call(judge)
 
     async def _invoke_and_record_metrics(
         self,
@@ -271,7 +249,8 @@ class JudgeEngine:
             try:
                 await count_usage(model, input_tokens, output_tokens)
             except Exception as err:
-                raise _UsageCountError from err
+                # Not a judge failure: no fallback, the limiter error goes up as is.
+                raise Spent from err
         return extract_judge_result(invocation.result, model.model_id)
 
     async def _invoke_model(
@@ -306,12 +285,8 @@ class JudgeEngine:
         token_output_count: int | None = None
         cached_token_count: int | None = None
 
-        if isinstance(raw_response, AIMessage) and raw_response.response_metadata:
-            token_usage = raw_response.response_metadata.get('token_usage')
-            if token_usage:
-                prompt_tokens_details = token_usage.get('prompt_tokens_details')
-                if prompt_tokens_details:
-                    cached_token_count = prompt_tokens_details.get('cached_tokens')
+        if isinstance(raw_response, AIMessage):
+            cached_token_count = legacy_cached_tokens(raw_response.response_metadata)
 
         if isinstance(raw_response, AIMessage) and raw_response.usage_metadata:
             token_input_count = raw_response.usage_metadata.get('input_tokens')
@@ -330,21 +305,14 @@ class JudgeEngine:
     ) -> StructuredChatModel:
         cache_key = f'{model.model_id}:{config.temperature}:{config.max_tokens}'
         if cache_key not in self._model_cache:
-            provider, model_name = parse_provider_and_model(model.model)
-            params = dict(
-                temperature=config.temperature,
-                max_tokens=config.max_tokens,
-                **(
-                    model.credentials.model_dump(exclude_none=True)
-                    if model.credentials
-                    else {}
-                ),
-            )
-            if provider not in ('anthropic', 'mistralai'):
-                params['http_async_client'] = self.httpx_client
-            self._model_cache[cache_key] = init_chat_model(
-                model=f'{provider}:{model_name}',
-                **params,
+            self._model_cache[cache_key] = build_chat_model(
+                model,
+                self.httpx_client,
+                params={
+                    'temperature': config.temperature,
+                    'max_tokens': config.max_tokens,
+                },
+                mock=False,
             ).with_structured_output(schema=JudgeResult, include_raw=True)
         return self._model_cache[cache_key]
 
@@ -519,3 +487,64 @@ class JudgeEngine:
                 invocation.token_output_count,
                 {'route_name': route_name, 'model_name': model.model_id},
             )
+
+
+def _identity(kwargs: dict) -> RequestIdentity:
+    """Return the request a judge call is for, from the guardrail kwargs."""
+    return RequestIdentity(
+        **{
+            field: kwargs.get(field, '')
+            for field in (
+                'request_uuid',
+                'route_name',
+                'api_key_uuid',
+                'api_key_name',
+                'group_uuid',
+                'group_name',
+                'project_uuid',
+                'project_name',
+            )
+        }
+    )
+
+
+def _judge_failed(models: list[Model], failures: list[Failure]) -> NoReturn:
+    """Raise the error of a judge no model answered."""
+    if len(failures) == 1:
+        logger.error('No fallback model defined. Raising judge error.')
+        err = failures[0].error
+        if isinstance(err, JudgeOutputTruncatedError | JudgeParsingError):
+            raise err
+        raise JudgeInternalError(
+            f'Primary judge model failed: {err}',
+            log_message=f'Primary judge model failed unexpectedly: {err}',
+            model_id=models[0].model_id,
+        ) from err
+    primary_err, fallback_err = failures[0].error, failures[1].error
+    if isinstance(fallback_err, JudgeOutputTruncatedError | JudgeParsingError):
+        logger.error(
+            'Both primary and fallback judges failed: primary=%s | fallback=%s',
+            str(primary_err),
+            str(fallback_err),
+        )
+        raise JudgeInternalError(
+            'Both primary and fallback judge models failed to produce valid output',
+            log_message=(
+                f'Both primary and fallback judges failed: '
+                f'primary={primary_err}, fallback={fallback_err}'
+            ),
+            model_id=models[1].model_id,
+        ) from fallback_err
+    logger.error(
+        'Both primary and fallback models failed: %s | %s',
+        str(primary_err),
+        str(fallback_err),
+    )
+    raise JudgeInternalError(
+        'Both primary and fallback judge models failed',
+        log_message=(
+            f'Both primary and fallback models failed: '
+            f'primary={primary_err}, fallback={fallback_err}'
+        ),
+        model_id=models[1].model_id,
+    ) from fallback_err
