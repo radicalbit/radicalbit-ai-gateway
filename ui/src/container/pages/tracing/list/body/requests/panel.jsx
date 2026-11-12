@@ -155,7 +155,7 @@ function StepByStep({ request }) {
       footer={<TraceLink request={request} />}
       header={(
         <NewHeader
-          details={{ one: formatTimestamp(createdAt) }}
+          details={{ one: <span className="text-xs">{formatTimestamp(createdAt)}</span> }}
           padding="none"
           title={<TextWithBold bold={eventLabel} boldProps={LABEL_PROPS} text={<strong>Step by step</strong>} />}
         />
