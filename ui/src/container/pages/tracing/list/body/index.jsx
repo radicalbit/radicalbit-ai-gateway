@@ -88,7 +88,7 @@ function ProjectSelected() {
 
   if (activeKey === TRACING_LIST_TABS.requests.key) {
     return (
-      <div className="flex flex-col gap-5" ref={containerRef}>
+      <div className="flex flex-col" ref={containerRef}>
         <div className="c-observability__filters flex flex-col gap-5" ref={filtersRef}>
           <Tabs activeKey={activeKey} items={items} onChange={handleOnChange} />
 
@@ -101,7 +101,7 @@ function ProjectSelected() {
   }
 
   return (
-    <div className="flex flex-col gap-5" ref={containerRef}>
+    <div className="flex flex-col" ref={containerRef}>
       <div className="c-observability__filters flex flex-col gap-5" ref={filtersRef}>
         <Tabs activeKey={activeKey} items={items} onChange={handleOnChange} />
 
