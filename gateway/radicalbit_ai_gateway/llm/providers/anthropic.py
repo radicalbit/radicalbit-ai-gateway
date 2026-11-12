@@ -36,6 +36,11 @@ from radicalbit_ai_gateway.llm.messages import (
     tool_call,
     tool_call_chunk,
 )
+from radicalbit_ai_gateway.llm.providers._schema import (
+    OutputParserError,
+    is_data_content_block,
+    rm_titles,
+)
 from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
 
 logger = logging.getLogger(__name__)
@@ -160,7 +165,6 @@ _OPENAI_TOOL_TYPES = (
 )
 _TOP_LEVEL_COMPOSITION_KEYS = ('oneOf', 'anyOf')
 _SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
-_DATA_BLOCK_TYPES = ('image', 'video', 'audio', 'text-plain', 'file')
 
 # Content blocks copied with only these fields.
 _FILTERED_BLOCK_FIELDS = {
@@ -199,10 +203,6 @@ _THINKING_ADMONITION = (
     'raise an OutputParserException if tool calls are not generated. Consider '
     'disabling `thinking` or adjust your prompt to ensure the tool is called.'
 )
-
-
-class OutputParserError(ValueError):
-    """A structured reply could not be parsed into its schema."""
 
 
 def build_chat_model(model_name: str, **kwargs: Any) -> 'ChatAnthropic':
@@ -323,6 +323,14 @@ class ChatAnthropic(ChatModel):
         return self._client
 
     # ── tools and structured output ─────────────────────────────────────────
+
+    def _adapt_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        adapted = dict(kwargs)
+        if 'max_completion_tokens' in adapted:
+            adapted['max_tokens'] = adapted.pop('max_completion_tokens')
+        # OpenAI's; Anthropic rejects it and reports usage in every stream.
+        adapted.pop('stream_options', None)
+        return adapted
 
     def bind_tools(self, tools: list[dict], tool_choice: Any = None) -> 'ChatAnthropic':
         formatted = [
@@ -907,7 +915,7 @@ def _openai_function(tool: Mapping[str, Any] | type[BaseModel]) -> dict[str, Any
         return {
             'name': name,
             'description': description,
-            'parameters': _rm_titles(schema),
+            'parameters': rm_titles(schema),
         }
     raise ValueError(f'Unsupported function\n\n{tool}')
 
@@ -930,20 +938,6 @@ def _dereference(schema: dict[str, Any]) -> dict[str, Any]:
         return {k: resolve(v, seen) for k, v in node.items()}
 
     return resolve(copy.deepcopy(schema), ())
-
-
-def _rm_titles(kv: dict[str, Any], prev_key: str = '') -> dict[str, Any]:
-    """Drop JSON-schema ``title``s, keeping properties that are named title."""
-    new_kv = {}
-    for k, v in kv.items():
-        if k == 'title':
-            if isinstance(v, dict) and prev_key == 'properties':
-                new_kv[k] = _rm_titles(v, k)
-        elif isinstance(v, dict):
-            new_kv[k] = _rm_titles(v, k)
-        else:
-            new_kv[k] = v
-    return new_kv
 
 
 def _drop_unsupported_root_composition_tools(
@@ -1150,7 +1144,7 @@ def _format_block(block: Any, message: BaseMessage) -> list[dict]:
         return []
     if block_type == 'image_url':
         return [{'type': 'image', 'source': _format_image(block['image_url']['url'])}]
-    if _is_data_content_block(block):
+    if is_data_content_block(block):
         return [_format_data_content_block(block)]
     if block_type == 'tool_use':
         return [_format_tool_use(block, message)]
@@ -1267,21 +1261,6 @@ def _format_image(url: str) -> dict:
         'Malformed url parameter.'
         ' Must be either an image URL (https://example.com/image.jpg)'
         " or base64 encoded string (data:image/png;base64,'/9j/4AAQSk'...)"
-    )
-
-
-def _is_data_content_block(block: dict) -> bool:
-    """Whether ``block`` is a multimodal data block (image, file, ...)."""
-    if block.get('type') not in _DATA_BLOCK_TYPES:
-        return False
-    if any(key in block for key in ('url', 'base64', 'file_id', 'text')):
-        return True
-    source_type = block.get('source_type')
-    return (
-        (source_type == 'url' and 'url' in block)
-        or (source_type == 'base64' and 'data' in block)
-        or (source_type == 'id' and 'id' in block)
-        or (source_type == 'text' and 'url' in block)
     )
 
 

@@ -52,7 +52,7 @@ def _config(guardrail: dict) -> GatewayConfig:
     )
 
 
-def test_decision_judge_loads_as_a_check_guardrail():
+def test_decision_judge_loads_as_a_check_guardrail_with_defaults():
     guardrail = _config(_decision_judge()).guardrails[0]
 
     assert guardrail.type == GuardrailType.DECISION_JUDGE
@@ -60,12 +60,8 @@ def test_decision_judge_loads_as_a_check_guardrail():
     assert isinstance(guardrail.parameters, DecisionJudgeParameter)
     assert guardrail.parameters.model_id == 'jev'
     assert guardrail.parameters.criteria is None
-
-
-def test_threshold_defaults_to_one_half():
-    guardrail = _config(_decision_judge()).guardrails[0]
-
     assert guardrail.parameters.threshold == 0.5
+    assert guardrail.parameters.fallback_model_id is None
 
 
 @pytest.mark.parametrize('threshold', [0, 0.2, 1])
@@ -92,11 +88,12 @@ def test_criteria_keep_their_true_and_false_descriptions():
     }
 
 
-def test_instructions_are_required():
+@pytest.mark.parametrize('field', ['instructions', 'model_id'])
+def test_required_parameters(field):
     guardrail = _decision_judge()
-    del guardrail['parameters']['instructions']
+    del guardrail['parameters'][field]
 
-    with pytest.raises(ValueError, match='instructions'):
+    with pytest.raises(ValueError, match=field):
         _config(guardrail)
 
 
@@ -129,14 +126,27 @@ def test_decision_judge_is_shown_in_the_config_out():
 # Model references, checked at load
 
 
-def test_unknown_model_id_is_rejected_naming_guardrail_and_id():
-    with pytest.raises(ValueError, match="'off_topic'.*'missing'"):
-        _config(_decision_judge(model_id='missing'))
-
-
-def test_unknown_fallback_model_id_is_rejected_naming_guardrail_and_id():
-    with pytest.raises(ValueError, match="'off_topic'.*'missing'"):
-        _config(_decision_judge(fallback_model_id='missing'))
+@pytest.mark.parametrize(
+    ('overrides', 'match'),
+    [
+        pytest.param(
+            {'model_id': 'missing'}, "'off_topic'.*'missing'", id='unknown-model'
+        ),
+        pytest.param(
+            {'fallback_model_id': 'missing'},
+            "'off_topic'.*'missing'",
+            id='unknown-fallback-model',
+        ),
+        pytest.param(
+            {'model_id': 'jev', 'fallback_model_id': 'jev'},
+            "'off_topic'.*'jev'",
+            id='fallback-equal-to-model',
+        ),
+    ],
+)
+def test_invalid_model_reference_is_rejected_naming_guardrail_and_id(overrides, match):
+    with pytest.raises(ValueError, match=match):
+        _config(_decision_judge(**overrides))
 
 
 @pytest.mark.parametrize(
@@ -159,22 +169,3 @@ def test_decision_models_not_on_the_route_are_accepted():
 
     assert guardrail.parameters.model_id == 'jev'
     assert guardrail.parameters.fallback_model_id == 'jev-backup'
-
-
-def test_fallback_model_id_is_optional():
-    guardrail = _config(_decision_judge()).guardrails[0]
-
-    assert guardrail.parameters.fallback_model_id is None
-
-
-def test_model_id_is_required():
-    guardrail = _decision_judge()
-    del guardrail['parameters']['model_id']
-
-    with pytest.raises(ValueError, match='model_id'):
-        _config(guardrail)
-
-
-def test_fallback_model_id_equal_to_model_id_is_rejected():
-    with pytest.raises(ValueError, match="'off_topic'.*'jev'"):
-        _config(_decision_judge(model_id='jev', fallback_model_id='jev'))

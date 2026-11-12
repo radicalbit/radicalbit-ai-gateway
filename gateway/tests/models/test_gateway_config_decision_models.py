@@ -9,6 +9,7 @@ JEV = {
     'model': 'typesafe/jev-latest',
     'credentials': {'api_key': 'ts-dummy'},
 }
+GPT = {'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}
 
 
 def test_decision_models_accepted_at_top_level_and_on_route():
@@ -26,7 +27,7 @@ def test_decision_models_accepted_at_top_level_and_on_route():
 def test_route_can_hold_decision_models_alongside_chat_models():
     config = GatewayConfig.model_validate(
         {
-            'chat_models': [{'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}],
+            'chat_models': [GPT],
             'decision_models': [JEV],
             'routes': {'agent': {'chat_models': ['gpt'], 'decision_models': ['jev']}},
         }
@@ -36,41 +37,70 @@ def test_route_can_hold_decision_models_alongside_chat_models():
     assert config.routes['agent'].decision_models == ['jev']
 
 
-def test_decision_model_id_reused_by_another_category_is_rejected():
-    with pytest.raises(
-        ValueError,
-        match='chat_models and decision_models must have globally unique model_id',
-    ):
-        GatewayConfig.model_validate(
+CACHE = {'redis_host': 'localhost', 'redis_port': 6379}
+
+
+@pytest.mark.parametrize(
+    ('raw', 'match'),
+    [
+        pytest.param(
             {
                 'chat_models': [{'model_id': 'jev', 'model': 'openai/gpt-4o-mini'}],
                 'decision_models': [JEV],
-            }
-        )
-
-
-def test_decision_model_ids_must_be_unique():
-    with pytest.raises(ValueError, match='All decision_models must have unique'):
-        GatewayConfig.model_validate({'decision_models': [JEV, JEV]})
-
-
-def test_route_referencing_undeclared_decision_model_is_rejected():
-    with pytest.raises(
-        ValueError, match='decision_models not declared in top-level decision_models'
-    ):
-        GatewayConfig.model_validate(
+            },
+            'chat_models and decision_models must have globally unique model_id',
+            id='id-reused-by-another-category',
+        ),
+        pytest.param(
+            {'decision_models': [JEV, JEV]},
+            'All decision_models must have unique',
+            id='duplicate-ids',
+        ),
+        pytest.param(
             {
                 'decision_models': [JEV],
                 'routes': {'agent': {'decision_models': ['missing']}},
-            }
-        )
-
-
-def test_decision_model_with_a_non_typesafe_provider_is_rejected():
-    with pytest.raises(ValueError, match="decision model 'jev'.*typesafe"):
-        GatewayConfig.model_validate(
-            {'decision_models': [{'model_id': 'jev', 'model': 'openai/gpt-4o-mini'}]}
-        )
+            },
+            'decision_models not declared in top-level decision_models',
+            id='route-references-undeclared-model',
+        ),
+        pytest.param(
+            {'decision_models': [{'model_id': 'jev', 'model': 'openai/gpt-4o-mini'}]},
+            "decision model 'jev'.*typesafe",
+            id='non-typesafe-provider',
+        ),
+        pytest.param(
+            {
+                'decision_models': [JEV],
+                'routes': {
+                    'agent': {
+                        'decision_models': ['jev'],
+                        'token_limiting': {'output': {'max_tokens': 1000}},
+                    }
+                },
+            },
+            'Decision models produce no output tokens',
+            id='output-token-limit-on-decision-only-route',
+        ),
+        pytest.param(
+            {
+                'decision_models': [JEV],
+                'cache': CACHE,
+                'routes': {
+                    'agent': {
+                        'decision_models': ['jev'],
+                        'caching': {'type': 'semantic', 'embedding_model_id': 'emb'},
+                    }
+                },
+            },
+            'semantic caching is not allowed on a route with only',
+            id='semantic-caching-on-decision-only-route',
+        ),
+    ],
+)
+def test_invalid_decision_model_config_is_rejected(raw, match):
+    with pytest.raises(ValueError, match=match):
+        GatewayConfig.model_validate(raw)
 
 
 @pytest.mark.parametrize(
@@ -85,7 +115,7 @@ def test_decision_models_are_rejected_inside_routing(
     ):
         GatewayConfig.model_validate(
             {
-                'chat_models': [{'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}],
+                'chat_models': [GPT],
                 'decision_models': [JEV],
                 'routing': [
                     {
@@ -112,29 +142,26 @@ def test_decision_models_are_rejected_inside_routing(
         )
 
 
-def test_jev_default_price_comes_from_the_price_list():
-    config = GatewayConfig.model_validate({'decision_models': [JEV]})
+@pytest.mark.parametrize(
+    ('overrides', 'input_cost'),
+    [
+        pytest.param({}, Decimal('0.042'), id='default-from-price-list'),
+        # The input price can be overridden; the output price is forced to zero.
+        pytest.param(
+            {
+                'input_cost_per_million_tokens': 0.05,
+                'output_cost_per_million_tokens': 3,
+            },
+            Decimal('0.05'),
+            id='overridden',
+        ),
+    ],
+)
+def test_jev_price(overrides, input_cost):
+    config = GatewayConfig.model_validate({'decision_models': [{**JEV, **overrides}]})
 
     jev = config.decision_models_by_id['jev']
-    assert jev.input_cost_per_million_tokens == Decimal('0.042')
-    assert jev.output_cost_per_million_tokens == Decimal('0')
-
-
-def test_jev_input_price_can_be_overridden_and_output_price_is_forced_to_zero():
-    config = GatewayConfig.model_validate(
-        {
-            'decision_models': [
-                {
-                    **JEV,
-                    'input_cost_per_million_tokens': 0.05,
-                    'output_cost_per_million_tokens': 3,
-                }
-            ]
-        }
-    )
-
-    jev = config.decision_models_by_id['jev']
-    assert jev.input_cost_per_million_tokens == Decimal('0.05')
+    assert jev.input_cost_per_million_tokens == input_cost
     assert jev.output_cost_per_million_tokens == Decimal('0')
 
 
@@ -172,7 +199,7 @@ def test_fallback_mixing_decision_and_chat_models_is_rejected(fallback, label):
     with pytest.raises(ValueError, match=f'must be present in the {label} models'):
         GatewayConfig.model_validate(
             {
-                'chat_models': [{'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}],
+                'chat_models': [GPT],
                 'decision_models': [JEV, JEV_EU],
                 'routes': {
                     'agent': {
@@ -201,25 +228,10 @@ def test_input_token_limit_is_accepted_on_a_decision_only_route():
     assert config.routes['agent'].token_limiting.input.max_tokens == 1000
 
 
-def test_output_token_limit_on_a_decision_only_route_is_rejected():
-    with pytest.raises(ValueError, match='Decision models produce no output tokens'):
-        GatewayConfig.model_validate(
-            {
-                'decision_models': [JEV],
-                'routes': {
-                    'agent': {
-                        'decision_models': ['jev'],
-                        'token_limiting': {'output': {'max_tokens': 1000}},
-                    }
-                },
-            }
-        )
-
-
 def test_output_token_limit_is_accepted_when_the_route_also_has_chat_models():
     config = GatewayConfig.model_validate(
         {
-            'chat_models': [{'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}],
+            'chat_models': [GPT],
             'decision_models': [JEV],
             'routes': {
                 'agent': {
@@ -232,30 +244,6 @@ def test_output_token_limit_is_accepted_when_the_route_also_has_chat_models():
     )
 
     assert config.routes['agent'].token_limiting.output.max_tokens == 1000
-
-
-CACHE = {'redis_host': 'localhost', 'redis_port': 6379}
-
-
-def test_semantic_caching_on_a_decision_only_route_is_rejected():
-    with pytest.raises(
-        ValueError, match='semantic caching is not allowed on a route with only'
-    ):
-        GatewayConfig.model_validate(
-            {
-                'decision_models': [JEV],
-                'cache': CACHE,
-                'routes': {
-                    'agent': {
-                        'decision_models': ['jev'],
-                        'caching': {
-                            'type': 'semantic',
-                            'embedding_model_id': 'emb',
-                        },
-                    }
-                },
-            }
-        )
 
 
 def test_exact_caching_is_accepted_on_a_decision_only_route():

@@ -1,0 +1,309 @@
+from collections.abc import Awaitable, Callable
+import logging
+from uuid import UUID
+
+from fastapi import FastAPI
+import redis
+
+from radicalbit_ai_gateway.caching.abstract_cache import AbstractCache
+from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
+from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
+from radicalbit_ai_gateway.caching.redis_cache import RedisCache
+from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
+from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
+    DecisionJudgeEngine,
+)
+from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeEngine
+from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
+from radicalbit_ai_gateway.invocation.decision_model_invoker import DecisionModelInvoker
+from radicalbit_ai_gateway.limiting.limits import RouteLimits
+from radicalbit_ai_gateway.limiting.windows import Category
+from radicalbit_ai_gateway.llm.factory import build_chat_model, build_embeddings
+from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
+from radicalbit_ai_gateway.models.project_entry import ProjectEntry
+from radicalbit_ai_gateway.models.routing import (
+    DecisionRoutingConfig,
+    LLMRoutingConfig,
+    SemanticRoutingConfig,
+    TextClassificationRoutingConfig,
+)
+from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.routing import (
+    DecisionRouter,
+    DeterministicRouter,
+    LLMRouter,
+    SemanticRouter,
+    TextClassificationRouter,
+)
+from radicalbit_ai_gateway.routing.llm_router import RouterModel
+from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.secrets import resolve_secrets_from_string
+
+app_config = get_app_config()
+logger = logging.getLogger(app_config.log_config.logger_name)
+
+
+async def initialize_async_routers(routes: dict[str, GatewayRoute]) -> None:
+    for route_name, route in routes.items():
+        if isinstance(route.router, SemanticRouter):
+            try:
+                await route.router.initialize()
+            except Exception:
+                logger.exception(
+                    'Failed to initialize semantic router for route %s — '
+                    'will fall back to default model',
+                    route_name,
+                )
+
+
+def get_proper_cache(
+    route_config: GatewayRouteConfig, redis_client: redis.asyncio.Redis | None
+) -> AbstractCache | None:
+    if not route_config.caching or not route_config.caching.enabled:
+        return None
+    if redis_client is None:
+        return CacheToolsInMemory()
+    if route_config.caching.type == 'exact':
+        return RedisCache(redis_client=redis_client)
+    return SemanticCache(
+        redis_client=redis_client,
+        similarity_threshold=route_config.caching.similarity_threshold,
+        dim=route_config.caching.dim,
+        distance_metric=route_config.caching.distance_metric,
+    )
+
+
+def build_gateway_routes_from_config(
+    gateway_config: GatewayConfig,
+    guardrails: Guardrails,
+    redis_client: redis.asyncio.Redis | None,
+    cost_service: CostService,
+    httpx_client,
+    project_uuid: str,
+) -> dict[str, GatewayRoute]:
+    """Build the live routes declared by ``gateway_config``.
+
+    ``project_uuid`` scopes the limiter storage keys and the cache keys. Route
+    names are unique only within a project, so omitting it makes two projects
+    that declare the same route name share one limit window and read each
+    other's cached responses.
+    """
+    routes: dict[str, GatewayRoute] = {}
+    chat_by_id = gateway_config.chat_models_by_id
+    emb_by_id = gateway_config.embedding_models_by_id
+    transcription_by_id = gateway_config.transcription_models_by_id
+    decision_by_id = gateway_config.decision_models_by_id
+
+    for route_name, route_config in gateway_config.routes.items():
+        chat_models = (
+            [chat_by_id[mid] for mid in (route_config.chat_models or [])]
+            if route_config.chat_models
+            else None
+        )
+        embedding_models = (
+            [emb_by_id[mid] for mid in (route_config.embedding_models or [])]
+            if route_config.embedding_models
+            else None
+        )
+        transcription_models = (
+            [
+                transcription_by_id[mid]
+                for mid in (route_config.transcription_models or [])
+            ]
+            if route_config.transcription_models
+            else None
+        )
+        decision_models = (
+            [decision_by_id[mid] for mid in route_config.decision_models]
+            if route_config.decision_models
+            else None
+        )
+        cache_client = get_proper_cache(route_config, redis_client)
+        gateway_cache = GatewayCache(cache_client) if cache_client is not None else None
+        route_limits = RouteLimits.from_config(route_config, project_uuid)
+        router = None
+        if route_config.routing and gateway_config.routing:
+            routing_config = gateway_config.routing_by_name.get(route_config.routing)
+            if routing_config:
+                route_models_by_id = {m.model_id: m for m in (chat_models or [])}
+                if isinstance(routing_config, TextClassificationRoutingConfig):
+                    router = TextClassificationRouter(
+                        config=routing_config,
+                        models_by_id=route_models_by_id,
+                    )
+                elif isinstance(routing_config, SemanticRoutingConfig):
+                    emb_model = gateway_config.embedding_models_by_id[
+                        routing_config.embedding_model_id
+                    ]
+                    embeddings_instance = build_embeddings(emb_model, httpx_client)
+                    router = SemanticRouter(
+                        config=routing_config,
+                        models_by_id=route_models_by_id,
+                        embeddings_model=embeddings_instance,
+                        embedding_model_config=emb_model,
+                    )
+                elif isinstance(routing_config, DecisionRoutingConfig):
+                    # Any decision model of the project can answer, as for judges.
+                    router = DecisionRouter(
+                        config=routing_config,
+                        models_by_id=route_models_by_id,
+                        invoker=DecisionModelInvoker(
+                            models=gateway_config.decision_models,
+                            cost_service=cost_service,
+                            httpx_client=httpx_client,
+                        ),
+                    )
+                elif isinstance(routing_config, LLMRoutingConfig):
+                    # Any chat model of the project can route, as for decision routing.
+                    router_ids = (
+                        routing_config.router_model_id,
+                        routing_config.fallback_model_id,
+                    )
+                    router = LLMRouter(
+                        config=routing_config,
+                        models_by_id=route_models_by_id,
+                        router_models={
+                            mid: RouterModel(
+                                model=chat_by_id[mid],
+                                chat_model=build_chat_model(
+                                    chat_by_id[mid], httpx_client
+                                ),
+                            )
+                            for mid in router_ids
+                            if mid is not None
+                        },
+                    )
+                else:
+                    router = DeterministicRouter(
+                        config=routing_config,
+                        models_by_id=route_models_by_id,
+                        budget=route_limits.window(Category.COST),
+                    )
+        routes[route_name] = GatewayRoute(
+            gateway_route_config=route_config,
+            chat_models=chat_models,
+            embedding_models=embedding_models,
+            transcription_models=transcription_models,
+            decision_models=decision_models,
+            guardrails=guardrails.for_route(route_config),
+            gateway_cache=gateway_cache,
+            cost_service=cost_service,
+            httpx_client=httpx_client,
+            router=router,
+            project_uuid=project_uuid,
+            route_limits=route_limits,
+        )
+
+    return routes
+
+
+def build_project_route_registrar(
+    app: FastAPI,
+    httpx_client,
+) -> tuple[
+    Callable[[UUID, str, str], Awaitable[None]], Callable[[UUID], Awaitable[None]]
+]:
+    """Return callables to register and deregister project routes.
+
+    The register callable parses a YAML config string and registers the
+    declared routes in ``app.state.routes`` under the key
+    ``project_name/route_name``.
+
+    The deregister callable removes all routes and the project config
+    for a given project UUID.
+    """
+    presidio_engine = PresidioEngine()
+    judge_engine = JudgeEngine(
+        prompt_manager=PromptManager.get_global(),
+        httpx_client=httpx_client,
+    )
+
+    async def register_project_routes(
+        project_uuid: UUID,
+        project_name: str,
+        yaml_content: str,
+    ) -> None:
+        resolved = resolve_secrets_from_string(yaml_content)
+        project_gateway_config = GatewayConfig.model_validate(resolved)
+        project_cost_service = CostService(
+            chat_models_by_id=project_gateway_config.chat_models_by_id,
+            embedding_models_by_id=project_gateway_config.embedding_models_by_id,
+            transcription_models_by_id=project_gateway_config.transcription_models_by_id,
+            decision_models_by_id=project_gateway_config.decision_models_by_id,
+        )
+        project_guardrails = Guardrails(
+            presidio_engine=presidio_engine,
+            judge_engine=judge_engine,
+            guardrails=project_gateway_config.guardrails,
+            chat_models_by_id=project_gateway_config.chat_models_by_id,
+            cost_service=project_cost_service,
+            decision_judge_engine=DecisionJudgeEngine(
+                decision_models=project_gateway_config.decision_models,
+                cost_service=project_cost_service,
+                httpx_client=httpx_client,
+            ),
+        )
+
+        project_redis_client = None
+        if project_gateway_config.cache:
+            project_redis_client = redis.asyncio.Redis(
+                host=project_gateway_config.cache.redis_host,
+                port=project_gateway_config.cache.redis_port,
+                decode_responses=True,
+                # RESP2 is required by the semantic cache: redis-py negotiates
+                # RESP3 by default and then parses FT.SEARCH replies as a map,
+                # while valkey-search answers with a flat array. The mismatch
+                # raises AttributeError inside the client, which the semantic
+                # cache swallows and reports as a miss, so every lookup fails.
+                protocol=2,
+            )
+        uuid_str = str(project_uuid)
+        routes = build_gateway_routes_from_config(
+            project_gateway_config,
+            project_guardrails,
+            project_redis_client,
+            project_cost_service,
+            httpx_client,
+            project_uuid=uuid_str,
+        )
+        await initialize_async_routers(routes)
+        for route_name, route in routes.items():
+            full_key = f'{project_name}/{route_name}'
+            route.project_name = project_name
+            app.state.routes[full_key] = route
+            logger.info('Registered project route: %s', full_key)
+
+        app.state.project_configs[project_name] = ProjectEntry(
+            uuid=project_uuid,
+            config=project_gateway_config,
+        )
+        logger.info('Registered project config: %s', project_name)
+
+    async def deregister_project_routes(project_uuid: UUID) -> None:
+        uuid_str = str(project_uuid)
+        keys_to_remove = [
+            key
+            for key, route in app.state.routes.items()
+            if getattr(route, 'project_uuid', None) == uuid_str
+        ]
+        for key in keys_to_remove:
+            del app.state.routes[key]
+            logger.info('Deregistered project route: %s', key)
+
+        config_key = next(
+            (
+                name
+                for name, entry in app.state.project_configs.items()
+                if entry.uuid == project_uuid
+            ),
+            None,
+        )
+        if config_key:
+            del app.state.project_configs[config_key]
+            logger.info('Deregistered project config: %s', config_key)
+
+    return register_project_routes, deregister_project_routes

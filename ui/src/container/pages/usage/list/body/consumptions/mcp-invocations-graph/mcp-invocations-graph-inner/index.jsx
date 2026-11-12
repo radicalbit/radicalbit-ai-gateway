@@ -1,7 +1,6 @@
 import Lucide from '@Components/lucide';
 import useDarkModeChart, { updateTheme } from '@Hooks/use-chart-dark-mode';
 import { useGetMcpServersChartSseWithRange } from '@State/usage/vertical-hooks';
-import ChartData from '@Components/chart-data';
 import withChartAria from '@Helpers/chart-aria';
 import {
   Board, Button, Segmented, Spinner, Void,
@@ -213,8 +212,6 @@ function IsSuccess({ chart }) {
           overflow: 'hidden',
         }}
       />
-
-      <ChartData granularity={chart?.granularity} series={series} xAxisData={chart?.timestamp || []} />
 
       <GroupByTabs />
     </div>

@@ -1,8 +1,8 @@
 """What limits emit: a block names the limit and how far it had gone, and a
 threshold event fires on the hit that crosses a global percentage.
 
-Each test drives a real limiter through check/count on in-memory storage and
-captures the event instead of sending it.
+Each test drives a request's limits through check/count on in-memory
+storage and captures the event instead of sending it.
 """
 
 from collections.abc import Iterator
@@ -12,29 +12,28 @@ from uuid import uuid4
 
 import pytest
 
-from tests.common.audio import make_wav_bytes
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 
-from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
-from radicalbit_ai_gateway.limiting.credential_limiter import CredentialLimiter
-from radicalbit_ai_gateway.limiting.duration_limiter import DurationLimiter
-from radicalbit_ai_gateway.limiting.project_budget_limiter import ProjectBudgetLimiter
-from radicalbit_ai_gateway.limiting.rate_limiter import RequestRateLimiter
-from radicalbit_ai_gateway.limiting.token_limiter import TokenLimiter
+from radicalbit_ai_gateway.limiter import InMemoryStorage
+from radicalbit_ai_gateway.limiting.limits import (
+    Demand,
+    InputEstimate,
+    Limits,
+    RequestLimits,
+    RouteLimits,
+    Usage,
+)
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
     CredentialLimitOut,
 )
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
-from radicalbit_ai_gateway.models.limiting import (
-    AudioDurationLimiting,
-    Limiting,
-    LimitingAlgorithmType,
-    RateLimiting,
-)
+from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
+from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitOut
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
+from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     AudioDurationLimitExceeded,
@@ -48,32 +47,6 @@ _PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
 _CREDENTIAL_UUID = '7b9e1d2c-0000-4000-8000-0000000000cc'
 _ROUTE = 'my-route'
 _MODEL = 'openai/gpt-4o'
-
-_ROUTE_CALL_ARGS = {
-    'request_uuid': str(REQUEST_UUID),
-    'api_key_uuid': str(API_KEY_UUID),
-    'group_uuid': str(GROUP_UUID),
-    'api_key_name': 'caller-key',
-    'group_name': 'team-a',
-    'project_uuid': _PROJECT_UUID,
-    'project_name': 'my-project',
-}
-_CREDENTIAL_CALL_ARGS = {
-    'request_uuid': str(REQUEST_UUID),
-    'group_uuid': str(GROUP_UUID),
-    'group_name': 'team-a',
-    'route_name': _ROUTE,
-    'project_uuid': _PROJECT_UUID,
-    'project_name': 'my-project',
-}
-_PROJECT_CALL_ARGS = {
-    'request_uuid': str(REQUEST_UUID),
-    'api_key_uuid': str(API_KEY_UUID),
-    'api_key_name': 'caller-key',
-    'group_uuid': str(GROUP_UUID),
-    'group_name': 'team-a',
-    'route_name': _ROUTE,
-}
 
 _IDENTITY = RequestIdentity(
     request_uuid=str(REQUEST_UUID),
@@ -100,12 +73,7 @@ _CREDENTIAL_IDENTITY = RequestIdentity(
 
 _EMITTERS = [
     'radicalbit_ai_gateway.limiting.limit_event.emit_event',
-    'radicalbit_ai_gateway.limiting.rate_limiter.emit_event',
-    'radicalbit_ai_gateway.limiting.token_limiter.emit_event',
-    'radicalbit_ai_gateway.limiting.duration_limiter.emit_event',
-    'radicalbit_ai_gateway.limiting.budget_limiting.emit_event',
-    'radicalbit_ai_gateway.limiting.credential_limiter.emit_event',
-    'radicalbit_ai_gateway.limiting.project_budget_limiter.emit_event',
+    'radicalbit_ai_gateway.limiting.limits.emit_event',
 ]
 
 
@@ -142,38 +110,81 @@ def _assert_live_window(event: LimitEventPayload, window_seconds: int) -> None:
     assert event.threshold_percentage is None
 
 
-def _credential_limit(category: CredentialLimitCategory, value: float):
+def _cost(units: float) -> Usage:
+    """Return a usage costing ``units`` dollars."""
+    return Usage(costs=(int(units * BUDGET_MULTIPLIER),))
+
+
+def _route(**limits) -> RouteLimits:
+    config = GatewayRouteConfig.model_validate(
+        {'route_name': _ROUTE, 'chat_models': ['m'], **limits}
+    )
+    return RouteLimits.from_config(config, _PROJECT_UUID)
+
+
+def _credential_limit(category: CredentialLimitCategory, value: float, window='1 hour'):
     return CredentialLimitOut(
         uuid=uuid4(),
         category=category,
         algorithm=LimitingAlgorithmType.FIXED_WINDOW,
-        window_size='1 hour',
+        window_size=window,
         value=value,
         created_at='2026-01-01 00:00:00',
         updated_at='2026-01-01 00:00:00',
     )
 
 
-def _credential_limiter(category: CredentialLimitCategory, value: float):
-    return CredentialLimiter(
-        credential_uuid=_CREDENTIAL_UUID,
-        credential_name='my-cred',
-        limits=[_credential_limit(category, value)],
+def _project_limit(value: float) -> ProjectBudgetLimitOut:
+    return ProjectBudgetLimitOut(
+        uuid=uuid4(),
+        algorithm=LimitingAlgorithmType.FIXED_WINDOW,
+        window_size='1 day',
+        value=value,
+        created_at='2026-01-01 00:00:00',
+        updated_at='2026-01-01 00:00:00',
     )
+
+
+@pytest.fixture
+def limits() -> Limits:
+    return Limits(InMemoryStorage())
+
+
+@pytest.fixture
+def route_limits(limits):
+    def resolve(**route) -> RequestLimits:
+        return limits.resolve(_IDENTITY, _route(**route))
+
+    return resolve
+
+
+@pytest.fixture
+def credential_limits(limits):
+    def resolve(*credential: CredentialLimitOut) -> RequestLimits:
+        return limits.resolve(_CREDENTIAL_IDENTITY, RouteLimits(), credential)
+
+    return resolve
+
+
+@pytest.fixture
+def project_limits(limits):
+    def resolve(value: float) -> RequestLimits:
+        return limits.resolve(_IDENTITY, RouteLimits(), (), [_project_limit(value)])
+
+    return resolve
+
+
+RATE = {'rate_limiting': {'max_requests': 2, 'window_size': '1 minute'}}
 
 
 class TestRouteLimits:
     @pytest.mark.asyncio
-    async def test_rate_limit(self, events):
-        limiter = RequestRateLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            rate_limiting_config=RateLimiting(max_requests=2, window_size='1 minute'),
-        )
-        await limiter.check_and_count_request(**_ROUTE_CALL_ARGS)
-        await limiter.check_and_count_request(**_ROUTE_CALL_ARGS)
+    async def test_rate_limit(self, events, route_limits):
+        scope = route_limits(**RATE)
+        await scope.check(Demand(request=True))
+        await scope.check(Demand(request=True))
         with pytest.raises(RequestRateLimitExceeded):
-            await limiter.check_and_count_request(**_ROUTE_CALL_ARGS)
+            await scope.check(Demand(request=True))
 
         event = _only(events)
         assert event.event_type == EventType.RATE_LIMIT
@@ -186,23 +197,18 @@ class TestRouteLimits:
         _assert_live_window(event, 60)
 
     @pytest.mark.asyncio
-    async def test_token_input_limit(self, events):
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            input_config=Limiting(max_tokens=100, window_size='1 minute'),
+    async def test_token_input_limit(self, events, route_limits):
+        scope = route_limits(
+            token_limiting={'input': {'max_tokens': 100, 'window_size': '1 minute'}}
         )
-        await limiter.count_input(prompt_tokens=80, identity=_IDENTITY)
+        await scope.count(Usage(input_tokens=80))
         with (
             patch(
-                'radicalbit_ai_gateway.limiting.token_limiter.count_tokens',
-                return_value=30,
+                'radicalbit_ai_gateway.limiting.limits.count_tokens', return_value=30
             ),
             pytest.raises(InputTokenLimitExceeded),
         ):
-            await limiter.check_input(
-                text='hello', model_string=_MODEL, **_ROUTE_CALL_ARGS
-            )
+            await scope.check(Demand(input=InputEstimate('hello', _MODEL)))
 
         event = _only(events)
         assert event.event_type == EventType.TOKEN_INPUT_LIMIT
@@ -213,15 +219,13 @@ class TestRouteLimits:
         _assert_live_window(event, 60)
 
     @pytest.mark.asyncio
-    async def test_token_output_limit(self, events):
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            output_config=Limiting(max_tokens=50, window_size='1 hour'),
+    async def test_token_output_limit(self, events, route_limits):
+        scope = route_limits(
+            token_limiting={'output': {'max_tokens': 50, 'window_size': '1 hour'}}
         )
-        await limiter.count_output(token_count=60, identity=_IDENTITY)
+        await scope.count(Usage(output_tokens=60))
         with pytest.raises(OutputTokenLimitExceeded):
-            await limiter.check_output(**_ROUTE_CALL_ARGS)
+            await scope.check(Demand(output_room=True))
 
         event = _only(events)
         assert event.event_type == EventType.TOKEN_OUTPUT_LIMIT
@@ -232,21 +236,13 @@ class TestRouteLimits:
         _assert_live_window(event, 3600)
 
     @pytest.mark.asyncio
-    async def test_audio_duration_limit(self, events):
-        limiter = DurationLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            config=AudioDurationLimiting(
-                max_duration_seconds=10, window_size='1 minute'
-            ),
+    async def test_audio_duration_limit(self, events, route_limits):
+        scope = route_limits(
+            duration_limiting={'max_duration_seconds': 10, 'window_size': '1 minute'}
         )
-        await limiter.check_and_count_duration(
-            audio_bytes=make_wav_bytes(8.0), **_ROUTE_CALL_ARGS
-        )
+        await scope.check(Demand(audio_seconds=8.0))
         with pytest.raises(AudioDurationLimitExceeded):
-            await limiter.check_and_count_duration(
-                audio_bytes=make_wav_bytes(5.0), **_ROUTE_CALL_ARGS
-            )
+            await scope.check(Demand(audio_seconds=5.0))
 
         event = _only(events)
         assert event.event_type == EventType.AUDIO_DURATION_LIMIT
@@ -257,17 +253,13 @@ class TestRouteLimits:
         _assert_live_window(event, 60)
 
     @pytest.mark.asyncio
-    async def test_budget_limit(self, events):
-        limiter = BudgetLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            config=Limiting(max_budget=1.0, window_size='1 minute'),
+    async def test_budget_limit(self, events, route_limits):
+        scope = route_limits(
+            budget_limiting={'max_budget': 1.0, 'window_size': '1 minute'}
         )
-        await limiter.count_input(
-            token_count=1500, input_cost_per_token=0.001, identity=_IDENTITY
-        )
+        await scope.count(_cost(1.5))
         with pytest.raises(BudgetLimitExceededError):
-            await limiter.check_budget(**_ROUTE_CALL_ARGS)
+            await scope.check(Demand(cost_room=True))
 
         event = _only(events)
         assert event.event_type == EventType.BUDGET_LIMIT
@@ -280,16 +272,12 @@ class TestRouteLimits:
         _assert_live_window(event, 60)
 
     @pytest.mark.asyncio
-    async def test_a_budget_within_limit_emits_nothing(self, events):
-        limiter = BudgetLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            config=Limiting(max_budget=1.0, window_size='1 minute'),
+    async def test_a_budget_within_limit_emits_nothing(self, events, route_limits):
+        scope = route_limits(
+            budget_limiting={'max_budget': 1.0, 'window_size': '1 minute'}
         )
-        await limiter.count_input(
-            token_count=10, input_cost_per_token=0.001, identity=_IDENTITY
-        )
-        await limiter.check_budget(**_ROUTE_CALL_ARGS)
+        await scope.count(_cost(0.01))
+        await scope.check(Demand(cost_room=True))
 
         assert events == []
 
@@ -307,11 +295,11 @@ class TestCredentialLimits:
         assert event.project_uuid == _PROJECT_UUID
 
     @pytest.mark.asyncio
-    async def test_rate_limit(self, events):
-        limiter = _credential_limiter(CredentialLimitCategory.RATE, 1)
-        await limiter.check_and_count_request(**_CREDENTIAL_CALL_ARGS)
+    async def test_rate_limit(self, events, credential_limits):
+        scope = credential_limits(_credential_limit(CredentialLimitCategory.RATE, 1))
+        await scope.check(Demand(request=True))
         with pytest.raises(RequestRateLimitExceeded):
-            await limiter.check_and_count_request(**_CREDENTIAL_CALL_ARGS)
+            await scope.check(Demand(request=True))
 
         event = _only(events)
         assert event.event_type == EventType.CREDENTIAL_RATE_LIMIT
@@ -322,19 +310,18 @@ class TestCredentialLimits:
         _assert_live_window(event, 3600)
 
     @pytest.mark.asyncio
-    async def test_token_input_limit(self, events):
-        limiter = _credential_limiter(CredentialLimitCategory.TOKEN_INPUT, 100)
-        await limiter.count_input_tokens(90, identity=_CREDENTIAL_IDENTITY)
+    async def test_token_input_limit(self, events, credential_limits):
+        scope = credential_limits(
+            _credential_limit(CredentialLimitCategory.TOKEN_INPUT, 100)
+        )
+        await scope.count(Usage(input_tokens=90))
         with (
             patch(
-                'radicalbit_ai_gateway.limiting.credential_limiter.count_tokens',
-                return_value=20,
+                'radicalbit_ai_gateway.limiting.limits.count_tokens', return_value=20
             ),
             pytest.raises(InputTokenLimitExceeded),
         ):
-            await limiter.check_input_tokens(
-                text='hello', model_string=_MODEL, **_CREDENTIAL_CALL_ARGS
-            )
+            await scope.check(Demand(input=InputEstimate('hello', _MODEL)))
 
         event = _only(events)
         assert event.event_type == EventType.CREDENTIAL_TOKEN_INPUT_LIMIT
@@ -345,11 +332,13 @@ class TestCredentialLimits:
         _assert_live_window(event, 3600)
 
     @pytest.mark.asyncio
-    async def test_token_output_limit(self, events):
-        limiter = _credential_limiter(CredentialLimitCategory.TOKEN_OUTPUT, 10)
-        await limiter.count_output_tokens(10, identity=_CREDENTIAL_IDENTITY)
+    async def test_token_output_limit(self, events, credential_limits):
+        scope = credential_limits(
+            _credential_limit(CredentialLimitCategory.TOKEN_OUTPUT, 10)
+        )
+        await scope.count(Usage(output_tokens=10))
         with pytest.raises(OutputTokenLimitExceeded):
-            await limiter.check_output_tokens(**_CREDENTIAL_CALL_ARGS)
+            await scope.check(Demand(output_room=True))
 
         event = _only(events)
         assert event.event_type == EventType.CREDENTIAL_TOKEN_OUTPUT_LIMIT
@@ -360,15 +349,13 @@ class TestCredentialLimits:
         _assert_live_window(event, 3600)
 
     @pytest.mark.asyncio
-    async def test_budget_limit(self, events):
-        limiter = _credential_limiter(CredentialLimitCategory.BUDGET, 2.0)
-        await limiter.count_budget_input(
-            token_count=2500,
-            input_cost_per_token=0.001,
-            identity=_CREDENTIAL_IDENTITY,
+    async def test_budget_limit(self, events, credential_limits):
+        scope = credential_limits(
+            _credential_limit(CredentialLimitCategory.BUDGET, 2.0)
         )
+        await scope.count(_cost(2.5))
         with pytest.raises(BudgetLimitExceededError):
-            await limiter.check_budget(**_CREDENTIAL_CALL_ARGS)
+            await scope.check(Demand(cost_room=True))
 
         event = _only(events)
         assert event.event_type == EventType.CREDENTIAL_BUDGET_LIMIT
@@ -381,26 +368,11 @@ class TestCredentialLimits:
 
 class TestProjectLimits:
     @pytest.mark.asyncio
-    async def test_budget_limit(self, events):
-        limiter = ProjectBudgetLimiter(
-            project_uuid=_PROJECT_UUID,
-            project_name='my-project',
-            limits=[
-                ProjectBudgetLimitOut(
-                    uuid=uuid4(),
-                    algorithm=LimitingAlgorithmType.FIXED_WINDOW,
-                    window_size='1 day',
-                    value=5.0,
-                    created_at='2026-01-01 00:00:00',
-                    updated_at='2026-01-01 00:00:00',
-                )
-            ],
-        )
-        await limiter.count_output(
-            token_count=6000, output_cost_per_token=0.001, identity=_IDENTITY
-        )
+    async def test_budget_limit(self, events, project_limits):
+        scope = project_limits(5.0)
+        await scope.count(_cost(6.0))
         with pytest.raises(BudgetLimitExceededError):
-            await limiter.check_budget(**_PROJECT_CALL_ARGS)
+            await scope.check(Demand(cost_room=True))
 
         event = _only(events)
         assert event.event_type == EventType.PROJECT_BUDGET_LIMIT
@@ -419,20 +391,16 @@ class TestWhatReachesClickHouse:
     """The limit fields land in the event row's ATTRIBUTES map as strings."""
 
     @pytest.mark.asyncio
-    async def test_the_limit_fields_are_written_as_plain_values(self):
-        limiter = BudgetLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            config=Limiting(max_budget=1.0, window_size='1 minute'),
+    async def test_the_limit_fields_are_written_as_plain_values(self, route_limits):
+        scope = route_limits(
+            budget_limiting={'max_budget': 1.0, 'window_size': '1 minute'}
         )
         with patch(
             'radicalbit_ai_gateway.events.events_processor._events_buffer'
         ) as buf:
-            await limiter.count_input(
-                token_count=1500, input_cost_per_token=0.001, identity=_IDENTITY
-            )
+            await scope.count(_cost(1.5))
             with pytest.raises(BudgetLimitExceededError):
-                await limiter.check_budget(**_ROUTE_CALL_ARGS)
+                await scope.check(Demand(cost_room=True))
 
         attributes = buf.add.call_args.args[0]['ATTRIBUTES']
         assert attributes['limit_scope'] == 'route'
@@ -459,26 +427,22 @@ def percentages():
     alert_config.alert_threshold_percentages = original
 
 
-def _rate_limiter(max_requests: int) -> RequestRateLimiter:
-    return RequestRateLimiter(
-        project_uuid=_PROJECT_UUID,
-        route_name=_ROUTE,
-        rate_limiting_config=RateLimiting(
-            max_requests=max_requests, window_size='1 minute'
-        ),
-    )
+RATE_OF_4 = {'rate_limiting': {'max_requests': 4, 'window_size': '1 minute'}}
+INPUT_OF_100 = {
+    'token_limiting': {'input': {'max_tokens': 100, 'window_size': '1 minute'}}
+}
 
 
 class TestThresholdEvents:
     @pytest.mark.asyncio
     async def test_a_threshold_fires_on_the_crossing_hit_only(
-        self, events, percentages
+        self, events, percentages, route_limits
     ):
-        limiter = _rate_limiter(max_requests=4)
+        scope = route_limits(**RATE_OF_4)
 
         fired_after_each_request = []
         for _ in range(4):
-            await limiter.check_and_count_request(**_ROUTE_CALL_ARGS)
+            await scope.check(Demand(request=True))
             fired_after_each_request.append(
                 [e.threshold_percentage for e in _thresholds(events)]
             )
@@ -488,11 +452,11 @@ class TestThresholdEvents:
 
     @pytest.mark.asyncio
     async def test_a_threshold_event_carries_the_limit_and_the_request(
-        self, events, percentages
+        self, events, percentages, route_limits
     ):
-        limiter = _rate_limiter(max_requests=4)
+        scope = route_limits(**RATE_OF_4)
         for _ in range(3):
-            await limiter.check_and_count_request(**_ROUTE_CALL_ARGS)
+            await scope.check(Demand(request=True))
 
         (event,) = _thresholds(events)
         assert event.event_type == EventType.LIMIT_THRESHOLD
@@ -514,69 +478,57 @@ class TestThresholdEvents:
 
     @pytest.mark.asyncio
     async def test_one_hit_crossing_both_percentages_emits_both(
-        self, events, percentages
+        self, events, percentages, route_limits
     ):
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            input_config=Limiting(max_tokens=100, window_size='1 minute'),
-        )
-
-        await limiter.count_input(prompt_tokens=99, identity=_IDENTITY)
+        await route_limits(**INPUT_OF_100).count(Usage(input_tokens=99))
 
         assert sorted(e.threshold_percentage for e in _thresholds(events)) == [75, 98]
 
     @pytest.mark.asyncio
     async def test_a_crossed_threshold_does_not_fire_again_in_the_window(
-        self, events, percentages
+        self, events, percentages, route_limits
     ):
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            input_config=Limiting(max_tokens=100, window_size='1 minute'),
-        )
-        await limiter.count_input(prompt_tokens=80, identity=_IDENTITY)
+        scope = route_limits(**INPUT_OF_100)
+        await scope.count(Usage(input_tokens=80))
         events.clear()
 
-        await limiter.count_input(prompt_tokens=10, identity=_IDENTITY)
+        await scope.count(Usage(input_tokens=10))
 
         assert _thresholds(events) == []
 
     @pytest.mark.asyncio
-    async def test_a_zero_cost_hit_crosses_nothing(self, events, percentages):
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            output_config=Limiting(max_tokens=100, window_size='1 minute'),
+    async def test_a_zero_cost_hit_crosses_nothing(
+        self, events, percentages, route_limits
+    ):
+        scope = route_limits(
+            token_limiting={'output': {'max_tokens': 100, 'window_size': '1 minute'}}
         )
-        await limiter.count_output(token_count=75, identity=_IDENTITY)
+        await scope.count(Usage(output_tokens=75))
         events.clear()
 
-        await limiter.count_output(token_count=0, identity=_IDENTITY)
+        await scope.count(Usage(output_tokens=0))
 
         assert _thresholds(events) == []
 
     @pytest.mark.asyncio
     async def test_the_percentages_come_from_the_alert_config(
-        self, events, percentages
+        self, events, percentages, route_limits
     ):
         percentages([50])
-        limiter = _rate_limiter(max_requests=4)
+        scope = route_limits(**RATE_OF_4)
 
         for _ in range(4):
-            await limiter.check_and_count_request(**_ROUTE_CALL_ARGS)
+            await scope.check(Demand(request=True))
 
         assert [e.threshold_percentage for e in _thresholds(events)] == [50]
 
     @pytest.mark.asyncio
-    async def test_route_token_output(self, events, percentages):
-        limiter = TokenLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            output_config=Limiting(max_tokens=100, window_size='1 hour'),
+    async def test_route_token_output(self, events, percentages, route_limits):
+        scope = route_limits(
+            token_limiting={'output': {'max_tokens': 100, 'window_size': '1 hour'}}
         )
 
-        await limiter.count_output(token_count=80, identity=_IDENTITY)
+        await scope.count(Usage(output_tokens=80))
 
         (event,) = _thresholds(events)
         assert event.category == 'token_output'
@@ -584,18 +536,12 @@ class TestThresholdEvents:
         assert event.window_seconds == 3600
 
     @pytest.mark.asyncio
-    async def test_route_audio_duration(self, events, percentages):
-        limiter = DurationLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            config=AudioDurationLimiting(
-                max_duration_seconds=10, window_size='1 minute'
-            ),
+    async def test_route_audio_duration(self, events, percentages, route_limits):
+        scope = route_limits(
+            duration_limiting={'max_duration_seconds': 10, 'window_size': '1 minute'}
         )
 
-        await limiter.check_and_count_duration(
-            audio_bytes=make_wav_bytes(8.0), **_ROUTE_CALL_ARGS
-        )
+        await scope.check(Demand(audio_seconds=8.0))
 
         (event,) = _thresholds(events)
         assert event.category == 'audio_duration'
@@ -604,19 +550,13 @@ class TestThresholdEvents:
         assert event.api_key_uuid == str(API_KEY_UUID)
 
     @pytest.mark.asyncio
-    async def test_route_budget_in_currency(self, events, percentages):
-        limiter = BudgetLimiter(
-            project_uuid=_PROJECT_UUID,
-            route_name=_ROUTE,
-            config=Limiting(max_budget=1.0, window_size='1 minute'),
+    async def test_route_budget_in_currency(self, events, percentages, route_limits):
+        scope = route_limits(
+            budget_limiting={'max_budget': 1.0, 'window_size': '1 minute'}
         )
 
-        await limiter.count_output(
-            token_count=800, output_cost_per_token=0.001, identity=_IDENTITY
-        )
-        await limiter.count_duration(
-            seconds=200, cost_per_second=0.001, identity=_IDENTITY
-        )
+        await scope.count(_cost(0.8))
+        await scope.count(_cost(0.2))
 
         crossed = _thresholds(events)
         assert [e.threshold_percentage for e in crossed] == [75, 98]
@@ -627,11 +567,13 @@ class TestThresholdEvents:
 
     @pytest.mark.asyncio
     async def test_credential_limits_emit_with_the_credential_scope(
-        self, events, percentages
+        self, events, percentages, credential_limits
     ):
-        limiter = _credential_limiter(CredentialLimitCategory.TOKEN_INPUT, 100)
+        scope = credential_limits(
+            _credential_limit(CredentialLimitCategory.TOKEN_INPUT, 100)
+        )
 
-        await limiter.count_input_tokens(80, identity=_CREDENTIAL_IDENTITY)
+        await scope.count(Usage(input_tokens=80))
 
         (event,) = _thresholds(events)
         assert event.limit_scope == LimitScope.CREDENTIAL
@@ -641,36 +583,30 @@ class TestThresholdEvents:
 
     @pytest.mark.asyncio
     async def test_every_window_of_a_credential_category_emits(
-        self, events, percentages
+        self, events, percentages, credential_limits
     ):
-        hourly = _credential_limit(CredentialLimitCategory.TOKEN_OUTPUT, 100)
-        daily = _credential_limit(CredentialLimitCategory.TOKEN_OUTPUT, 100)
-        daily = daily.model_copy(update={'window_size': '1 day'})
-        limiter = CredentialLimiter(
-            credential_uuid=_CREDENTIAL_UUID,
-            credential_name='my-cred',
-            limits=[hourly, daily],
+        scope = credential_limits(
+            _credential_limit(CredentialLimitCategory.TOKEN_OUTPUT, 100),
+            _credential_limit(CredentialLimitCategory.TOKEN_OUTPUT, 100, '1 day'),
         )
 
-        await limiter.count_output_tokens(80, identity=_CREDENTIAL_IDENTITY)
+        await scope.count(Usage(output_tokens=80))
 
         assert sorted(e.window_seconds for e in _thresholds(events)) == [3600, 86400]
 
     @pytest.mark.asyncio
-    async def test_credential_rate_and_budget(self, events, percentages):
-        rate = _credential_limiter(CredentialLimitCategory.RATE, 4)
-        budget = _credential_limiter(CredentialLimitCategory.BUDGET, 1.0)
+    async def test_credential_rate_and_budget(
+        self, events, percentages, credential_limits
+    ):
+        scope = credential_limits(
+            _credential_limit(CredentialLimitCategory.RATE, 4),
+            _credential_limit(CredentialLimitCategory.BUDGET, 1.0),
+        )
 
         for _ in range(3):
-            await rate.check_and_count_request(**_CREDENTIAL_CALL_ARGS)
-        await budget.count_budget_output(
-            token_count=500,
-            output_cost_per_token=0.001,
-            identity=_CREDENTIAL_IDENTITY,
-        )
-        await budget.count_budget_duration(
-            seconds=300, cost_per_second=0.001, identity=_CREDENTIAL_IDENTITY
-        )
+            await scope.check(Demand(request=True))
+        await scope.count(_cost(0.5))
+        await scope.count(_cost(0.3))
 
         by_category = {e.category: e for e in _thresholds(events)}
         assert by_category['request_rate'].consumption == 3
@@ -680,29 +616,12 @@ class TestThresholdEvents:
 
     @pytest.mark.asyncio
     async def test_project_budget_emits_with_the_project_scope(
-        self, events, percentages
+        self, events, percentages, project_limits
     ):
-        limiter = ProjectBudgetLimiter(
-            project_uuid=_PROJECT_UUID,
-            project_name='my-project',
-            limits=[
-                ProjectBudgetLimitOut(
-                    uuid=uuid4(),
-                    algorithm=LimitingAlgorithmType.FIXED_WINDOW,
-                    window_size='1 day',
-                    value=1.0,
-                    created_at='2026-01-01 00:00:00',
-                    updated_at='2026-01-01 00:00:00',
-                )
-            ],
-        )
+        scope = project_limits(1.0)
 
-        await limiter.count_input(
-            token_count=500, input_cost_per_token=0.001, identity=_IDENTITY
-        )
-        await limiter.count_duration(
-            seconds=300, cost_per_second=0.001, identity=_IDENTITY
-        )
+        await scope.count(_cost(0.5))
+        await scope.count(_cost(0.3))
 
         (event,) = _thresholds(events)
         assert event.limit_scope == LimitScope.PROJECT

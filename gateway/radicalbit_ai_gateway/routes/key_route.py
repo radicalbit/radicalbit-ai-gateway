@@ -26,9 +26,9 @@ from radicalbit_ai_gateway.models.credential_limiting import (
 from radicalbit_ai_gateway.models.credential_rotation import GracePeriodOutOfBoundsError
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.route_meta import route_meta
+from radicalbit_ai_gateway.routes.dependencies import get_route_configs
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.dependencies import get_route_configs
 from radicalbit_ai_gateway.utils.exceptions import CredentialLimitValueError
 
 app_config = get_app_config()

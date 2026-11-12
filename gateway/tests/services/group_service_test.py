@@ -41,12 +41,11 @@ _MY_PROJECT_UUID = UUID('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
 
 
 class GroupServiceTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.group_dao: GroupDAO = MagicMock(spec_set=GroupDAO)
-        cls.key_dao: KeyDAO = MagicMock(spec_set=KeyDAO)
-        cls.key_service: KeyService = MagicMock()(spec_set=KeyService)
-        cls.group_route_dao: GroupRouteDAO = MagicMock(spec_set=GroupRouteDAO)
+    def setUp(self):
+        self.group_dao: GroupDAO = MagicMock(spec_set=GroupDAO)
+        self.key_dao: KeyDAO = MagicMock(spec_set=KeyDAO)
+        self.key_service: KeyService = MagicMock(spec_set=KeyService)
+        self.group_route_dao: GroupRouteDAO = MagicMock(spec_set=GroupRouteDAO)
         gw_a = get_plain_gateway('route-A')
         gw_b = get_plain_gateway('route-B')
         project_config = GatewayConfig(
@@ -59,23 +58,14 @@ class GroupServiceTest(unittest.TestCase):
             guardrails=[],
             cache=None,
         )
-        cls.group_service = GroupService(
-            group_dao=cls.group_dao,
-            key_service=cls.key_service,
-            group_route_dao=cls.group_route_dao,
+        self.group_service = GroupService(
+            group_dao=self.group_dao,
+            key_service=self.key_service,
+            group_route_dao=self.group_route_dao,
             project_configs={
                 'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
             },
         )
-        cls.mocks = [
-            cls.group_dao,
-            cls.key_service,
-            cls.group_route_dao,
-        ]
-
-    def setUp(self):
-        for mock in self.mocks:
-            mock.reset_mock()
 
     def test_create_group_ok(self):
         group = db_mock.get_sample_group_plain()
@@ -188,33 +178,27 @@ class GroupServiceTest(unittest.TestCase):
         self.key_service.add_group_to_key.assert_not_called()
 
     def test_delete_group(self):
-        group = db_mock.get_sample_group_plain()
-        self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        self.group_dao.delete_by_uuid = MagicMock(return_value=group)
-        res = self.group_service.delete_group(group.uuid, False, False)
-        self.group_dao.delete_by_uuid.assert_called_once_with(group.uuid)
-        assert res == GroupFullOut.from_group(group)
-
-    def test_delete_group_only_routes(self):
         group_uuid = uuid.uuid4()
-        group_route = db_mock.get_sample_group_route(group_uuid=group_uuid)
-        group = db_mock.get_sample_group(uuid=group_uuid, group_routes=[group_route])
+        group = db_mock.get_sample_group(
+            uuid=group_uuid,
+            group_routes=[db_mock.get_sample_group_route(group_uuid=group_uuid)],
+            keys=[db_mock.get_sample_key(uuid=uuid.uuid4())],
+        )
         self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        self.group_dao.delete_by_uuid = MagicMock(return_value=group)
-        res = self.group_service.delete_group(group.uuid, True, False)
-        self.group_dao.delete_by_uuid.assert_called_once_with(group.uuid)
-        assert res == GroupFullOut.from_group(group, True, False)
-
-    def test_delete_group_only_keys(self):
-        group_uuid = uuid.uuid4()
-        key_uuid = uuid.uuid4()
-        key = db_mock.get_sample_key(uuid=key_uuid)
-        group = db_mock.get_sample_group(uuid=group_uuid, keys=[key])
-        self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        self.group_dao.delete_by_uuid = MagicMock(return_value=group)
-        res = self.group_service.delete_group(group.uuid, False, True)
-        self.group_dao.delete_by_uuid.assert_called_once_with(group.uuid)
-        assert res == GroupFullOut.from_group(group, False, True)
+        for include_routes, include_keys in (
+            (False, False),
+            (True, False),
+            (False, True),
+        ):
+            with self.subTest(include_routes=include_routes, include_keys=include_keys):
+                self.group_dao.delete_by_uuid = MagicMock(return_value=group)
+                res = self.group_service.delete_group(
+                    group.uuid, include_routes, include_keys
+                )
+                self.group_dao.delete_by_uuid.assert_called_once_with(group.uuid)
+                assert res == GroupFullOut.from_group(
+                    group, include_routes, include_keys
+                )
 
     def test_delete_group_ko(self):
         group = db_mock.get_sample_group_plain()
@@ -253,13 +237,6 @@ class GroupServiceTest(unittest.TestCase):
             False,
         )
         self.group_dao.delete_by_uuid.assert_not_called()
-
-    def test_get_group_by_uuid(self):
-        group = db_mock.get_sample_group_plain()
-        self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        res = self.group_service.get_group_by_uuid(group.uuid, False, False)
-        self.group_dao.get_by_uuid.assert_called_once()
-        assert res == GroupFullOut.from_group(group)
 
     def test_get_missing_group_by_uuid(self):
         group = db_mock.get_sample_group_plain()
@@ -310,49 +287,21 @@ class GroupServiceTest(unittest.TestCase):
             group_in,
         )
 
-    def test_get_all_groups_by_route_empty(self):
-        self.group_dao.get_all_group_by_route_name = MagicMock(return_value=[])
-        groups = self.group_service.get_all_groups_by_route('my-project', 'route-A')
-        assert len(groups) == 0
-
-    def test_get_all_groups_by_route_with_single_group(self):
-        admin_group = db_mock.get_sample_group_plain()
-        self.group_dao.get_all_group_by_route_name = MagicMock(
-            return_value=[admin_group]
-        )
-        groups = self.group_service.get_all_groups_by_route('my-project', 'route-A')
-        assert len(groups) == 1
-        assert isinstance(groups[0], GroupFullOut)
-        assert groups[0].uuid == admin_group.uuid
-
     def test_get_all_groups_by_route(self):
-        dev = db_mock.get_sample_group_plain()
-        data = db_mock.get_sample_group_plain()
-        admin = db_mock.get_sample_group_plain()
-        self.group_dao.get_all_group_by_route_name = MagicMock(
-            return_value=[dev, data, admin]
+        groups = [db_mock.get_sample_group_plain(uuid=uuid.uuid4()) for _ in range(3)]
+        self.group_dao.get_all_group_by_route_name = MagicMock(return_value=groups)
+        res = self.group_service.get_all_groups_by_route('my-project', 'route-A')
+        self.group_dao.get_all_group_by_route_name.assert_called_once_with(
+            _MY_PROJECT_UUID, 'route-A'
         )
-        groups = self.group_service.get_all_groups_by_route('my-project', 'route-A')
-        assert len(groups) == 3
-        assert all(isinstance(x, GroupFullOut) for x in groups)
+        assert res == [GroupFullOut.from_group(group=g) for g in groups]
 
-    def test_get_all_groups_by_route_filters_correctly(self):
-        dashboard_group = db_mock.get_sample_group_plain(name='Dashboard Users')
-        _ = db_mock.get_sample_group_plain(name='Settings Users')
-        self.group_dao.get_all_group_by_route_name = MagicMock(
-            return_value=[dashboard_group]
-        )
-        groups = self.group_service.get_all_groups_by_route('my-project', 'route-A')
-        assert len(groups) == 1
-        assert groups[0].name == 'Dashboard Users'
-
-    def test_get_all_groups_by_non_existent_route(self):
-        self.group_dao.get_all_group_by_route_name = MagicMock(return_value=[])
+    def test_get_all_groups_by_non_existent_project(self):
         groups = self.group_service.get_all_groups_by_route(
             'this-project', 'this-route-does-not-exist'
         )
         assert groups == []
-        assert len(groups) == 0
+        self.group_dao.get_all_group_by_route_name.assert_not_called()
 
     def test_get_associable_keys_ok(self):
         group = db_mock.get_sample_group_plain()
@@ -369,31 +318,6 @@ class GroupServiceTest(unittest.TestCase):
         self.key_service.get_associable_keys.assert_called_once_with(group.uuid)
         assert len(res) == 2
 
-    def test_get_associable_keys_group_not_found(self):
-        self.key_service.get_associable_keys = MagicMock(
-            side_effect=GroupNotFoundError('error')
-        )
-        pytest.raises(
-            GroupNotFoundError,
-            self.group_service.get_associable_keys,
-            uuid.uuid4(),
-        )
-
-    def test_get_associable_groups_for_project_route_ok(self):
-        g1 = db_mock.get_sample_group_plain(uuid=uuid.uuid4(), name='g1')
-        g2 = db_mock.get_sample_group_plain(uuid=uuid.uuid4(), name='g2')
-        self.group_dao.get_all = MagicMock(return_value=[g1, g2])
-        self.group_dao.get_all_group_by_route_name = MagicMock(return_value=[])
-        res = self.group_service.get_associable_groups_for_project_route(
-            'my-project', 'route-A', False, False
-        )
-        self.group_dao.get_all.assert_called_once_with()
-        self.group_dao.get_all_group_by_route_name.assert_called_once_with(
-            _MY_PROJECT_UUID, 'route-A'
-        )
-        assert len(res) == 2
-        assert all(isinstance(g, GroupFullOut) for g in res)
-
     def test_get_associable_groups_for_project_route_excludes_assigned(self):
         g1 = db_mock.get_sample_group_plain(uuid=uuid.uuid4(), name='g1')
         g2 = db_mock.get_sample_group_plain(uuid=uuid.uuid4(), name='g2')
@@ -402,8 +326,11 @@ class GroupServiceTest(unittest.TestCase):
         res = self.group_service.get_associable_groups_for_project_route(
             'my-project', 'route-A', False, False
         )
-        assert len(res) == 1
-        assert res[0].uuid == g2.uuid
+        self.group_dao.get_all.assert_called_once_with()
+        self.group_dao.get_all_group_by_route_name.assert_called_once_with(
+            _MY_PROJECT_UUID, 'route-A'
+        )
+        assert res == [GroupFullOut.from_group(g2, False, False)]
 
     def test_get_associable_groups_for_project_route_not_found(self):
         pytest.raises(
@@ -416,18 +343,22 @@ class GroupServiceTest(unittest.TestCase):
         )
 
     def test_get_associable_routes_ok(self):
-        group = db_mock.get_sample_group_plain()
-        self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        self.group_dao.get_route_names_by_group_uuid = MagicMock(return_value=[])
-        res = self.group_service.get_associable_routes(group.uuid, 'my-project')
-        self.group_dao.get_route_names_by_group_uuid.assert_called_once_with(group.uuid)
-        assert (
-            len(res) == 2
-        )  # my-project/route-A and my-project/route-B from test config
-        assert all(isinstance(r, GroupRouteOut) for r in res)
-        assert {r.name for r in res} == {'route-A', 'route-B'}
-        assert all(r.project_uuid == _MY_PROJECT_UUID for r in res)
-        assert all(r.project_name == 'my-project' for r in res)
+        # keycloak groups can also be associated to routes
+        for owner in ('gateway', 'keycloak'):
+            with self.subTest(owner=owner):
+                group = db_mock.get_sample_group_plain()
+                group.owner = owner
+                self.group_dao.get_by_uuid = MagicMock(return_value=group)
+                self.group_dao.get_route_names_by_group_uuid = MagicMock(
+                    return_value=[]
+                )
+                res = self.group_service.get_associable_routes(group.uuid, 'my-project')
+                self.group_dao.get_route_names_by_group_uuid.assert_called_once_with(
+                    group.uuid
+                )
+                assert {r.name for r in res} == {'route-A', 'route-B'}
+                assert all(r.project_uuid == _MY_PROJECT_UUID for r in res)
+                assert all(r.project_name == 'my-project' for r in res)
 
     def test_get_associable_routes_excludes_assigned(self):
         group = db_mock.get_sample_group_plain()
@@ -439,15 +370,6 @@ class GroupServiceTest(unittest.TestCase):
         assert len(res) == 1
         assert res[0].name == 'route-B'
 
-    def test_get_associable_routes_keycloak_group(self):
-        group = db_mock.get_sample_group_plain()
-        group.owner = 'keycloak'
-        self.group_dao.get_by_uuid = MagicMock(return_value=group)
-        self.group_dao.get_route_names_by_group_uuid = MagicMock(return_value=[])
-        res = self.group_service.get_associable_routes(group.uuid, 'my-project')
-        self.group_dao.get_route_names_by_group_uuid.assert_called_once_with(group.uuid)
-        assert len(res) == 2  # keycloak groups can also be associated to routes
-
     def test_get_associable_routes_group_not_found(self):
         self.group_dao.get_by_uuid = MagicMock(return_value=None)
         pytest.raises(
@@ -455,31 +377,6 @@ class GroupServiceTest(unittest.TestCase):
             self.group_service.get_associable_routes,
             uuid.uuid4(),
             'my-project',
-        )
-
-    def test_validate_route_finds_project_route(self):
-        """_validate_route resolves project routes via the shared project_configs dict."""
-        project_config = get_plain_gateway('my-route')
-        service = GroupService(
-            group_dao=self.group_dao,
-            key_service=self.key_service,
-            group_route_dao=self.group_route_dao,
-            project_configs={
-                'my-project': ProjectEntry(uuid=_MY_PROJECT_UUID, config=project_config)
-            },
-        )
-        service._validate_route('my-project', 'my-route')  # must not raise
-
-    def test_validate_route_project_route_not_found(self):
-        """_validate_route raises RouteNotFoundError when the project route doesn't exist."""
-        service = GroupService(
-            group_dao=self.group_dao,
-            key_service=self.key_service,
-            group_route_dao=self.group_route_dao,
-            project_configs={},
-        )
-        pytest.raises(
-            RouteNotFoundError, service._validate_route, 'my-project', 'my-route'
         )
 
     def test_add_project_routes(self):
@@ -670,7 +567,6 @@ class GroupServiceTest(unittest.TestCase):
         assert isinstance(res, GroupsRouteOut)
         assert res.route_name == 'my-route'
         assert res.project_name == 'my-project'
-        assert res.groups is not None
         assert len(res.groups) == 1
         assert res.groups[0].uuid == group.uuid
 

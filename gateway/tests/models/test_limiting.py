@@ -31,22 +31,24 @@ def test_init_wrong_window_size(window_size_input, expected_window_size_attr):
         _ = Limiting(window_size=window_size_input)
 
 
-def test_init_max_request_or_max_token():
+@pytest.mark.parametrize(
+    'kwargs',
+    [
+        pytest.param(
+            {'max_tokens': 1000, 'max_requests': 50}, id='tokens-and-requests'
+        ),
+        pytest.param(
+            {'max_tokens': 1000, 'max_duration_seconds': 60}, id='tokens-and-duration'
+        ),
+    ],
+)
+def test_only_one_max_can_be_set(kwargs):
     with pytest.raises(
         ValueError,
         match=r'Only one of max_requests, max_tokens, max_budget, or '
         r'max_duration_seconds can be set.',
     ):
-        _ = Limiting(max_tokens=1000, max_requests=50)
-
-
-def test_init_max_duration_seconds_with_max_tokens_rejected():
-    with pytest.raises(
-        ValueError,
-        match=r'Only one of max_requests, max_tokens, max_budget, or '
-        r'max_duration_seconds can be set.',
-    ):
-        _ = Limiting(max_tokens=1000, max_duration_seconds=60)
+        Limiting(**kwargs)
 
 
 def test_max_duration_seconds_alone_is_valid():
@@ -54,18 +56,18 @@ def test_max_duration_seconds_alone_is_valid():
     assert config.max_duration_seconds == 300
 
 
-def test_max_budget_computed_field():
-    """Test that max_budget stays as float and max_budget_in_units is computed."""
-    config = Limiting(max_budget=1.5)
-    assert config.max_budget == 1.5
-    assert config.max_budget_in_units == 1_500_000_000
-
-
-def test_max_budget_computed_field_none():
-    """Test that max_budget_in_units is None when max_budget is None."""
-    config = Limiting()
-    assert config.max_budget is None
-    assert config.max_budget_in_units is None
+@pytest.mark.parametrize(
+    ('kwargs', 'max_budget', 'max_budget_in_units'),
+    [
+        pytest.param({'max_budget': 1.5}, 1.5, 1_500_000_000, id='float-budget'),
+        pytest.param({}, None, None, id='no-budget'),
+    ],
+)
+def test_max_budget_in_units_is_computed(kwargs, max_budget, max_budget_in_units):
+    """max_budget stays a float and max_budget_in_units is derived from it."""
+    config = Limiting(**kwargs)
+    assert config.max_budget == max_budget
+    assert config.max_budget_in_units == max_budget_in_units
 
 
 class TestAlignedFixedWindowValidation:
@@ -96,28 +98,18 @@ class TestAlignedFixedWindowValidation:
         )
         assert limiting.window_size == size
 
-    def test_invalid_window_size_3_days_rejected(self):
-        """Multi-day sizes should be rejected."""
+    @pytest.mark.parametrize(
+        'size',
+        [
+            pytest.param('3 days', id='multi-day'),
+            pytest.param('7 minutes', id='non-divisor'),
+            pytest.param('1 month', id='variable-month-length'),
+        ],
+    )
+    def test_invalid_window_sizes_rejected(self, size):
         with pytest.raises(ValueError, match='not allowed for ALIGNED_FIXED_WINDOW'):
             Limiting(
-                algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
-                window_size='3 days',
-            )
-
-    def test_invalid_window_size_7_minutes_rejected(self):
-        """Non-divisor sizes should be rejected."""
-        with pytest.raises(ValueError, match='not allowed for ALIGNED_FIXED_WINDOW'):
-            Limiting(
-                algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
-                window_size='7 minutes',
-            )
-
-    def test_invalid_window_size_1_month_rejected(self):
-        """1 month should be rejected (variable month lengths)."""
-        with pytest.raises(ValueError, match='not allowed for ALIGNED_FIXED_WINDOW'):
-            Limiting(
-                algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW,
-                window_size='1 month',
+                algorithm=LimitingAlgorithmType.ALIGNED_FIXED_WINDOW, window_size=size
             )
 
     def test_fixed_window_allows_any_size(self):

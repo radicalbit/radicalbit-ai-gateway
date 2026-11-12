@@ -6,6 +6,12 @@ import time
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
+from radicalbit_ai_gateway.invocation.fallback_chain import (
+    Candidate,
+    Reply,
+    Skip,
+    TryNext,
+)
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
@@ -15,9 +21,14 @@ from radicalbit_ai_gateway.llm.messages import (
 )
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import LLMRoutingConfig
-from radicalbit_ai_gateway.routing.common import routing_text, set_span_attributes
+from radicalbit_ai_gateway.routing.common import (
+    RoutingSpendRecorder,
+    record_routing_spend,
+    routing_chain,
+    routing_text,
+    set_span_attributes,
+)
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.request_context import record_routing_spend
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
@@ -39,7 +50,7 @@ def _set_attributes(**attributes) -> None:
 
 
 class _NoAnswer(Exception):
-    """The router model gave no answer: try the fallback."""
+    """Neither the router model nor its fallback gave an answer."""
 
 
 class _BadAnswer(Exception):
@@ -131,7 +142,11 @@ class LLMRouter:
             for model_id, router_model in router_models.items()
         }
 
-    async def select_model(self, messages: list[BaseMessage]) -> Model:
+    async def select_model(
+        self,
+        messages: list[BaseMessage],
+        record_spend: RoutingSpendRecorder | None = None,
+    ) -> Model:
         state = routing_text(messages, self._config.history, self._config.message_roles)
         _set_attributes(
             options=json.dumps(
@@ -148,7 +163,7 @@ class LLMRouter:
         _set_attributes(state=state)
 
         try:
-            scores = await self._ask(state)
+            scores = await self._ask(state, record_spend)
         except _NoAnswer:
             return self._default(REASON_ERROR)
         except _BadAnswer:
@@ -165,28 +180,47 @@ class LLMRouter:
         _set_attributes(chosen_model_id=best.model_id, default_used=False)
         return self._models_by_id[best.model_id]
 
-    async def _ask(self, state: str) -> dict[str, float]:
+    async def _ask(
+        self, state: str, record_spend: RoutingSpendRecorder | None
+    ) -> dict[str, float]:
         """Ask the router model, then the fallback if the first gives no answer."""
         model_id = self._config.router_model_id
+        fallback_id = self._config.fallback_model_id
         _set_attributes(model_id=model_id, fallback_used=False)
-        try:
-            return await self._ask_model(model_id, state)
-        except _NoAnswer:
-            fallback_id = self._config.fallback_model_id
-            if not fallback_id:
-                raise
-        logger.warning(
-            'LLM routing falls back from model %s to model %s',
-            model_id,
-            fallback_id,
-        )
-        _set_attributes(model_id=fallback_id, fallback_used=True)
-        return await self._ask_model(fallback_id, state)
 
-    async def _ask_model(self, model_id: str, state: str) -> dict[str, float]:
+        async def ask(candidate: Candidate) -> Reply:
+            if candidate.is_fallback:
+                logger.warning(
+                    'LLM routing falls back from model %s to model %s',
+                    model_id,
+                    fallback_id,
+                )
+                _set_attributes(model_id=fallback_id, fallback_used=True)
+            return Reply(
+                await self._ask_model(candidate.model.model_id, state, record_spend)
+            )
+
+        parsed = await routing_chain(
+            [self._router_models[mid].model for mid in (model_id, fallback_id) if mid],
+            ROUTER_MODEL_TYPE,
+            record_spend,
+            no_answer=_NoAnswer,
+        ).call(ask)
+        if not isinstance(parsed, BaseModel):
+            raise _BadAnswer
+        return parsed.model_dump()
+
+    async def _ask_model(
+        self, model_id: str, state: str, record_spend: RoutingSpendRecorder | None
+    ) -> object:
+        """Return the router model's parsed answer, or None when it has none.
+
+        Raise TryNext when the model gives no answer, and Skip when it cannot
+        be asked (no structured output): it is never called.
+        """
         structured_model = self._structured_models[model_id]
         if structured_model is None:
-            raise _NoAnswer
+            raise Skip
         start = time.monotonic()
         try:
             response = await asyncio.wait_for(
@@ -200,25 +234,31 @@ class LLMRouter:
             )
         except Exception as e:
             logger.warning('LLM routing model %s failed', model_id, exc_info=True)
-            raise _NoAnswer from e
+            raise TryNext(e) from e
         latency_ms = (time.monotonic() - start) * 1000
         # Count before reading the scores. A bad answer still spent tokens.
-        await self._record_spend(model_id, response.get('raw'), latency_ms)
+        await self._record_spend(
+            record_spend, model_id, response.get('raw'), latency_ms
+        )
 
         parsed = response.get('parsed')
         if not isinstance(parsed, BaseModel):
             logger.warning('LLM routing model %s: no parseable scores', model_id)
-            raise _BadAnswer
-        return parsed.model_dump()
+        return parsed
 
     async def _record_spend(
-        self, model_id: str, raw_response: object, latency_ms: float
+        self,
+        record_spend: RoutingSpendRecorder | None,
+        model_id: str,
+        raw_response: object,
+        latency_ms: float,
     ) -> None:
         """Charge the router call, input and output tokens, to the request."""
         if not isinstance(raw_response, AIMessage) or not raw_response.usage_metadata:
             logger.warning('LLM routing model %s: no token usage', model_id)
             return
         await record_routing_spend(
+            record_spend,
             self._router_models[model_id].model,
             raw_response.usage_metadata.get('input_tokens', 0),
             latency_ms,

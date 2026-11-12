@@ -1,3 +1,5 @@
+import pytest
+
 from tests.common.mocked_gateway_config import (
     get_default_gateway,
     get_default_gateway_without_features,
@@ -70,93 +72,37 @@ def test_flags_event_dto_routing_per_route():
     }
 
 
-def test_from_dao_no_semantic_cache():
-    """Test CostDataDTO.from_dao when semantic_cache_cost_data is None."""
-    cost_data = CostData(
-        input_cost=10.0,
-        output_cost=20.0,
-        total_cost=30.0,
-        cache_triggered=5,
-        saved_amount_input=0.1,
-        saved_amount_output=0.2,
-        total_saved_amount=0.3,
+COSTS = {'input_cost': 10.0, 'output_cost': 20.0, 'total_cost': 30.0}
+
+
+@pytest.mark.parametrize(
+    ('saved', 'semantic_net_savings', 'expected'),
+    [
+        pytest.param(0.3, None, 0.3, id='no_semantic_cache'),
+        pytest.param(0.15, 0.05, 0.20, id='semantic_cache_savings_added'),
+        pytest.param(0.15, 0.0, 0.15, id='semantic_cache_without_savings'),
+        pytest.param(None, 0.05, None, id='nothing_saved'),
+    ],
+)
+def test_from_dao_saved_amount(saved, semantic_net_savings, expected):
+    """totals.saved is what the route saved, plus the semantic cache's net savings."""
+    semantic = (
+        None
+        if semantic_net_savings is None
+        else SemanticCacheCostData(net_savings=semantic_net_savings)
     )
 
-    result = CostDataDTO.from_dao(cost_data, None)
-
-    assert result.input_cost == 10.0
-    assert result.output_cost == 20.0
-    assert result.total_cost == 30.0
-    assert result.cache_triggered == 5
-    assert result.saved_amount_input == 0.1
-    assert result.saved_amount_output == 0.2
-    assert result.total_saved_amount == 0.3
-
-
-def test_from_dao_with_semantic_cache_full():
-    """Test CostDataDTO.from_dao with all semantic cache fields populated."""
-    cost_data = CostData(
-        input_cost=10.0,
-        output_cost=20.0,
-        total_cost=30.0,
-        cache_triggered=2,
-        cache_saved_tokens_input=100,
-        cache_saved_tokens_output=200,
-        saved_amount_input=0.05,
-        saved_amount_output=0.10,
-        total_cached_tokens=300,
-        total_saved_amount=0.15,
+    result = CostDataDTO.from_dao(
+        CostData(**COSTS, total_saved_amount=saved), semantic, DetailedCostBreakdown()
     )
 
-    semantic_cache_data = SemanticCacheCostData(
-        embedding_inference_cost=0.01,
-        cache_triggered=3,
-        cache_saved_tokens_input=50,
-        cache_saved_tokens_output=100,
-        llm_input_request_savings=0.02,
-        llm_output_request_savings=0.04,
-        llm_total_request_savings=0.06,
-        total_cached_tokens=150,
-        net_savings=0.05,  # 0.06 - 0.01
-    )
-
-    result = CostDataDTO.from_dao(cost_data, semantic_cache_data)
-
-    assert result.input_cost == 10.01  # 10.0 + 0.01
-    assert result.output_cost == 20.0
-    assert result.total_cost == 30.01  # 30.0 + 0.01
-    assert result.cache_triggered == 5  # 2 + 3
-    assert result.cache_saved_tokens_input == 150  # 100 + 50
-    assert result.cache_saved_tokens_output == 300  # 200 + 100
-    assert result.saved_amount_input == 0.07  # 0.05 + 0.02
-    assert result.saved_amount_output == 0.14  # 0.10 + 0.04
-    assert result.total_cached_tokens == 450  # 300 + 150
-    assert result.total_saved_amount == 0.20  # 0.15 + 0.05
+    assert result.totals.saved == pytest.approx(expected)
 
 
-def test_from_dao_semantic_cache_zero_values():
-    """Test CostDataDTO.from_dao when semantic cache has zero/falsy values."""
-    cost_data = CostData(
-        input_cost=10.0,
-        output_cost=20.0,
-        total_cost=30.0,
-    )
+def test_from_dao_without_a_breakdown_serves_nothing():
+    result = CostDataDTO.from_dao(CostData(**COSTS, total_saved_amount=0.3), None)
 
-    semantic_cache_data = SemanticCacheCostData(
-        embedding_inference_cost=0.0,
-        cache_triggered=0,
-        llm_input_request_savings=0.0,
-        llm_output_request_savings=0.0,
-        llm_total_request_savings=0.0,
-        net_savings=0.0,
-    )
-
-    result = CostDataDTO.from_dao(cost_data, semantic_cache_data)
-
-    # With zero embedding cost, input_cost and total_cost should remain unchanged
-    assert result.input_cost == 10.0
-    assert result.output_cost == 20.0
-    assert result.total_cost == 30.0
+    assert result.model_dump(exclude_none=True) == {}
 
 
 def test_from_dao_with_transcription_models():
