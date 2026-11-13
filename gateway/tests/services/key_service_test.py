@@ -130,9 +130,9 @@ class KeyServiceTest(unittest.TestCase):
         )
         self.key_dao.delete_by_uuid.assert_not_called()
 
-    def test_rename_keycloak_key_raises(self):
+    def test_rename_externally_managed_key_raises(self):
         key = db_mock.get_sample_key()
-        key.owner = 'keycloak'
+        key.owner = 'idp'
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
         self.key_dao.update_key_name = MagicMock()
         pytest.raises(

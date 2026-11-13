@@ -238,9 +238,9 @@ class GroupServiceTest(unittest.TestCase):
         )
         self.group_dao.delete_by_uuid.assert_not_called()
 
-    def test_rename_keycloak_group_raises(self):
+    def test_rename_externally_managed_group_raises(self):
         group = db_mock.get_sample_group_plain()
-        group.owner = 'keycloak'
+        group.owner = 'idp'
         self.group_dao.get_by_uuid = MagicMock(return_value=group)
         self.group_dao.update_group_name = MagicMock()
         pytest.raises(
