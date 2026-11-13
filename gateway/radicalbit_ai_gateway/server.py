@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
+from importlib.metadata import PackageNotFoundError, version as package_version
 import logging.config
 import os
 from urllib.parse import urlparse
@@ -8,12 +9,14 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from httpx_aiohttp import HttpxAiohttpClient
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_client import start_http_server
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
 from traceloop.sdk import Traceloop
@@ -111,6 +114,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     budget_limiter_exception_handler,
     gateway_exception_handler,
     guardrail_exception_handler,
+    http_exception_handler,
     judge_exception_handler,
     mcp_transport_exception_handler,
     model_invoker_exception_handler,
@@ -349,11 +353,26 @@ class GatewayApp(FastAPI):
             self.exception_handlers = handlers
 
 
+def _gateway_version() -> str:
+    try:
+        return package_version('radicalbit-ai-gateway')
+    except PackageNotFoundError:
+        return '0.1.0'
+
+
+def _operation_id(route: APIRoute) -> str:
+    """``<first tag>_<handler name>``, for the routes without an explicit
+    ``operation_id``: unique, and stable unlike FastAPI's path-based default.
+    """
+    return f'{route.tags[0]}_{route.name}' if route.tags else route.name
+
+
 app = GatewayApp(
     title='Radicalbit AI Gateway',
     description='A FastAPI server for the Radicalbit AI Gateway',
-    version='0.1.0',
+    version=_gateway_version(),
     lifespan=lifespan,
+    generate_unique_id_function=_operation_id,
 )
 
 # Register the default token validator before plugins load.
@@ -433,6 +452,7 @@ app.include_router(
 
 # exception_handler
 app.add_exception_handler(Exception, unhandled_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestRateLimitExceeded, rate_limit_exceeded_handler)
 app.add_exception_handler(TokenLimitExceeded, token_limiter_exception_handler)
 app.add_exception_handler(

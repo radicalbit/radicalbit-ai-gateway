@@ -26,6 +26,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     GroupOut,
     KeyFullOut,
     KeyGroupIn,
+    KeyUpdateIn,
 )
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
@@ -44,6 +45,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     CredentialLimitAlreadyExistsError,
     CredentialLimitNotFoundError,
     CredentialLimitValueError,
+    KeyExternallyManagedError,
     KeyGroupAlreadyExistsError,
     KeyInternalError,
     KeyNotFoundError,
@@ -122,11 +124,24 @@ class KeyServiceTest(unittest.TestCase):
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
         self.key_dao.delete_by_uuid = MagicMock()
         pytest.raises(
-            KeyOperationNotAllowedError,
+            KeyExternallyManagedError,
             self.key_service.delete_key,
             key.uuid,
         )
         self.key_dao.delete_by_uuid.assert_not_called()
+
+    def test_rename_externally_managed_key_raises(self):
+        key = db_mock.get_sample_key()
+        key.owner = 'external'
+        self.key_dao.get_by_uuid = MagicMock(return_value=key)
+        self.key_dao.update_key_name = MagicMock()
+        pytest.raises(
+            KeyExternallyManagedError,
+            self.key_service.update_key_name,
+            key.uuid,
+            KeyUpdateIn(name='renamed'),
+        )
+        self.key_dao.update_key_name.assert_not_called()
 
     def test_delete_key_ko(self):
         key = db_mock.get_sample_key()
@@ -913,7 +928,7 @@ class TestGroupMembershipLeavesLimitsAlone:
         key.owner = 'keycloak'
         key_dao.get_by_uuid = MagicMock(return_value=key)
         key_dao.remove_group = MagicMock()
-        with pytest.raises(KeyOperationNotAllowedError):
+        with pytest.raises(KeyExternallyManagedError):
             await service.remove_group_from_key(key.uuid, group_uuid)
         key_dao.remove_group.assert_not_called()
 

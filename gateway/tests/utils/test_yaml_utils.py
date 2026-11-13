@@ -1,6 +1,9 @@
+import time
+
 import pytest
 
 from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.utils import yaml_utils
 from radicalbit_ai_gateway.utils.app_config import PromptManagerConfig, get_app_config
 from radicalbit_ai_gateway.utils.exceptions import ProjectConfigValidationError
 from radicalbit_ai_gateway.utils.yaml_utils import (
@@ -37,6 +40,25 @@ from radicalbit_ai_gateway.utils.yaml_utils import (
 )
 def test_check_no_literal_secrets(yaml_content, expected):
     assert check_no_literal_secrets(yaml_content) == expected
+
+
+def test_check_no_literal_secrets_counts_lines_after_blank_lines():
+    assert check_no_literal_secrets('a: 1\n\n\napi_key: sk-1\n') == [
+        'line 4: api_key: sk-1'
+    ]
+
+
+def test_check_no_literal_secrets_value_on_the_next_line_is_checked():
+    assert check_no_literal_secrets('api_key:\n  sk-1\n') == [
+        'line 1: api_key:\n  sk-1'
+    ]
+
+
+def test_check_no_literal_secrets_is_linear_on_a_crafted_config():
+    # The previous pattern took about 25 s on this: quadratic in the newlines
+    started = time.perf_counter()
+    assert check_no_literal_secrets('api_key:' + '\n' * 200_000) == []
+    assert time.perf_counter() - started < 1
 
 
 def test_parse_yaml_with_secret_placeholders():
@@ -231,6 +253,23 @@ def test_validate_gateway_config_rejects_with_message(
     message = str(exc_info.value)
     for fragment in fragments:
         assert fragment in message
+
+
+@pytest.mark.parametrize('error', [KeyError('routes'), TypeError('not a mapping')])
+def test_validate_gateway_config_reports_a_non_validation_error(monkeypatch, error):
+    def fail(parsed):
+        raise error
+
+    monkeypatch.setattr(yaml_utils.GatewayConfig, 'model_validate', fail)
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config('routes: {}\n', check_secrets=False)
+    assert exc_info.value.details == [
+        {
+            'loc': [],
+            'msg': f'Invalid gateway configuration: {error}',
+            'type': 'invalid_config',
+        }
+    ]
 
 
 def test_validate_gateway_config_rejects_missing_model_prompt_file(tmp_path):

@@ -24,6 +24,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitValueIn,
 )
 from radicalbit_ai_gateway.models.credential_rotation import GracePeriodOutOfBoundsError
+from radicalbit_ai_gateway.models.error_dto import error_responses
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.route_meta import route_meta
 from radicalbit_ai_gateway.routes.dependencies import get_route_configs
@@ -39,24 +40,37 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 class KeyRoute:
     @staticmethod
     def get_key_router(key_service: KeyService) -> APIRouter:
-        router = APIRouter(tags=['key_api'])
+        router = APIRouter(tags=['credentials'])
 
-        @router.post('/keys', status_code=201, response_model=KeyFullOut)
+        @router.post(
+            '/keys',
+            status_code=201,
+            response_model=KeyFullOut,
+            operation_id='credentials_create',
+            responses=error_responses(409),
+        )
         @route_meta(entity_type='KEY', response_uuid_field='uuid')
         def create_key(
             key_in: KeyCreateIn,
         ):
+            """Create a credential. The response is the only one carrying its value."""
             key = key_service.create_key(key_in)
             logger.info('Created key %s', key.uuid)
             return key
 
-        @router.get('/keys', status_code=200, response_model=list[KeyFullOut])
+        @router.get(
+            '/keys',
+            status_code=200,
+            response_model=list[KeyFullOut],
+            operation_id='credentials_list',
+        )
         def get_all(
             include_groups: bool = False,
             only_unassigned: bool = Query(False),
             include_limits: bool = Query(False),
             route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
+            """List the credentials."""
             return key_service.get_all(
                 include_groups, only_unassigned, include_limits, route_configs
             )
@@ -77,13 +91,20 @@ class KeyRoute:
                 }
                 await asyncio.sleep(10)
 
-        @router.get('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
+        @router.get(
+            '/keys/{key_uuid}',
+            status_code=200,
+            response_model=KeyFullOut,
+            operation_id='credentials_get',
+            responses=error_responses(404),
+        )
         def get_key_by_uuid(
             key_uuid: UUID,
             include_groups: bool = False,
             include_limits: bool = Query(False),
             route_configs: dict[str, GatewayRouteConfig] = Depends(get_route_configs),
         ):
+            """Get a credential."""
             return key_service.get_key_by_uuid(
                 key_uuid, include_groups, include_limits, route_configs
             )
@@ -93,16 +114,30 @@ class KeyRoute:
         def update_key(key_uuid: UUID, key_in: KeyUpdateIn):
             return key_service.update_key_name(key_uuid, key_in)
 
-        @router.delete('/keys/{key_uuid}', status_code=200, response_model=KeyFullOut)
+        @router.delete(
+            '/keys/{key_uuid}',
+            status_code=200,
+            response_model=KeyFullOut,
+            operation_id='credentials_delete',
+            responses=error_responses(404, 409),
+        )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
         def delete_key(key_uuid: UUID, include_groups: bool = Query(False)):
+            """Delete a credential: it stops authenticating at once."""
             return key_service.delete_key(key_uuid, include_groups)
 
         @router.post(
-            '/keys/{key_uuid}/rotation', status_code=200, response_model=KeyFullOut
+            '/keys/{key_uuid}/rotation',
+            status_code=200,
+            response_model=KeyFullOut,
+            operation_id='credentials_rotate',
+            responses=error_responses(404, 405, 409),
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
         def rotate_key(key_uuid: UUID, rotation_in: KeyRotationIn):
+            """Give a credential a new value. The previous value keeps
+            authenticating for the grace period; null ends it at once.
+            """
             try:
                 key = key_service.rotate_key(key_uuid, rotation_in)
             except GracePeriodOutOfBoundsError as e:
@@ -124,11 +159,16 @@ class KeyRoute:
             return key
 
         @router.delete(
-            '/keys/{key_uuid}/rotation', status_code=200, response_model=KeyFullOut
+            '/keys/{key_uuid}/rotation',
+            status_code=200,
+            response_model=KeyFullOut,
+            operation_id='credentials_end_grace_period',
+            responses=error_responses(404, 409),
         )
         # Ends the grace period: an update of the credential, not its deletion
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid', action='UPDATE')
         def end_grace_period(key_uuid: UUID):
+            """End a rotation's grace period: the previous value stops authenticating."""
             key = key_service.end_grace_period(key_uuid)
             logger.info('Ended the grace period of key %s', key_uuid)
             return key

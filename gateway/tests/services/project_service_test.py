@@ -46,6 +46,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ProjectBudgetLimitAlreadyExistsError,
     ProjectBudgetLimitConflictError,
     ProjectBudgetLimitNotFoundError,
+    ProjectConfigStateError,
     ProjectConfigValidationError,
     ProjectNotFoundError,
 )
@@ -367,6 +368,44 @@ class ProjectServiceTest(DatabaseIntegration):
         assert ca.config_file == _VALID
         assert ca.config_status == ConfigStatus.DRAFT
         assert ca.updated_at is not None
+
+    def test_state_errors_are_409_with_their_code(self):
+        out, a, _ = self._create()
+        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        cases = [
+            (lambda: self.svc.serve_config(out.uuid, a), 'config_not_approved'),
+            (
+                lambda: self.svc.cancel_approval(out.uuid, a),
+                'config_not_ready_to_serve',
+            ),
+            (lambda: self.svc.unserve_config(out.uuid, a), 'config_not_served'),
+        ]
+        for action, code in cases:
+            with pytest.raises(ProjectConfigStateError) as exc_info:
+                action()
+            assert (exc_info.value.status_code, exc_info.value.code) == (409, code)
+
+        self.svc.approve_config(out.uuid, a)
+        with pytest.raises(ProjectConfigStateError) as exc_info:
+            self.svc.approve_config(out.uuid, a)
+        assert exc_info.value.code == 'config_no_draft_to_approve'
+
+        self.svc.serve_config(out.uuid, a)
+        for action, code in [
+            (
+                lambda: self.svc.update_config(
+                    out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
+                ),
+                'config_served_not_editable',
+            ),
+            (
+                lambda: self.svc.import_config(out.uuid, a, _VALID.encode()),
+                'config_served_not_importable',
+            ),
+        ]:
+            with pytest.raises(ProjectConfigStateError) as exc_info:
+                action()
+            assert (exc_info.value.status_code, exc_info.value.code) == (409, code)
 
     # --- listing / filters ---
 
