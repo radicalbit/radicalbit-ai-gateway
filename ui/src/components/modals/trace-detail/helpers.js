@@ -152,3 +152,9 @@ export function spanTreeRows(tree) {
 
   return [row(tree)];
 }
+
+export function attributeTags(value) {
+  const list = Array.isArray(value) ? value : String(value ?? '').split(',');
+
+  return list.map((tag) => String(tag).trim()).filter(Boolean);
+}
