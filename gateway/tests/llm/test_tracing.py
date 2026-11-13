@@ -1869,3 +1869,490 @@ async def test_responses_stream_stopped_after_its_final_event_succeeds(spans, me
     assert span.attributes['gen_ai.response.id'] == 'resp_1'
     assert span.attributes['gen_ai.usage.output_tokens'] == 7
     assert _token_points(metrics)['output'] == ('fake', 'gpt-6-luna-2026', 7)
+
+
+# ── Native Messages API ──────────────────────────────────────────────────────
+
+
+class _MessagesModel(_Model):
+    """A model serving the Messages API with canned events or a message."""
+
+    def __init__(self, message=None, events=(), error=None, **settings: Any):
+        super().__init__(error=error, **settings)
+        self.message = message
+        self.events = list(events)
+
+    async def _ainvoke_native_messages(
+        self, body: dict, headers: dict[str, str]
+    ) -> dict:
+        if self.error:
+            raise self.error
+        return self.message
+
+    async def _astream_native_messages(
+        self, body: dict, headers: dict[str, str]
+    ) -> AsyncIterator[tuple[str, str]]:
+        for event in self.events:
+            yield event['type'], json.dumps(event)
+        if self.error:
+            raise self.error
+
+
+MESSAGES_BODY = {
+    'model': 'proj/assistant',
+    'max_tokens': 1024,
+    'temperature': 0.5,
+    'system': [{'type': 'text', 'text': 'Be terse.'}],
+    'messages': [
+        {
+            'role': 'user',
+            'content': [
+                {'type': 'text', 'text': 'Weather?'},
+                {
+                    'type': 'image',
+                    'source': {
+                        'type': 'base64',
+                        'media_type': 'image/png',
+                        'data': 'iVBOR',
+                    },
+                },
+                {
+                    'type': 'image',
+                    'source': {'type': 'url', 'url': 'https://example.com/sky.png'},
+                },
+            ],
+        },
+        {
+            'role': 'assistant',
+            'content': [
+                {'type': 'thinking', 'thinking': 'Need a tool.', 'signature': 'sig'},
+                {'type': 'redacted_thinking', 'data': 'gAAAA'},
+                {
+                    'type': 'tool_use',
+                    'id': 'toolu_1',
+                    'name': 'weather',
+                    'input': {'city': 'Paris'},
+                },
+            ],
+        },
+        {
+            'role': 'user',
+            'content': [
+                {'type': 'tool_result', 'tool_use_id': 'toolu_1', 'content': 'rainy'},
+                {
+                    'type': 'tool_result',
+                    'tool_use_id': 'toolu_2',
+                    'content': [{'type': 'text', 'text': 'windy'}],
+                },
+            ],
+        },
+        {'role': 'user', 'content': 'And in Rome?'},
+    ],
+    'tools': [
+        {
+            'name': 'weather',
+            'description': 'The weather',
+            'input_schema': {'type': 'object'},
+        },
+        {'type': 'web_search_20250305', 'name': 'web_search'},
+    ],
+}
+
+MESSAGE = {
+    'id': 'msg_1',
+    'type': 'message',
+    'role': 'assistant',
+    'model': 'claude-luna-5-2026',
+    'content': [
+        {'type': 'thinking', 'thinking': 'Rome next.', 'signature': 'sig'},
+        {'type': 'text', 'text': 'Let me check.'},
+        {
+            'type': 'tool_use',
+            'id': 'toolu_3',
+            'name': 'weather',
+            'input': {'city': 'Rome'},
+        },
+    ],
+    'stop_reason': 'tool_use',
+    'stop_sequence': None,
+    'usage': {
+        'input_tokens': 100,
+        'output_tokens': 7,
+        'cache_read_input_tokens': 40,
+        'cache_creation_input_tokens': 30,
+        'cache_creation': {
+            'ephemeral_5m_input_tokens': 20,
+            'ephemeral_1h_input_tokens': 10,
+        },
+    },
+}
+MESSAGE_OUTPUT = {
+    'role': 'assistant',
+    'parts': [
+        {'type': 'reasoning', 'content': 'Rome next.'},
+        {'type': 'text', 'content': 'Let me check.'},
+        {
+            'type': 'tool_call',
+            'id': 'toolu_3',
+            'name': 'weather',
+            'arguments': {'city': 'Rome'},
+        },
+    ],
+    'finish_reason': 'tool_call',
+}
+
+
+def _message_events(message: dict) -> list[dict]:
+    """Return ``message`` as Anthropic streams it: text and JSON in two pieces."""
+    usage = message['usage']
+    events: list[dict] = [
+        {
+            'type': 'message_start',
+            'message': {
+                **message,
+                'content': [],
+                'stop_reason': None,
+                'usage': {**usage, 'output_tokens': 1},
+            },
+        },
+        {'type': 'ping'},
+    ]
+    for index, block in enumerate(message['content']):
+        if block['type'] == 'text':
+            start = {**block, 'text': ''}
+            half = len(block['text']) // 2
+            deltas = [
+                {'type': 'text_delta', 'text': block['text'][:half]},
+                {'type': 'text_delta', 'text': block['text'][half:]},
+            ]
+        elif block['type'] == 'thinking':
+            start = {**block, 'thinking': '', 'signature': ''}
+            deltas = [
+                {'type': 'thinking_delta', 'thinking': block['thinking']},
+                {'type': 'signature_delta', 'signature': block['signature']},
+            ]
+        else:
+            start = {**block, 'input': {}}
+            text = json.dumps(block['input'])
+            deltas = [
+                {'type': 'input_json_delta', 'partial_json': text[:4]},
+                {'type': 'input_json_delta', 'partial_json': text[4:]},
+            ]
+        events.append(
+            {'type': 'content_block_start', 'index': index, 'content_block': start}
+        )
+        events += [
+            {'type': 'content_block_delta', 'index': index, 'delta': delta}
+            for delta in deltas
+        ]
+        events.append({'type': 'content_block_stop', 'index': index})
+    events.append(
+        {
+            'type': 'message_delta',
+            'delta': {
+                'stop_reason': message['stop_reason'],
+                'stop_sequence': message['stop_sequence'],
+            },
+            'usage': {'output_tokens': usage['output_tokens']},
+        }
+    )
+    events.append({'type': 'message_stop'})
+    return events
+
+
+async def test_messages_reply_span(spans, metrics):
+    # The settings are not sent on this path: the span reports the body's.
+    model = _MessagesModel(MESSAGE, model='claude-luna-5', temperature=0.2, top_p=0.9)
+
+    assert await model.ainvoke_native_messages(MESSAGES_BODY, {}) == MESSAGE
+
+    span = _only_span(spans)
+    assert span.name == '_MessagesModel.chat'
+    assert span.kind == SpanKind.CLIENT
+    attributes = dict(span.attributes)
+    assert json.loads(attributes.pop('gen_ai.system_instructions')) == [
+        {'type': 'text', 'content': 'Be terse.'}
+    ]
+    assert json.loads(attributes.pop('gen_ai.input.messages')) == [
+        {
+            'role': 'user',
+            'parts': [
+                {'type': 'text', 'content': 'Weather?'},
+                {
+                    'type': 'blob',
+                    'modality': 'image',
+                    'mime_type': 'image/png',
+                    'content': 'iVBOR',
+                },
+                {
+                    'type': 'uri',
+                    'modality': 'image',
+                    'uri': 'https://example.com/sky.png',
+                },
+            ],
+        },
+        {
+            'role': 'assistant',
+            'parts': [
+                # Encrypted reasoning is not reported.
+                {'type': 'reasoning', 'content': 'Need a tool.'},
+                {
+                    'type': 'tool_call',
+                    'id': 'toolu_1',
+                    'name': 'weather',
+                    'arguments': {'city': 'Paris'},
+                },
+            ],
+        },
+        {
+            'role': 'user',
+            'parts': [
+                {'type': 'tool_call_response', 'id': 'toolu_1', 'response': 'rainy'},
+                {
+                    'type': 'tool_call_response',
+                    'id': 'toolu_2',
+                    'response': '[{"type": "text", "text": "windy"}]',
+                },
+            ],
+        },
+        {'role': 'user', 'parts': [{'type': 'text', 'content': 'And in Rome?'}]},
+    ]
+    assert json.loads(attributes.pop('gen_ai.tool.definitions')) == [
+        {
+            'name': 'weather',
+            'description': 'The weather',
+            'parameters': {'type': 'object'},
+        },
+        {'name': 'web_search'},
+    ]
+    assert json.loads(attributes.pop('gen_ai.output.messages')) == [MESSAGE_OUTPUT]
+    assert attributes == {
+        'traceloop.workflow.name': '',
+        'traceloop.entity.path': '',
+        'gen_ai.provider.name': 'fake',
+        'gen_ai.operation.name': 'chat',
+        'gen_ai.request.model': 'claude-luna-5',
+        'gen_ai.response.model': 'claude-luna-5-2026',
+        'gen_ai.response.id': 'msg_1',
+        'gen_ai.request.max_tokens': 1024,
+        'gen_ai.request.temperature': 0.5,
+        # 100 plus 40 read from the cache and 30 written to it.
+        'gen_ai.usage.input_tokens': 170,
+        'gen_ai.usage.output_tokens': 7,
+        'gen_ai.usage.total_tokens': 177,
+        'gen_ai.usage.cache_read.input_tokens': 40,
+        'gen_ai.usage.cache_creation.input_tokens': 30,
+        'gen_ai.response.finish_reasons': ('tool_call',),
+    }
+    assert _token_points(metrics) == {
+        'input': ('fake', 'claude-luna-5-2026', 170),
+        'output': ('fake', 'claude-luna-5-2026', 7),
+    }
+    ((duration, count, _),) = _points(metrics)['gen_ai.client.operation.duration']
+    assert duration == {
+        'gen_ai.provider.name': 'fake',
+        'gen_ai.response.model': 'claude-luna-5-2026',
+    }
+    assert count == 1
+
+
+async def test_messages_stream_span_reads_the_message_from_its_events(spans, metrics):
+    model = _MessagesModel(events=_message_events(MESSAGE), model='claude-luna-5')
+
+    events = await _collect(model.astream_native_messages(MESSAGES_BODY, {}))
+
+    assert [event for event, _ in events][-1] == 'message_stop'
+    span = _only_span(spans)
+    attributes = span.attributes
+    assert span.status.status_code == StatusCode.UNSET
+    assert attributes['gen_ai.request.stream'] is True
+    assert attributes['gen_ai.response.time_to_first_chunk'] >= 0
+    assert attributes['gen_ai.response.model'] == 'claude-luna-5-2026'
+    assert attributes['gen_ai.response.id'] == 'msg_1'
+    assert attributes['gen_ai.usage.input_tokens'] == 170
+    # The final count, of ``message_delta``: not the 1 of ``message_start``.
+    assert attributes['gen_ai.usage.output_tokens'] == 7
+    assert attributes['gen_ai.usage.cache_read.input_tokens'] == 40
+    assert attributes['gen_ai.usage.cache_creation.input_tokens'] == 30
+    assert attributes['gen_ai.response.finish_reasons'] == ('tool_call',)
+    assert _output(span) == MESSAGE_OUTPUT
+    assert _token_points(metrics) == {
+        'input': ('fake', 'claude-luna-5-2026', 170),
+        'output': ('fake', 'claude-luna-5-2026', 7),
+    }
+
+
+async def test_messages_cost_is_the_price_of_the_gateway_counts(spans):
+    priced = []
+
+    def cost(usage):
+        priced.append(usage)
+        return 0.25
+
+    model = _MessagesModel(MESSAGE, model='m')
+
+    await model.ainvoke_native_messages(MESSAGES_BODY, {}, cost)
+
+    assert _only_span(spans).attributes['gen_ai.usage.cost'] == 0.25
+    assert priced == [(170, 7, 40, 20, 10)]
+
+
+async def test_messages_cost_that_fails_leaves_the_rest_of_the_span(spans):
+    def cost(usage):
+        raise KeyError('no price')
+
+    model = _MessagesModel(MESSAGE, model='m')
+
+    assert await model.ainvoke_native_messages(MESSAGES_BODY, {}, cost) == MESSAGE
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.UNSET
+    assert 'gen_ai.usage.cost' not in span.attributes
+    assert span.attributes['gen_ai.usage.output_tokens'] == 7
+    assert _output(span) == MESSAGE_OUTPUT
+
+
+@pytest.mark.parametrize(
+    ('stop_reason', 'reported'),
+    [
+        ('end_turn', 'stop'),
+        ('stop_sequence', 'stop'),
+        ('max_tokens', 'length'),
+        ('tool_use', 'tool_call'),
+        ('pause_turn', 'pause_turn'),
+        ('refusal', 'refusal'),
+    ],
+)
+async def test_messages_stop_reason_is_the_finish_reason(spans, stop_reason, reported):
+    model = _MessagesModel({**MESSAGE, 'stop_reason': stop_reason}, model='m')
+
+    await model.ainvoke_native_messages({'messages': []}, {})
+
+    span = _only_span(spans)
+    assert span.attributes['gen_ai.response.finish_reasons'] == (reported,)
+    assert _output(span)['finish_reason'] == reported
+
+
+async def test_messages_string_system_and_no_usage(spans, metrics):
+    message = {'id': 'msg_2', 'role': 'assistant', 'content': [], 'stop_reason': None}
+    model = _MessagesModel(message, model='m')
+
+    await model.ainvoke_native_messages({'system': 'Be terse.', 'messages': []}, {})
+
+    attributes = _only_span(spans).attributes
+    assert json.loads(attributes['gen_ai.system_instructions']) == [
+        {'type': 'text', 'content': 'Be terse.'}
+    ]
+    assert 'gen_ai.input.messages' not in attributes
+    assert attributes['gen_ai.response.model'] == 'm'
+    assert 'gen_ai.usage.input_tokens' not in attributes
+    assert 'gen_ai.response.finish_reasons' not in attributes
+    assert _token_points(metrics) == {}
+
+
+async def test_messages_error_event_fails_the_span(spans):
+    events = [
+        *_message_events(MESSAGE)[:3],
+        {
+            'type': 'error',
+            'error': {'type': 'overloaded_error', 'message': 'Overloaded'},
+        },
+    ]
+    model = _MessagesModel(events=events, model='m')
+
+    await _collect(model.astream_native_messages(MESSAGES_BODY, {}))
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.status.description == 'Overloaded'
+    assert span.attributes['error.type'] == 'overloaded_error'
+    assert span.attributes['gen_ai.task.status'] == 'failure'
+
+
+async def test_messages_call_error_fails_the_span(spans):
+    model = _MessagesModel(error=ValueError('boom'), model='m')
+
+    with pytest.raises(ValueError, match='boom'):
+        await model.ainvoke_native_messages(MESSAGES_BODY, {})
+
+    _assert_error_span(_only_span(spans), 'ValueError', 'boom')
+
+
+async def test_messages_stream_stopped_early_fails_the_span(spans):
+    model = _MessagesModel(events=_message_events(MESSAGE), model='m')
+
+    stream = model.astream_native_messages(MESSAGES_BODY, {})
+    await anext(stream)
+    await stream.aclose()
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes['error.type'] == 'GeneratorExit'
+
+
+async def test_messages_stream_stopped_after_its_stop_reason_succeeds(spans, metrics):
+    # A client that closes the connection once it has the whole message
+    # cancels the stream before the upstream closes it.
+    model = _MessagesModel(events=_message_events(MESSAGE), model='m')
+
+    stream = model.astream_native_messages(MESSAGES_BODY, {})
+    async for event, _ in stream:
+        if event == 'message_delta':
+            break
+    await stream.aclose()
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.UNSET
+    assert 'error.type' not in span.attributes
+    assert span.attributes['gen_ai.response.id'] == 'msg_1'
+    assert span.attributes['gen_ai.usage.output_tokens'] == 7
+    assert _output(span) == MESSAGE_OUTPUT
+    assert _token_points(metrics)['output'] == ('fake', 'claude-luna-5-2026', 7)
+
+
+async def test_messages_empty_stream_ends_the_span(spans):
+    model = _MessagesModel(events=[], model='m')
+
+    assert await _collect(model.astream_native_messages(MESSAGES_BODY, {})) == []
+
+    span = _only_span(spans)
+    assert span.status.status_code == StatusCode.UNSET
+    assert 'gen_ai.output.messages' not in span.attributes
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_messages_content_tracing_switch(spans, content_tracing_off, stream):
+    model = _MessagesModel(MESSAGE, events=_message_events(MESSAGE), model='m')
+
+    if stream:
+        await _collect(model.astream_native_messages(MESSAGES_BODY, {}))
+    else:
+        await model.ainvoke_native_messages(MESSAGES_BODY, {})
+
+    attributes = _only_span(spans).attributes
+    assert not any(key in attributes for key in CONTENT_KEYS)
+    assert 'gen_ai.tool.definitions' in attributes
+    assert attributes['gen_ai.usage.input_tokens'] == 170
+    assert attributes['gen_ai.response.finish_reasons'] == ('tool_call',)
+
+
+async def test_messages_nothing_is_recorded_when_the_span_is_not_recording(
+    unsampled, metrics
+):
+    model = _MessagesModel(MESSAGE, events=_message_events(MESSAGE), model='m')
+
+    assert await model.ainvoke_native_messages(MESSAGES_BODY, {}) == MESSAGE
+    events = await _collect(model.astream_native_messages(MESSAGES_BODY, {}))
+
+    assert len(events) == len(_message_events(MESSAGE))
+    assert unsampled.get_finished_spans() == ()
+    assert _points(metrics) == {}
+
+
+async def test_messages_broken_tracing_does_not_fail_the_call(spans):
+    # A body tracing cannot read: the call is made all the same.
+    model = _MessagesModel(MESSAGE, model='m')
+
+    assert await model.ainvoke_native_messages({'messages': 'not a list'}, {}) == (
+        MESSAGE
+    )

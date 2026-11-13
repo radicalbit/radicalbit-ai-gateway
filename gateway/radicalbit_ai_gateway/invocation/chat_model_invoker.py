@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator, Callable
+from decimal import Decimal
 import logging
 from typing import NoReturn
 
@@ -32,6 +33,7 @@ from radicalbit_ai_gateway.llm.messages_thinking import (
 )
 from radicalbit_ai_gateway.llm.responses_stream import NativeResponsesEvent
 from radicalbit_ai_gateway.llm.usage import (
+    MessagesUsage,
     StreamUsage,
     cache_tokens,
     messages_usage,
@@ -472,15 +474,41 @@ class ChatModelInvoker(ModelInvoker):
         )
         return retry_body
 
+    def _messages_cost(self, model: Model) -> Callable[[MessagesUsage], Decimal]:
+        """Return what prices a Messages usage on ``model``, for the call's span.
+
+        Each count has the price its event has (see ``_messages_tokens``).
+        """
+        price = self.recorder.cost_service.compute_cost
+
+        def cost(usage: MessagesUsage) -> Decimal:
+            return sum(
+                (
+                    price(count, where, model.model_id)
+                    for where, count in (
+                        ('input', usage.uncached_input),
+                        ('output', usage.output),
+                        ('cached', usage.cache_read),
+                        ('cached_creation', usage.cache_creation_5m),
+                        ('cached_creation_1h', usage.cache_creation_1h),
+                    )
+                    if count
+                ),
+                Decimal(0),
+            )
+
+        return cost
+
     async def _invoke_messages(
         self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
     ) -> dict:
         """Make one Messages call to one model (see ``_signature_retry_body``)."""
+        cost = self._messages_cost(model)
         try:
-            return await chat_model.ainvoke_native_messages(body, headers)
+            return await chat_model.ainvoke_native_messages(body, headers, cost)
         except Exception as error:
             retry_body = self._signature_retry_body(model, body, error)
-        return await chat_model.ainvoke_native_messages(retry_body, headers)
+        return await chat_model.ainvoke_native_messages(retry_body, headers, cost)
 
     async def _stream_messages(
         self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
@@ -490,8 +518,11 @@ class ChatModelInvoker(ModelInvoker):
         The refusal comes before the first event, so the retry is safe.
         """
         started = False
+        cost = self._messages_cost(model)
         try:
-            async for event, data in chat_model.astream_native_messages(body, headers):
+            async for event, data in chat_model.astream_native_messages(
+                body, headers, cost
+            ):
                 started = True
                 yield event, data
         except Exception as error:
@@ -501,7 +532,7 @@ class ChatModelInvoker(ModelInvoker):
         else:
             return
         async for event, data in chat_model.astream_native_messages(
-            retry_body, headers
+            retry_body, headers, cost
         ):
             yield event, data
 
