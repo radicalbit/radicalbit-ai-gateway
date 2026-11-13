@@ -138,11 +138,15 @@ class Resource:
 
 
 def snake_case(name: str, where: str) -> str:
-    name = re.sub(r'(?<=[a-z0-9])([A-Z])', r'_\1', name).lower()
-    check(
-        name.isidentifier() and not keyword.iskeyword(name),
-        f'{where}: bad name {name!r}',
-    )
+    """The Python name of an API name; the API name stays the one sent.
+
+    Leading underscores are dropped (``_page`` is ``page``) and a keyword gets
+    a trailing one (``from`` is ``from_``), as in PEP 8.
+    """
+    name = re.sub(r'(?<=[a-z0-9])([A-Z])', r'_\1', name).lower().lstrip('_')
+    if keyword.iskeyword(name):
+        name += '_'
+    check(name.isidentifier(), f'{where}: bad name {name!r}')
     return name
 
 
@@ -410,8 +414,13 @@ def docstring(text: str) -> str:
     return '\n'.join(lines).strip() + ('\n        ' if len(lines) > 1 else '')
 
 
-def render(spec: dict, models_source: str) -> str:
-    """The source of ``_resources.py``; ``ruff`` drops the unused imports and formats it."""
+def render(spec: dict, models_source: str, package: str = 'radicalbit_gateway') -> str:
+    """The source of ``_resources.py``; ``ruff`` drops the unused imports and formats it.
+
+    ``package`` is the package the generated code imports its ``models`` and
+    its clients (``_client``) from: this SDK's by default, or another package
+    built on it.
+    """
     # The models are classes; the closed sets of values, type aliases
     model_names = set()
     for node in ast.parse(models_source).body:
@@ -429,8 +438,14 @@ def render(spec: dict, models_source: str) -> str:
         extensions=['jinja2.ext.do'],
     )
     env.filters.update(docstring=docstring, repr=repr)
+    check(
+        all(part.isidentifier() for part in package.split('.')),
+        f'bad package {package!r}',
+    )
     resources = Spec(spec, model_names).resources()
-    return env.get_template('resources.py.jinja').render(resources=resources)
+    return env.get_template('resources.py.jinja').render(
+        resources=resources, package=package
+    )
 
 
 def main() -> int:
@@ -438,9 +453,16 @@ def main() -> int:
     parser.add_argument('--spec', type=Path, default=SDK / 'openapi.json')
     parser.add_argument('--models', type=Path, default=PACKAGE / 'models.py')
     parser.add_argument('--out', type=Path, default=PACKAGE / '_resources.py')
+    parser.add_argument(
+        '--package',
+        default='radicalbit_gateway',
+        help='the package the generated code imports models and _client from',
+    )
     args = parser.parse_args()
     try:
-        source = render(json.loads(args.spec.read_text()), args.models.read_text())
+        source = render(
+            json.loads(args.spec.read_text()), args.models.read_text(), args.package
+        )
     except UnsupportedSpecError as e:
         print(f'generate_client: unsupported spec construct: {e}', file=sys.stderr)
         return 1
