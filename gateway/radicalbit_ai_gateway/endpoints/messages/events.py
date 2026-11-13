@@ -1,6 +1,7 @@
 """The events of a Messages API stream.
 
-``relay_frame`` relays an upstream event. ``message_events`` builds the event
+``relay_frame`` relays an upstream event. ``MessageCollector`` builds the
+answer an upstream stream carries. ``message_events`` builds the event
 sequence Anthropic streams for an answer the gateway builds or replays (a soft
 block, a cache hit, an answer the output guardrails read first).
 """
@@ -9,7 +10,11 @@ from __future__ import annotations
 
 import json
 
-from radicalbit_ai_gateway.llm.messages_stream import MESSAGE_DELTA, MESSAGE_START
+from radicalbit_ai_gateway.llm.messages_stream import (
+    MESSAGE_DELTA,
+    MESSAGE_START,
+    stream_usage,
+)
 
 
 def sse(event: str, data: str) -> str:
@@ -29,6 +34,79 @@ def relay_frame(event: str, data: str, route_name: str) -> str:
     if isinstance(message, dict):
         payload = {**payload, 'message': {**message, 'model': route_name}}
     return sse(event, json.dumps(payload, ensure_ascii=False, separators=(',', ':')))
+
+
+# ── The answer of an upstream stream ─────────────────────────────────────
+
+
+class MessageCollector:
+    """Builds the message object an upstream stream carries, event by event.
+
+    It is the reverse of ``message_events``. A delta of a type it does not
+    know is left out.
+    """
+
+    def __init__(self) -> None:
+        self._message: dict | None = None
+        self._blocks: dict[int, dict] = {}
+        # The JSON text of each tool use's input, as it comes.
+        self._inputs: dict[int, str] = {}
+        self._complete = False
+        #: The usage read so far, as ``stream_usage`` reads it.
+        self.usage: dict = {}
+        #: The data of the upstream's ``error`` event, if one came.
+        self.error: str | None = None
+
+    def add(self, event: str, data: str) -> None:
+        """Read one upstream event."""
+        self.usage = stream_usage(event, data, self.usage)
+        if event == 'error':
+            self.error = data
+        elif event == 'message_stop':
+            self._complete = True
+        elif event == MESSAGE_START:
+            self._message = dict(json.loads(data).get('message') or {})
+        elif event == MESSAGE_DELTA and self._message is not None:
+            self._message.update(json.loads(data).get('delta') or {})
+        elif event == 'content_block_start':
+            payload = json.loads(data)
+            self._blocks[payload['index']] = dict(payload['content_block'])
+        elif event == 'content_block_delta':
+            payload = json.loads(data)
+            self._add_delta(payload['index'], payload.get('delta') or {})
+        elif event == 'content_block_stop':
+            index = json.loads(data)['index']
+            if self._inputs.get(index):
+                self._blocks[index]['input'] = json.loads(self._inputs[index])
+
+    def _add_delta(self, index: int, delta: dict) -> None:
+        block = self._blocks.get(index)
+        if block is None:
+            return
+        delta_type = delta.get('type')
+        if delta_type == 'text_delta':
+            block['text'] = (block.get('text') or '') + delta.get('text', '')
+        elif delta_type == 'input_json_delta':
+            self._inputs[index] = self._inputs.get(index, '') + delta.get(
+                'partial_json', ''
+            )
+        elif delta_type == 'thinking_delta':
+            block['thinking'] = (block.get('thinking') or '') + delta.get(
+                'thinking', ''
+            )
+        elif delta_type == 'signature_delta':
+            block['signature'] = delta.get('signature', '')
+        elif delta_type == 'citations_delta':
+            block['citations'] = [*(block.get('citations') or []), delta['citation']]
+
+    def message(self) -> dict | None:
+        """Return the answer, or nothing when the stream ended before
+        ``message_stop``.
+        """
+        if not self._complete or self._message is None:
+            return None
+        content = [self._blocks[index] for index in sorted(self._blocks)]
+        return {**self._message, 'content': content, 'usage': self.usage}
 
 
 # ── Events the gateway builds ────────────────────────────────────────────
