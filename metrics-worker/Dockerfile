@@ -3,7 +3,7 @@ FROM python:3.13.18-slim AS build
 WORKDIR /app
 
 COPY uv.lock pyproject.toml ./
-RUN pip install --no-cache-dir --no-compile uv==0.13.4 && \
+RUN pip install --no-cache-dir --no-compile uv==0.13.8 && \
     uv export --no-dev --no-hashes --format requirements-txt > requirements.txt && \
     rm -f uv.lock pyproject.toml && \
     rm -rf /root/.cache

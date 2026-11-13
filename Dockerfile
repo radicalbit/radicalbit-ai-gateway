@@ -62,7 +62,7 @@ RUN apt-get update && \
 # the PyPI publish job, which does a full git checkout.
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_RADICALBIT_AI_GATEWAY=0.0.0
 COPY ./gateway/uv.lock ./gateway/pyproject.toml ./
-RUN pip install --no-cache-dir --no-compile uv==0.13.4 && \
+RUN pip install --no-cache-dir --no-compile uv==0.13.8 && \
     uv export --no-dev --no-hashes --format requirements-txt > requirements.txt && \
     pip uninstall -y uv && \
     pip install --no-cache-dir --no-compile -r requirements.txt && \
