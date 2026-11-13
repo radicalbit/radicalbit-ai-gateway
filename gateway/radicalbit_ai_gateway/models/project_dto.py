@@ -83,6 +83,10 @@ class ProjectConfigFileIn(BaseModel):
     )
 
 
+class ConfigValidationOut(BaseModel):
+    valid: bool
+
+
 class GenerateConfigIn(BaseModel):
     description: str
 

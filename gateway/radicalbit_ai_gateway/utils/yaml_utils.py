@@ -200,6 +200,11 @@ def parse_yaml_with_secret_placeholders(yaml_content: str) -> dict:
     return data
 
 
+def _detail(loc: list, msg: str, type_: str) -> dict:
+    """One entry of ProjectConfigValidationError.details."""
+    return {'loc': loc, 'msg': msg, 'type': type_}
+
+
 def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
     try:
         parsed, secret_refs = _parse_yaml_with_secrets(yaml_str)
@@ -207,20 +212,28 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
         mark = getattr(e, 'problem_mark', None)
         location = f' (line {mark.line + 1}, column {mark.column + 1})' if mark else ''
         problem = getattr(e, 'problem', None) or str(e)
-        raise ProjectConfigValidationError(f'Invalid YAML{location}: {problem}') from e
+        message = f'Invalid YAML{location}: {problem}'
+        raise ProjectConfigValidationError(
+            message, details=[_detail([], message, 'yaml_syntax_error')]
+        ) from e
     if check_secrets:
         violations = check_no_literal_secrets(yaml_str)
         if isinstance(parsed, dict):
             violations += check_no_literal_secrets_in_mcp_servers(parsed, yaml_str)
         if violations:
             raise ProjectConfigValidationError(
-                f'Config contains literal secrets: {violations}. Use !secret references instead.'
+                f'Config contains literal secrets: {violations}. Use !secret references instead.',
+                details=[_detail([], v, 'literal_secret') for v in violations],
             )
         secret_violations = check_secret_references(yaml_str, _refs=secret_refs)
         if secret_violations:
             raise ProjectConfigValidationError(
                 f'Config references invalid secrets: {"; ".join(secret_violations)}. '
-                'Ensure all !secret keys exist and have non-empty values.'
+                'Ensure all !secret keys exist and have non-empty values.',
+                details=[
+                    _detail([], v, 'invalid_secret_reference')
+                    for v in secret_violations
+                ],
             )
     try:
         GatewayConfig.model_validate(parsed)
@@ -230,9 +243,16 @@ def validate_gateway_config(yaml_str: str, *, check_secrets: bool) -> str:
                 _format_validation_error(err, yaml_str) for err in e.errors()
             )
             raise ProjectConfigValidationError(
-                f'Invalid gateway configuration - {len(e.errors())} error(s): {details}'
+                f'Invalid gateway configuration - {len(e.errors())} error(s): {details}',
+                details=[
+                    _detail(list(err['loc']), err['msg'], err['type'])
+                    for err in e.errors()
+                ],
             ) from e
-        raise ProjectConfigValidationError(f'Invalid gateway configuration: {e}') from e
+        message = f'Invalid gateway configuration: {e}'
+        raise ProjectConfigValidationError(
+            message, details=[_detail([], message, 'invalid_config')]
+        ) from e
     return yaml_str
 
 

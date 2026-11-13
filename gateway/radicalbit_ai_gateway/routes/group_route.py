@@ -11,6 +11,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     KeyFullOut,
     KeysUuidIn,
 )
+from radicalbit_ai_gateway.models.error_dto import error_responses
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.group_limiting import (
     GroupLimitsApplyOut,
@@ -33,31 +34,49 @@ class GroupRoute:
         group_service: GroupService,
         project_service: ProjectService,
     ) -> APIRouter:
-        router = APIRouter(tags=['group_api'])
+        router = APIRouter(tags=['groups'])
 
-        @router.post('/groups', status_code=201, response_model=GroupFullOut)
+        @router.post(
+            '/groups',
+            status_code=201,
+            response_model=GroupFullOut,
+            operation_id='groups_create',
+            responses=error_responses(409),
+        )
         @route_meta(entity_type='GROUP', response_uuid_field='uuid')
         def create_group(
             group_in: GroupIn,
         ):
+            """Create a group of credentials."""
             group = group_service.create_group(group_in)
             logger.info('Created group %s', group.uuid)
             return group
 
-        @router.get('/groups', status_code=200, response_model=list[GroupFullOut])
+        @router.get(
+            '/groups',
+            status_code=200,
+            response_model=list[GroupFullOut],
+            operation_id='groups_list',
+        )
         def get_all(
             include_routes: bool = Query(False), include_keys: bool = Query(False)
         ):
+            """List the groups."""
             return group_service.get_all(include_routes, include_keys)
 
         @router.get(
-            '/groups/{group_uuid}', status_code=200, response_model=GroupFullOut
+            '/groups/{group_uuid}',
+            status_code=200,
+            response_model=GroupFullOut,
+            operation_id='groups_get',
+            responses=error_responses(404),
         )
         def get_group_by_uuid(
             group_uuid: UUID,
             include_routes: bool = Query(False),
             include_keys: bool = Query(False),
         ):
+            """Get a group."""
             return group_service.get_group_by_uuid(
                 group_uuid, include_routes, include_keys
             )
@@ -84,6 +103,8 @@ class GroupRoute:
             '/groups/{group_uuid}/projects/{project_uuid}/routes',
             status_code=201,
             response_model=GroupFullOut,
+            operation_id='groups_add_routes',
+            responses=error_responses(404, 409),
         )
         @route_meta(
             entity_type='GROUP', entity_uuid_param='group_uuid', action='ASSIGN'
@@ -95,6 +116,7 @@ class GroupRoute:
             include_routes: bool = Query(False),
             include_keys: bool = Query(False),
         ):
+            """Let the group's credentials call routes of a project's served config."""
             project = project_service.get_by_uuid(project_uuid)
             return group_service.add_project_routes(
                 group_uuid,
@@ -109,18 +131,25 @@ class GroupRoute:
             '/groups/{group_uuid}/projects/{project_uuid}/routes/{route_name}',
             status_code=200,
             response_model=GroupFullOut,
+            operation_id='groups_remove_route',
+            responses=error_responses(404),
         )
         @route_meta(
             entity_type='GROUP', entity_uuid_param='group_uuid', action='REVOKE'
         )
         def remove_project_route(group_uuid: UUID, project_uuid: UUID, route_name: str):
+            """Stop the group's credentials from calling a route."""
             project = project_service.get_by_uuid(project_uuid)
             return group_service.remove_project_route(
                 group_uuid, project_uuid, project.name, route_name
             )
 
         @router.patch(
-            '/groups/{group_uuid}/keys', status_code=201, response_model=GroupFullOut
+            '/groups/{group_uuid}/keys',
+            status_code=201,
+            response_model=GroupFullOut,
+            operation_id='groups_add_keys',
+            responses=error_responses(404, 405, 409),
         )
         @route_meta(
             entity_type='GROUP', entity_uuid_param='group_uuid', action='ASSIGN'
@@ -131,17 +160,21 @@ class GroupRoute:
             include_routes: bool = Query(False),
             include_keys: bool = Query(False),
         ):
+            """Add credentials to the group. A credential belongs to one group at most."""
             return group_service.add_keys(group_uuid, key, include_routes, include_keys)
 
         @router.delete(
             '/groups/{group_uuid}/keys/{key_uuid}',
             status_code=200,
             response_model=GroupFullOut,
+            operation_id='groups_remove_key',
+            responses=error_responses(404, 405),
         )
         @route_meta(
             entity_type='GROUP', entity_uuid_param='group_uuid', action='REVOKE'
         )
         async def remove_key(group_uuid: UUID, key_uuid: UUID):
+            """Remove a credential from the group."""
             return await group_service.remove_key(group_uuid, key_uuid)
 
         @router.get(

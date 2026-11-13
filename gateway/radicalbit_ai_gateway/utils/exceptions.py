@@ -1,11 +1,15 @@
+from http import HTTPStatus
 import logging
 from typing import Any
 
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from fastapi.utils import is_body_allowed_for_status_code
 from pydantic.alias_generators import to_snake
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
+from starlette.responses import Response
 
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
 from radicalbit_ai_gateway.models.event_payload import LimitScope
@@ -587,8 +591,8 @@ class KeyAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'key_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'key_already_exists',
             log_message=log_message,
         )
 
@@ -617,8 +621,8 @@ class KeyGroupAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'key_group_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'key_group_already_exists',
             log_message=log_message,
         )
 
@@ -627,8 +631,8 @@ class CredentialLimitAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'credential_limit_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'credential_limit_already_exists',
             log_message=log_message,
         )
 
@@ -677,8 +681,8 @@ class GroupAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'group_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'group_already_exists',
             log_message=log_message,
         )
 
@@ -737,8 +741,8 @@ class ProjectAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'project_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'project_already_exists',
             log_message=log_message,
         )
 
@@ -750,6 +754,7 @@ class ProjectConfigValidationError(AuthRegistryError):
         *,
         log_message: str | None = None,
         routes: list[str] | None = None,
+        details: list[dict[str, Any]] | None = None,
     ):
         super().__init__(
             message,
@@ -758,14 +763,29 @@ class ProjectConfigValidationError(AuthRegistryError):
             log_message=log_message,
         )
         self.routes = routes
+        # One {loc, msg, type} per problem in the YAML, for clients to read
+        self.details = details
+
+
+class ProjectConfigStateError(ProjectConfigValidationError):
+    """A config action not allowed in the config's current state.
+
+    A ProjectConfigValidationError for the callers that catch that, but a 409
+    with a code of its own for each state.
+    """
+
+    def __init__(self, message: str, code: str, *, log_message: str | None = None):
+        super().__init__(message, log_message=log_message)
+        self.status_code = status.HTTP_409_CONFLICT
+        self.code = code
 
 
 class ProjectBudgetLimitAlreadyExistsError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
             message,
-            status.HTTP_400_BAD_REQUEST,
-            'project_budget_limit_already_exists_bad_request',
+            status.HTTP_409_CONFLICT,
+            'project_budget_limit_already_exists',
             log_message=log_message,
         )
 
@@ -951,8 +971,11 @@ def api_key_exception_handler(request: Request, err: ApiKeyError):
 
 def auth_registry_exception_handler(request: Request, err: AuthRegistryError):
     set_request_error_info(request, err)
-    routes = getattr(err, 'routes', None)
-    extra = {'routes': routes} if routes is not None else None
+    extra = {
+        name: value
+        for name in ('routes', 'details')
+        if (value := getattr(err, name, None)) is not None
+    } or None
     return _log_and_json_response(err, 'auth_registry_error', extra=extra)
 
 
@@ -1044,6 +1067,30 @@ def validation_error_param(error: dict) -> str:
     The ``body`` part of the error's location is left out.
     """
     return '.'.join(str(part) for part in (error.get('loc') or ())[1:])
+
+
+def http_exception_handler(request: Request, exc: HTTPException) -> Response:
+    """Answer the web framework's own errors in the ``ErrorOut`` shape.
+
+    Unknown paths, methods not allowed, bodies that cannot be parsed and any
+    ``HTTPException`` raised by the gateway.
+
+    Replaces FastAPI's default handler, which answers ``{"detail": ...}``: the
+    status and headers of the exception are kept.
+    """
+    if not is_body_allowed_for_status_code(exc.status_code):
+        return Response(status_code=exc.status_code, headers=exc.headers)
+    try:
+        code: str | int = HTTPStatus(exc.status_code).name.lower()
+    except ValueError:
+        code = exc.status_code
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            'error': ErrorOut(str(exc.detail), type_='http_error', code=code).error
+        },
+        headers=exc.headers,
+    )
 
 
 async def unhandled_exception_handler(request: Request, err: Exception):

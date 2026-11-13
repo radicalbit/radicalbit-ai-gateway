@@ -1,0 +1,54 @@
+"""The API's operations, one class per tag. Generated: do not edit.
+
+Written by generator/generate_client.py from openapi.json (run scripts/generate.sh).
+"""
+
+from __future__ import annotations
+
+import builtins
+import datetime
+from typing import TYPE_CHECKING, Any
+from uuid import UUID
+
+from radicalbit_gateway import models
+from radicalbit_gateway._types import NOT_GIVEN, FileTypes, NotGiven
+
+if TYPE_CHECKING:
+    from radicalbit_gateway._client import Gateway
+{% macro mapping(params) %}{{ '{' }}{% for p in params %}{{ p.api_name | repr }}: {{ p.name }}{{ ', ' if not loop.last }}{% endfor %}{{ '}' }}{% endmacro %}
+{% macro signature(op) %}
+{% set args = ['self'] %}
+{% for p in op.path_params %}{% do args.append(p.name ~ ': ' ~ p.annotation) %}{% endfor %}
+{% if op.keyword_params %}{% do args.append('*') %}{% endif %}
+{% for p in op.keyword_params %}{% do args.append(p.name ~ ': ' ~ p.annotation ~ ('' if p.required else ' | NotGiven = NOT_GIVEN')) %}{% endfor %}
+{{ args | join(', ') }}{% endmacro %}
+{% for resource in resources %}
+
+
+class {{ resource.class_name }}:
+    """The ``{{ resource.tag }}`` operations."""
+
+    def __init__(self, client: Gateway) -> None:
+        self._client = client
+{% for op in resource.operations %}
+{% set request = [op.http_method | repr, op.path | repr] %}
+{% if op.path_params %}{% do request.append('path_params=' ~ mapping(op.path_params)) %}{% endif %}
+{% if op.query %}{% do request.append('query=' ~ mapping(op.query)) %}{% endif %}
+{% if op.json is not none %}{% do request.append('json=' ~ mapping(op.json)) %}{% endif %}
+{% if op.form is not none %}{% do request.append('data=' ~ mapping(op.form)) %}{% do request.append('files=' ~ mapping(op.files)) %}{% endif %}
+{% do request.append('response=' ~ (op.response or 'None')) %}
+
+    def {{ op.name }}({{ signature(op) | trim }}) -> {{ op.response or 'None' }}:
+        """{{ op.doc | docstring }}"""
+        return self._client._request({{ request | join(', ') }})
+{% endfor %}
+{% endfor %}
+
+
+class Resources:
+    """One attribute per tag of the API, each sending its requests through ``client``."""
+
+    def __init__(self, client: Gateway) -> None:
+{% for resource in resources %}
+        self.{{ resource.tag }} = {{ resource.class_name }}(client)
+{% endfor %}

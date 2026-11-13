@@ -33,6 +33,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ProjectBudgetLimitAlreadyExistsError,
     ProjectBudgetLimitConflictError,
     ProjectBudgetLimitNotFoundError,
+    ProjectConfigStateError,
     ProjectConfigValidationError,
     ProjectNotFoundError,
     auth_registry_exception_handler,
@@ -150,6 +151,20 @@ def test_get_by_uuid(client, project_service, params, include_limits):
 
 
 # --- config mutations ---
+
+
+def test_update_config_state_error_is_409(client, project_service):
+    project_service.update_config.side_effect = ProjectConfigStateError(
+        'Config is served and cannot be edited', 'config_served_not_editable'
+    )
+
+    res = client.patch(CONFIG, json={'configFile': _VALID})
+
+    assert res.status_code == 409
+    error = res.json()['error']
+    assert error['code'] == 'config_served_not_editable'
+    assert error['message'] == 'Config is served and cannot be edited'
+    assert 'details' not in error
 
 
 def test_update_config(client, project_service):
@@ -460,7 +475,7 @@ PROJECT_ERRORS = [
         'create_project',
         {'json': jsonable_encoder(db_mock.get_sample_project_in())},
         ProjectAlreadyExistsError('error'),
-        400,
+        409,
         id='create-already-exists',
     ),
     pytest.param(
@@ -514,7 +529,7 @@ PROJECT_ERRORS = [
         'add_budget_limits_to_project',
         {'json': jsonable_encoder(db_mock.get_sample_project_budget_limits_in())},
         ProjectBudgetLimitAlreadyExistsError('dup'),
-        400,
+        409,
         id='add-budget-limit-already-exists',
     ),
     pytest.param(
