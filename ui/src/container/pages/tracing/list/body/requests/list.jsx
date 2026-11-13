@@ -64,7 +64,7 @@ function RequestsList() {
     <Board
       header={(
         <NewHeader
-          details={{ one: totalLabel }}
+          details={{ one: <div className="text-xs">{totalLabel}</div> }}
           padding="none"
           title={<SectionTitle title="Requests" />}
         />

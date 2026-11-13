@@ -19,7 +19,7 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import { RELATIVE_DATE_REFRESH_SECONDS, REQUESTS_PAGE_PARAM, SELECTED_REQUEST_PARAM } from './constants';
+import { RELATIVE_DATE_REFRESH_SECONDS, RELATIVE_DATE_THRESHOLD, REQUESTS_PAGE_PARAM, SELECTED_REQUEST_PARAM } from './constants';
 import { CredentialLink, GroupLink } from './entity-links';
 import { formatOffset, requestSteps, selectedRequestUuid } from './helpers';
 import PanelSkeleton from './panel-skeleton';
@@ -173,7 +173,7 @@ function StepByStep({ request }) {
       footer={<TraceLink request={request} />}
       header={(
         <NewHeader
-          details={{ one: <span className="text-xs"><RelativeDateTime format={DATE_FORMAT} formatTooltip={DATE_FORMAT} refreshInterval={RELATIVE_DATE_REFRESH_SECONDS} threshold={0} timestamp={createdAt * 1000} withTooltip /></span> }}
+          details={{ one: <span className="text-xs"><RelativeDateTime format={DATE_FORMAT} formatTooltip={DATE_FORMAT} refreshInterval={RELATIVE_DATE_REFRESH_SECONDS} threshold={RELATIVE_DATE_THRESHOLD} timestamp={createdAt * 1000} withTooltip /></span> }}
           padding="none"
           title={<TextWithBold bold={eventLabel} boldProps={LABEL_PROPS} text={<strong>Step by step</strong>} />}
         />

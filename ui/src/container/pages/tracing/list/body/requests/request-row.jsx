@@ -4,7 +4,7 @@ import formatCost from '@Src/helpers/format-cost';
 import {
   NewHeader, Pin, RelativeDateTime, SectionTitle, TextWithBold,
 } from '@radicalbit/radicalbit-design-system';
-import { RELATIVE_DATE_REFRESH_SECONDS } from './constants';
+import { RELATIVE_DATE_REFRESH_SECONDS, RELATIVE_DATE_THRESHOLD } from './constants';
 import { CredentialLink } from './entity-links';
 import RequestIcons from './request-icons';
 import RequestTypeCell from './request-type-cell';
@@ -33,7 +33,7 @@ function RequestRow({ request }) {
 
   return (
     <NewHeader
-      details={{ one: <span className="text-xs"><RelativeDateTime format={DATE_FORMAT} formatTooltip={DATE_FORMAT} refreshInterval={RELATIVE_DATE_REFRESH_SECONDS} threshold={0} timestamp={createdAt * 1000} withTooltip /></span> }}
+      details={{ one: <span className="text-xs"><RelativeDateTime format={DATE_FORMAT} formatTooltip={DATE_FORMAT} refreshInterval={RELATIVE_DATE_REFRESH_SECONDS} threshold={RELATIVE_DATE_THRESHOLD} timestamp={createdAt * 1000} withTooltip /></span> }}
       padding="all"
       title={(
         <SectionTitle
