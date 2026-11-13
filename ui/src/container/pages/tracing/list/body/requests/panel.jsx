@@ -223,10 +223,11 @@ function StepTitle({ blocking, type }) {
 function TraceLink({ request }) {
   const { showModal } = useModals();
 
+  const requestUuid = request?.requestUuid;
   const traceId = request?.traceId;
 
   const handleOnClick = () => {
-    showModal(modals.TRACE_DETAIL, { traceId });
+    showModal(modals.TRACE_DETAIL, { requestUuid });
   };
 
   if (!traceId) {
