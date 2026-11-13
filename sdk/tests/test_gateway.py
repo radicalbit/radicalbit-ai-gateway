@@ -67,7 +67,7 @@ def test_save_sends_the_path_and_the_json_body():
         project_uuid, config_uuid, config_file='routes: {}'
     )
     assert isinstance(out, models.ProjectOut)
-    assert out.configs[1].config_status is models.ConfigStatus.DRAFT
+    assert out.configs[1].config_status == 'DRAFT'
     assert seen[0].method == 'PATCH'
     assert seen[0].url.path == (
         f'/public/api/v1/projects/{project_uuid}/configs/{config_uuid}'
@@ -136,7 +136,7 @@ def test_query_params_keep_the_api_names_and_omit_unset_ones():
     seen: list[httpx2.Request] = []
     gw = _gateway(200, [], seen)
     assert gw.groups.list(include_keys=True) == []
-    gw.projects.list(filter=models.ProjectFilter.ACTIVE)
+    gw.projects.list(filter='active')
     assert dict(seen[0].url.params) == {'include_keys': 'true'}
     assert dict(seen[1].url.params) == {'filter': 'active'}
 

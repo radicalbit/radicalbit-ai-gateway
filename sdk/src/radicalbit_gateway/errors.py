@@ -6,6 +6,10 @@ The gateway answers errors in two shapes (``models.ErrorOut`` and
   but the 422;
 - ``{"detail": [{"loc", "msg", "type"}, ...]}``: 422, request validation.
 A body in neither shape (e.g. from a proxy) is kept as it came, in ``body``.
+
+When no answer arrives at all, the error is an ``APIConnectionError`` (an
+``APITimeoutError`` when the time ran out), with ``status`` None. So one
+``except GatewayError`` catches every failure of a call.
 """
 
 import json
@@ -15,18 +19,41 @@ CONFIG_VALIDATION_CODE = 'project_config_validation_error'
 
 
 class GatewayError(Exception):
-    """An error answered by the gateway.
+    """A call to the gateway failed.
 
-    ``status`` is the HTTP status, ``code`` the gateway's machine-readable code
-    (None in the 422 shape), ``body`` the decoded body (or the raw text).
+    ``status`` is the HTTP status (None when no answer arrived), ``code`` the
+    gateway's machine-readable code (None in the 422 shape), ``body`` the
+    decoded body (or the raw text).
     """
 
-    def __init__(self, status: int, code: str | None, message: str, body: Any):
-        super().__init__(f'{status}: {message}' if message else str(status))
+    def __init__(self, status: int | None, code: str | None, message: str, body: Any):
+        if status is None:
+            text = message
+        else:
+            text = f'{status}: {message}' if message else str(status)
+        super().__init__(text)
         self.status = status
         self.code = code
         self.message = message
         self.body = body
+
+
+class APIConnectionError(GatewayError):
+    """No answer: the gateway could not be reached, or the connection broke.
+
+    Raised after the retries (``max_retries``) ran out; ``__cause__`` is the
+    network error.
+    """
+
+    def __init__(self, message: str = 'Could not reach the gateway'):
+        super().__init__(None, None, message, None)
+
+
+class APITimeoutError(APIConnectionError):
+    """No answer within the timeout (``timeout`` of the client)."""
+
+    def __init__(self, message: str = 'The gateway did not answer in time'):
+        super().__init__(message)
 
 
 class AuthenticationError(GatewayError):
@@ -107,6 +134,8 @@ def error_from_response(status: int, content: bytes) -> GatewayError:
 
 
 __all__ = [
+    'APIConnectionError',
+    'APITimeoutError',
     'AuthenticationError',
     'AuthorizationError',
     'ConflictError',

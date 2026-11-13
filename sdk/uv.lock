@@ -694,6 +694,7 @@ source = { editable = "." }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
+    { name = "typing-extensions" },
 ]
 
 [package.dev-dependencies]
@@ -709,6 +710,7 @@ dev = [
 requires-dist = [
     { name = "httpx2", specifier = ">=2.16" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "typing-extensions", specifier = ">=4.12" },
 ]
 
 [package.metadata.requires-dev]

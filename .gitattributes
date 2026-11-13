@@ -1,0 +1,5 @@
+# Written by sdk/scripts/generate.sh: GitHub collapses their diffs in pull
+# requests and leaves them out of the language statistics
+sdk/openapi.json linguist-generated=true
+sdk/src/radicalbit_gateway/models.py linguist-generated=true
+sdk/src/radicalbit_gateway/_resources.py linguist-generated=true
