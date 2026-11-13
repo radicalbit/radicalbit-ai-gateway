@@ -143,7 +143,7 @@ function SpanKpis({ span }) {
 
   const items = [
     { title: 'Duration', value: formatMs(durationMs) },
-    { title: 'Share', value: `${spanShare(span, traceDurationMs)}% of trace` },
+    { title: 'Share of trace', value: `${spanShare(span, traceDurationMs)}% of ${formatMs(traceDurationMs)}` },
     { title: 'Tokens', value: `${formatInt(inputTokens)} in · ${formatInt(outputTokens)} out` },
     { title: 'Errors', type: errorType, value: formatInt(errorCount) },
     { title: 'Created', value: formatTimestamp(createdAt).trim() },
