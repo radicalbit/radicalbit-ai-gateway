@@ -72,12 +72,12 @@ const usage = (hasLeftColumnCollapsed) => ({
   link: getLink(PathsEnum.USAGE, 'Usage'),
 });
 
-const tracing = (hasLeftColumnCollapsed) => ({
+const observability = (hasLeftColumnCollapsed) => ({
   position: 9,
-  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Tracing</CollapsedTitle> : 'Tracing',
+  title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '6', shape: 'circle' }] }}>Observability</CollapsedTitle> : 'Observability',
   icon: <Lucide icon={Route} size="md" />,
-  key: PathsEnum.TRACING,
-  link: getLink(PathsEnum.TRACING, 'Tracing'),
+  key: PathsEnum.OBSERVABILITY,
+  link: getLink(PathsEnum.OBSERVABILITY, 'Observability'),
 });
 
 const groups = (hasLeftColumnCollapsed) => ({
@@ -115,7 +115,7 @@ const allRoutes = (hasLeftColumnCollapsed) => [
   group('monitor-header', 'Monitor', 6, hasLeftColumnCollapsed, [
     routes(hasLeftColumnCollapsed),
     usage(hasLeftColumnCollapsed),
-    tracing(hasLeftColumnCollapsed),
+    observability(hasLeftColumnCollapsed),
   ]),
   divider('separator2', 10),
   group('manage-header', 'Manage', 11, hasLeftColumnCollapsed, [

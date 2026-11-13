@@ -1,4 +1,4 @@
-FROM python:3.11.17-slim
+FROM python:3.11.18-slim
 
 # Apply Debian security updates (the pinned base tag is not rebuilt once a newer
 # Python patch is released)
@@ -9,7 +9,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Install uv (build-time only: removed once the dependencies are installed)
-RUN pip install --no-cache-dir --no-compile uv==0.13.4
+RUN pip install --no-cache-dir --no-compile uv==0.13.8
 
 # setuptools-scm derives the package version from git, which isn't available
 # in this build context (only uv.lock/pyproject.toml are copied in) — pin a

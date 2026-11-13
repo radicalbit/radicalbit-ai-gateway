@@ -249,8 +249,8 @@ async def test_image_blocks_become_inline_data():
     )
     parts = requests[0]['body']['contents'][0]['parts']
     assert parts[0] == {'text': 'What is this?'}
-    # The SDK serializes bytes as url-safe base64.
-    expected = {'inlineData': {'data': PNG.replace('+', '-'), 'mimeType': 'image/png'}}
+    # The SDK serializes bytes as url-safe base64, and the blob's own keys in snake_case.
+    expected = {'inlineData': {'data': PNG.replace('+', '-'), 'mime_type': 'image/png'}}
     assert parts[1] == parts[2] == expected
 
 
@@ -1042,17 +1042,17 @@ async def test_file_and_provider_resolved_blocks_become_file_data():
     )
     assert parts == [
         {
-            'fileData': {'fileUri': 'files/abc', 'mimeType': 'application/pdf'},
+            'fileData': {'file_uri': 'files/abc', 'mime_type': 'application/pdf'},
             'mediaProcessing': 'STATIC',
         },
         {
             'fileData': {
-                'fileUri': 'files/def',
-                'mimeType': 'application/octet-stream',
+                'file_uri': 'files/def',
+                'mime_type': 'application/octet-stream',
             }
         },
-        {'fileData': {'fileUri': 'https://www.youtube.com/watch?v=1'}},
-        {'fileData': {'fileUri': 'files/img', 'mimeType': 'image/png'}},
+        {'fileData': {'file_uri': 'https://www.youtube.com/watch?v=1'}},
+        {'fileData': {'file_uri': 'files/img', 'mime_type': 'image/png'}},
     ]
 
 
@@ -1068,9 +1068,9 @@ async def test_inline_data_blocks_are_decoded_or_downloaded():
     )
     assert parts == [
         # The mime type is sniffed from the bytes.
-        {'inlineData': {'data': wire_b64(PNG_BYTES), 'mimeType': 'image/png'}},
+        {'inlineData': {'data': wire_b64(PNG_BYTES), 'mime_type': 'image/png'}},
         # ... or guessed from the URL.
-        {'inlineData': {'data': wire_b64(b'"pixels"'), 'mimeType': 'image/png'}},
+        {'inlineData': {'data': wire_b64(b'"pixels"'), 'mime_type': 'image/png'}},
         {'inlineData': {'data': wire_b64(b'"pixels"')}},
     ]
 
@@ -1115,7 +1115,7 @@ async def test_image_url_variants():
         responses=[CannedResponse(json_body='pixels')],
     )
     assert parts == [
-        {'fileData': {'fileUri': 'gs://bucket/cat.jpg', 'mimeType': 'image/jpeg'}},
+        {'fileData': {'file_uri': 'gs://bucket/cat.jpg', 'mime_type': 'image/jpeg'}},
         {
             'inlineData': {'data': wire_b64(b'"pixels"')},
             'thoughtSignature': wire_b64(b'sig'),
@@ -1157,13 +1157,13 @@ async def test_media_blocks():
         ]
     )
     assert parts == [
-        {'inlineData': {'data': wire_b64(PNG_BYTES), 'mimeType': 'image/png'}},
+        {'inlineData': {'data': wire_b64(PNG_BYTES), 'mime_type': 'image/png'}},
         {
-            'inlineData': {'data': wire_b64(b'raw'), 'mimeType': 'audio/wav'},
+            'inlineData': {'data': wire_b64(b'raw'), 'mime_type': 'audio/wav'},
             'thoughtSignature': wire_b64(b'sig'),
         },
         {
-            'fileData': {'fileUri': 'files/v', 'mimeType': 'video/mp4'},
+            'fileData': {'file_uri': 'files/v', 'mime_type': 'video/mp4'},
             'mediaProcessing': 'AGENTIC',
             'thoughtSignature': wire_b64(b'sig'),
             # The SDK leaves this nested key in snake_case.
@@ -1228,7 +1228,7 @@ async def test_gcs_uris_are_dropped_from_ai_history():
     contents = await contents_for([HumanMessage('a'), history, HumanMessage('b')])
     assert contents[1]['parts'] == [
         {'text': 'text'},
-        {'fileData': {'fileUri': 'files/7', 'mimeType': 'video/mp4'}},
+        {'fileData': {'file_uri': 'files/7', 'mime_type': 'video/mp4'}},
     ]
 
 
@@ -1259,8 +1259,8 @@ async def test_tool_calling_turn_keeps_content_and_signatures():
             {'text': 'thinking aloud'},
             {
                 'fileData': {
-                    'fileUri': 'files/x',
-                    'mimeType': 'application/octet-stream',
+                    'file_uri': 'files/x',
+                    'mime_type': 'application/octet-stream',
                 }
             },
             {
@@ -1305,7 +1305,7 @@ async def test_tool_results_with_media_and_plain_text():
     contents = await contents_for(messages)
     assert contents[2] == {
         'parts': [
-            {'inlineData': {'data': wire_b64(PNG_BYTES), 'mimeType': 'image/png'}},
+            {'inlineData': {'data': wire_b64(PNG_BYTES), 'mime_type': 'image/png'}},
             {
                 'functionResponse': {
                     'name': 'snap',
@@ -1689,8 +1689,8 @@ async def test_gcs_and_downloaded_blocks_with_a_custom_http_client():
             responses=[CannedResponse(json_body='pixels')],
         )
     assert parts == [
-        {'fileData': {'fileUri': 'gs://bucket/x.png', 'mimeType': 'image/png'}},
-        {'inlineData': {'data': wire_b64(b'"pixels"'), 'mimeType': 'image/png'}},
+        {'fileData': {'file_uri': 'gs://bucket/x.png', 'mime_type': 'image/png'}},
+        {'inlineData': {'data': wire_b64(b'"pixels"'), 'mime_type': 'image/png'}},
     ]
 
 
