@@ -1,5 +1,4 @@
 import HtmlAnchor from '@Components/html-anchor';
-import InfoPopover from '@Components/info-popover';
 import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
 import { DATE_FORMAT } from '@Src/constants';
@@ -23,8 +22,7 @@ import { RELATIVE_DATE_REFRESH_SECONDS, RELATIVE_DATE_THRESHOLD, REQUESTS_PAGE_P
 import { CredentialLink, GroupLink } from './entity-links';
 import { formatOffset, requestSteps, selectedRequestUuid } from './helpers';
 import PanelSkeleton from './panel-skeleton';
-
-const VISIBLE_TAGS = 3;
+import RequestTags from './request-tags';
 
 const LABEL_PROPS = { type: 'secondary' };
 
@@ -107,7 +105,7 @@ function Summary({ request }) {
 
       <TextWithBold bold={<GroupLink groupName={groupName} groupUuid={groupUuid} />} size="small" text="Group" textProps={LABEL_PROPS} />
 
-      <TextWithBold bold={<SummaryTags tags={tags} />} size="small" text="Tags" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<RequestTags tags={tags} />} size="small" text="Tags" textProps={LABEL_PROPS} />
 
       <TextWithBold bold={formatMs(durationMs)} size="small" text="Duration" textProps={LABEL_PROPS} />
 
@@ -115,40 +113,6 @@ function Summary({ request }) {
 
       <TextWithBold bold={formatCost(cost)} size="small" text="Cost" textProps={LABEL_PROPS} />
     </div>
-  );
-}
-
-function SummaryTags({ tags }) {
-  const visibleTags = tags.slice(0, VISIBLE_TAGS);
-  const hiddenCount = tags.length - visibleTags.length;
-
-  if (tags.length === 0) {
-    return '--';
-  }
-
-  if (hiddenCount === 0) {
-    return (
-      <span className="inline-flex flex-wrap items-center gap-1">
-        {visibleTags.map((tag) => <Tag key={tag} type="secondary">{tag}</Tag>)}
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1">
-      {visibleTags.map((tag) => <Tag key={tag} type="secondary">{tag}</Tag>)}
-
-      <InfoPopover
-        content={(
-          <div className="flex flex-col gap-1">
-            {tags.map((tag) => <Tag key={tag} type="secondary">{tag}</Tag>)}
-          </div>
-        )}
-        title="Tags"
-      >
-        <Tag rounded type="secondary">{`+${hiddenCount}`}</Tag>
-      </InfoPopover>
-    </span>
   );
 }
 
