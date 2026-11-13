@@ -77,7 +77,7 @@ def _error(status: int, **headers: str) -> httpx2.Response:
 def test_a_read_is_retried_after_a_server_error(waits):
     seen: list = []
     gw = _gateway(_error(502), _error(500), _ok(), seen=seen)
-    assert gw.keys.list() == []
+    assert gw.credentials.list() == []
     assert len(seen) == 3
     assert len(waits) == 2
     assert 0.375 <= waits[0] <= 0.5  # 0.5 s, with jitter
@@ -88,7 +88,7 @@ def test_a_create_is_not_retried_after_a_server_error(waits):
     seen: list = []
     gw = _gateway(_error(500), seen=seen)
     with pytest.raises(errors.GatewayError) as error:
-        gw.keys.create(name='k')
+        gw.credentials.create(name='k')
     assert error.value.status == 500
     assert len(seen) == 1
     assert waits == []
@@ -98,7 +98,7 @@ def test_a_create_is_not_retried_after_a_server_error(waits):
 def test_a_create_refused_unprocessed_is_retried(waits, status):
     seen: list = []
     gw = _gateway(_error(status), _ok(KEY), seen=seen)
-    assert gw.keys.create(name='k').name == 'k'
+    assert gw.credentials.create(name='k').name == 'k'
     assert len(seen) == 2
 
 
@@ -108,13 +108,13 @@ def test_retry_after_sets_the_wait(waits):
         _error(429, **{'retry-after-ms': '1500'}),
         _ok(),
     )
-    gw.keys.list()
+    gw.credentials.list()
     assert waits == [3.0, 1.5]
 
 
 def test_a_retry_after_beyond_a_minute_falls_back_to_the_backoff(waits):
     gw = _gateway(_error(503, **{'Retry-After': '3600'}), _ok())
-    gw.keys.list()
+    gw.credentials.list()
     assert waits[0] <= 0.5
 
 
@@ -122,7 +122,7 @@ def test_the_last_answer_is_raised_when_the_retries_run_out(waits):
     seen: list = []
     gw = _gateway(_error(503), _error(503), _error(503), seen=seen)
     with pytest.raises(errors.GatewayError) as error:
-        gw.keys.list()
+        gw.credentials.list()
     assert error.value.status == 503
     assert len(seen) == 3  # 1 + max_retries (2)
 
@@ -131,7 +131,7 @@ def test_max_retries_zero_sends_once(waits):
     seen: list = []
     gw = _gateway(_error(503), seen=seen, max_retries=0)
     with pytest.raises(errors.GatewayError):
-        gw.keys.list()
+        gw.credentials.list()
     assert len(seen) == 1
 
 
@@ -139,7 +139,7 @@ def test_a_client_error_is_not_retried(waits):
     seen: list = []
     gw = _gateway(_error(404), seen=seen)
     with pytest.raises(errors.NotFoundError):
-        gw.keys.get(KEY['uuid'])
+        gw.credentials.get(KEY['uuid'])
     assert len(seen) == 1
 
 
@@ -167,7 +167,7 @@ def test_a_refused_connection_is_retried_then_raised(waits):
     refused = httpx2.ConnectError('refused')
     gw = _gateway(refused, refused, refused)
     with pytest.raises(errors.APIConnectionError) as error:
-        gw.keys.create(name='k')  # never sent: retried even for a create
+        gw.credentials.create(name='k')  # never sent: retried even for a create
     assert error.value.status is None
     assert isinstance(error.value.__cause__, httpx2.ConnectError)
     assert len(waits) == 2
@@ -177,13 +177,13 @@ def test_a_read_timeout_on_a_create_is_not_retried(waits):
     seen: list = []
     gw = _gateway(httpx2.ReadTimeout('slow'), seen=seen)
     with pytest.raises(errors.APITimeoutError):
-        gw.keys.create(name='k')  # it may have been created
+        gw.credentials.create(name='k')  # it may have been created
     assert len(seen) == 1
 
 
 def test_a_read_timeout_on_a_read_is_retried(waits):
     gw = _gateway(httpx2.ReadTimeout('slow'), _ok())
-    assert gw.keys.list() == []
+    assert gw.credentials.list() == []
 
 
 def test_network_errors_are_gateway_errors():
@@ -199,7 +199,7 @@ def test_with_options_changes_only_the_copy(waits):
     gw = _gateway(_error(503), _error(503), seen=seen, headers={'X-Team': 'ml'})
     impatient = gw.with_options(max_retries=0, headers={'X-Run': '1'})
     with pytest.raises(errors.GatewayError):
-        impatient.keys.list()
+        impatient.credentials.list()
     assert len(seen) == 1
     assert seen[0].headers['X-Team'] == 'ml'
     assert seen[0].headers['X-Run'] == '1'
@@ -210,15 +210,15 @@ def test_with_options_changes_only_the_copy(waits):
 def test_with_options_sets_the_timeout_of_its_calls():
     seen: list = []
     gw = _gateway(_ok(), _ok(), seen=seen)
-    gw.with_options(timeout=120).keys.list()
-    gw.keys.list()
+    gw.with_options(timeout=120).credentials.list()
+    gw.credentials.list()
     assert seen[0].extensions['timeout']['read'] == 120
     assert seen[1].extensions['timeout']['read'] == 30
 
 
 def test_the_user_agent_names_the_sdk_and_its_version():
     seen: list = []
-    _gateway(_ok(), seen=seen).keys.list()
+    _gateway(_ok(), seen=seen).credentials.list()
     assert seen[0].headers['User-Agent'].startswith('radicalbit-gateway-python/')
 
 
@@ -226,7 +226,7 @@ def test_the_url_comes_from_the_environment(monkeypatch):
     monkeypatch.setenv('RADICALBIT_GATEWAY_BASE_URL', 'http://from-env.test/')
     seen: list = []
     gw = Gateway(transport=httpx2.MockTransport(_replying(_ok(), seen=seen)))
-    gw.keys.list()
+    gw.credentials.list()
     assert str(seen[0].url).startswith('http://from-env.test/public/api/v1/')
 
 
@@ -238,7 +238,7 @@ def test_no_url_at_all_is_an_error(monkeypatch):
 
 def test_an_id_can_be_a_string():
     seen: list = []
-    _gateway(_ok(KEY), seen=seen).keys.get(KEY['uuid'])
+    _gateway(_ok(KEY), seen=seen).credentials.get(KEY['uuid'])
     assert seen[0].url.path == f'/public/api/v1/keys/{KEY["uuid"]}'
 
 
@@ -251,7 +251,7 @@ def test_the_async_client_calls_and_retries(waits):
 
     async def call() -> models.KeyFullOut:
         async with AsyncGateway(URL, transport=transport) as gw:
-            return await gw.keys.get(KEY['uuid'])
+            return await gw.credentials.get(KEY['uuid'])
 
     assert asyncio.run(call()).name == 'k'
     assert len(seen) == 2
@@ -263,7 +263,7 @@ def test_the_async_client_raises_typed_errors():
 
     async def call() -> None:
         async with AsyncGateway(URL, transport=transport) as gw:
-            await gw.keys.create(name='k')
+            await gw.credentials.create(name='k')
 
     with pytest.raises(errors.ConflictError):
         asyncio.run(call())
@@ -291,5 +291,6 @@ def test_a_delete_is_not_retried_after_a_lost_answer(waits):
     seen: list = []
     gw = _gateway(httpx2.ReadTimeout('slow'), seen=seen)
     with pytest.raises(errors.APITimeoutError):
-        gw.keys.delete(KEY['uuid'])  # a retry would answer 404 if it went through
+        # A retry would answer 404 if the first one went through
+        gw.credentials.delete(KEY['uuid'])
     assert len(seen) == 1

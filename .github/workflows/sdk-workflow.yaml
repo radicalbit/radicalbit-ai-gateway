@@ -92,6 +92,13 @@ jobs:
             exit 1
           fi
 
+      # The SDK against the gateway's real routes and error handlers (services
+      # mocked). Also part of the gateway's tests: run here too, because a
+      # change to sdk/ alone does not trigger the gateway workflow
+      - name: SDK against the gateway routes
+        working-directory: ./gateway
+        run: uv run pytest tests/sdk --no-cov
+
   lint-spec:
     name: lint the SDK spec
     runs-on: ubuntu-22.04

@@ -607,6 +607,19 @@ class KeyOperationNotAllowedError(AuthRegistryError):
         )
 
 
+class KeyExternallyManagedError(KeyOperationNotAllowedError):
+    """A change to a credential the IdP owns: its lifecycle stays with the IdP.
+
+    A KeyOperationNotAllowedError for the callers that catch that, but a 409
+    with a code of its own: the UI reads a 405 as an expired credential.
+    """
+
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(message, log_message=log_message)
+        self.status_code = status.HTTP_409_CONFLICT
+        self.code = 'key_externally_managed'
+
+
 class KeyRotationConflictError(AuthRegistryError):
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(
@@ -695,6 +708,15 @@ class GroupOperationNotAllowedError(AuthRegistryError):
             'group_operation_method_not_allowed',
             log_message=log_message,
         )
+
+
+class GroupExternallyManagedError(GroupOperationNotAllowedError):
+    """A change to a group the IdP owns: its lifecycle stays with the IdP."""
+
+    def __init__(self, message: str, *, log_message: str | None = None):
+        super().__init__(message, log_message=log_message)
+        self.status_code = status.HTTP_409_CONFLICT
+        self.code = 'group_externally_managed'
 
 
 class GroupHasNoCredentialsError(AuthRegistryError):

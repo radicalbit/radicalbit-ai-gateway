@@ -1363,7 +1363,7 @@
     "/public/api/v1/groups/{group_uuid}/keys": {
       "patch": {
         "description": "Add credentials to the group. A credential belongs to one group at most.",
-        "operationId": "groups_add_keys",
+        "operationId": "groups_add_credentials",
         "parameters": [
           {
             "in": "path",
@@ -1467,7 +1467,7 @@
     "/public/api/v1/groups/{group_uuid}/keys/{key_uuid}": {
       "delete": {
         "description": "Remove a credential from the group.",
-        "operationId": "groups_remove_key",
+        "operationId": "groups_remove_credential",
         "parameters": [
           {
             "in": "path",
@@ -1511,7 +1511,7 @@
             },
             "description": "Not Found"
           },
-          "405": {
+          "409": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1519,7 +1519,7 @@
                 }
               }
             },
-            "description": "Method Not Allowed"
+            "description": "Conflict"
           },
           "422": {
             "content": {
@@ -1718,7 +1718,7 @@
     "/public/api/v1/keys": {
       "get": {
         "description": "List the credentials.",
-        "operationId": "keys_list",
+        "operationId": "credentials_list",
         "parameters": [
           {
             "in": "query",
@@ -1759,7 +1759,7 @@
                   "items": {
                     "$ref": "#/components/schemas/KeyFullOut"
                   },
-                  "title": "Response Keys List",
+                  "title": "Response Credentials List",
                   "type": "array"
                 }
               }
@@ -1779,12 +1779,12 @@
         },
         "summary": "Get All",
         "tags": [
-          "keys"
+          "credentials"
         ]
       },
       "post": {
         "description": "Create a credential. The response is the only one carrying its value.",
-        "operationId": "keys_create",
+        "operationId": "credentials_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1829,14 +1829,14 @@
         },
         "summary": "Create Key",
         "tags": [
-          "keys"
+          "credentials"
         ]
       }
     },
     "/public/api/v1/keys/{key_uuid}": {
       "delete": {
         "description": "Delete a credential: it stops authenticating at once.",
-        "operationId": "keys_delete",
+        "operationId": "credentials_delete",
         "parameters": [
           {
             "in": "path",
@@ -1880,7 +1880,7 @@
             },
             "description": "Not Found"
           },
-          "405": {
+          "409": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1888,7 +1888,7 @@
                 }
               }
             },
-            "description": "Method Not Allowed"
+            "description": "Conflict"
           },
           "422": {
             "content": {
@@ -1903,12 +1903,12 @@
         },
         "summary": "Delete Key",
         "tags": [
-          "keys"
+          "credentials"
         ]
       },
       "get": {
         "description": "Get a credential.",
-        "operationId": "keys_get",
+        "operationId": "credentials_get",
         "parameters": [
           {
             "in": "path",
@@ -1975,14 +1975,14 @@
         },
         "summary": "Get Key By Uuid",
         "tags": [
-          "keys"
+          "credentials"
         ]
       }
     },
     "/public/api/v1/keys/{key_uuid}/rotation": {
       "delete": {
         "description": "End a rotation's grace period: the previous value stops authenticating.",
-        "operationId": "keys_end_grace_period",
+        "operationId": "credentials_end_grace_period",
         "parameters": [
           {
             "in": "path",
@@ -2039,12 +2039,12 @@
         },
         "summary": "End Grace Period",
         "tags": [
-          "keys"
+          "credentials"
         ]
       },
       "post": {
         "description": "Give a credential a new value. The previous value keeps\nauthenticating for the grace period; null ends it at once.",
-        "operationId": "keys_rotate",
+        "operationId": "credentials_rotate",
         "parameters": [
           {
             "in": "path",
@@ -2121,7 +2121,7 @@
         },
         "summary": "Rotate Key",
         "tags": [
-          "keys"
+          "credentials"
         ]
       }
     },

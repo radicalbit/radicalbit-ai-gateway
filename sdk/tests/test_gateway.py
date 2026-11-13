@@ -92,19 +92,21 @@ def test_none_is_sent_as_null_when_given():
 
 def test_body_values_are_serialized_as_json():
     seen: list[httpx2.Request] = []
-    _gateway(201, KEY, seen).keys.create(name='k', expires_on=datetime.date(2030, 1, 2))
+    _gateway(201, KEY, seen).credentials.create(
+        name='k', expires_on=datetime.date(2030, 1, 2)
+    )
     assert json.loads(seen[0].content) == {'name': 'k', 'expiresOn': '2030-01-02'}
 
 
 def test_rotate_sends_a_required_null():
     seen: list[httpx2.Request] = []
-    out = _gateway(200, KEY, seen).keys.rotate(KEY['uuid'], grace_period=None)
+    out = _gateway(200, KEY, seen).credentials.rotate(KEY['uuid'], grace_period=None)
     assert isinstance(out, models.KeyFullOut)
     assert seen[0].url.path == f'/public/api/v1/keys/{KEY["uuid"]}/rotation'
     assert json.loads(seen[0].content) == {'gracePeriod': None}
 
 
-def test_add_keys_sends_the_key_uuids():
+def test_add_credentials_sends_the_key_uuids():
     group_uuid, key_uuid = uuid4(), uuid4()
     group = {
         'uuid': str(group_uuid),
@@ -117,7 +119,7 @@ def test_add_keys_sends_the_key_uuids():
         'updatedAt': 'now',
     }
     seen: list[httpx2.Request] = []
-    _gateway(201, group, seen).groups.add_keys(group_uuid, keys=[key_uuid])
+    _gateway(201, group, seen).groups.add_credentials(group_uuid, keys=[key_uuid])
     assert seen[0].url.path == f'/public/api/v1/groups/{group_uuid}/keys'
     assert json.loads(seen[0].content) == {'keys': [str(key_uuid)]}
 
@@ -242,6 +244,6 @@ def test_auth_and_headers_are_applied():
 
 def test_context_manager_closes_the_http_client():
     with _gateway(200, []) as gw:
-        gw.keys.list()
+        gw.credentials.list()
     with pytest.raises(RuntimeError):
-        gw.keys.list()
+        gw.credentials.list()

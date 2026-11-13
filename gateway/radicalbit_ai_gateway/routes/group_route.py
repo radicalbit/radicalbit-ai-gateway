@@ -148,7 +148,7 @@ class GroupRoute:
             '/groups/{group_uuid}/keys',
             status_code=201,
             response_model=GroupFullOut,
-            operation_id='groups_add_keys',
+            operation_id='groups_add_credentials',
             responses=error_responses(404, 405, 409),
         )
         @route_meta(
@@ -167,8 +167,8 @@ class GroupRoute:
             '/groups/{group_uuid}/keys/{key_uuid}',
             status_code=200,
             response_model=GroupFullOut,
-            operation_id='groups_remove_key',
-            responses=error_responses(404, 405),
+            operation_id='groups_remove_credential',
+            responses=error_responses(404, 409),
         )
         @route_meta(
             entity_type='GROUP', entity_uuid_param='group_uuid', action='REVOKE'

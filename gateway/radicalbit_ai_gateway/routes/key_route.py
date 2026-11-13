@@ -40,13 +40,13 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 class KeyRoute:
     @staticmethod
     def get_key_router(key_service: KeyService) -> APIRouter:
-        router = APIRouter(tags=['keys'])
+        router = APIRouter(tags=['credentials'])
 
         @router.post(
             '/keys',
             status_code=201,
             response_model=KeyFullOut,
-            operation_id='keys_create',
+            operation_id='credentials_create',
             responses=error_responses(409),
         )
         @route_meta(entity_type='KEY', response_uuid_field='uuid')
@@ -62,7 +62,7 @@ class KeyRoute:
             '/keys',
             status_code=200,
             response_model=list[KeyFullOut],
-            operation_id='keys_list',
+            operation_id='credentials_list',
         )
         def get_all(
             include_groups: bool = False,
@@ -95,7 +95,7 @@ class KeyRoute:
             '/keys/{key_uuid}',
             status_code=200,
             response_model=KeyFullOut,
-            operation_id='keys_get',
+            operation_id='credentials_get',
             responses=error_responses(404),
         )
         def get_key_by_uuid(
@@ -118,8 +118,8 @@ class KeyRoute:
             '/keys/{key_uuid}',
             status_code=200,
             response_model=KeyFullOut,
-            operation_id='keys_delete',
-            responses=error_responses(404, 405),
+            operation_id='credentials_delete',
+            responses=error_responses(404, 409),
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
         def delete_key(key_uuid: UUID, include_groups: bool = Query(False)):
@@ -130,7 +130,7 @@ class KeyRoute:
             '/keys/{key_uuid}/rotation',
             status_code=200,
             response_model=KeyFullOut,
-            operation_id='keys_rotate',
+            operation_id='credentials_rotate',
             responses=error_responses(404, 405, 409),
         )
         @route_meta(entity_type='KEY', entity_uuid_param='key_uuid')
@@ -162,7 +162,7 @@ class KeyRoute:
             '/keys/{key_uuid}/rotation',
             status_code=200,
             response_model=KeyFullOut,
-            operation_id='keys_end_grace_period',
+            operation_id='credentials_end_grace_period',
             responses=error_responses(404, 409),
         )
         # Ends the grace period: an update of the credential, not its deletion

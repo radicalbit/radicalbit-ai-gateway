@@ -11,9 +11,10 @@ from radicalbit_gateway import Gateway, errors, models
 
 with Gateway('http://localhost:9000') as gw:
     project = gw.projects.create(name='support-bot')
-    key = gw.keys.create(name='support-bot-prod')  # key.api_key: the only copy
+    # credential.api_key: the value, returned only here
+    credential = gw.credentials.create(name='support-bot-prod')
     group = gw.groups.create(name='support')
-    gw.groups.add_keys(group.uuid, keys=[key.uuid])
+    gw.groups.add_credentials(group.uuid, keys=[credential.uuid])
 
     gw.configs.validate(config_file=open('config.yaml').read())  # dry run
     slot_a = next(c for c in project.configs if c.slot == 'A')
@@ -27,7 +28,7 @@ with Gateway('http://localhost:9000') as gw:
 ## API
 
 Operation `<tag>_<action>` of the API is the method `gw.<tag>.<action>()`
-(`keys_create` is `gw.keys.create`, `configs_cancel_approval` is
+(`credentials_create` is `gw.credentials.create`, `configs_cancel_approval` is
 `gw.configs.cancel_approval`). For every method:
 
 - **path parameters** are positional, named as in the API (`project_uuid`,
@@ -36,10 +37,12 @@ Operation `<tag>_<action>` of the API is the method `gw.<tag>.<action>()`
   (`configFile` is `config_file`). Required ones have no default;
 - **optional ones default to `NOT_GIVEN`**: an argument you do not pass is not
   sent, so the API applies its own default. `None` is sent as JSON `null`
-  (e.g. `keys.rotate(key_uuid, grace_period=None)`: no grace period);
-- a **file** of a multipart body (`configs.upload(..., file=...)`) takes what
-  httpx2 takes: an open binary file, `bytes`, or `(filename, content[, content type])`;
-- an **id** takes a `UUID` or its string (`gw.keys.get('3f1c9a2e-...')`);
+  (e.g. `credentials.rotate(key_uuid, grace_period=None)`: no grace period);
+- a **file** of a multipart body (`configs.upload(..., file=...)`) takes an
+  open binary file or `(filename, content[, content type])`, not the content
+  alone: the gateway accepts only a `.yaml` or `.yml` filename. For YAML text
+  already in memory, `configs.save(..., config_file=text)` needs no file;
+- an **id** takes a `UUID` or its string (`gw.credentials.get('3f1c9a2e-...')`);
 - a **closed set of values** is a plain string, checked by the type checker and
   completed by the editor (`gw.projects.list(filter='prod')`;
   `project.project_status == 'PROD'`): `models.ProjectFilter` and the like are
@@ -50,8 +53,10 @@ Operation `<tag>_<action>` of the API is the method `gw.<tag>.<action>()`
 
 The signatures and docstrings are the reference (`help(gw.configs)`): they are
 generated from the API's spec, and each docstring lists the method's
-arguments, return value and errors. Credentials are the API's `keys`. A project has
-two config slots, `A` and `B`, in `project.configs`.
+arguments, return value and errors. A project has two config slots, `A` and
+`B`, in `project.configs`. The API's paths and fields still call credentials
+`keys` (`/keys`, `key_uuid`, `groups.add_credentials(..., keys=[...])`); the
+methods call them credentials (`gw.credentials`).
 
 ## Errors
 
@@ -83,7 +88,8 @@ sending it twice cannot do the work twice:
 
 The wait doubles from 0.5 s up to 8 s, with jitter, or follows `Retry-After` /
 `retry-after-ms` (up to 60 s). An upload of an open file is not retried (it
-could not be read again); pass `bytes` for a retried upload.
+could not be read again); pass `('config.yaml', content_bytes)` for a retried
+upload.
 
 ## Newer gateways
 
@@ -108,7 +114,7 @@ Use it as a context manager, or call `close()`. For some calls only,
 
 ```python
 gw.with_options(timeout=120).configs.validate(config_file=big_config)
-gw.with_options(max_retries=0, headers={'X-Run': run_id}).keys.list()
+gw.with_options(max_retries=0, headers={'X-Run': run_id}).credentials.list()
 ```
 
 `AsyncGateway` takes the same options; its methods are awaited, and it is used
@@ -165,5 +171,9 @@ fix), or teach the generator the construct, with a test in
   tests on a mocked transport: the operations (`tests/test_gateway.py`) and the
   client's own behaviour, retries, options, async, tolerance
   (`tests/test_client_options.py`).
+- `gateway/tests/sdk/`: every SDK method against the gateway's real routes and
+  error handlers, in-process, with the services mocked
+  (`cd ../gateway && uv run pytest tests/sdk --no-cov`). It runs in the
+  gateway's tests and in the SDK workflow.
 - Python 3.11+, for the SDK and its dev environment.
 - `uv run ty check src`: type-checks the SDK, generated code included.

@@ -30,10 +30,10 @@ from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
     GroupAlreadyExistsError,
+    GroupExternallyManagedError,
     GroupHasNoCredentialsError,
     GroupInternalError,
     GroupNotFoundError,
-    GroupOperationNotAllowedError,
     RouteNotFoundError,
 )
 
@@ -168,7 +168,7 @@ class GroupServiceTest(unittest.TestCase):
         self.group_dao.get_by_uuid = MagicMock(return_value=group)
         keys_in = db_mock.get_sample_keys_uuid_in([uuid.uuid4()])
         pytest.raises(
-            GroupOperationNotAllowedError,
+            GroupExternallyManagedError,
             self.group_service.add_keys,
             group.uuid,
             keys_in,
@@ -230,7 +230,7 @@ class GroupServiceTest(unittest.TestCase):
         self.group_dao.get_by_uuid = MagicMock(return_value=group)
         self.group_dao.delete_by_uuid = MagicMock()
         pytest.raises(
-            GroupOperationNotAllowedError,
+            GroupExternallyManagedError,
             self.group_service.delete_group,
             group.uuid,
             False,
@@ -729,7 +729,7 @@ class TestRemoveKey(_AsyncGroupServiceTestBase):
         group.owner = 'keycloak'
         key = db_mock.get_sample_key()
         group_dao.get_by_uuid = MagicMock(return_value=group)
-        with pytest.raises(GroupOperationNotAllowedError):
+        with pytest.raises(GroupExternallyManagedError):
             await service.remove_key(group.uuid, key.uuid)
         key_service.remove_group_from_key.assert_not_called()
 

@@ -44,6 +44,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     CredentialLimitAlreadyExistsError,
     CredentialLimitNotFoundError,
     CredentialLimitValueError,
+    KeyExternallyManagedError,
     KeyGroupAlreadyExistsError,
     KeyInternalError,
     KeyNotFoundError,
@@ -122,7 +123,7 @@ class KeyServiceTest(unittest.TestCase):
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
         self.key_dao.delete_by_uuid = MagicMock()
         pytest.raises(
-            KeyOperationNotAllowedError,
+            KeyExternallyManagedError,
             self.key_service.delete_key,
             key.uuid,
         )
@@ -913,7 +914,7 @@ class TestGroupMembershipLeavesLimitsAlone:
         key.owner = 'keycloak'
         key_dao.get_by_uuid = MagicMock(return_value=key)
         key_dao.remove_group = MagicMock()
-        with pytest.raises(KeyOperationNotAllowedError):
+        with pytest.raises(KeyExternallyManagedError):
             await service.remove_group_from_key(key.uuid, group_uuid)
         key_dao.remove_group.assert_not_called()
 

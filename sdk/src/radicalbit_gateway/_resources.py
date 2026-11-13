@@ -210,13 +210,182 @@ class ConfigsResource:
         )
 
 
+class CredentialsResource:
+    """The ``credentials`` operations."""
+
+    def __init__(self, client: Gateway) -> None:
+        self._client = client
+
+    def create(
+        self, *, name: str, expires_on: datetime.date | None | NotGiven = NOT_GIVEN
+    ) -> models.KeyFullOut:
+        """Create a credential. The response is the only one carrying its value.
+
+        Args:
+            name: Body field.
+            expires_on: Body field ``expiresOn``. Optional: not sent unless given. None is sent as null.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return self._client._request(
+            'POST',
+            '/public/api/v1/keys',
+            json={'expiresOn': expires_on, 'name': name},
+            response=models.KeyFullOut,
+        )
+
+    def delete(
+        self, key_uuid: UUID | str, *, include_groups: bool | NotGiven = NOT_GIVEN
+    ) -> models.KeyFullOut:
+        """Delete a credential: it stops authenticating at once.
+
+        Args:
+            key_uuid: Path parameter.
+            include_groups: Query parameter. Optional: not sent unless given.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return self._client._request(
+            'DELETE',
+            '/public/api/v1/keys/{key_uuid}',
+            path_params={'key_uuid': key_uuid},
+            query={'include_groups': include_groups},
+            response=models.KeyFullOut,
+        )
+
+    def end_grace_period(self, key_uuid: UUID | str) -> models.KeyFullOut:
+        """End a rotation's grace period: the previous value stops authenticating.
+
+        Args:
+            key_uuid: Path parameter.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return self._client._request(
+            'DELETE',
+            '/public/api/v1/keys/{key_uuid}/rotation',
+            path_params={'key_uuid': key_uuid},
+            response=models.KeyFullOut,
+        )
+
+    def get(
+        self,
+        key_uuid: UUID | str,
+        *,
+        include_groups: bool | NotGiven = NOT_GIVEN,
+        include_limits: bool | NotGiven = NOT_GIVEN,
+    ) -> models.KeyFullOut:
+        """Get a credential.
+
+        Args:
+            key_uuid: Path parameter.
+            include_groups: Query parameter. Optional: not sent unless given.
+            include_limits: Query parameter. Optional: not sent unless given.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return self._client._request(
+            'GET',
+            '/public/api/v1/keys/{key_uuid}',
+            path_params={'key_uuid': key_uuid},
+            query={'include_groups': include_groups, 'include_limits': include_limits},
+            response=models.KeyFullOut,
+        )
+
+    def list(
+        self,
+        *,
+        include_groups: bool | NotGiven = NOT_GIVEN,
+        only_unassigned: bool | NotGiven = NOT_GIVEN,
+        include_limits: bool | NotGiven = NOT_GIVEN,
+    ) -> builtins.list[models.KeyFullOut]:
+        """List the credentials.
+
+        Args:
+            include_groups: Query parameter. Optional: not sent unless given.
+            only_unassigned: Query parameter. Optional: not sent unless given.
+            include_limits: Query parameter. Optional: not sent unless given.
+
+        Returns:
+            list[models.KeyFullOut]
+
+        Raises:
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return self._client._request(
+            'GET',
+            '/public/api/v1/keys',
+            query={
+                'include_groups': include_groups,
+                'only_unassigned': only_unassigned,
+                'include_limits': include_limits,
+            },
+            response=builtins.list[models.KeyFullOut],
+        )
+
+    def rotate(
+        self, key_uuid: UUID | str, *, grace_period: str | None
+    ) -> models.KeyFullOut:
+        """Give a credential a new value. The previous value keeps
+        authenticating for the grace period; null ends it at once.
+
+        Args:
+            key_uuid: Path parameter.
+            grace_period: Body field ``gracePeriod``. None is sent as null.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            GatewayError: 405 Method Not Allowed.
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return self._client._request(
+            'POST',
+            '/public/api/v1/keys/{key_uuid}/rotation',
+            path_params={'key_uuid': key_uuid},
+            json={'gracePeriod': grace_period},
+            response=models.KeyFullOut,
+        )
+
+
 class GroupsResource:
     """The ``groups`` operations."""
 
     def __init__(self, client: Gateway) -> None:
         self._client = client
 
-    def add_keys(
+    def add_credentials(
         self,
         group_uuid: UUID | str,
         *,
@@ -364,7 +533,7 @@ class GroupsResource:
             response=builtins.list[models.GroupFullOut],
         )
 
-    def remove_key(
+    def remove_credential(
         self, group_uuid: UUID | str, key_uuid: UUID | str
     ) -> models.GroupFullOut:
         """Remove a credential from the group.
@@ -378,7 +547,7 @@ class GroupsResource:
 
         Raises:
             NotFoundError: 404 Not Found.
-            GatewayError: 405 Method Not Allowed.
+            ConflictError: 409 Conflict.
             ValidationError: 422 Validation Error.
             APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
         """
@@ -416,175 +585,6 @@ class GroupsResource:
                 'route_name': route_name,
             },
             response=models.GroupFullOut,
-        )
-
-
-class KeysResource:
-    """The ``keys`` operations."""
-
-    def __init__(self, client: Gateway) -> None:
-        self._client = client
-
-    def create(
-        self, *, name: str, expires_on: datetime.date | None | NotGiven = NOT_GIVEN
-    ) -> models.KeyFullOut:
-        """Create a credential. The response is the only one carrying its value.
-
-        Args:
-            name: Body field.
-            expires_on: Body field ``expiresOn``. Optional: not sent unless given. None is sent as null.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            ConflictError: 409 Conflict.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return self._client._request(
-            'POST',
-            '/public/api/v1/keys',
-            json={'expiresOn': expires_on, 'name': name},
-            response=models.KeyFullOut,
-        )
-
-    def delete(
-        self, key_uuid: UUID | str, *, include_groups: bool | NotGiven = NOT_GIVEN
-    ) -> models.KeyFullOut:
-        """Delete a credential: it stops authenticating at once.
-
-        Args:
-            key_uuid: Path parameter.
-            include_groups: Query parameter. Optional: not sent unless given.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            NotFoundError: 404 Not Found.
-            GatewayError: 405 Method Not Allowed.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return self._client._request(
-            'DELETE',
-            '/public/api/v1/keys/{key_uuid}',
-            path_params={'key_uuid': key_uuid},
-            query={'include_groups': include_groups},
-            response=models.KeyFullOut,
-        )
-
-    def end_grace_period(self, key_uuid: UUID | str) -> models.KeyFullOut:
-        """End a rotation's grace period: the previous value stops authenticating.
-
-        Args:
-            key_uuid: Path parameter.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            NotFoundError: 404 Not Found.
-            ConflictError: 409 Conflict.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return self._client._request(
-            'DELETE',
-            '/public/api/v1/keys/{key_uuid}/rotation',
-            path_params={'key_uuid': key_uuid},
-            response=models.KeyFullOut,
-        )
-
-    def get(
-        self,
-        key_uuid: UUID | str,
-        *,
-        include_groups: bool | NotGiven = NOT_GIVEN,
-        include_limits: bool | NotGiven = NOT_GIVEN,
-    ) -> models.KeyFullOut:
-        """Get a credential.
-
-        Args:
-            key_uuid: Path parameter.
-            include_groups: Query parameter. Optional: not sent unless given.
-            include_limits: Query parameter. Optional: not sent unless given.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            NotFoundError: 404 Not Found.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return self._client._request(
-            'GET',
-            '/public/api/v1/keys/{key_uuid}',
-            path_params={'key_uuid': key_uuid},
-            query={'include_groups': include_groups, 'include_limits': include_limits},
-            response=models.KeyFullOut,
-        )
-
-    def list(
-        self,
-        *,
-        include_groups: bool | NotGiven = NOT_GIVEN,
-        only_unassigned: bool | NotGiven = NOT_GIVEN,
-        include_limits: bool | NotGiven = NOT_GIVEN,
-    ) -> builtins.list[models.KeyFullOut]:
-        """List the credentials.
-
-        Args:
-            include_groups: Query parameter. Optional: not sent unless given.
-            only_unassigned: Query parameter. Optional: not sent unless given.
-            include_limits: Query parameter. Optional: not sent unless given.
-
-        Returns:
-            list[models.KeyFullOut]
-
-        Raises:
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return self._client._request(
-            'GET',
-            '/public/api/v1/keys',
-            query={
-                'include_groups': include_groups,
-                'only_unassigned': only_unassigned,
-                'include_limits': include_limits,
-            },
-            response=builtins.list[models.KeyFullOut],
-        )
-
-    def rotate(
-        self, key_uuid: UUID | str, *, grace_period: str | None
-    ) -> models.KeyFullOut:
-        """Give a credential a new value. The previous value keeps
-        authenticating for the grace period; null ends it at once.
-
-        Args:
-            key_uuid: Path parameter.
-            grace_period: Body field ``gracePeriod``. None is sent as null.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            NotFoundError: 404 Not Found.
-            GatewayError: 405 Method Not Allowed.
-            ConflictError: 409 Conflict.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return self._client._request(
-            'POST',
-            '/public/api/v1/keys/{key_uuid}/rotation',
-            path_params={'key_uuid': key_uuid},
-            json={'gracePeriod': grace_period},
-            response=models.KeyFullOut,
         )
 
 
@@ -675,8 +675,8 @@ class Resources:
 
     def __init__(self, client: Gateway) -> None:
         self.configs = ConfigsResource(client)
+        self.credentials = CredentialsResource(client)
         self.groups = GroupsResource(client)
-        self.keys = KeysResource(client)
         self.projects = ProjectsResource(client)
 
 
@@ -869,13 +869,182 @@ class AsyncConfigsResource:
         )
 
 
+class AsyncCredentialsResource:
+    """The ``credentials`` operations, awaited."""
+
+    def __init__(self, client: AsyncGateway) -> None:
+        self._client = client
+
+    async def create(
+        self, *, name: str, expires_on: datetime.date | None | NotGiven = NOT_GIVEN
+    ) -> models.KeyFullOut:
+        """Create a credential. The response is the only one carrying its value.
+
+        Args:
+            name: Body field.
+            expires_on: Body field ``expiresOn``. Optional: not sent unless given. None is sent as null.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return await self._client._request(
+            'POST',
+            '/public/api/v1/keys',
+            json={'expiresOn': expires_on, 'name': name},
+            response=models.KeyFullOut,
+        )
+
+    async def delete(
+        self, key_uuid: UUID | str, *, include_groups: bool | NotGiven = NOT_GIVEN
+    ) -> models.KeyFullOut:
+        """Delete a credential: it stops authenticating at once.
+
+        Args:
+            key_uuid: Path parameter.
+            include_groups: Query parameter. Optional: not sent unless given.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return await self._client._request(
+            'DELETE',
+            '/public/api/v1/keys/{key_uuid}',
+            path_params={'key_uuid': key_uuid},
+            query={'include_groups': include_groups},
+            response=models.KeyFullOut,
+        )
+
+    async def end_grace_period(self, key_uuid: UUID | str) -> models.KeyFullOut:
+        """End a rotation's grace period: the previous value stops authenticating.
+
+        Args:
+            key_uuid: Path parameter.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return await self._client._request(
+            'DELETE',
+            '/public/api/v1/keys/{key_uuid}/rotation',
+            path_params={'key_uuid': key_uuid},
+            response=models.KeyFullOut,
+        )
+
+    async def get(
+        self,
+        key_uuid: UUID | str,
+        *,
+        include_groups: bool | NotGiven = NOT_GIVEN,
+        include_limits: bool | NotGiven = NOT_GIVEN,
+    ) -> models.KeyFullOut:
+        """Get a credential.
+
+        Args:
+            key_uuid: Path parameter.
+            include_groups: Query parameter. Optional: not sent unless given.
+            include_limits: Query parameter. Optional: not sent unless given.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return await self._client._request(
+            'GET',
+            '/public/api/v1/keys/{key_uuid}',
+            path_params={'key_uuid': key_uuid},
+            query={'include_groups': include_groups, 'include_limits': include_limits},
+            response=models.KeyFullOut,
+        )
+
+    async def list(
+        self,
+        *,
+        include_groups: bool | NotGiven = NOT_GIVEN,
+        only_unassigned: bool | NotGiven = NOT_GIVEN,
+        include_limits: bool | NotGiven = NOT_GIVEN,
+    ) -> builtins.list[models.KeyFullOut]:
+        """List the credentials.
+
+        Args:
+            include_groups: Query parameter. Optional: not sent unless given.
+            only_unassigned: Query parameter. Optional: not sent unless given.
+            include_limits: Query parameter. Optional: not sent unless given.
+
+        Returns:
+            list[models.KeyFullOut]
+
+        Raises:
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return await self._client._request(
+            'GET',
+            '/public/api/v1/keys',
+            query={
+                'include_groups': include_groups,
+                'only_unassigned': only_unassigned,
+                'include_limits': include_limits,
+            },
+            response=builtins.list[models.KeyFullOut],
+        )
+
+    async def rotate(
+        self, key_uuid: UUID | str, *, grace_period: str | None
+    ) -> models.KeyFullOut:
+        """Give a credential a new value. The previous value keeps
+        authenticating for the grace period; null ends it at once.
+
+        Args:
+            key_uuid: Path parameter.
+            grace_period: Body field ``gracePeriod``. None is sent as null.
+
+        Returns:
+            models.KeyFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            GatewayError: 405 Method Not Allowed.
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return await self._client._request(
+            'POST',
+            '/public/api/v1/keys/{key_uuid}/rotation',
+            path_params={'key_uuid': key_uuid},
+            json={'gracePeriod': grace_period},
+            response=models.KeyFullOut,
+        )
+
+
 class AsyncGroupsResource:
     """The ``groups`` operations, awaited."""
 
     def __init__(self, client: AsyncGateway) -> None:
         self._client = client
 
-    async def add_keys(
+    async def add_credentials(
         self,
         group_uuid: UUID | str,
         *,
@@ -1023,7 +1192,7 @@ class AsyncGroupsResource:
             response=builtins.list[models.GroupFullOut],
         )
 
-    async def remove_key(
+    async def remove_credential(
         self, group_uuid: UUID | str, key_uuid: UUID | str
     ) -> models.GroupFullOut:
         """Remove a credential from the group.
@@ -1037,7 +1206,7 @@ class AsyncGroupsResource:
 
         Raises:
             NotFoundError: 404 Not Found.
-            GatewayError: 405 Method Not Allowed.
+            ConflictError: 409 Conflict.
             ValidationError: 422 Validation Error.
             APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
         """
@@ -1075,175 +1244,6 @@ class AsyncGroupsResource:
                 'route_name': route_name,
             },
             response=models.GroupFullOut,
-        )
-
-
-class AsyncKeysResource:
-    """The ``keys`` operations, awaited."""
-
-    def __init__(self, client: AsyncGateway) -> None:
-        self._client = client
-
-    async def create(
-        self, *, name: str, expires_on: datetime.date | None | NotGiven = NOT_GIVEN
-    ) -> models.KeyFullOut:
-        """Create a credential. The response is the only one carrying its value.
-
-        Args:
-            name: Body field.
-            expires_on: Body field ``expiresOn``. Optional: not sent unless given. None is sent as null.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            ConflictError: 409 Conflict.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return await self._client._request(
-            'POST',
-            '/public/api/v1/keys',
-            json={'expiresOn': expires_on, 'name': name},
-            response=models.KeyFullOut,
-        )
-
-    async def delete(
-        self, key_uuid: UUID | str, *, include_groups: bool | NotGiven = NOT_GIVEN
-    ) -> models.KeyFullOut:
-        """Delete a credential: it stops authenticating at once.
-
-        Args:
-            key_uuid: Path parameter.
-            include_groups: Query parameter. Optional: not sent unless given.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            NotFoundError: 404 Not Found.
-            GatewayError: 405 Method Not Allowed.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return await self._client._request(
-            'DELETE',
-            '/public/api/v1/keys/{key_uuid}',
-            path_params={'key_uuid': key_uuid},
-            query={'include_groups': include_groups},
-            response=models.KeyFullOut,
-        )
-
-    async def end_grace_period(self, key_uuid: UUID | str) -> models.KeyFullOut:
-        """End a rotation's grace period: the previous value stops authenticating.
-
-        Args:
-            key_uuid: Path parameter.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            NotFoundError: 404 Not Found.
-            ConflictError: 409 Conflict.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return await self._client._request(
-            'DELETE',
-            '/public/api/v1/keys/{key_uuid}/rotation',
-            path_params={'key_uuid': key_uuid},
-            response=models.KeyFullOut,
-        )
-
-    async def get(
-        self,
-        key_uuid: UUID | str,
-        *,
-        include_groups: bool | NotGiven = NOT_GIVEN,
-        include_limits: bool | NotGiven = NOT_GIVEN,
-    ) -> models.KeyFullOut:
-        """Get a credential.
-
-        Args:
-            key_uuid: Path parameter.
-            include_groups: Query parameter. Optional: not sent unless given.
-            include_limits: Query parameter. Optional: not sent unless given.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            NotFoundError: 404 Not Found.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return await self._client._request(
-            'GET',
-            '/public/api/v1/keys/{key_uuid}',
-            path_params={'key_uuid': key_uuid},
-            query={'include_groups': include_groups, 'include_limits': include_limits},
-            response=models.KeyFullOut,
-        )
-
-    async def list(
-        self,
-        *,
-        include_groups: bool | NotGiven = NOT_GIVEN,
-        only_unassigned: bool | NotGiven = NOT_GIVEN,
-        include_limits: bool | NotGiven = NOT_GIVEN,
-    ) -> builtins.list[models.KeyFullOut]:
-        """List the credentials.
-
-        Args:
-            include_groups: Query parameter. Optional: not sent unless given.
-            only_unassigned: Query parameter. Optional: not sent unless given.
-            include_limits: Query parameter. Optional: not sent unless given.
-
-        Returns:
-            list[models.KeyFullOut]
-
-        Raises:
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return await self._client._request(
-            'GET',
-            '/public/api/v1/keys',
-            query={
-                'include_groups': include_groups,
-                'only_unassigned': only_unassigned,
-                'include_limits': include_limits,
-            },
-            response=builtins.list[models.KeyFullOut],
-        )
-
-    async def rotate(
-        self, key_uuid: UUID | str, *, grace_period: str | None
-    ) -> models.KeyFullOut:
-        """Give a credential a new value. The previous value keeps
-        authenticating for the grace period; null ends it at once.
-
-        Args:
-            key_uuid: Path parameter.
-            grace_period: Body field ``gracePeriod``. None is sent as null.
-
-        Returns:
-            models.KeyFullOut
-
-        Raises:
-            NotFoundError: 404 Not Found.
-            GatewayError: 405 Method Not Allowed.
-            ConflictError: 409 Conflict.
-            ValidationError: 422 Validation Error.
-            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
-        """
-        return await self._client._request(
-            'POST',
-            '/public/api/v1/keys/{key_uuid}/rotation',
-            path_params={'key_uuid': key_uuid},
-            json={'gracePeriod': grace_period},
-            response=models.KeyFullOut,
         )
 
 
@@ -1334,6 +1334,6 @@ class AsyncResources:
 
     def __init__(self, client: AsyncGateway) -> None:
         self.configs = AsyncConfigsResource(client)
+        self.credentials = AsyncCredentialsResource(client)
         self.groups = AsyncGroupsResource(client)
-        self.keys = AsyncKeysResource(client)
         self.projects = AsyncProjectsResource(client)
