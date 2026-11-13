@@ -14,7 +14,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
-  UV_VERSION: "0.7.13"
+  UV_VERSION: "0.13.8"
   # Dependency-Track project names (registry-independent, stable across builds)
   GATEWAY_PYTHON_PROJECT: radicalbit-ai-gateway-python
   WORKER_PYTHON_PROJECT: metrics-worker-python
