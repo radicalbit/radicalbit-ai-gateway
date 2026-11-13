@@ -3,8 +3,7 @@ route's policies.
 
 The policies read the request's texts as chat messages (see
 ``MessagesRequest``); what they change is written back into the body that
-goes upstream. The order is the one of the Responses API. The cache does not
-apply to the Messages API yet (AG-1132).
+goes upstream. The order is the one of the Responses API.
 """
 
 from collections.abc import AsyncIterator
@@ -14,6 +13,7 @@ from radicalbit_ai_gateway.endpoints.chat_like.limits import check_chat_limits
 from radicalbit_ai_gateway.endpoints.chat_like.model_selection import route_chat
 from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config_prompt
 from radicalbit_ai_gateway.endpoints.common.streams import stream_of
+from radicalbit_ai_gateway.endpoints.messages.cache import MessagesEntry, is_complete
 from radicalbit_ai_gateway.endpoints.messages.events import (
     MessageCollector,
     message_events,
@@ -66,15 +66,14 @@ async def stream(
     """Answer a Messages API request with SSE frames.
 
     The upstream's events are relayed as they come, unless the whole answer
-    must be known first: a soft block, or an answer the output guardrails
-    must pass. Then the frames are known when this returns.
+    must be known first: a soft block, a cache hit, or an answer the output
+    guardrails must pass. Then the frames are known when this returns.
 
     The input policies run before this returns, so a request they refuse
     gets an HTTP error.
     """
     prepared = await _prepare(scope, body, headers)
-    # A cache hit is known whole too: it goes with the buffered answers.
-    if prepared.soft_block or scope.route.guardrails.has_output:
+    if prepared.soft_block or scope.cached.hit or scope.route.guardrails.has_output:
         return stream_of(await _buffered(scope, prepared))
     return _live(scope, prepared)
 
@@ -129,13 +128,19 @@ async def _prepare(
         # cache sees.
         request.insert_system_prompt(messages[0])
 
-    # The cache lookup goes here, on the body as it goes upstream.
+    # The lookup is on the body as it goes upstream.
+    scope.cached = await scope.cache.lookup(MessagesEntry(request.body))
     return _Prepared(request.body, headers, model)
 
 
 async def _respond(scope: RequestScope, prepared: _Prepared) -> dict:
     if prepared.soft_block:
         return prepared.soft_block
+    if scope.cached.hit:
+        # A hit is screened as a model's answer is. No model was called, so
+        # nothing is counted on the limits.
+        message = await screen_output(scope, scope.cached.value)
+        return {**message, 'model': scope.route.gateway_route_config.route_name}
 
     set_operation_category(OperationCategory.INVOCATION)
     message, _ = await scope.route.chat_invoker.complete_messages(
@@ -145,12 +150,12 @@ async def _respond(scope: RequestScope, prepared: _Prepared) -> dict:
 
 
 async def _screened(scope: RequestScope, prepared: _Prepared, message: dict) -> dict:
-    """Count a model's answer, apply the output guardrails to it and return
-    it as the client gets it.
+    """Count a model's answer, apply the output guardrails to it, cache it
+    and return it as the client gets it.
     """
     await _count(scope, prepared, message.get('usage'))
     message = await screen_output(scope, message)
-    # The cache store goes here, on the screened answer.
+    await _store(scope, prepared, message)
     return {**message, 'model': scope.route.gateway_route_config.route_name}
 
 
@@ -165,18 +170,25 @@ def _call(scope: RequestScope, prepared: _Prepared) -> dict:
 
 
 async def _live(scope: RequestScope, prepared: _Prepared) -> AsyncIterator[str]:
-    """Relay the upstream's events, then count the reply on the limits."""
+    """Relay the upstream's events, then count the reply on the limits and
+    cache it.
+    """
     set_streaming()
     set_operation_category(OperationCategory.INVOCATION)
     route_name = scope.route.gateway_route_config.route_name
     usage: dict = {}
+    # The answer is built from its events only on a route with a cache.
+    collector = MessageCollector() if scope.route.cache.backend else None
     async for event, data in scope.route.chat_invoker.stream_messages(
         **_call(scope, prepared)
     ):
         usage = stream_usage(event, data, usage)
+        if collector:
+            collector.add(event, data)
         yield relay_frame(event, data, route_name)
     await _count(scope, prepared, usage)
-    # The cache store of a relayed answer goes here.
+    if collector and (message := collector.message()):
+        await _store(scope, prepared, message)
 
 
 async def _buffered(scope: RequestScope, prepared: _Prepared) -> list[str]:
@@ -187,8 +199,8 @@ async def _buffered(scope: RequestScope, prepared: _Prepared) -> list[str]:
     streams it, each block in one delta.
     """
     set_streaming()
-    if prepared.soft_block:
-        return message_events(prepared.soft_block)
+    if prepared.soft_block or scope.cached.hit:
+        return message_events(await _respond(scope, prepared))
 
     set_operation_category(OperationCategory.INVOCATION)
     collector = MessageCollector()
@@ -217,3 +229,9 @@ async def _count(scope: RequestScope, prepared: _Prepared, usage: dict | None) -
         return
     input_tokens, output_tokens = messages_token_counts(usage)
     await scope.limits.count(Usage.priced(prepared.model, input_tokens, output_tokens))
+
+
+async def _store(scope: RequestScope, prepared: _Prepared, message: dict) -> None:
+    """Cache a model's screened answer, when it is complete."""
+    if is_complete(message):
+        await scope.cached.store({**message, 'model': prepared.model.model_id})

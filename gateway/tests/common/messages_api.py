@@ -12,6 +12,7 @@ import pook
 from tests.common import db_mock, provider_responses as canned
 from tests.common.gateway_harness import build_routes
 
+from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.server import app
 
@@ -97,12 +98,14 @@ def messages_routes(
     fallbacks: list[str] | None = None,
     routing: dict | None = None,
     config: dict | None = None,
+    project_uuid: str = '',
     **route: object,
 ) -> dict:
     """Build the ``assistant`` route over ``models``: by default, on the first.
 
     ``route`` holds more keys of the route, ``config`` more top-level sections
     of the project config (guardrails, embedding models, cache).
+    ``project_uuid`` is the project of the routes: the semantic cache needs one.
     """
     route_models = route_models or [models[0]['model_id']]
     config_route: dict = {'chat_models': route_models, **route}
@@ -116,15 +119,17 @@ def messages_routes(
             'routing': [routing] if routing else None,
             'routes': {'assistant': config_route},
             **(config or {}),
-        }
+        },
+        project_uuid=project_uuid,
     )
 
 
-def serve(*models: dict, **route: object) -> None:
+def serve(*models: dict, **route: object) -> GatewayRoute:
     """Serve the ``assistant`` route over ``models`` for the rest of the test
-    (``open_gateway`` puts the routes back).
+    (``open_gateway`` puts the routes back) and return it.
     """
     app.state.routes = messages_routes(*models, **route)
+    return app.state.routes[ROUTE_KEY]
 
 
 def serve_with_fallback(fallback: dict = HAIKU) -> None:
@@ -198,6 +203,23 @@ def mock_every_upstream() -> list:
         mock.reply(500).json({})
         mocks.append(mock)
     return mocks
+
+
+EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings'
+
+
+def mock_embedding(*vector: float):
+    """Mock one OpenAI embeddings answer: ``vector``, for 3 input tokens."""
+    mock = pook.post(EMBEDDINGS_URL).times(1)
+    mock.reply(200).json(
+        {
+            'object': 'list',
+            'data': [{'object': 'embedding', 'index': 0, 'embedding': list(vector)}],
+            'model': 'text-embedding-3-small',
+            'usage': {'prompt_tokens': 3, 'total_tokens': 3},
+        }
+    )
+    return mock
 
 
 def sent_body(mock, index: int = 0) -> dict:
