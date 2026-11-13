@@ -1,6 +1,7 @@
 import asyncio
+from decimal import Decimal
 import io
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 import uuid
 import zipfile
 
@@ -13,11 +14,20 @@ from tests.common.db_integration import DatabaseIntegration
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
+from radicalbit_ai_gateway.limiter import InMemoryStorage
+from radicalbit_ai_gateway.limiting.limits import (
+    Limits,
+    RouteLimits,
+    Usage,
+    shared_limits,
+)
+from radicalbit_ai_gateway.limiting.windows import project_window
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitIn,
+    ProjectBudgetLimitOut,
     ProjectBudgetLimitsIn,
     ProjectBudgetLimitValueIn,
 )
@@ -28,7 +38,9 @@ from radicalbit_ai_gateway.models.project_dto import (
     ProjectIn,
 )
 from radicalbit_ai_gateway.models.project_status import ProjectStatus
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.project_service import ProjectService
+from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.exceptions import (
     ProjectAlreadyExistsError,
     ProjectBudgetLimitAlreadyExistsError,
@@ -56,6 +68,8 @@ routes:
       max_budget: 5.0
 """
 
+_ROUTE_BUDGET = ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING)
+
 
 class ProjectServiceTest(DatabaseIntegration):
     @classmethod
@@ -71,27 +85,36 @@ class ProjectServiceTest(DatabaseIntegration):
         out = self.svc.create_project(ProjectIn(name=name))
         return out, out.configs[0].uuid, out.configs[1].uuid
 
-    # --- create ---
+    def _approve(self, project_uuid, config_uuid, config=None):
+        self.svc.update_config(
+            project_uuid, config_uuid, config or ProjectConfigFileIn(config_file=_VALID)
+        )
+        return self.svc.approve_config(project_uuid, config_uuid)
 
-    def test_create_project_seeds_two_draft_slots(self):
-        out, a, b = self._create()
-        assert len(out.configs) == 2
+    def _serve(self, project_uuid, config_uuid, config=None):
+        self._approve(project_uuid, config_uuid, config)
+        return self.svc.serve_config(project_uuid, config_uuid)
+
+    def _add_limit(self, project_uuid):
+        return self.svc.add_budget_limits_to_project(
+            project_uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+
+    @staticmethod
+    def _slot(res, config_uuid):
+        return next(c for c in res.configs if c.uuid == config_uuid)
+
+    # --- create / update ---
+
+    def test_create_project_seeds_two_empty_draft_slots(self):
+        out, _, _ = self._create()
+
         assert [c.slot for c in out.configs] == ['A', 'B']
         assert all(c.config_status == ConfigStatus.DRAFT for c in out.configs)
-        assert out.project_status == ProjectStatus.DEV
-        assert out.served_config_uuid is None
-
-    def test_create_project_leaves_updated_at_null(self):
-        out, _, _ = self._create()
         assert all(c.created_at is not None for c in out.configs)
         assert all(c.updated_at is None for c in out.configs)
-
-    def test_update_config_sets_updated_at(self):
-        out, a, _ = self._create()
-        res = self.svc.update_config(
-            out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
-        )
-        assert next(c for c in res.configs if c.uuid == a).updated_at is not None
+        assert out.project_status == ProjectStatus.DEV
+        assert out.served_config_uuid is None
 
     def test_create_project_already_exists(self):
         # IntegrityError -> ProjectAlreadyExistsError mapping is a unit concern,
@@ -103,205 +126,200 @@ class ProjectServiceTest(DatabaseIntegration):
         with pytest.raises(ProjectAlreadyExistsError):
             svc.create_project(ProjectIn(name='dup'))
 
-    def test_get_by_uuid_not_found(self):
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.get_by_uuid(uuid.uuid4())
-
-    def test_get_by_uuid_omits_limits_by_default(self):
-        out, _, _ = self._create(name='no-limits')
-        res = self.svc.get_by_uuid(out.uuid)
-        assert res.limits is None
-
-    def test_get_by_uuid_include_limits(self):
-        out, _, _ = self._create(name='with-limits')
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-        res = self.svc.get_by_uuid(out.uuid, include_limits=True)
-        assert res.limits is not None
-        assert len(res.limits) == 1
-        assert res.limits[0].window_size == '1 day'
-
-    def test_get_all_filtered_include_limits(self):
-        out, _, _ = self._create(name='filtered-with-limits')
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-        results = self.svc.get_all_filtered(include_limits=True)
-        found = next(p for p in results if p.uuid == out.uuid)
-        assert found.limits is not None
-        assert len(found.limits) == 1
-
-    def test_get_all_filtered_omits_limits_by_default(self):
-        out, _, _ = self._create(name='filtered-no-limits')
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-        results = self.svc.get_all_filtered()
-        found = next(p for p in results if p.uuid == out.uuid)
-        assert found.limits is None
-
-    # --- update ---
-
     def test_update_config_ok(self):
         out, a, _ = self._create()
+
         res = self.svc.update_config(
             out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
         )
-        ca = next(c for c in res.configs if c.uuid == a)
+
+        ca = self._slot(res, a)
         assert ca.config_file == _VALID
         assert ca.config_status == ConfigStatus.DRAFT
+        assert ca.updated_at is not None
 
-    def test_update_config_invalid_yaml(self):
-        out, a, _ = self._create()
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.update_config(
-                out.uuid, a, ProjectConfigFileIn(config_file='::not yaml::')
-            )
+    def test_invalid_operations_raise(self):
+        out, a, b = self._create()
+        self._serve(out.uuid, a)
+        missing = uuid.uuid4()
+        valid = ProjectConfigFileIn(config_file=_VALID)
+        svc = self.svc
+        cases = [
+            (
+                'update invalid yaml',
+                lambda: svc.update_config(
+                    out.uuid, b, ProjectConfigFileIn(config_file='::not yaml::')
+                ),
+                ProjectConfigValidationError,
+            ),
+            (
+                'update served is read-only',
+                lambda: svc.update_config(out.uuid, a, valid),
+                ProjectConfigValidationError,
+            ),
+            (
+                'update wrong project',
+                lambda: svc.update_config(missing, b, valid),
+                ProjectNotFoundError,
+            ),
+            (
+                'cancel when not ready',
+                lambda: svc.cancel_approval(out.uuid, b),
+                ProjectConfigValidationError,
+            ),
+            (
+                'serve requires approval',
+                lambda: svc.serve_config(out.uuid, b),
+                ProjectConfigValidationError,
+            ),
+            (
+                'unserve when not served',
+                lambda: svc.unserve_config(out.uuid, b),
+                ProjectConfigValidationError,
+            ),
+            (
+                'get config wrong project',
+                lambda: svc.get_config(missing, a),
+                ProjectNotFoundError,
+            ),
+            (
+                'export all not found',
+                lambda: svc.export_all_configs(missing),
+                ProjectNotFoundError,
+            ),
+            (
+                'export not found',
+                lambda: svc.export_config(missing, uuid.uuid4()),
+                ProjectNotFoundError,
+            ),
+            (
+                'import into served',
+                lambda: svc.import_config(out.uuid, a, _VALID.encode()),
+                ProjectConfigValidationError,
+            ),
+            (
+                'import invalid yaml',
+                lambda: svc.import_config(out.uuid, b, b'::not yaml::'),
+                ProjectConfigValidationError,
+            ),
+            (
+                'import non utf8',
+                lambda: svc.import_config(out.uuid, b, b'\xff\xfe'),
+                ProjectConfigValidationError,
+            ),
+            (
+                'import not found',
+                lambda: svc.import_config(missing, uuid.uuid4(), _VALID.encode()),
+                ProjectNotFoundError,
+            ),
+            (
+                'add budget limits not found',
+                lambda: self._add_limit(missing),
+                ProjectNotFoundError,
+            ),
+            (
+                'get budget limits not found',
+                lambda: svc.get_budget_limits_for_project(missing),
+                ProjectNotFoundError,
+            ),
+            (
+                'budget limit conflicts not found',
+                lambda: svc.get_budget_limit_conflicts(missing),
+                ProjectNotFoundError,
+            ),
+            (
+                'update budget limit value project not found',
+                lambda: svc.update_budget_limit_value(
+                    missing, uuid.uuid4(), ProjectBudgetLimitValueIn(value=1)
+                ),
+                ProjectNotFoundError,
+            ),
+            (
+                'delete budget limit project not found',
+                lambda: asyncio.run(
+                    svc.delete_budget_limit_from_project(missing, uuid.uuid4())
+                ),
+                ProjectNotFoundError,
+            ),
+        ]
+        for case, operation, error in cases:
+            with self.subTest(case), pytest.raises(error):
+                operation()
 
-    def test_update_config_served_is_read_only(self):
-        out, a, _ = self._create()
-        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-        self.svc.approve_config(out.uuid, a)
-        self.svc.serve_config(out.uuid, a)
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-
-    def test_update_config_wrong_project(self):
-        out, a, _ = self._create()
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.update_config(
-                uuid.uuid4(), a, ProjectConfigFileIn(config_file=_VALID)
-            )
-
-    # --- approve / cancel ---
+    # --- lifecycle ---
 
     def test_approve_then_cancel(self):
         out, a, _ = self._create()
-        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-        res = self.svc.approve_config(out.uuid, a)
-        assert next(c for c in res.configs if c.uuid == a).config_status == (
-            ConfigStatus.READY_TO_SERVE
-        )
+
+        res = self._approve(out.uuid, a)
+        assert self._slot(res, a).config_status == ConfigStatus.READY_TO_SERVE
+
         res = self.svc.cancel_approval(out.uuid, a)
-        assert next(c for c in res.configs if c.uuid == a).config_status == (
-            ConfigStatus.DRAFT
-        )
+        assert self._slot(res, a).config_status == ConfigStatus.DRAFT
 
-    def test_cancel_when_not_ready_raises(self):
-        out, a, _ = self._create()
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.cancel_approval(out.uuid, a)
+    def test_serve_swap_and_unserve(self):
+        out, a, b = self._create()
+        self._approve(out.uuid, b)
 
-    # --- serve / swap / unserve ---
-
-    def test_serve_requires_approval(self):
-        out, a, _ = self._create()
-        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.serve_config(out.uuid, a)
-
-    def test_serve_ok(self):
-        out, a, _ = self._create()
-        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-        self.svc.approve_config(out.uuid, a)
-        res = self.svc.serve_config(out.uuid, a)
+        res = self._serve(out.uuid, a)
         assert res.project_status == ProjectStatus.PROD
         assert res.served_config_uuid == a
-        assert next(c for c in res.configs if c.uuid == a).config_status == (
-            ConfigStatus.SERVED
-        )
+        assert self._slot(res, a).config_status == ConfigStatus.SERVED
 
-    def test_serve_swaps_displaced_to_draft(self):
-        out, a, b = self._create()
-        for c in (a, b):
-            self.svc.update_config(out.uuid, c, ProjectConfigFileIn(config_file=_VALID))
-            self.svc.approve_config(out.uuid, c)
-        self.svc.serve_config(out.uuid, a)
+        # Serving the other slot swaps the displaced one back to draft
         res = self.svc.serve_config(out.uuid, b)
         st = {c.uuid: c.config_status for c in res.configs}
-        assert st[b] == ConfigStatus.SERVED
-        assert st[a] == ConfigStatus.DRAFT
+        assert st == {a: ConfigStatus.DRAFT, b: ConfigStatus.SERVED}
         assert res.served_config_uuid == b
 
-    def test_unserve_ok(self):
-        out, a, _ = self._create()
-        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-        self.svc.approve_config(out.uuid, a)
-        self.svc.serve_config(out.uuid, a)
-        res = self.svc.unserve_config(out.uuid, a)
+        res = self.svc.unserve_config(out.uuid, b)
         assert res.project_status == ProjectStatus.DEV
         assert res.served_config_uuid is None
 
-    def test_unserve_when_not_served_raises(self):
-        out, a, _ = self._create()
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.unserve_config(out.uuid, a)
-
-    # --- delete ---
-
     def test_delete_project(self):
-        out, _, _ = self._create()
+        out, _, _ = self._create(name='reuse-me')
+        self._add_limit(out.uuid)
+        with pytest.raises(ProjectAlreadyExistsError):
+            self.svc.create_project(ProjectIn(name='reuse-me'))
+
         deleted = asyncio.run(self.svc.delete_project(out.uuid))
+
         assert deleted.uuid == out.uuid
         with pytest.raises(ProjectNotFoundError):
             self.svc.get_by_uuid(out.uuid)
-
-    def test_delete_project_removes_its_budget_limits(self):
-        out, _, _ = self._create(name='delete-cascades-budget-limits')
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-        asyncio.run(self.svc.delete_project(out.uuid))
         assert self.svc.project_budget_limit_dao.get_by_project_uuid(out.uuid) == []
-
-    def test_recreate_with_deleted_project_name_succeeds(self):
-        out, _, _ = self._create(name='reuse-me')
-        asyncio.run(self.svc.delete_project(out.uuid))
+        # The name of a deleted project can be reused
         again = self.svc.create_project(ProjectIn(name='reuse-me'))
         assert again.uuid != out.uuid
         assert again.name == 'reuse-me'
-
-    def test_duplicate_active_name_still_rejected(self):
-        self._create(name='dup-active')
-        with pytest.raises(ProjectAlreadyExistsError):
-            self.svc.create_project(ProjectIn(name='dup-active'))
-
-    # --- get_config ---
 
     def test_get_config(self):
         out, a, _ = self._create()
         slot = self.svc.get_config(out.uuid, a)
         assert slot.uuid == a and slot.slot == 'A'
 
-    def test_get_config_wrong_project(self):
-        out, a, _ = self._create()
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.get_config(uuid.uuid4(), a)
+    # --- export / import ---
 
-    # --- export ---
-
-    def test_export_config_returns_zip(self):
+    def test_export_config_names_the_file_by_status(self):
         out, a, _ = self._create()
+
         content, filename = self.svc.export_config(out.uuid, a)
         assert filename == 'proj_config.zip'
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
-            names = archive.namelist()
-            assert names == ['proj_config_A_draft.yaml']
-            assert archive.read(names[0]).decode() == out.configs[0].config_file
+            assert archive.namelist() == ['proj_config_A_draft.yaml']
+            assert archive.read('proj_config_A_draft.yaml').decode() == (
+                out.configs[0].config_file
+            )
 
-    def test_export_config_served_label(self):
-        out, a, _ = self._create()
-        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-        self.svc.approve_config(out.uuid, a)
-        self.svc.serve_config(out.uuid, a)
+        self._serve(out.uuid, a)
+
         content, filename = self.svc.export_config(out.uuid, a)
         assert filename == 'proj_config.zip'
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             assert archive.namelist() == ['proj_config_A_served.yaml']
 
     def test_export_all_configs_returns_zip_with_both_slots(self):
-        out, a, b = self._create()
+        out, _, _ = self._create()
         content, filename = self.svc.export_all_configs(out.uuid)
         assert filename == 'proj_config.zip'
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
@@ -328,25 +346,9 @@ class ProjectServiceTest(DatabaseIntegration):
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             assert archive.namelist() == ['partial_config_A_draft.yaml']
 
-    def test_export_all_configs_empty_raises(self):
+    def test_export_of_empty_configs_raises(self):
         project = self.insert(
             db_mock.get_sample_project(uuid=uuid.uuid4(), name='all-empty')
-        )
-        self.insert(
-            db_mock.get_sample_project_config(
-                project_uuid=project.uuid, slot=Slot.A, config_file=None
-            )
-        )
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.export_all_configs(project.uuid)
-
-    def test_export_all_configs_not_found(self):
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.export_all_configs(uuid.uuid4())
-
-    def test_export_config_empty_raises(self):
-        project = self.insert(
-            db_mock.get_sample_project(uuid=uuid.uuid4(), name='export-empty')
         )
         config = self.insert(
             db_mock.get_sample_project_config(
@@ -354,51 +356,23 @@ class ProjectServiceTest(DatabaseIntegration):
             )
         )
         with pytest.raises(ProjectConfigValidationError):
+            self.svc.export_all_configs(project.uuid)
+        with pytest.raises(ProjectConfigValidationError):
             self.svc.export_config(project.uuid, config.uuid)
-
-    def test_export_config_not_found(self):
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.export_config(uuid.uuid4(), uuid.uuid4())
-
-    # --- import ---
 
     def test_import_config_writes_draft(self):
         out, a, _ = self._create()
         res = self.svc.import_config(out.uuid, a, _VALID.encode())
-        ca = next(c for c in res.configs if c.uuid == a)
+        ca = self._slot(res, a)
         assert ca.config_file == _VALID
         assert ca.config_status == ConfigStatus.DRAFT
         assert ca.updated_at is not None
-
-    def test_import_config_into_served_raises(self):
-        out, a, _ = self._create()
-        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-        self.svc.approve_config(out.uuid, a)
-        self.svc.serve_config(out.uuid, a)
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.import_config(out.uuid, a, _VALID.encode())
-
-    def test_import_config_invalid_yaml_raises(self):
-        out, a, _ = self._create()
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.import_config(out.uuid, a, b'::not yaml::')
-
-    def test_import_config_non_utf8_raises(self):
-        out, a, _ = self._create()
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.import_config(out.uuid, a, b'\xff\xfe')
-
-    def test_import_config_not_found(self):
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.import_config(uuid.uuid4(), uuid.uuid4(), _VALID.encode())
 
     # --- listing / filters ---
 
     def test_get_all_and_filters(self):
         served, a, _ = self._create(name='served')
-        self.svc.update_config(served.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-        self.svc.approve_config(served.uuid, a)
-        self.svc.serve_config(served.uuid, a)
+        self._serve(served.uuid, a)
         self._create(name='dev')
 
         assert len(self.svc.get_all()) == 2
@@ -412,9 +386,7 @@ class ProjectServiceTest(DatabaseIntegration):
     def test_get_configs_filters_by_status(self):
         # served-only: slot A served, slot B left as the untouched seed.
         served, a, _ = self._create(name='served')
-        self.svc.update_config(served.uuid, a, ProjectConfigFileIn(config_file=_VALID))
-        self.svc.approve_config(served.uuid, a)
-        self.svc.serve_config(served.uuid, a)
+        self._serve(served.uuid, a)
 
         # draft-only: slot A saved (still DRAFT), never approved/served.
         draft_proj, da, _ = self._create(name='draft')
@@ -437,9 +409,27 @@ class ProjectServiceTest(DatabaseIntegration):
 
         assert self.svc.get_configs(ConfigListFilter.REQUEST_TO_PUBLISH) == []
 
+    def test_limits_are_included_only_when_asked(self):
+        out, _, _ = self._create(name='with-limits')
+        self._add_limit(out.uuid)
+
+        assert self.svc.get_by_uuid(out.uuid).limits is None
+        assert [
+            limit.window_size
+            for limit in self.svc.get_by_uuid(out.uuid, include_limits=True).limits
+        ] == ['1 day']
+        [found] = [p for p in self.svc.get_all_filtered() if p.uuid == out.uuid]
+        assert found.limits is None
+        [found] = [
+            p
+            for p in self.svc.get_all_filtered(include_limits=True)
+            if p.uuid == out.uuid
+        ]
+        assert [limit.window_size for limit in found.limits] == ['1 day']
+
     # --- project budget limits ---
 
-    def test_add_budget_limits_to_project_ok(self):
+    def test_add_budget_limits_then_update_a_value(self):
         out, _, _ = self._create(name='budget-ok')
         limits = self.svc.add_budget_limits_to_project(
             out.uuid,
@@ -455,65 +445,35 @@ class ProjectServiceTest(DatabaseIntegration):
         assert {limit.window_size for limit in limits} == {'1 day', '1 month'}
         fetched = self.svc.get_budget_limits_for_project(out.uuid)
         assert {limit.window_size for limit in fetched} == {'1 day', '1 month'}
+        limit = next(lim for lim in limits if lim.window_size == '1 day')
 
-    def test_add_budget_limits_to_project_not_found(self):
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.add_budget_limits_to_project(
-                uuid.uuid4(), db_mock.get_sample_project_budget_limits_in()
-            )
+        updated = self.svc.update_budget_limit_value(
+            out.uuid, limit.uuid, ProjectBudgetLimitValueIn(value=42.5)
+        )
+
+        # The row is kept and the previous maximum is returned
+        assert updated.uuid == limit.uuid
+        assert updated.value == 42.5
+        assert updated.previous_value == limit.value
+        assert updated.window_size == limit.window_size
+        saved = {
+            lim.uuid: lim.value
+            for lim in self.svc.get_budget_limits_for_project(out.uuid)
+        }
+        assert saved[limit.uuid] == 42.5
 
     def test_add_budget_limits_to_project_duplicate_window_raises(self):
         out, _, _ = self._create(name='budget-dup')
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
+        self._add_limit(out.uuid)
         with pytest.raises(ProjectBudgetLimitAlreadyExistsError):
-            self.svc.add_budget_limits_to_project(
-                out.uuid, db_mock.get_sample_project_budget_limits_in()
-            )
-
-    def test_add_budget_limits_rejected_when_published_route_has_budget_limiting(
-        self,
-    ):
-        out, a, _ = self._create(name='budget-conflict')
-        self.svc.update_config(
-            out.uuid,
-            a,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
-        self.svc.approve_config(out.uuid, a)
-        self.svc.serve_config(out.uuid, a)
-        with pytest.raises(ProjectBudgetLimitConflictError):
-            self.svc.add_budget_limits_to_project(
-                out.uuid, db_mock.get_sample_project_budget_limits_in()
-            )
+            self._add_limit(out.uuid)
 
     def test_add_budget_limits_conflict_names_the_published_routes(self):
         out, a, _ = self._create(name='budget-conflict-routes')
-        self.svc.update_config(
-            out.uuid,
-            a,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
-        self.svc.approve_config(out.uuid, a)
-        self.svc.serve_config(out.uuid, a)
+        self._serve(out.uuid, a, _ROUTE_BUDGET)
         with pytest.raises(ProjectBudgetLimitConflictError) as exc_info:
-            self.svc.add_budget_limits_to_project(
-                out.uuid, db_mock.get_sample_project_budget_limits_in()
-            )
+            self._add_limit(out.uuid)
         assert exc_info.value.routes == ['test-route']
-
-    def test_add_budget_limits_allowed_when_only_a_draft_has_route_budgets(self):
-        out, _, b = self._create(name='budget-draft-only')
-        self.svc.update_config(
-            out.uuid,
-            b,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
-        added = self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-        assert len(added) == 1
 
     def test_budget_limits_with_the_same_window_and_another_algorithm_coexist(self):
         out, _, _ = self._create(name='budget-same-window')
@@ -532,32 +492,38 @@ class ProjectServiceTest(DatabaseIntegration):
         )
         assert len(added) == 2
 
+    def test_budget_limit_conflicts_of_the_published_config(self):
+        out, a, _ = self._create(name='budget-conflicts-published-only')
+        conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
+        assert (conflicts.published, conflicts.draft, conflicts.budget_routing) == (
+            [],
+            [],
+            [],
+        )
+
+        self._serve(out.uuid, a, _ROUTE_BUDGET)
+
+        conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
+        assert conflicts.published == ['test-route']
+        assert conflicts.draft_configs == []
+        project = self.svc.get_by_uuid(out.uuid, include_limits=True)
+        assert project.route_budgets.published == ['test-route']
+        assert project.route_budgets.draft == []
+        assert project.route_budgets.draft_configs == []
+        assert self.svc.get_by_uuid(out.uuid).route_budgets is None
+
     def test_budget_limit_conflicts_lists_published_and_draft_routes(self):
         out, a, b = self._create(name='budget-conflicts')
-        self.svc.update_config(
-            out.uuid,
-            a,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
-        self.svc.approve_config(out.uuid, a)
-        self.svc.serve_config(out.uuid, a)
-        self.svc.update_config(
-            out.uuid,
-            b,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
+        self._serve(out.uuid, a, _ROUTE_BUDGET)
+        self.svc.update_config(out.uuid, b, _ROUTE_BUDGET)
         conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
         assert conflicts.published == ['test-route']
         assert conflicts.draft == ['test-route']
         assert conflicts.budget_routing == []
 
-    def test_budget_limit_conflicts_names_each_draft_slot(self):
+    def test_budget_limit_conflicts_names_each_draft_slot_with_route_budgets(self):
         out, a, b = self._create(name='budget-conflicts-draft-slots')
-        self.svc.update_config(
-            out.uuid,
-            a,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
+        self.svc.update_config(out.uuid, a, _ROUTE_BUDGET)
         self.svc.update_config(
             out.uuid,
             b,
@@ -574,205 +540,71 @@ class ProjectServiceTest(DatabaseIntegration):
         ]
         assert sorted(conflicts.draft) == ['other-route', 'test-route']
 
-    def test_budget_limit_conflicts_skips_a_draft_without_route_budgets(self):
-        out, a, b = self._create(name='budget-conflicts-draft-without-budget')
-        self.svc.update_config(
-            out.uuid,
-            a,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
+        # A draft without route budgets is skipped
         self.svc.update_config(out.uuid, b, ProjectConfigFileIn(config_file=_VALID))
+
         conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
         assert [(c.config_uuid, c.slot) for c in conflicts.draft_configs] == [(a, 'A')]
 
-    def test_budget_limit_conflicts_has_no_draft_configs_when_only_published(self):
-        out, a, _ = self._create(name='budget-conflicts-published-only')
-        self.svc.update_config(
-            out.uuid,
-            a,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
-        self.svc.approve_config(out.uuid, a)
-        self.svc.serve_config(out.uuid, a)
-        conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
-        assert conflicts.published == ['test-route']
-        assert conflicts.draft_configs == []
-        project = self.svc.get_by_uuid(out.uuid, include_limits=True)
-        assert project.route_budgets.draft_configs == []
-
-    def test_budget_limit_conflicts_is_empty_without_route_budgets(self):
-        out, _, _ = self._create(name='budget-no-conflicts')
-        conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
-        assert conflicts.published == []
-        assert conflicts.draft == []
-        assert conflicts.budget_routing == []
-
-    def test_project_with_limits_names_its_route_budgets(self):
-        out, a, _ = self._create(name='route-budgets-in-out')
-        self.svc.update_config(
-            out.uuid,
-            a,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
-        self.svc.approve_config(out.uuid, a)
-        self.svc.serve_config(out.uuid, a)
-        project = self.svc.get_by_uuid(out.uuid, include_limits=True)
-        assert project.route_budgets.published == ['test-route']
-        assert project.route_budgets.draft == []
-        assert self.svc.get_by_uuid(out.uuid).route_budgets is None
-
-    def test_budget_limit_conflicts_project_not_found(self):
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.get_budget_limit_conflicts(uuid.uuid4())
-
-    def test_get_budget_limits_for_project_not_found(self):
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.get_budget_limits_for_project(uuid.uuid4())
-
     def test_delete_budget_limit_from_project_ok(self):
         out, _, _ = self._create(name='budget-delete-ok')
-        [limit] = self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
+        [limit] = self._add_limit(out.uuid)
         deleted = asyncio.run(
             self.svc.delete_budget_limit_from_project(out.uuid, limit.uuid)
         )
         assert deleted.uuid == limit.uuid
         assert self.svc.get_budget_limits_for_project(out.uuid) == []
 
-    def test_delete_budget_limit_from_project_not_found_project(self):
-        with pytest.raises(ProjectNotFoundError):
-            asyncio.run(
-                self.svc.delete_budget_limit_from_project(uuid.uuid4(), uuid.uuid4())
-            )
+    def test_a_budget_limit_of_another_project_is_not_found(self):
+        owner, _, _ = self._create(name='budget-owner')
+        other, _, _ = self._create(name='budget-other')
+        [limit] = self._add_limit(owner.uuid)
 
-    def test_delete_budget_limit_from_project_not_found_limit(self):
-        out, _, _ = self._create(name='budget-delete-not-found')
-        with pytest.raises(ProjectBudgetLimitNotFoundError):
-            asyncio.run(
-                self.svc.delete_budget_limit_from_project(out.uuid, uuid.uuid4())
-            )
-
-    def test_delete_budget_limit_from_project_not_found_when_owned_by_other_project(
-        self,
-    ):
-        owner, _, _ = self._create(name='budget-delete-owner')
-        other, _, _ = self._create(name='budget-delete-other')
-        [limit] = self.svc.add_budget_limits_to_project(
-            owner.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-        with pytest.raises(ProjectBudgetLimitNotFoundError):
-            asyncio.run(
-                self.svc.delete_budget_limit_from_project(other.uuid, limit.uuid)
-            )
-
-    def test_update_budget_limit_value_keeps_the_row_and_returns_the_previous_max(
-        self,
-    ):
-        out, _, _ = self._create(name='budget-update-ok')
-        [limit] = self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-
-        updated = self.svc.update_budget_limit_value(
-            out.uuid, limit.uuid, ProjectBudgetLimitValueIn(value=42.5)
-        )
-
-        assert updated.uuid == limit.uuid
-        assert updated.value == 42.5
-        assert updated.previous_value == limit.value
-        assert updated.window_size == limit.window_size
-        [saved] = self.svc.get_budget_limits_for_project(out.uuid)
-        assert (saved.uuid, saved.value) == (limit.uuid, 42.5)
-
-    def test_update_budget_limit_value_project_not_found(self):
-        with pytest.raises(ProjectNotFoundError):
-            self.svc.update_budget_limit_value(
-                uuid.uuid4(), uuid.uuid4(), ProjectBudgetLimitValueIn(value=1)
-            )
-
-    def test_update_budget_limit_value_of_another_project_is_not_found(self):
-        owner, _, _ = self._create(name='budget-update-owner')
-        other, _, _ = self._create(name='budget-update-other')
-        [limit] = self.svc.add_budget_limits_to_project(
-            owner.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-        with pytest.raises(ProjectBudgetLimitNotFoundError):
-            self.svc.update_budget_limit_value(
-                other.uuid, limit.uuid, ProjectBudgetLimitValueIn(value=1)
-            )
+        for limit_uuid in (limit.uuid, uuid.uuid4()):
+            with self.subTest(limit_uuid=limit_uuid):
+                with pytest.raises(ProjectBudgetLimitNotFoundError):
+                    asyncio.run(
+                        self.svc.delete_budget_limit_from_project(
+                            other.uuid, limit_uuid
+                        )
+                    )
+                with pytest.raises(ProjectBudgetLimitNotFoundError):
+                    self.svc.update_budget_limit_value(
+                        other.uuid, limit_uuid, ProjectBudgetLimitValueIn(value=1)
+                    )
 
     # --- reverse validation: route config vs. existing project budget limit ---
 
-    def test_update_config_rejected_when_project_has_budget_limit_and_route_sets_it(
-        self,
-    ):
+    def test_saving_a_route_budget_is_rejected_once_the_project_has_one(self):
         out, a, _ = self._create(name='route-conflict-update')
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
+        self._add_limit(out.uuid)
+
         with pytest.raises(ProjectConfigValidationError) as exc_info:
-            self.svc.update_config(
-                out.uuid,
-                a,
-                ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-            )
+            self.svc.update_config(out.uuid, a, _ROUTE_BUDGET)
         assert exc_info.value.routes == ['test-route']
-
-    def test_approve_config_rejected_when_project_has_budget_limit_and_route_sets_it(
-        self,
-    ):
-        out, a, _ = self._create(name='route-conflict-approve')
-        self.svc.update_config(
-            out.uuid,
-            a,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.approve_config(out.uuid, a)
-
-    def test_serve_config_rejected_when_project_has_budget_limit_and_route_sets_it(
-        self,
-    ):
-        out, a, _ = self._create(name='route-conflict-serve')
-        self.svc.update_config(
-            out.uuid,
-            a,
-            ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING),
-        )
-        self.svc.approve_config(out.uuid, a)
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
-        with pytest.raises(ProjectConfigValidationError):
-            self.svc.serve_config(out.uuid, a)
-
-    def test_import_config_rejected_when_project_has_budget_limit_and_route_sets_it(
-        self,
-    ):
-        out, a, _ = self._create(name='route-conflict-import')
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
         with pytest.raises(ProjectConfigValidationError):
             self.svc.import_config(
                 out.uuid, a, _VALID_WITH_ROUTE_BUDGET_LIMITING.encode()
             )
-
-    def test_update_config_allowed_when_no_conflict(self):
         # Guards against over-rejection: a project budget limit alone (no route
         # budget_limiting in the submitted config) must not block saving.
-        out, a, _ = self._create(name='route-no-conflict')
-        self.svc.add_budget_limits_to_project(
-            out.uuid, db_mock.get_sample_project_budget_limits_in()
-        )
         res = self.svc.update_config(
             out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
         )
-        assert next(c for c in res.configs if c.uuid == a).config_file == _VALID
+        assert self._slot(res, a).config_file == _VALID
+
+    def test_publishing_a_route_budget_is_rejected_once_the_project_has_one(self):
+        out, a, b = self._create(name='route-conflict-publish')
+        self.svc.update_config(out.uuid, a, _ROUTE_BUDGET)
+        self._approve(out.uuid, b, _ROUTE_BUDGET)
+
+        # Allowed while only unpublished configs set a route budget
+        assert len(self._add_limit(out.uuid)) == 1
+
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.approve_config(out.uuid, a)
+        with pytest.raises(ProjectConfigValidationError):
+            self.svc.serve_config(out.uuid, b)
 
 
 class TestBudgetLimitRedisClear:
@@ -780,166 +612,137 @@ class TestBudgetLimitRedisClear:
     deletion, mirroring key_service_test.py::TestDeleteLimitFromKey.
     """
 
-    def _make_service(self):
+    def _make_service(self, limits=()):
+        project_uuid = uuid.uuid4()
         project_dao = MagicMock(spec_set=ProjectDAO)
         project_config_dao = MagicMock(spec_set=ProjectConfigDAO)
         project_budget_limit_dao = MagicMock(spec_set=ProjectBudgetLimitDAO)
-        service = ProjectService(
-            project_dao, project_config_dao, project_budget_limit_dao
+        project_dao.get_by_uuid = MagicMock(
+            return_value=db_mock.get_sample_project(uuid=project_uuid)
         )
-        return service, project_dao, project_config_dao, project_budget_limit_dao
-
-    @pytest.mark.asyncio
-    async def test_delete_budget_limit_from_project_clears_redis_counter(self):
-        service, project_dao, _, project_budget_limit_dao = self._make_service()
-        project_uuid = uuid.uuid4()
-        limit_uuid = uuid.uuid4()
-        project = db_mock.get_sample_project(uuid=project_uuid)
-        limit = db_mock.get_sample_project_budget_limit(
-            uuid=limit_uuid, project_uuid=project_uuid
-        )
-        project_dao.get_by_uuid = MagicMock(return_value=project)
-        project_budget_limit_dao.get_by_uuid = MagicMock(return_value=limit)
-        project_budget_limit_dao.delete_by_uuid = MagicMock(return_value=1)
-
-        with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
-            new=AsyncMock(),
-        ) as mock_clear:
-            res = await service.delete_budget_limit_from_project(
-                project_uuid, limit_uuid
-            )
-
-        project_budget_limit_dao.delete_by_uuid.assert_called_once_with(limit_uuid)
-        mock_clear.assert_awaited_once_with(
-            project_uuid=str(project_uuid),
-            algorithm=limit.algorithm,
-            window_size=limit.window_size,
-        )
-        assert res.uuid == limit_uuid
-
-    @pytest.mark.asyncio
-    async def test_delete_budget_limit_redis_clear_failure_does_not_fail_the_request(
-        self,
-    ):
-        """A Redis-side error clearing the counter must not undo the delete."""
-        service, project_dao, _, project_budget_limit_dao = self._make_service()
-        project_uuid = uuid.uuid4()
-        limit_uuid = uuid.uuid4()
-        project = db_mock.get_sample_project(uuid=project_uuid)
-        limit = db_mock.get_sample_project_budget_limit(
-            uuid=limit_uuid, project_uuid=project_uuid
-        )
-        project_dao.get_by_uuid = MagicMock(return_value=project)
-        project_budget_limit_dao.get_by_uuid = MagicMock(return_value=limit)
-        project_budget_limit_dao.delete_by_uuid = MagicMock(return_value=1)
-
-        with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
-            new=AsyncMock(side_effect=ConnectionError('redis unreachable')),
-        ):
-            res = await service.delete_budget_limit_from_project(
-                project_uuid, limit_uuid
-            )
-
-        project_budget_limit_dao.delete_by_uuid.assert_called_once_with(limit_uuid)
-        assert res.uuid == limit_uuid
-
-    @pytest.mark.asyncio
-    async def test_delete_project_clears_every_budget_limit_counter(self):
-        service, project_dao, project_config_dao, project_budget_limit_dao = (
-            self._make_service()
-        )
-        project_uuid = uuid.uuid4()
-        project = db_mock.get_sample_project(uuid=project_uuid)
-        limits = [
-            db_mock.get_sample_project_budget_limit(
-                uuid=uuid.uuid4(), project_uuid=project_uuid, window_size='1 day'
-            ),
-            db_mock.get_sample_project_budget_limit(
-                uuid=uuid.uuid4(), project_uuid=project_uuid, window_size='1 month'
-            ),
-        ]
-        project_dao.get_by_uuid = MagicMock(return_value=project)
         project_config_dao.list_by_project = MagicMock(return_value=[])
         project_config_dao.get_served_by_project = MagicMock(return_value=None)
         project_config_dao.soft_delete_by_project = MagicMock(return_value=1)
         project_dao.soft_delete = MagicMock(return_value=1)
+        limits = [
+            db_mock.get_sample_project_budget_limit(
+                uuid=uuid.uuid4(), project_uuid=project_uuid, window_size=window
+            )
+            for window in limits
+        ]
         project_budget_limit_dao.get_by_project_uuid = MagicMock(return_value=limits)
-        project_budget_limit_dao.delete_by_project_uuid = MagicMock(return_value=2)
+        project_budget_limit_dao.delete_by_project_uuid = MagicMock(
+            return_value=len(limits)
+        )
+        project_budget_limit_dao.get_by_uuid = MagicMock(
+            return_value=limits[0] if limits else None
+        )
+        project_budget_limit_dao.delete_by_uuid = MagicMock(return_value=1)
+        service = ProjectService(
+            project_dao, project_config_dao, project_budget_limit_dao
+        )
+        return service, project_uuid, limits, project_budget_limit_dao
 
-        with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
-            new=AsyncMock(),
+    @staticmethod
+    def _window(project_uuid, limit):
+        return project_window(str(project_uuid), limit.algorithm, limit.window_size)
+
+    # A Redis-side error clearing the counter must not undo the delete.
+    @pytest.mark.parametrize(
+        'clear_error',
+        [None, ConnectionError('redis unreachable')],
+        ids=['ok', 'redis down'],
+    )
+    @pytest.mark.asyncio
+    async def test_delete_budget_limit_from_project_clears_redis_counter(
+        self, clear_error
+    ):
+        service, project_uuid, [limit], dao = self._make_service(['1 day'])
+
+        with patch.object(
+            shared_limits, 'clear', new=AsyncMock(side_effect=clear_error)
+        ) as mock_clear:
+            res = await service.delete_budget_limit_from_project(
+                project_uuid, limit.uuid
+            )
+
+        dao.delete_by_uuid.assert_called_once_with(limit.uuid)
+        mock_clear.assert_awaited_once_with(self._window(project_uuid, limit))
+        assert res.uuid == limit.uuid
+
+    @pytest.mark.parametrize(
+        'clear_error',
+        [None, ConnectionError('redis unreachable')],
+        ids=['ok', 'redis down'],
+    )
+    @pytest.mark.asyncio
+    async def test_delete_project_clears_every_budget_limit_counter(self, clear_error):
+        service, project_uuid, limits, dao = self._make_service(['1 day', '1 month'])
+
+        with patch.object(
+            shared_limits, 'clear', new=AsyncMock(side_effect=clear_error)
         ) as mock_clear:
             res = await service.delete_project(project_uuid)
 
-        project_budget_limit_dao.delete_by_project_uuid.assert_called_once_with(
-            project_uuid
-        )
-        assert mock_clear.await_count == 2
-        mock_clear.assert_any_await(
-            project_uuid=str(project_uuid),
-            algorithm=limits[0].algorithm,
-            window_size=limits[0].window_size,
-        )
-        mock_clear.assert_any_await(
-            project_uuid=str(project_uuid),
-            algorithm=limits[1].algorithm,
-            window_size=limits[1].window_size,
-        )
+        dao.delete_by_project_uuid.assert_called_once_with(project_uuid)
+        assert mock_clear.await_args_list == [
+            call(self._window(project_uuid, limit)) for limit in limits
+        ]
         assert res.uuid == project_uuid
 
     @pytest.mark.asyncio
     async def test_delete_project_with_no_budget_limits_skips_cleanup(self):
-        service, project_dao, project_config_dao, project_budget_limit_dao = (
-            self._make_service()
-        )
-        project_uuid = uuid.uuid4()
-        project = db_mock.get_sample_project(uuid=project_uuid)
-        project_dao.get_by_uuid = MagicMock(return_value=project)
-        project_config_dao.list_by_project = MagicMock(return_value=[])
-        project_config_dao.get_served_by_project = MagicMock(return_value=None)
-        project_config_dao.soft_delete_by_project = MagicMock(return_value=1)
-        project_dao.soft_delete = MagicMock(return_value=1)
-        project_budget_limit_dao.get_by_project_uuid = MagicMock(return_value=[])
+        service, project_uuid, _, dao = self._make_service()
 
-        with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
-            new=AsyncMock(),
-        ) as mock_clear:
+        with patch.object(shared_limits, 'clear', new=AsyncMock()) as mock_clear:
             await service.delete_project(project_uuid)
 
-        project_budget_limit_dao.delete_by_project_uuid.assert_not_called()
+        dao.delete_by_project_uuid.assert_not_called()
         mock_clear.assert_not_awaited()
 
+
+class TestBudgetLimitsConsumption:
+    """The projects list's consumption stream (AG-1083) reads the counters a
+    project's requests write, keyed by limit uuid.
+    """
+
     @pytest.mark.asyncio
-    async def test_delete_project_redis_clear_failure_does_not_fail_the_request(self):
-        service, project_dao, project_config_dao, project_budget_limit_dao = (
-            self._make_service()
-        )
+    async def test_reports_what_the_projects_requests_spent(self):
         project_uuid = uuid.uuid4()
-        project = db_mock.get_sample_project(uuid=project_uuid)
-        limits = [
-            db_mock.get_sample_project_budget_limit(
-                uuid=uuid.uuid4(), project_uuid=project_uuid
-            )
-        ]
-        project_dao.get_by_uuid = MagicMock(return_value=project)
-        project_config_dao.list_by_project = MagicMock(return_value=[])
-        project_config_dao.get_served_by_project = MagicMock(return_value=None)
-        project_config_dao.soft_delete_by_project = MagicMock(return_value=1)
-        project_dao.soft_delete = MagicMock(return_value=1)
-        project_budget_limit_dao.get_by_project_uuid = MagicMock(return_value=limits)
-        project_budget_limit_dao.delete_by_project_uuid = MagicMock(return_value=1)
+        # The DB returns NUMERIC maxima as Decimal.
+        budget = db_mock.get_sample_project_budget_limit(
+            uuid=uuid.uuid4(), project_uuid=project_uuid, max_value=Decimal('4')
+        )
+        budget_dao = MagicMock(spec_set=ProjectBudgetLimitDAO)
+        budget_dao.get_all_by_project_uuids.return_value = [budget]
+        service = ProjectService(
+            MagicMock(spec_set=ProjectDAO),
+            MagicMock(spec_set=ProjectConfigDAO),
+            budget_dao,
+        )
+        limits = Limits(InMemoryStorage())
+        request = limits.resolve(
+            RequestIdentity(
+                request_uuid='req',
+                route_name='route',
+                api_key_uuid='key',
+                api_key_name='key',
+                group_uuid='group',
+                group_name='group',
+                project_uuid=str(project_uuid),
+                project_name='project',
+            ),
+            RouteLimits(),
+            project_limits=[ProjectBudgetLimitOut.from_project_budget_limit(budget)],
+        )
+        await request.count(Usage(costs=(BUDGET_MULTIPLIER,)))
 
         with patch(
-            'radicalbit_ai_gateway.services.project_service.clear_project_budget_limit_counter',
-            new=AsyncMock(side_effect=ConnectionError('redis unreachable')),
+            'radicalbit_ai_gateway.services.project_service.shared_limits', limits
         ):
-            res = await service.delete_project(project_uuid)
+            consumption = await service.get_budget_limits_consumption([project_uuid])
 
-        project_budget_limit_dao.delete_by_project_uuid.assert_called_once_with(
-            project_uuid
-        )
-        assert res.uuid == project_uuid
+        budget_dao.get_all_by_project_uuids.assert_called_once_with([project_uuid])
+        bar = consumption[str(budget.uuid)]
+        assert (bar.window_size, bar.window_filled_size) == (4.0, 1.0)
+        assert bar.window_filled_percentage == 25.0

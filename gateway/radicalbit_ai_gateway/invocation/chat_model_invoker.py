@@ -1,114 +1,58 @@
 from collections.abc import AsyncIterator
 import logging
-import time
+from typing import NoReturn
 
-import anthropic
-import openai
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
 from traceloop.sdk.decorators import task
 
+from radicalbit_ai_gateway.invocation.errors import (
+    Surface,
+    final_messages_refusal,
+    raising,
+)
+from radicalbit_ai_gateway.invocation.fallback_chain import (
+    Attempt,
+    CallContext,
+    Candidate,
+    FallbackChain,
+    Reply,
+    candidates,
+)
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
+from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
-from radicalbit_ai_gateway.llm.factory import init_chat_model
+from radicalbit_ai_gateway.llm.factory import build_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
-from radicalbit_ai_gateway.messages.events import stream_usage
-from radicalbit_ai_gateway.messages.thinking import (
+from radicalbit_ai_gateway.llm.messages_stream import stream_usage
+from radicalbit_ai_gateway.llm.messages_thinking import (
     is_invalid_thinking_signature,
     without_old_thinking,
 )
-from radicalbit_ai_gateway.models.fallback import Fallback
-from radicalbit_ai_gateway.models.model import (
-    ENABLE_PROMPT_CACHE_PARAM,
-    MockGatewayChatModel,
-    Model,
+from radicalbit_ai_gateway.llm.responses_stream import NativeResponsesEvent
+from radicalbit_ai_gateway.llm.usage import (
+    StreamUsage,
+    cache_tokens,
+    responses_token_counts,
 )
-from radicalbit_ai_gateway.responses.events import NativeResponsesEvent
-from radicalbit_ai_gateway.responses.output import usage_token_counts
+from radicalbit_ai_gateway.models.fallback import Fallback
+from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
 from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerBadRequest,
-    ModelInvokerError,
     ModelInvokerInternalError,
     ModelInvokerUpstreamError,
-)
-from radicalbit_ai_gateway.utils.parse_provider_and_model import (
-    parse_provider_and_model,
 )
 
 app_config = get_app_config()
 
 logger = logging.getLogger(app_config.log_config.logger_name)
 
-# Upstream statuses that refuse the gateway's own access to the provider
-# (its configured key, say), not the client's request.
-_UPSTREAM_ACCESS_REFUSALS = (401, 403)
-
-
-def _upstream_refusal(
-    error: openai.APIStatusError | anthropic.APIStatusError, unreadable_body: dict
-) -> ModelInvokerUpstreamError:
-    """Return an upstream's refusal, to relay with its status and body.
-
-    ``unreadable_body`` stands in for a body that is not JSON.
-    """
-    try:
-        body = error.response.json()
-    except ValueError:
-        body = unreadable_body
-    return ModelInvokerUpstreamError(error.message, error.status_code, body)
-
-
-def _all_models_failed(route_name: str, error: Exception) -> ModelInvokerError:
-    return ModelInvokerInternalError(
-        f'All chat models failed for model {route_name}: {error}'
-    )
-
-
-def build_chat_model(model: Model, httpx_client=None) -> ChatModel:
-    """Build a chat model from configuration.
-
-    Shared by the chat invoker and by the routers that call a chat model.
-
-    Returns:
-        ChatModel: A chat model instance.
-
-    """
-    provider, model_name = parse_provider_and_model(model.model)
-    params = model.params or {}
-    credentials = (
-        model.credentials.model_dump(exclude_none=True) if model.credentials else {}
-    )
-
-    # Handle mock provider (gateway-specific)
-    if provider == 'mock':
-        latency_ms: int = int(params.get('latency_ms', 0))
-        response_text: str = params.get('response_text', 'ok')
-        return MockGatewayChatModel(
-            model_name=model_name,
-            latency_ms=latency_ms,
-            response_text=response_text,
-        )
-
-    # Strip gateway-only params that must not reach the provider
-    _GATEWAY_PARAMS = {ENABLE_PROMPT_CACHE_PARAM}
-    init_kwargs = {
-        k: v for k, v in {**params, **credentials}.items() if k not in _GATEWAY_PARAMS
-    }
-
-    # Factory provider keys use underscores (google_genai) where the gateway
-    # config uses hyphens (google-genai)
-    factory_provider = provider.replace('-', '_')
-
-    if provider not in ('anthropic', 'mistralai'):
-        init_kwargs['http_async_client'] = httpx_client
-    return init_chat_model(
-        model=f'{factory_provider}:{model_name}',
-        **init_kwargs,
-    )
+CHAT_MODEL_TYPE = 'chat-model'
 
 
 class ChatModelInvoker(ModelInvoker):
@@ -131,402 +75,192 @@ class ChatModelInvoker(ModelInvoker):
         return build_chat_model(model, self.httpx_client)
 
     @staticmethod
-    def _normalize_kwargs_for_model(model: Model, kwargs: dict) -> dict:
-        """Translate or strip kwargs to match what each provider accepts.
-
-        - max_completion_tokens → provider-native name
-        - stream_options, original_stream_options → stripped for Anthropic
-          (OpenAI-specific; Anthropic returns usage in chunks by default)
-        """
-        provider, _ = parse_provider_and_model(model.model)
-        normalized = dict(kwargs)
-
-        if 'max_completion_tokens' in normalized:
-            value = normalized.pop('max_completion_tokens')
-            if provider == 'google-genai':
-                normalized['max_output_tokens'] = value
-            elif provider == 'anthropic':
-                normalized['max_tokens'] = value
-            else:
-                normalized['max_completion_tokens'] = value
-
-        # stream_options is OpenAI-specific; Anthropic rejects it
-        if provider == 'anthropic':
-            normalized.pop('stream_options', None)
-            normalized.pop('original_stream_options', None)
-
-        return normalized
-
-    @staticmethod
-    def _extract_cache_token_counts(
-        usage_metadata,
-        response_metadata,
-    ) -> tuple[int | None, int | None, int | None]:
-        """Extract cache token counts from message metadata.
-
-        Returns:
-            Tuple of (cached_read, cache_creation_5m, cache_creation_1h).
-            Each value is None when not present in the response.
-
-        """
-        cached_token_count: int | None = None
-        cache_creation_5m_token_count: int | None = None
-        cache_creation_1h_token_count: int | None = None
-
-        if usage_metadata:
-            input_token_details = usage_metadata.get('input_token_details')
-            if input_token_details:
-                cache_read = input_token_details.get('cache_read')
-                if cache_read:
-                    cached_token_count = cache_read
-
-                # Prefer granular TTL breakdown when available
-                ephem_5m = input_token_details.get('ephemeral_5m_input_tokens')
-                ephem_1h = input_token_details.get('ephemeral_1h_input_tokens')
-                if ephem_5m or ephem_1h:
-                    if ephem_5m:
-                        cache_creation_5m_token_count = ephem_5m
-                    if ephem_1h:
-                        cache_creation_1h_token_count = ephem_1h
-                else:
-                    # Fallback: treat total cache_creation as 5-min cost
-                    cache_creation = input_token_details.get('cache_creation')
-                    if cache_creation:
-                        cache_creation_5m_token_count = cache_creation
-
-        # Fallback to response_metadata for providers using legacy format (e.g. OpenAI)
-        if cached_token_count is None and response_metadata:
-            token_usage = response_metadata.get('token_usage')
-            if token_usage:
-                prompt_tokens_details = token_usage.get('prompt_tokens_details')
-                if prompt_tokens_details:
-                    cached_token_count = prompt_tokens_details.get('cached_tokens')
-
-        return (
-            cached_token_count,
-            cache_creation_5m_token_count,
-            cache_creation_1h_token_count,
+    def _call(model_id: str, identity: RequestIdentity) -> Call:
+        return Call(
+            identity=identity, model_type=CHAT_MODEL_TYPE, target_model_id=model_id
         )
 
-    async def _execute_with_fallbacks(
+    def _chain(
         self,
-        route_name: str,
         model_id: str,
-        messages: list[BaseMessage],
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
-        **kwargs,
-    ) -> tuple[AIMessage, Model, bool]:
+        call: Call,
+        **context,
+    ) -> FallbackChain:
+        """Return the chain of ``model_id``, each model offering the tools.
+
+        The target is bound here: a tool it cannot take fails the request.
+        A fallback is bound when its turn comes (see ``_bound``).
+        """
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Chat model {model_id} not defined')
-
         model, chat_model, fallbacks = self.model_map[model_id]
         if tools and tool_choice:
             chat_model = chat_model.bind_tools(tools=tools, tool_choice=tool_choice)
-        logger.debug(
-            'Invoking model %s with messages: %s',
-            model_id,
-            messages,
+        return FallbackChain(
+            candidates((model, chat_model), fallbacks),
+            CallContext(call=call, recorder=self.recorder, **context),
         )
-        fallback_triggered = False
-        result = None
-        model_invoked = model
-        try:
-            result = await chat_model.ainvoke(
-                input=messages, **self._normalize_kwargs_for_model(model, kwargs)
-            )
-        except Exception as primary_chat_model_exception:
-            logger.warning(
-                'Primary chat model %s failed: %s. Trying fallbacks...',
-                model_id,
-                str(primary_chat_model_exception),
-            )
-            for fallback_model, fallback_chat_model in fallbacks or []:
-                try:
-                    if tools and tool_choice:
-                        fallback_chat_model = fallback_chat_model.bind_tools(
-                            tools=tools, tool_choice=tool_choice
-                        )
-                    result = await fallback_chat_model.ainvoke(
-                        input=messages,
-                        **self._normalize_kwargs_for_model(fallback_model, kwargs),
-                    )
-                    fallback_triggered = True
-                    model_invoked = fallback_model
-                    break
-                except Exception as fallback_chat_model_exception:
-                    logger.warning(
-                        'Fallback chat model %s failed: %s',
-                        fallback_model.model_id,
-                        str(fallback_chat_model_exception),
-                    )
-            if result is None:
-                logger.error(
-                    'All chat models failed for route %s',
-                    route_name,
-                    exc_info=primary_chat_model_exception,
-                )
-                raise ModelInvokerInternalError(
-                    f'All chat models failed for model {route_name}: {str(primary_chat_model_exception)}'
-                ) from primary_chat_model_exception
-            return result, model_invoked, fallback_triggered
-        return result, model_invoked, fallback_triggered
+
+    @staticmethod
+    def _bound(candidate: Candidate, tools, tool_choice) -> ChatModel:
+        if candidate.is_fallback and tools and tool_choice:
+            return candidate.client.bind_tools(tools=tools, tool_choice=tool_choice)
+        return candidate.client
+
+    @classmethod
+    def _tokens(cls, message: AIMessage) -> Tokens | None:
+        """Return the tokens of a reply; None when it reports no usage."""
+        if not isinstance(message, AIMessage) or not message.usage_metadata:
+            return None
+        cached, creation_5m, creation_1h = cache_tokens(
+            message.usage_metadata, message.response_metadata
+        )
+        input_tokens = message.usage_metadata.get('input_tokens')
+        if input_tokens is not None:
+            input_tokens -= (cached or 0) + (creation_5m or 0) + (creation_1h or 0)
+        return Tokens(
+            input=input_tokens,
+            output=message.usage_metadata.get('output_tokens'),
+            cached=cached,
+            cache_5m=creation_5m,
+            cache_1h=creation_1h,
+        )
 
     @task(name='llm_complete')
     async def complete(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         messages: list[BaseMessage],
         model_id: str,
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
-        project_uuid: str = '',
-        project_name: str = '',
         **kwargs,
     ) -> ChatCompletion:
-        start_time = time.monotonic()
-        result, model_invoked, fallback_triggered = await self._execute_with_fallbacks(
-            route_name=route_name,
-            model_id=model_id,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
-        latency_ms = (time.monotonic() - start_time) * 1000
+        call = self._call(model_id, identity)
 
-        usage_metadata = (
-            result.usage_metadata if isinstance(result, AIMessage) else None
-        )
-        response_metadata = (
-            result.response_metadata if isinstance(result, AIMessage) else None
-        )
-        (
-            cached_token_count,
-            cache_creation_5m_token_count,
-            cache_creation_1h_token_count,
-        ) = self._extract_cache_token_counts(usage_metadata, response_metadata)
-
-        token_input_count: int | None = None
-
-        if isinstance(result, AIMessage) and result.usage_metadata:
-            input_tokens = result.usage_metadata.get('input_tokens')
-            if input_tokens is not None:
-                token_input_count = (
-                    input_tokens
-                    - (cached_token_count or 0)
-                    - (cache_creation_5m_token_count or 0)
-                    - (cache_creation_1h_token_count or 0)
+        def log_failure(candidate: Candidate, error: BaseException) -> None:
+            if candidate.is_fallback:
+                logger.warning(
+                    'Fallback chat model %s failed: %s',
+                    candidate.model.model_id,
+                    str(error),
+                )
+            else:
+                logger.warning(
+                    'Primary chat model %s failed: %s. Trying fallbacks...',
+                    model_id,
+                    str(error),
                 )
 
-        if isinstance(result, AIMessage) and result.usage_metadata:
-            token_output_count = result.usage_metadata.get('output_tokens')
+        chain = self._chain(
+            model_id,
+            tools,
+            tool_choice,
+            call,
+            on_failure=log_failure,
+            on_exhausted=raising(Surface.CHAT, identity.route_name),
+        )
+        logger.debug('Invoking model %s with messages: %s', model_id, messages)
 
-            self._record_metrics(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                model=model_invoked,
-                target_model_id=model_id,
-                latency_ms=latency_ms,
-                model_type='chat-model',
-                token_input_count=token_input_count,
-                token_output_count=token_output_count,
-                cached_token_count=cached_token_count,
-                cache_creation_5m_token_count=cache_creation_5m_token_count,
-                cache_creation_1h_token_count=cache_creation_1h_token_count,
-                fallback_triggered=fallback_triggered,
-                project_uuid=project_uuid,
-                project_name=project_name,
+        async def ask(candidate: Candidate) -> Reply:
+            result = await self._bound(candidate, tools, tool_choice).ainvoke(
+                input=messages, **kwargs
             )
+            return Reply((result, candidate.model), usage=self._tokens(result))
 
-        if isinstance(result, AIMessage):
-            return ChatUtils.to_openai_chat_completion(
-                result,
-                model_id_invoked=model_invoked.model_id,
-                request_id=request_uuid,
+        result, model_invoked = await chain.call(ask)
+        if not isinstance(result, AIMessage) and isinstance(result, BaseMessage):
+            result = AIMessage(content=result.content)
+        if not isinstance(result, AIMessage):
+            raise ModelInvokerInternalError(
+                f'Expected AIMessage or BaseMessage, got {type(result)}'
             )
-        if isinstance(result, BaseMessage):
-            ai_message = AIMessage(content=result.content)
-            return ChatUtils.to_openai_chat_completion(
-                ai_message,
-                model_id_invoked=model_invoked.model_id,
-                request_id=request_uuid,
-            )
-        raise ModelInvokerInternalError(
-            f'Expected AIMessage or BaseMessage, got {type(result)}'
+        return ChatUtils.to_openai_chat_completion(
+            result,
+            model_id_invoked=model_invoked.model_id,
+            request_id=identity.request_uuid,
         )
 
-    async def _stream_with_metrics(
-        self,
+    @staticmethod
+    async def _stream_counting(
         chat_model: ChatModel,
         messages: list[BaseMessage],
-        stats: dict[str, int],
+        usage: StreamUsage,
         **kwargs,
     ) -> AsyncIterator[AIMessageChunk]:
-        """Help generator to stream chunks and update metrics stats."""
+        """Stream the model's chunks, counting their usage in ``usage``."""
         async for chunk in chat_model.astream(input=messages, **kwargs):
-            if chunk.usage_metadata:
-                input_tokens = chunk.usage_metadata.get('input_tokens') or 0
-                stats['token_output_count'] += (
-                    chunk.usage_metadata.get('output_tokens') or 0
-                )
-
-                cached, creation_5m, creation_1h = self._extract_cache_token_counts(
-                    usage_metadata=chunk.usage_metadata,
-                    response_metadata=chunk.response_metadata,
-                )
-                if cached is not None:
-                    stats['cached_token_count'] = cached
-                if creation_5m is not None:
-                    stats['cache_creation_5m_token_count'] = creation_5m
-                if creation_1h is not None:
-                    stats['cache_creation_1h_token_count'] = creation_1h
-
-                if input_tokens:
-                    stats['token_input_count'] = (
-                        input_tokens
-                        - (stats['cached_token_count'] or 0)
-                        - (stats['cache_creation_5m_token_count'] or 0)
-                        - (stats['cache_creation_1h_token_count'] or 0)
-                    )
-
+            usage.add(chunk.usage_metadata, chunk.response_metadata)
             yield chunk
+
+    @staticmethod
+    def _stream_tokens(usage: StreamUsage | None) -> Tokens:
+        """Return a stream's tokens: a count of 0 is not reported."""
+        counts = usage.counts() if usage else ()
+        return Tokens(*(count or None for count in counts))
 
     @task(name='llm_stream')
     async def stream(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         messages: list[BaseMessage],
         model_id: str,
         tools: list[ChatCompletionToolParam] | None,
         tool_choice: ChatCompletionToolChoiceOptionParam | None,
-        project_uuid: str = '',
-        project_name: str = '',
         **kwargs,
     ) -> AsyncIterator[AIMessageChunk]:
-        if model_id not in self.model_map:
-            raise ModelInvokerBadRequest(f'Chat model {model_id} not defined')
+        call = self._call(model_id, identity)
 
-        model, chat_model, fallbacks = self.model_map[model_id]
-        if tools and tool_choice:
-            chat_model = chat_model.bind_tools(tools=tools, tool_choice=tool_choice)
+        def log_failure(candidate: Candidate, error: BaseException) -> None:
+            if candidate.is_fallback:
+                logger.warning(
+                    'Fallback %s stream failed: %s',
+                    candidate.model.model_id,
+                    str(error),
+                )
+            else:
+                logger.warning(
+                    'Primary model %s stream failed: %s', model_id, str(error)
+                )
 
-        start_time = time.monotonic()
-        # Shared mutable stats object
-        stats = {
-            'token_input_count': 0,
-            'token_output_count': 0,
-            'cached_token_count': 0,
-            'cache_creation_5m_token_count': 0,
-            'cache_creation_1h_token_count': 0,
-        }
-        fallback_triggered = False
-        model_invoked = model
+        def record(candidate: Candidate, stats, latency_ms: float) -> None:
+            self.recorder.invocation(
+                call,
+                candidate.model,
+                latency_ms,
+                tokens=self._stream_tokens(stats),
+                fallback_triggered=candidate.is_fallback,
+            )
 
-        try:
-            # Primary model stream
-            async for chunk in self._stream_with_metrics(
-                chat_model,
+        chain = self._chain(
+            model_id,
+            tools,
+            tool_choice,
+            call,
+            record=record,
+            on_failure=log_failure,
+            on_exhausted=raising(Surface.CHAT_STREAM, identity.route_name),
+        )
+
+        async def stream(attempt: Attempt) -> AsyncIterator[AIMessageChunk]:
+            candidate = attempt.candidate
+            if candidate.is_fallback:
+                logger.info(
+                    'Trying fallback model %s for streaming', candidate.model.model_id
+                )
+            attempt.usage = StreamUsage()
+            async for chunk in self._stream_counting(
+                self._bound(candidate, tools, tool_choice),
                 messages,
-                stats,
-                **self._normalize_kwargs_for_model(model, kwargs),
+                attempt.usage,
+                **kwargs,
             ):
                 yield chunk
 
-        except Exception as primary_error:
-            logger.warning(
-                'Primary model %s stream failed: %s', model_id, str(primary_error)
-            )
-            fallback_success = False
-            for fb_model, fb_chat_model in fallbacks or []:
-                try:
-                    logger.info(
-                        'Trying fallback model %s for streaming', fb_model.model_id
-                    )
-                    if tools and tool_choice:
-                        fb_chat_model = fb_chat_model.bind_tools(
-                            tools=tools, tool_choice=tool_choice
-                        )
-
-                    # Reset stats for fallback attempt
-                    stats['token_input_count'] = 0
-                    stats['token_output_count'] = 0
-                    stats['cached_token_count'] = 0
-                    stats['cache_creation_5m_token_count'] = 0
-                    stats['cache_creation_1h_token_count'] = 0
-
-                    model_invoked = fb_model
-
-                    async for chunk in self._stream_with_metrics(
-                        fb_chat_model,
-                        messages,
-                        stats,
-                        **self._normalize_kwargs_for_model(fb_model, kwargs),
-                    ):
-                        yield chunk
-
-                    fallback_success = True
-                    fallback_triggered = True
-                    break
-                except Exception as fb_error:
-                    logger.warning(
-                        'Fallback %s stream failed: %s',
-                        fb_model.model_id,
-                        str(fb_error),
-                    )
-
-            if not fallback_success:
-                raise ModelInvokerInternalError(
-                    f'All models failed for streaming {route_name}'
-                ) from primary_error
-
-        finally:
-            latency_ms = (time.monotonic() - start_time) * 1000
-
-            self._record_metrics(
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                model=model_invoked,
-                target_model_id=model_id,
-                latency_ms=latency_ms,
-                model_type='chat-model',
-                token_input_count=stats['token_input_count']
-                if stats['token_input_count'] > 0
-                else None,
-                token_output_count=stats['token_output_count']
-                if stats['token_output_count'] > 0
-                else None,
-                cached_token_count=stats['cached_token_count']
-                if stats['cached_token_count'] > 0
-                else None,
-                cache_creation_5m_token_count=stats['cache_creation_5m_token_count']
-                if stats['cache_creation_5m_token_count'] > 0
-                else None,
-                cache_creation_1h_token_count=stats['cache_creation_1h_token_count']
-                if stats['cache_creation_1h_token_count'] > 0
-                else None,
-                fallback_triggered=fallback_triggered,
-                project_uuid=project_uuid,
-                project_name=project_name,
-            )
+        async for chunk in chain.stream(stream):
+            yield chunk
 
     # ── Responses API ────────────────────────────────────────────────────
 
@@ -537,11 +271,16 @@ class ChatModelInvoker(ModelInvoker):
         _, chat_model, _ = self.model_map[model_id]
         return chat_model.supports_native_responses()
 
-    def _responses_attempts(
-        self, model_id: str, allow_fallback: bool, body: dict
-    ) -> list[tuple[Model, ChatModel, dict]]:
-        """Return the model, then its fallbacks that serve the Responses API, each
-        with the body to send it.
+    def _responses_chain(
+        self,
+        model_id: str,
+        allow_fallback: bool,
+        body: dict,
+        call: Call,
+    ) -> FallbackChain:
+        """Return the chain of the model, then its fallbacks that serve the
+        Responses API. Each candidate's client is the model and the body to
+        send it.
 
         The history may hold items another provider produced: each model, the
         first included, gets the input adapted to what it accepts.
@@ -551,17 +290,29 @@ class ChatModelInvoker(ModelInvoker):
                 f'Chat model {model_id} does not serve the Responses API'
             )
         model, chat_model, fallbacks = self.model_map[model_id]
-        candidates = [(model, chat_model)]
-        if allow_fallback:
-            candidates += [
-                (fallback, fallback_model)
-                for fallback, fallback_model in fallbacks or []
-                if fallback_model.supports_native_responses()
-            ]
-        return [
-            (candidate, candidate_model, self._responses_body(candidate_model, body))
-            for candidate, candidate_model in candidates
+        served = [
+            (fallback, fallback_model)
+            for fallback, fallback_model in (fallbacks if allow_fallback else [])
+            if fallback_model.supports_native_responses()
         ]
+        pairs = [
+            (candidate, (candidate_model, self._responses_body(candidate_model, body)))
+            for candidate, candidate_model in [(model, chat_model), *served]
+        ]
+
+        def record(candidate: Candidate, usage: dict | None, latency_ms: float):
+            self._record_responses(call, candidate, usage, latency_ms)
+
+        return FallbackChain(
+            candidates(pairs[0], pairs[1:]),
+            CallContext(
+                call=call,
+                recorder=self.recorder,
+                record=record,
+                on_failure=_log_responses_failure,
+                on_exhausted=raising(Surface.RESPONSES, call.identity.route_name),
+            ),
+        )
 
     @staticmethod
     def _responses_body(chat_model: ChatModel, body: dict) -> dict:
@@ -571,160 +322,72 @@ class ChatModelInvoker(ModelInvoker):
             return body
         return {**body, 'input': chat_model.adapt_responses_input(items)}
 
-    @staticmethod
-    def _responses_failure(route_name: str, error: Exception) -> ModelInvokerError:
-        """Return the error of a Responses request no model could serve.
-
-        An upstream's refusal (a too long context, a rate limit...) reaches the
-        client as the upstream sent it, so a Responses client handles it as it
-        would without the gateway.
-        """
-        if isinstance(error, openai.APIStatusError) and 400 <= error.status_code < 500:
-            return _upstream_refusal(error, {'error': {'message': error.message}})
-        return _all_models_failed(route_name, error)
-
-    def _record_responses_metrics(
-        self,
-        usage: dict | None,
-        model: Model,
-        fallback_triggered: bool,
-        start_time: float,
-        target_model_id: str,
-        **request: str,
+    def _record_responses(
+        self, call: Call, candidate: Candidate, usage: dict | None, latency_ms: float
     ) -> None:
-        input_tokens, cached, output = usage_token_counts(usage)
-        self._record_metrics(
-            **request,
-            model=model,
-            target_model_id=target_model_id,
-            latency_ms=(time.monotonic() - start_time) * 1000,
-            model_type='chat-model',
-            token_input_count=(input_tokens - cached) or None,
-            token_output_count=output or None,
-            cached_token_count=cached or None,
-            cache_creation_5m_token_count=None,
-            cache_creation_1h_token_count=None,
-            fallback_triggered=fallback_triggered,
+        input_tokens, cached, output = responses_token_counts(usage)
+        self.recorder.invocation(
+            call,
+            candidate.model,
+            latency_ms,
+            tokens=Tokens(
+                input=(input_tokens - cached) or None,
+                output=output or None,
+                cached=cached or None,
+            ),
+            fallback_triggered=candidate.is_fallback,
         )
 
     @task(name='llm_stream_responses')
     async def stream_responses(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         model_id: str,
         allow_fallback: bool = True,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> AsyncIterator[NativeResponsesEvent]:
         """Stream a Responses API request and yield the upstream's events.
 
         A fallback is tried only while nothing has been yielded: once the
         client has part of a reply, an error ends the stream.
         """
-        attempts = self._responses_attempts(model_id, allow_fallback, body)
-        start_time = time.monotonic()
-        usage: dict | None = None
-        model_invoked = attempts[0][0]
-        fallback_triggered = False
-        first_error: Exception | None = None
-        try:
-            for position, (candidate, chat_model, candidate_body) in enumerate(
-                attempts
+        call = self._call(model_id, identity)
+        chain = self._responses_chain(model_id, allow_fallback, body, call)
+
+        async def stream(attempt: Attempt) -> AsyncIterator[NativeResponsesEvent]:
+            chat_model, candidate_body = attempt.candidate.client
+            async for event, data in chat_model.astream_native_responses(
+                candidate_body
             ):
-                model_invoked = candidate
-                fallback_triggered = position > 0
-                usage = None
-                started = False
-                try:
-                    async for event, data in chat_model.astream_native_responses(
-                        candidate_body
-                    ):
-                        native_event = NativeResponsesEvent.parse(event, data)
-                        if native_event.is_final:
-                            usage = native_event.usage
-                        started = True
-                        yield native_event
-                except Exception as error:
-                    if started:
-                        raise
-                    first_error = first_error or error
-                    logger.warning(
-                        'Responses model %s failed: %s', candidate.model_id, str(error)
-                    )
-                else:
-                    return
-            raise self._responses_failure(route_name, first_error) from first_error
-        finally:
-            self._record_responses_metrics(
-                usage=usage,
-                model=model_invoked,
-                fallback_triggered=fallback_triggered,
-                start_time=start_time,
-                target_model_id=model_id,
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                project_uuid=project_uuid,
-                project_name=project_name,
-            )
+                native_event = NativeResponsesEvent.parse(event, data)
+                if native_event.is_final:
+                    attempt.usage = native_event.usage
+                yield native_event
+
+        async for event in chain.stream(stream):
+            yield event
 
     @task(name='llm_complete_responses')
     async def complete_responses(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         model_id: str,
         allow_fallback: bool = True,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> tuple[dict, Model]:
         """Answer a Responses API request; return the upstream's response
         object and the model that answered.
         """
-        start_time = time.monotonic()
-        first_error: Exception | None = None
-        for position, (candidate, chat_model, candidate_body) in enumerate(
-            self._responses_attempts(model_id, allow_fallback, body)
-        ):
-            try:
-                result = await chat_model.ainvoke_native_responses(candidate_body)
-            except Exception as error:
-                first_error = first_error or error
-                logger.warning(
-                    'Responses model %s failed: %s', candidate.model_id, str(error)
-                )
-                continue
-            self._record_responses_metrics(
-                usage=result.get('usage'),
-                model=candidate,
-                fallback_triggered=position > 0,
-                start_time=start_time,
-                target_model_id=model_id,
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                project_uuid=project_uuid,
-                project_name=project_name,
-            )
-            return result, candidate
-        raise self._responses_failure(route_name, first_error) from first_error
+        call = self._call(model_id, identity)
+        chain = self._responses_chain(model_id, allow_fallback, body, call)
+
+        async def ask(candidate: Candidate) -> Reply:
+            chat_model, candidate_body = candidate.client
+            result = await chat_model.ainvoke_native_responses(candidate_body)
+            # A reply without usage is recorded too: {} is not None.
+            return Reply((result, candidate.model), usage=result.get('usage') or {})
+
+        return await chain.call(ask)
 
     # ── Messages API ─────────────────────────────────────────────────────
 
@@ -735,66 +398,57 @@ class ChatModelInvoker(ModelInvoker):
         _, chat_model, _ = self.model_map[model_id]
         return chat_model.supports_native_messages()
 
-    def _messages_attempts(self, model_id: str) -> list[tuple[Model, ChatModel]]:
-        """Return the model, then its fallbacks in order.
+    def _messages_chain(self, model_id: str, call: Call) -> FallbackChain:
+        """Return the chain of the model, then its fallbacks in order.
 
-        A fallback that does not serve the Messages API is kept: the request
-        fails when it gets there (see ``_check_messages_attempt``), it is never
-        translated.
+        A fallback that does not serve the Messages API ends the chain: the
+        request fails when it gets there, it is never translated.
         """
         if not self.supports_messages(model_id):
             raise ModelInvokerBadRequest(
                 f'Chat model {model_id} does not serve the Messages API'
             )
+        route_name = call.identity.route_name
         model, chat_model, fallbacks = self.model_map[model_id]
-        return [(model, chat_model), *(fallbacks or [])]
+        served: list[tuple[Model, ChatModel]] = []
+        unserved: Model | None = None
+        for fallback, fallback_model in fallbacks or []:
+            if not fallback_model.supports_native_messages():
+                unserved = fallback
+                break
+            served.append((fallback, fallback_model))
+        raise_exhausted = raising(Surface.MESSAGES, route_name)
 
-    @staticmethod
-    def _check_messages_attempt(
-        model: Model, chat_model: ChatModel, route_name: str, error: Exception
-    ) -> None:
-        """Refuse a fallback that does not serve the Messages API."""
-        if not chat_model.supports_native_messages():
-            raise ModelInvokerBadRequest(
-                f'Model {model.model_id} of route {route_name} '
-                'does not serve the Messages API'
-            ) from error
+        def on_exhausted(failures: list) -> NoReturn:
+            if unserved is not None:
+                raise ModelInvokerBadRequest(
+                    f'Model {unserved.model_id} of route {route_name} '
+                    'does not serve the Messages API'
+                ) from failures[0].error
+            raise_exhausted(failures)
 
-    @staticmethod
-    def _is_relayed_messages_error(error: Exception) -> bool:
-        """Whether an upstream error reaches the client as the upstream sent it.
-
-        That is a 4xx, but not a 401 or 403: those refuse the gateway's own
-        access to the provider. The client must not read them as a refusal of
-        its credential, so they fall back, and end as an ``api_error``.
-        """
-        return (
-            isinstance(error, anthropic.APIStatusError)
-            and 400 <= error.status_code < 500
-            and error.status_code not in _UPSTREAM_ACCESS_REFUSALS
-        )
-
-    @classmethod
-    def _is_final_messages_error(cls, error: Exception) -> bool:
-        """Whether the upstream refused the request itself: no fallback then.
-
-        A relayed 4xx other than 429 says the request is wrong, so another
-        model would refuse it too.
-        """
-        return cls._is_relayed_messages_error(error) and error.status_code != 429
-
-    @classmethod
-    def _messages_failure(cls, route_name: str, error: Exception) -> ModelInvokerError:
-        """Return the error of a Messages request no model could serve."""
-        if cls._is_relayed_messages_error(error):
-            return _upstream_refusal(
-                error,
-                {
-                    'type': 'error',
-                    'error': {'type': 'api_error', 'message': error.message},
-                },
+        def record(candidate: Candidate, usage: dict | None, latency_ms: float):
+            self.recorder.invocation(
+                call,
+                candidate.model,
+                latency_ms,
+                tokens=_messages_tokens(usage),
+                fallback_triggered=candidate.is_fallback,
             )
-        return _all_models_failed(route_name, error)
+
+        return FallbackChain(
+            candidates((model, chat_model), served),
+            CallContext(
+                call=call,
+                recorder=self.recorder,
+                record=record,
+                on_failure=_log_messages_failure,
+                # A refusal of the request itself (``final_messages_refusal``),
+                # raised as the client gets it: another model would refuse it too.
+                final=lambda error: isinstance(error, ModelInvokerUpstreamError),
+                on_exhausted=on_exhausted,
+            ),
+        )
 
     @staticmethod
     def _signature_retry_body(model: Model, body: dict, error: Exception) -> dict:
@@ -853,159 +507,84 @@ class ChatModelInvoker(ModelInvoker):
     @task(name='llm_complete_messages')
     async def complete_messages(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         headers: dict[str, str],
         model_id: str,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> tuple[dict, Model]:
         """Answer a Messages API request; return the upstream's message object
         and the model that answered.
         """
-        start_time = time.monotonic()
-        first_error: Exception | None = None
-        for position, (candidate, chat_model) in enumerate(
-            self._messages_attempts(model_id)
-        ):
-            if first_error is not None:
-                self._check_messages_attempt(
-                    candidate, chat_model, route_name, first_error
-                )
+        call = self._call(model_id, identity)
+        chain = self._messages_chain(model_id, call)
+
+        async def ask(candidate: Candidate) -> Reply:
             try:
                 result = await self._invoke_messages(
-                    candidate, chat_model, body, headers
+                    candidate.model, candidate.client, body, headers
                 )
             except Exception as error:
-                first_error = first_error or error
-                logger.warning(
-                    'Messages model %s failed: %s', candidate.model_id, str(error)
-                )
-                if self._is_final_messages_error(error):
-                    raise self._messages_failure(route_name, error) from error
-                continue
-            self._record_messages_metrics(
-                usage=result.get('usage'),
-                model=candidate,
-                fallback_triggered=position > 0,
-                start_time=start_time,
-                target_model_id=model_id,
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                project_uuid=project_uuid,
-                project_name=project_name,
-            )
-            return result, candidate
-        raise self._messages_failure(route_name, first_error) from first_error
+                if refusal := final_messages_refusal(error):
+                    raise refusal from error
+                raise
+            # A reply without usage is recorded too: {} is not None.
+            return Reply((result, candidate.model), usage=result.get('usage') or {})
+
+        return await chain.call(ask)
 
     @task(name='llm_stream_messages')
     async def stream_messages(
         self,
-        request_uuid: str,
-        api_key_uuid: str,
-        group_uuid: str,
-        api_key_name: str,
-        group_name: str,
-        route_name: str,
+        identity: RequestIdentity,
         body: dict,
         headers: dict[str, str],
         model_id: str,
-        project_uuid: str = '',
-        project_name: str = '',
     ) -> AsyncIterator[tuple[str, str]]:
         """Stream a Messages API request and yield the upstream's ``(event, data)``.
 
         A fallback is tried only while nothing has been yielded: once the
         client has part of a reply, an error ends the stream.
         """
-        attempts = self._messages_attempts(model_id)
-        start_time = time.monotonic()
-        usage: dict = {}
-        model_invoked = attempts[0][0]
-        fallback_triggered = False
-        first_error: Exception | None = None
-        try:
-            for position, (candidate, chat_model) in enumerate(attempts):
-                if first_error is not None:
-                    self._check_messages_attempt(
-                        candidate, chat_model, route_name, first_error
-                    )
-                model_invoked = candidate
-                fallback_triggered = position > 0
-                usage = {}
-                started = False
-                try:
-                    async for event, data in self._stream_messages(
-                        candidate, chat_model, body, headers
-                    ):
-                        usage = stream_usage(event, data, usage)
-                        started = True
-                        yield event, data
-                except Exception as error:
-                    if started:
-                        raise
-                    first_error = first_error or error
-                    logger.warning(
-                        'Messages model %s failed: %s', candidate.model_id, str(error)
-                    )
-                    if self._is_final_messages_error(error):
-                        raise self._messages_failure(route_name, error) from error
-                else:
-                    return
-            raise self._messages_failure(route_name, first_error) from first_error
-        finally:
-            self._record_messages_metrics(
-                usage=usage,
-                model=model_invoked,
-                fallback_triggered=fallback_triggered,
-                start_time=start_time,
-                target_model_id=model_id,
-                request_uuid=request_uuid,
-                api_key_uuid=api_key_uuid,
-                group_uuid=group_uuid,
-                api_key_name=api_key_name,
-                group_name=group_name,
-                route_name=route_name,
-                project_uuid=project_uuid,
-                project_name=project_name,
-            )
+        call = self._call(model_id, identity)
+        chain = self._messages_chain(model_id, call)
 
-    def _record_messages_metrics(
-        self,
-        usage: dict | None,
-        model: Model,
-        fallback_triggered: bool,
-        start_time: float,
-        target_model_id: str,
-        **request: str,
-    ) -> None:
-        usage = usage or {}
-        cache_creation = usage.get('cache_creation') or {}
-        self._record_metrics(
-            **request,
-            model=model,
-            target_model_id=target_model_id,
-            latency_ms=(time.monotonic() - start_time) * 1000,
-            model_type='chat-model',
-            token_input_count=usage.get('input_tokens') or None,
-            token_output_count=usage.get('output_tokens') or None,
-            cached_token_count=usage.get('cache_read_input_tokens') or None,
-            cache_creation_5m_token_count=cache_creation.get(
-                'ephemeral_5m_input_tokens'
-            )
-            or None,
-            cache_creation_1h_token_count=cache_creation.get(
-                'ephemeral_1h_input_tokens'
-            )
-            or None,
-            fallback_triggered=fallback_triggered,
-        )
+        async def stream(attempt: Attempt) -> AsyncIterator[tuple[str, str]]:
+            attempt.usage = {}
+            started = False
+            try:
+                async for event, data in self._stream_messages(
+                    attempt.candidate.model, attempt.candidate.client, body, headers
+                ):
+                    attempt.usage = stream_usage(event, data, attempt.usage)
+                    started = True
+                    yield event, data
+            except Exception as error:
+                if not started and (refusal := final_messages_refusal(error)):
+                    raise refusal from error
+                raise
+
+        async for event in chain.stream(stream):
+            yield event
+
+
+def _log_responses_failure(candidate: Candidate, error: BaseException) -> None:
+    logger.warning(
+        'Responses model %s failed: %s', candidate.model.model_id, str(error)
+    )
+
+
+def _messages_tokens(usage: dict | None) -> Tokens:
+    """Return the tokens of a Messages API usage object; 0 is not reported."""
+    usage = usage or {}
+    cache_creation = usage.get('cache_creation') or {}
+    return Tokens(
+        input=usage.get('input_tokens') or None,
+        output=usage.get('output_tokens') or None,
+        cached=usage.get('cache_read_input_tokens') or None,
+        cache_5m=cache_creation.get('ephemeral_5m_input_tokens') or None,
+        cache_1h=cache_creation.get('ephemeral_1h_input_tokens') or None,
+    )
+
+
+def _log_messages_failure(candidate: Candidate, error: BaseException) -> None:
+    logger.warning('Messages model %s failed: %s', candidate.model.model_id, str(error))

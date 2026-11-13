@@ -1,10 +1,11 @@
 import Lucide from '@Components/lucide';
 import {
-  DUPLICATE_BUDGET_ERROR, DUPLICATE_BUDGET_PREFIX, DUPLICATE_EDIT_LINK, DUPLICATE_SUFFIX, WINDOW_TYPE_HELP,
+  DUPLICATE_BUDGET_ERROR, DUPLICATE_BUDGET_PREFIX, DUPLICATE_EDIT_LINK, DUPLICATE_SUFFIX,
 } from '@Components/limits/constants';
 import { asBudgets, getDuplicateLimit, getNewLimitsErrors } from '@Components/limits/helpers';
 import focusLimitRow from '@Components/limits/focus-limit-row';
 import LimitFields from '@Components/limits/limit-fields';
+import LimitNotes from '@Components/limits/limit-notes';
 import useModals from '@Hooks/use-modals';
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { useFormbitContext } from '@radicalbit/formbit';
@@ -46,12 +47,14 @@ function AddScreen() {
         <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another budget</Button>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <span className="text-xs opacity-70">{WINDOW_TYPE_HELP}</span>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <Rows />
 
-        <Rows />
+          {backendErrorField}
+        </div>
 
-        {backendErrorField}
+        <LimitNotes />
       </div>
     </div>
   );

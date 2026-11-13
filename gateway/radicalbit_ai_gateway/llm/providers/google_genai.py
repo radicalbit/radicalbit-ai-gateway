@@ -44,6 +44,10 @@ from radicalbit_ai_gateway.llm.messages import (
     tool_call,
     tool_call_chunk,
 )
+from radicalbit_ai_gateway.llm.providers._schema import (
+    OutputParserError,
+    is_data_content_block,
+)
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 app_config = get_app_config()
@@ -69,7 +73,6 @@ _SPECIAL_TOOL_KEYS = (
     'url_context',
     'computer_use',
 )
-_DATA_BLOCK_TYPES = ('image', 'video', 'audio', 'text-plain', 'file')
 _PROVIDER_RESOLVED_HOSTS = (
     'youtube.com',
     'youtu.be',
@@ -85,10 +88,6 @@ class GoogleGenerativeAIError(Exception):
 
 class ChatGoogleGenerativeAIError(GoogleGenerativeAIError):
     """A Gemini chat request was rejected by the API."""
-
-
-class OutputParserError(ValueError):
-    """A structured reply could not be parsed into its schema."""
 
 
 def _api_key(params: dict[str, Any]) -> str | None:
@@ -264,6 +263,13 @@ class ChatGoogleGenerativeAI(ChatModel):
         clone.__dict__.update(self.__dict__)
         clone._bound = {**self._bound, **bound}
         return clone
+
+    def _adapt_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        if 'max_completion_tokens' not in kwargs:
+            return kwargs
+        adapted = dict(kwargs)
+        adapted['max_output_tokens'] = adapted.pop('max_completion_tokens')
+        return adapted
 
     def bind_tools(
         self, tools: list[dict], tool_choice: Any = None
@@ -1129,21 +1135,6 @@ def _extras_signature(block: Mapping[str, Any]) -> bytes | None:
     return None
 
 
-def _is_data_block(block: Mapping[str, Any]) -> bool:
-    """Tell a multimodal data block, v0 (``source_type``) or v1 shaped."""
-    if block.get('type') not in _DATA_BLOCK_TYPES:
-        return False
-    if any(key in block for key in ('url', 'base64', 'file_id', 'text')):
-        return not (block['type'] == 'text' and 'source_type' not in block)
-    source_type = block.get('source_type')
-    return (
-        (source_type == 'url' and 'url' in block)
-        or (source_type == 'base64' and 'data' in block)
-        or (source_type == 'id' and 'id' in block)
-        or (source_type == 'text' and 'url' in block)
-    )
-
-
 def _provider_resolved_uri(block: Mapping[str, Any]) -> str | None:
     """Return a URI Gemini fetches itself, rather than one to download."""
     file_id = block.get('file_id')
@@ -1330,7 +1321,7 @@ async def _convert_to_parts(
             if 'media_processing' in part:
                 kwargs['media_processing'] = part['media_processing']
             parts.append(types.Part(**kwargs))
-        elif _is_data_block(part):
+        elif is_data_content_block(part):
             parts.append(await _data_block_part(part, model, http_client))
         elif part_type == 'image_url':
             image_url = part['image_url']
@@ -1526,7 +1517,7 @@ async def _tool_message_parts(
             b
             for b in message.content
             if isinstance(b, dict)
-            and (_is_data_block(b) or b.get('type') == 'image_url')
+            and (is_data_content_block(b) or b.get('type') == 'image_url')
         ]
         parts.extend(await _convert_to_parts(media, model, http_client))
         response = [b for b in message.content if not any(b is m for m in media)]

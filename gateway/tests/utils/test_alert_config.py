@@ -5,53 +5,50 @@ import pytest
 
 from radicalbit_ai_gateway.utils.app_config import AlertConfig, AppConfig
 
-
-def test_the_thresholds_default_to_75_and_98(monkeypatch):
-    monkeypatch.delenv('ALERT_THRESHOLD_PERCENTAGES', raising=False)
-
-    assert AlertConfig().alert_threshold_percentages == [75, 98]
+THRESHOLDS = 'ALERT_THRESHOLD_PERCENTAGES'
+TICK = 'ALERT_WINDOW_TICK_SECONDS'
 
 
-def test_the_thresholds_are_read_from_the_environment(monkeypatch):
-    monkeypatch.setenv('ALERT_THRESHOLD_PERCENTAGES', '[50, 80, 90]')
+@pytest.mark.parametrize(
+    ('env', 'value', 'attribute', 'expected'),
+    [
+        pytest.param(THRESHOLDS, None, 'alert_threshold_percentages', [75, 98], id='thresholds-default'),
+        pytest.param(THRESHOLDS, '[50, 80, 90]', 'alert_threshold_percentages', [50, 80, 90], id='thresholds-from-env'),
+        # The 1..99 bounds are inclusive.
+        pytest.param(THRESHOLDS, '[1]', 'alert_threshold_percentages', [1], id='threshold-lower-bound'),
+        pytest.param(THRESHOLDS, '[99]', 'alert_threshold_percentages', [99], id='threshold-upper-bound'),
+        pytest.param(TICK, None, 'alert_window_tick_seconds', 30, id='tick-default'),
+        pytest.param(TICK, '5', 'alert_window_tick_seconds', 5, id='tick-from-env'),
+    ],
+)  # fmt: skip
+def test_alert_setting_is_read(monkeypatch, env, value, attribute, expected):
+    if value is None:
+        monkeypatch.delenv(env, raising=False)
+    else:
+        monkeypatch.setenv(env, value)
 
-    assert AlertConfig().alert_threshold_percentages == [50, 80, 90]
+    assert getattr(AlertConfig(), attribute) == expected
 
 
-@pytest.mark.parametrize('value', ['[0]', '[100]', '[75, 120]', '[-5]'])
-def test_a_threshold_outside_1_to_99_is_rejected(monkeypatch, value):
-    monkeypatch.setenv('ALERT_THRESHOLD_PERCENTAGES', value)
+@pytest.mark.parametrize(
+    ('env', 'value'),
+    [
+        # A threshold outside 1..99.
+        pytest.param(THRESHOLDS, '[0]', id='threshold-0'),
+        pytest.param(THRESHOLDS, '[100]', id='threshold-100'),
+        pytest.param(THRESHOLDS, '[75, 120]', id='threshold-120'),
+        pytest.param(THRESHOLDS, '[-5]', id='threshold-negative'),
+        # A window tick that is not positive.
+        pytest.param(TICK, '0', id='tick-0'),
+        pytest.param(TICK, '-1', id='tick-negative'),
+    ],
+)
+def test_invalid_alert_setting_is_rejected(monkeypatch, env, value):
+    monkeypatch.setenv(env, value)
 
     with pytest.raises(ValidationError):
         AlertConfig()
-
-
-@pytest.mark.parametrize('value', ['[1]', '[99]'])
-def test_the_bounds_are_inclusive(monkeypatch, value):
-    monkeypatch.setenv('ALERT_THRESHOLD_PERCENTAGES', value)
-
-    assert AlertConfig().alert_threshold_percentages == [int(value[1:-1])]
 
 
 def test_the_app_config_carries_the_alert_section():
     assert isinstance(AppConfig().alert_config, AlertConfig)
-
-
-def test_the_window_tick_defaults_to_30_seconds(monkeypatch):
-    monkeypatch.delenv('ALERT_WINDOW_TICK_SECONDS', raising=False)
-
-    assert AlertConfig().alert_window_tick_seconds == 30
-
-
-def test_the_window_tick_is_read_from_the_environment(monkeypatch):
-    monkeypatch.setenv('ALERT_WINDOW_TICK_SECONDS', '5')
-
-    assert AlertConfig().alert_window_tick_seconds == 5
-
-
-@pytest.mark.parametrize('value', ['0', '-1'])
-def test_a_window_tick_that_is_not_positive_is_rejected(monkeypatch, value):
-    monkeypatch.setenv('ALERT_WINDOW_TICK_SECONDS', value)
-
-    with pytest.raises(ValidationError):
-        AlertConfig()

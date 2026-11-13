@@ -1,7 +1,6 @@
 import Lucide from '@Components/lucide';
-import { WINDOW_TYPE_HELP } from '@Components/limits/constants';
-import EditNote from '@Components/limits/edit-note';
 import LimitFields from '@Components/limits/limit-fields';
+import LimitNotes from '@Components/limits/limit-notes';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button, FormField } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft } from 'lucide-react';
@@ -32,14 +31,14 @@ function EditScreen() {
         <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnCancel} type="text">Back</Button>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <span className="text-xs opacity-70">{WINDOW_TYPE_HELP}</span>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <LimitFields limit={row} onChange={handleOnChange} withCategory={false} />
 
-        <LimitFields limit={row} onChange={handleOnChange} withCategory={false} />
+          {errorField}
+        </div>
 
-        <EditNote isWindowChanged={isWindowChanged} />
-
-        {errorField}
+        <LimitNotes isEditing isWindowChanged={isWindowChanged} />
       </div>
     </div>
   );

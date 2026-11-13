@@ -1,10 +1,11 @@
 import Lucide from '@Components/lucide';
 import {
-  DUPLICATE_EDIT_LINK, DUPLICATE_LIMIT_ERROR, DUPLICATE_LIMIT_PREFIX, DUPLICATE_SUFFIX, WINDOW_TYPE_HELP,
+  DUPLICATE_EDIT_LINK, DUPLICATE_LIMIT_ERROR, DUPLICATE_LIMIT_PREFIX, DUPLICATE_SUFFIX,
 } from '@Components/limits/constants';
 import { getDuplicateLimit, getNewLimitsErrors } from '@Components/limits/helpers';
 import focusLimitRow from '@Components/limits/focus-limit-row';
 import LimitFields from '@Components/limits/limit-fields';
+import LimitNotes from '@Components/limits/limit-notes';
 import useModals from '@Hooks/use-modals';
 import { useGetKeyQuery } from '@State/keys/api';
 import { useFormbitContext } from '@radicalbit/formbit';
@@ -41,12 +42,14 @@ function AddScreen() {
         <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another limit</Button>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <span className="text-xs opacity-70">{WINDOW_TYPE_HELP}</span>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <Rows />
 
-        <Rows />
+          {backendErrorField}
+        </div>
 
-        {backendErrorField}
+        <LimitNotes />
       </div>
     </div>
   );

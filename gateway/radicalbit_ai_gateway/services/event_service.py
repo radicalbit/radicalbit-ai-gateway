@@ -9,13 +9,17 @@ from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.models.event import (
     CostData,
+    Counters,
     DetailedCostBreakdown,
     EventDetails,
     LastEventFallback,
     LastEventGuardrail,
+    RequestStats,
     TokensCounter,
 )
-from radicalbit_ai_gateway.limiting.window_progress import window_progress_bar
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiting.windows import Category, Window
+from radicalbit_ai_gateway.limiting.wording import BLOCKS
 from radicalbit_ai_gateway.models.event_dto import (
     CacheHitEventDetailDTO,
     ChartDataSeriesDTO,
@@ -28,6 +32,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     GuardrailEventDetailDTO,
     InvocationChartDataDTO,
     LastNEvents,
+    LimitEventDetailDTO,
     ModelCostDTO,
     MostExpensiveRouteChartDataDTO,
     MostExpensiveRouteDTO,
@@ -44,6 +49,7 @@ from radicalbit_ai_gateway.models.event_dto import (
     WindowProgressBarDTO,
     WindowStatus,
 )
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_config_out import GatewayRouteConfigOut
@@ -62,6 +68,12 @@ from radicalbit_ai_gateway.utils.chart_utils import (
 
 app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+# The scope and category of each event a limit records when it blocks, for
+# rows recorded before the event carried them.
+_BLOCKED_BY: dict[str, tuple[LimitScope, Category]] = {
+    block.event_type.value: key for key, block in BLOCKS.items()
+}
 
 
 class EventService:
@@ -145,91 +157,63 @@ class EventService:
             )
         return tokens_counter_dto
 
-    def _get_metrics_per_route(
+    def _get_metrics_of_routes(
         self,
         project_uuid: UUID,
         config: GatewayConfig,
-        route_name: str,
+        route_names: list[str],
         _from: datetime | None,
         _to: datetime | None,
         tags: list[str] | None = None,
-    ):
-        counters = self.event_dao.get_all_counters_by_route(
-            project_uuid=project_uuid,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
+    ) -> dict[str, EventsDTO]:
+        """Return the metrics of each route, keyed by route name.
+
+        Each kind of metric is read once for all the routes, so the number of
+        queries does not grow with the number of routes.
+        """
+        counters = self.event_dao.get_counters_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
+        )
+        tokens_counter = self.event_dao.get_tokens_by_model_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
+        )
+        last_events = self.event_dao.get_last_events_of_routes(
+            project_uuid,
+            [EventType.GUARDRAIL, EventType.FALLBACK],
+            route_names,
+            _from,
+            _to,
             tags=tags,
         )
-        tokens_counter = self.event_dao.get_tokens_by_model_per_route(
-            project_uuid=project_uuid,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
+        routing_model_counters = self.event_dao.get_routing_model_counters_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
         )
-        last_event_guardrail = self.event_dao.get_last_event_route(
-            project_uuid=project_uuid,
-            event_type=EventType.GUARDRAIL,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
+        request_stats = self.request_event_dao.get_request_stats_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
         )
-        last_event_fallback = self.event_dao.get_last_event_route(
-            project_uuid=project_uuid,
-            event_type=EventType.FALLBACK,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
-        )
-        routing_model_counters = self.event_dao.get_routing_model_counters(
-            project_uuid=project_uuid,
-            _from=_from,
-            _to=_to,
-            route_name=route_name,
-            tags=tags,
-        )
-        request_stats = self.request_event_dao.get_request_stats_by_route(
-            project_uuid=project_uuid,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
-        )
-        error_details = self.request_event_dao.get_error_breakdown(
-            project_uuid=project_uuid,
-            route_name=route_name,
-            _from=_from,
-            _to=_to,
-            tags=tags,
+        error_details = self.request_event_dao.get_error_breakdown_of_routes(
+            project_uuid, route_names, _from, _to, tags=tags
         )
 
-        tokens_counter_dto = self._calculate_token_metrics(
-            tokens_counter=tokens_counter, route_name=route_name
-        )
+        # One name lookup for the last events of every route.
+        self._resolve_last_event_key_names(list(last_events.values()))
 
-        if last_event_guardrail:
-            assert isinstance(last_event_guardrail, LastEventGuardrail)
-        if last_event_fallback:
-            assert isinstance(last_event_fallback, LastEventFallback)
-
-        self._resolve_last_event_key_names(
-            [e for e in [last_event_guardrail, last_event_fallback] if e]
-        )
-
-        return EventsDTO.from_dao_per_route(
-            config=config,
-            route_name=route_name,
-            counters=counters,
-            tokens_counter_dto=tokens_counter_dto,
-            last_event_guardrail=last_event_guardrail,
-            last_event_fallback=last_event_fallback,
-            routing_model_counters=routing_model_counters,
-            request_stats=request_stats,
-            error_details=error_details,
-        )
+        return {
+            route_name: EventsDTO.from_dao_per_route(
+                config=config,
+                route_name=route_name,
+                counters=counters.get(route_name, Counters()),
+                tokens_counter_dto=self._calculate_token_metrics(
+                    tokens_counter=tokens_counter, route_name=route_name
+                ),
+                last_event_guardrail=last_events.get((route_name, EventType.GUARDRAIL)),
+                last_event_fallback=last_events.get((route_name, EventType.FALLBACK)),
+                routing_model_counters=routing_model_counters.get(route_name, []),
+                request_stats=request_stats.get(route_name, RequestStats()),
+                error_details=error_details.get(route_name, []),
+            )
+            for route_name in route_names
+        }
 
     def get_total_counter(
         self,
@@ -245,18 +229,11 @@ class EventService:
         counters = self.event_dao.get_all_counters(
             project_uuid=project_uuid, _from=_from, _to=_to, tags=tags
         )
-        last_event_guardrail = self.event_dao.get_last_event(
-            project_uuid=project_uuid,
-            event_type=EventType.GUARDRAIL,
-            _from=_from,
-            _to=_to,
-            tags=tags,
-        )
-        last_event_fallback = self.event_dao.get_last_event(
-            project_uuid=project_uuid,
-            event_type=EventType.FALLBACK,
-            _from=_from,
-            _to=_to,
+        last_events = self.event_dao.get_last_events(
+            project_uuid,
+            [EventType.GUARDRAIL, EventType.FALLBACK],
+            _from,
+            _to,
             tags=tags,
         )
         routing_model_counters = self.event_dao.get_routing_model_counters(
@@ -274,27 +251,50 @@ class EventService:
             route_name=None,
         )
 
-        if last_event_guardrail:
-            assert isinstance(last_event_guardrail, LastEventGuardrail)
-        if last_event_fallback:
-            assert isinstance(last_event_fallback, LastEventFallback)
-
         # TODO: Implement soft delete for keys in Postgres (deleted_at column)
         # so that deleted keys still have resolvable names, removing the need for this fallback.
-        self._resolve_last_event_key_names(
-            [e for e in [last_event_guardrail, last_event_fallback] if e]
-        )
+        self._resolve_last_event_key_names(list(last_events.values()))
 
         return EventsDTO.from_dao_global(
             config=config,
             counters=counters,
             tokens_counter_dto=tokens_counter_dto,
-            last_event_guardrail=last_event_guardrail,
-            last_event_fallback=last_event_fallback,
+            last_event_guardrail=last_events.get(EventType.GUARDRAIL),
+            last_event_fallback=last_events.get(EventType.FALLBACK),
             routing_model_counters=routing_model_counters,
             request_stats=request_stats,
             error_details=error_details,
         )
+
+    def _get_routes_out(
+        self,
+        project_uuid: UUID,
+        project_name: str,
+        config: GatewayConfig,
+        route_names: list[str],
+        include_groups: bool,
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None,
+    ) -> list[GatewayRouteOut]:
+        metrics = self._get_metrics_of_routes(
+            project_uuid, config, route_names, _from, _to, tags=tags
+        )
+        return [
+            GatewayRouteOut(
+                route_name=route_name,
+                configuration=self._build_route_config_out(
+                    config.routes[route_name], config
+                ),
+                metrics=metrics[route_name],
+                groups=self.group_service.get_all_groups_by_route(
+                    project_name, route_name
+                )
+                if include_groups
+                else None,
+            )
+            for route_name in route_names
+        ]
 
     def get_total_counter_per_route(
         self,
@@ -306,30 +306,16 @@ class EventService:
         _to: datetime | None,
         tags: list[str] | None = None,
     ) -> list[GatewayRouteOut]:
-        routes_out = []
-        for route_name, route_config in config.routes.items():
-            configuration = self._build_route_config_out(route_config, config)
-            groups = None
-            if include_groups:
-                groups = self.group_service.get_all_groups_by_route(
-                    project_name, route_name
-                )
-            routes_out.append(
-                GatewayRouteOut(
-                    route_name=route_name,
-                    configuration=configuration,
-                    metrics=self._get_metrics_per_route(
-                        project_uuid=project_uuid,
-                        config=config,
-                        route_name=route_name,
-                        _from=_from,
-                        _to=_to,
-                        tags=tags,
-                    ),
-                    groups=groups,
-                )
-            )
-        return routes_out
+        return self._get_routes_out(
+            project_uuid,
+            project_name,
+            config,
+            list(config.routes),
+            include_groups,
+            _from,
+            _to,
+            tags,
+        )
 
     def get_counter_per_route(
         self,
@@ -342,26 +328,17 @@ class EventService:
         _to: datetime | None,
         tags: list[str] | None = None,
     ) -> GatewayRouteOut:
-        route_config = config.routes[route_name]
-        configuration = self._build_route_config_out(route_config, config)
-        groups = None
-        if include_groups:
-            groups = self.group_service.get_all_groups_by_route(
-                project_name, route_name
-            )
-        return GatewayRouteOut(
-            route_name=route_name,
-            configuration=configuration,
-            metrics=self._get_metrics_per_route(
-                project_uuid=project_uuid,
-                config=config,
-                route_name=route_name,
-                _from=_from,
-                _to=_to,
-                tags=tags,
-            ),
-            groups=groups,
+        [route_out] = self._get_routes_out(
+            project_uuid,
+            project_name,
+            config,
+            [route_name],
+            include_groups,
+            _from,
+            _to,
+            tags,
         )
+        return route_out
 
     def get_latest_n_per_event_type(
         self,
@@ -380,6 +357,7 @@ class EventService:
         token_output_limit: list[TokenOutputLimitEventDetailDTO] = []
         duration_limit: list[DurationLimitEventDetailDTO] = []
         cache_triggered: list[CacheHitEventDetailDTO] = []
+        limits: list[LimitEventDetailDTO] = []
 
         route_config = config.routes[route_name]
         events = self.event_dao.get_latest_n_per_event_type(
@@ -405,6 +383,9 @@ class EventService:
             event.api_key_active = event.api_key_uuid in key_names_map
             resolved_name = _resolved_key_name(event.api_key_uuid)
             event = self.clean_model_empty_strings(event)
+
+            if event.event_type in _BLOCKED_BY:
+                limits.append(self._limit_event_detail(event, resolved_name))
 
             match event.event_type:
                 case 'FALLBACK':
@@ -492,6 +473,15 @@ class EventService:
                             target=event.target,
                         )
                     )
+                case (
+                    'BUDGET_LIMIT'
+                    | 'CREDENTIAL_RATE_LIMIT'
+                    | 'CREDENTIAL_TOKEN_INPUT_LIMIT'
+                    | 'CREDENTIAL_TOKEN_OUTPUT_LIMIT'
+                    | 'CREDENTIAL_BUDGET_LIMIT'
+                    | 'PROJECT_BUDGET_LIMIT'
+                ):
+                    pass  # only in `limits`, added above
                 case _:
                     logger.warning('Unable to determine event type')
 
@@ -503,7 +493,30 @@ class EventService:
             token_output_limit=token_output_limit,
             duration_limit=duration_limit,
             cache_triggered=cache_triggered,
+            limits=sorted(limits, key=lambda e: e.timestamp, reverse=True)[:n],
             route_config=route_config,
+        )
+
+    @staticmethod
+    def _limit_event_detail(
+        event: EventDetails, api_key_name: str
+    ) -> LimitEventDetailDTO:
+        """Name the limit that blocked, falling back on the event type for
+        scope and category when the row predates ``limit_scope``.
+        """
+        scope, category = _BLOCKED_BY[event.event_type]
+        return LimitEventDetailDTO(
+            timestamp=event.timestamp,
+            api_key_uuid=event.api_key_uuid,
+            route_name=event.route_name,
+            api_key_name=api_key_name,
+            api_key_active=event.api_key_active,
+            event_type=event.event_type,
+            limit_scope=event.limit_scope or scope,
+            category=event.category or category,
+            window_seconds=event.window_seconds,
+            maximum=event.maximum,
+            consumption=event.consumption,
         )
 
     @staticmethod
@@ -1138,7 +1151,7 @@ class EventService:
             total += (
                 cost_dto.total
                 if cost_dto.total is not None
-                else cost_dto.total_cost or 0.0
+                else cost_data.total_cost or 0.0
             )
 
             route_dtos.append(RouteCostDTO(route_name=route_name, summary=cost_dto))
@@ -1218,12 +1231,10 @@ class EventService:
         )
 
     @staticmethod
-    async def _get_progress_bar(
-        limiter, item, is_budget: bool = False
-    ) -> WindowProgressBarDTO | None:
-        if limiter is None or item is None:
+    async def _get_progress_bar(window: Window | None) -> WindowProgressBarDTO | None:
+        if window is None:
             return None
-        return await window_progress_bar(limiter, item, is_budget=is_budget)
+        return await shared_limits.progress(window)
 
     async def get_route_limits_progress(
         self,
@@ -1247,11 +1258,7 @@ class EventService:
         async def _get_route_progress(
             route_name: str, gateway_route
         ) -> RouteProgressBarDTO:
-            token_limiter = gateway_route.token_limiter
-            budget_limiter = gateway_route.budget_limiter
-            req_rate_limiter = gateway_route.request_rate_limiter
-            duration_limiter = gateway_route.duration_limiter
-
+            route_limits = gateway_route.route_limits
             (
                 budget_bar,
                 token_input_bar,
@@ -1259,27 +1266,16 @@ class EventService:
                 rate_bar,
                 duration_bar,
             ) = await asyncio.gather(
-                self._get_progress_bar(
-                    getattr(budget_limiter, 'limiter', None),
-                    getattr(budget_limiter, 'item', None),
-                    is_budget=True,
-                ),
-                self._get_progress_bar(
-                    getattr(token_limiter, 'input_limiter', None),
-                    getattr(token_limiter, 'input_item', None),
-                ),
-                self._get_progress_bar(
-                    getattr(token_limiter, 'output_limiter', None),
-                    getattr(token_limiter, 'output_item', None),
-                ),
-                self._get_progress_bar(
-                    getattr(req_rate_limiter, 'limiter', None),
-                    getattr(req_rate_limiter, 'item', None),
-                ),
-                self._get_progress_bar(
-                    getattr(duration_limiter, 'limiter', None),
-                    getattr(duration_limiter, 'item', None),
-                ),
+                *(
+                    self._get_progress_bar(route_limits.window(category))
+                    for category in (
+                        Category.COST,
+                        Category.INPUT_TOKENS,
+                        Category.OUTPUT_TOKENS,
+                        Category.REQUESTS,
+                        Category.AUDIO_SECONDS,
+                    )
+                )
             )
 
             has_any = any(

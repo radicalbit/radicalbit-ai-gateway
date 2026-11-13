@@ -1,8 +1,8 @@
 import Lucide from '@Components/lucide';
-import { WINDOW_TYPE_HELP } from '@Components/limits/constants';
 import { getNewLimitsErrors } from '@Components/limits/helpers';
 import focusLimitRow from '@Components/limits/focus-limit-row';
 import LimitFields from '@Components/limits/limit-fields';
+import LimitNotes from '@Components/limits/limit-notes';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button, FormField } from '@radicalbit/radicalbit-design-system';
 import { Plus, Trash2 } from 'lucide-react';
@@ -26,9 +26,13 @@ function LimitsToApply() {
         <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another limit</Button>
       </div>
 
-      <span className="text-xs opacity-70">{WINDOW_TYPE_HELP}</span>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <Rows />
+        </div>
 
-      <Rows />
+        <LimitNotes />
+      </div>
     </div>
   );
 }

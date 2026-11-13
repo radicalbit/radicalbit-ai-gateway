@@ -28,6 +28,8 @@ from radicalbit_ai_gateway.services.requests_service import RequestsService
 PROJECT = TEST_PROJECT_UUID
 REQUEST_UUID_ATTR = 'traceloop.association.properties.request_uuid'
 T0 = datetime.datetime(2026, 3, 10, 12, 0, 0, tzinfo=datetime.timezone.utc)
+# Before every request these tests store: a list from here reads them all.
+LONG_AGO = T0 - datetime.timedelta(days=365)
 
 
 def _request(request_uuid=None, timestamp=T0, **kwargs):
@@ -79,7 +81,7 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
             'route_names': None,
             'group_uuids': None,
             'key_uuids': None,
-            '_from': None,
+            '_from': LONG_AGO,
             '_to': None,
             **filters,
         }
@@ -419,7 +421,7 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
             route_names=None,
             group_uuids=None,
             key_uuids=None,
-            _from=None,
+            _from=LONG_AGO,
             _to=None,
             params=Params(page=1, size=50),
         )
@@ -601,3 +603,66 @@ class TestRequestsServiceIntegration(DatabaseIntegrationClickhouse):
             self.otel_traces_dao.get_trace_ids_by_request_uuids(PROJECT, [], day, day)
             == {}
         )
+
+    def test_with_no_start_the_list_covers_the_last_24_hours(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        recent, old = uuid.uuid4(), uuid.uuid4()
+        self.insert(
+            [
+                _request(recent, timestamp=now - datetime.timedelta(hours=1)),
+                _request(old, timestamp=now - datetime.timedelta(hours=25)),
+            ]
+        )
+
+        page = self._list(_from=None)
+
+        assert [row.request_uuid for row in page.items] == [recent]
+
+    def test_with_no_start_the_window_ends_at_the_given_end(self):
+        inside, before = uuid.uuid4(), uuid.uuid4()
+        self.insert(
+            [
+                _request(inside, timestamp=T0 - datetime.timedelta(hours=23)),
+                _request(before, timestamp=T0 - datetime.timedelta(hours=25)),
+            ]
+        )
+
+        page = self._list(_from=None, _to=T0)
+
+        assert [row.request_uuid for row in page.items] == [inside]
+
+    def test_pages_tile_the_list_whatever_their_size(self):
+        # Requests bunched in some hours, sparse in others, two sharing an
+        # instant: together the pages must return each one once, in order.
+        offsets = [0, 0, 1, 2, 3, 30, 59, 61, 61.5, 62, 180, 181, 400, 1500, 1501]
+        seeds = [
+            (uuid.uuid4(), T0 - datetime.timedelta(minutes=minutes))
+            for minutes in offsets
+        ]
+        self.insert([_request(u, timestamp=ts) for u, ts in seeds])
+        timestamps = dict(seeds)
+
+        listings = []
+        for size in (1, 2, 4, 7, 15, 50):
+            listed = []
+            for page in range(1, len(seeds) // size + 2):
+                result = self._list(page=page, size=size)
+                assert result.total == len(seeds)
+                listed += [row.request_uuid for row in result.items]
+            listings.append(listed)
+
+        # Each request once, newest first, and the same order at every size
+        # (ClickHouse, not Python, decides how the two sharing an instant sort).
+        assert sorted(listings[0]) == sorted(timestamps)
+        assert [timestamps[u] for u in listings[0]] == sorted(
+            timestamps.values(), reverse=True
+        )
+        assert all(listed == listings[0] for listed in listings)
+
+    def test_a_page_past_the_end_is_empty_and_keeps_the_total(self):
+        self.insert([_request(), _request()])
+
+        page = self._list(page=3, size=50)
+
+        assert page.items == []
+        assert page.total == 2

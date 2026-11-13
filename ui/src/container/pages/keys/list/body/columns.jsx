@@ -1,5 +1,6 @@
 import HtmlAnchor from '@Components/html-anchor';
 import LimitsSummary from '@Components/limits/limits-summary';
+import LiveColumnTitle from '@Components/limits/live-column-title';
 import { useRegisterVisibleRow, useVisibleRowUuids } from '@Components/limits/visible-rows-context';
 import Lucide from '@Components/lucide';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
@@ -53,7 +54,7 @@ const columns = [
     render: (group) => <AssociatedGroup group={group} />,
   },
   {
-    title: 'Limits',
+    title: <LiveColumnTitle title="Limits" />,
     dataIndex: 'limits',
     key: 'limits',
     render: (limits, { limitWarnings, uuid }) => <Limits limits={limits} uuid={uuid} warnings={limitWarnings} />,

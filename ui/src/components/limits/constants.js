@@ -5,6 +5,13 @@ export const LimitCategoryEnum = {
   BUDGET: 'budget',
 };
 
+// Who owns the limit that blocked a request (`limitScope` on a limit event).
+export const LimitScopeEnum = {
+  ROUTE: 'route',
+  CREDENTIAL: 'credential',
+  PROJECT: 'project',
+};
+
 export const WindowTypeEnum = {
   FIXED: 'FIXED_WINDOW',
   ALIGNED: 'ALIGNED_FIXED_WINDOW',
@@ -16,6 +23,9 @@ export const LIMIT_CATEGORIES = [
   LimitCategoryEnum.TOKEN_OUTPUT,
   LimitCategoryEnum.BUDGET,
 ];
+
+// A route-only limiter category: credentials and projects can't limit it.
+export const AUDIO_DURATION_CATEGORY = 'audio_duration';
 
 export const LIMIT_CATEGORY_LABELS = {
   [LimitCategoryEnum.REQUEST_RATE]: 'Requests',
@@ -37,8 +47,6 @@ export const WINDOW_TYPE_LABELS = {
   [WindowTypeEnum.FIXED]: 'Fixed',
   [WindowTypeEnum.ALIGNED]: 'Aligned',
 };
-
-export const WINDOW_TYPE_HELP = 'Fixed: the window starts at the first request and lasts its full length. Aligned: the window follows the UTC clock (1 day runs from midnight to midnight).';
 
 export const LIMIT_WINDOWS = [
   { value: '1 minute', label: '1 min', aligned: true },
@@ -78,10 +86,6 @@ export const DUPLICATE_LIMIT_ERROR = `${DUPLICATE_LIMIT_PREFIX}${DUPLICATE_EDIT_
 export const DUPLICATE_BUDGET_ERROR = `${DUPLICATE_BUDGET_PREFIX}${DUPLICATE_EDIT_LINK}${DUPLICATE_SUFFIX}`;
 
 export const DUPLICATE_ROW_ERROR = 'Same limit as a row above.';
-
-export const EDIT_MAX_NOTE = 'Changing only the max keeps what was already consumed in this window.';
-
-export const EDIT_WINDOW_NOTE = 'A new window type or window restarts the counter: what was already consumed is not carried over.';
 
 export const COUNTER_RESTARTS_NOTE = 'The counter restarts: what was already consumed in the current window is not carried over.';
 

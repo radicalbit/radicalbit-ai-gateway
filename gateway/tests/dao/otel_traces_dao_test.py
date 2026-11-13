@@ -10,7 +10,51 @@ from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 from tests.common.db_mock import TEST_PROJECT_UUID
 
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
+from radicalbit_ai_gateway.db.models.trace import SpanRecord, SpanStats
 from radicalbit_ai_gateway.models.request_event_type import RequestType
+
+T0 = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
+SEC = datetime.timedelta(seconds=1)
+MIN = datetime.timedelta(minutes=1)
+H = datetime.timedelta(hours=1)
+D = datetime.timedelta(days=1)
+WINDOW = {'_from': T0, '_to': T0 + H}
+EMPTY_WINDOW = {'_from': T0 - D, '_to': T0 - D + H}
+PROP = 'traceloop.association.properties.'
+CATEGORY = f'{PROP}rb.gateway.operation_category'
+TAGS = f'{PROP}tags'
+IN_TOKENS = 'gen_ai.usage.input_tokens'
+OUT_TOKENS = 'gen_ai.usage.output_tokens'
+GROUP_1 = '550e8400-e29b-41d4-a716-446655440001'
+GROUP_2 = '550e8400-e29b-41d4-a716-446655440002'
+GROUP_3 = '550e8400-e29b-41d4-a716-446655440003'
+KEY_1 = '660e8400-e29b-41d4-a716-446655440001'
+KEY_2 = '660e8400-e29b-41d4-a716-446655440002'
+KEY_3 = '660e8400-e29b-41d4-a716-446655440003'
+
+
+def _ms(ms):
+    return ms * 1_000_000
+
+
+def _meta(route='', key='', key_name='', group='', group_name=''):
+    """Trace attributes as the gateway stamps them, empty ones left out."""
+    attrs = {
+        'route_name': route,
+        'api_key_uuid': key,
+        'api_key_name': key_name,
+        'group_uuid': group,
+        'group_name': group_name,
+    }
+    return {f'{PROP}{k}': v for k, v in attrs.items() if v}
+
+
+def _span(at, **kwargs):
+    return db_mock.get_sample_otel_span(timestamp=at, **kwargs)
+
+
+def _approx(*values):
+    return tuple(pytest.approx(v, abs=1.0) for v in values)
 
 
 class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
@@ -19,1652 +63,476 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         super().setUpClass()
         cls.otel_traces_dao = OtelTracesDAO(cls.db)
 
-    # --- get_span_latencies ---
-
-    def test_get_span_latencies_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        res = self.otel_traces_dao.get_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        assert res == []
-
-    def test_get_span_latencies_returns_percentiles(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        # Insert 4 spans for 'invoke': 100ms, 200ms, 300ms, 400ms (in nanoseconds)
-        durations_ms = [100, 200, 300, 400]
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=i),
-                span_name='invoke',
-                duration_ns=ms * 1_000_000,
-            )
-            for i, ms in enumerate(durations_ms)
+    def test_get_span_latencies(self):
+        durations = [
+            ('invoke', 100),
+            ('invoke', 200),
+            ('invoke', 300),
+            ('invoke', 400),
+            ('set_cached_response', 10),
+            ('set_cached_response', 20),
+            ('single', 500),
         ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        assert len(res) == 1
-        span = res[0]
-        assert span.span_name == 'invoke'
-        assert span.p50 is not None
-        assert span.p90 is not None
-        assert span.p95 is not None
-        assert span.p99 is not None
-        # p50 should be between 100 and 400
-        assert 100 <= span.p50 <= 400
-
-    def test_get_span_latencies_groups_by_span_name(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time, span_name='invoke', duration_ns=100 * 1_000_000
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=1),
-                span_name='invoke',
-                duration_ns=200 * 1_000_000,
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=2),
-                span_name='set_cached_response',
-                duration_ns=10 * 1_000_000,
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=3),
-                span_name='set_cached_response',
-                duration_ns=20 * 1_000_000,
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        assert len(res) == 2
-        span_names = {r.span_name for r in res}
-        assert span_names == {'invoke', 'set_cached_response'}
-
-    def test_get_span_latencies_filters_by_time_range(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time, span_name='invoke', duration_ns=100 * 1_000_000
-            ),
-            # Outside time range
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(hours=3),
-                span_name='other_span',
-                duration_ns=999 * 1_000_000,
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        span_names = {r.span_name for r in res}
-        assert 'invoke' in span_names
-        assert 'other_span' not in span_names
-
-    def test_get_span_latencies_no_time_filter(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time, span_name='invoke', duration_ns=100 * 1_000_000
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(days=10),
-                span_name='invoke',
-                duration_ns=200 * 1_000_000,
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=None,
-            _to=None,
-        )
-
-        assert len(res) == 1
-        assert res[0].span_name == 'invoke'
-
-    def test_get_span_latencies_duration_in_milliseconds(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        # Insert a single span with exactly 500ms
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time, span_name='invoke', duration_ns=500 * 1_000_000
-            )
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        assert len(res) == 1
-        # With a single value, all percentiles should equal 500ms
-        assert res[0].p50 == pytest.approx(500.0, abs=1.0)
-        assert res[0].p99 == pytest.approx(500.0, abs=1.0)
-
-    def test_get_span_latencies_filters_by_route_name(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                span_name='invoke',
-                duration_ns=100 * 1_000_000,
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-a'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=1),
-                span_name='invoke',
-                duration_ns=200 * 1_000_000,
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-b'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=['route-a'],
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        assert len(res) == 1
-        assert res[0].span_name == 'invoke'
-        assert res[0].p50 == pytest.approx(100.0, abs=1.0)
-
-    # --- get_category_latencies ---
-
-    def test_get_category_latencies_groups_by_category(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=i),
-                span_name='invoke',
-                duration_ns=100_000_000,
-                span_attributes={
-                    'traceloop.association.properties.rb.gateway.operation_category': 'invocation'
-                },
-            )
-            for i in range(3)
-        ] + [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=i + 3),
-                span_name='get_cached_response',
-                duration_ns=50_000_000,
-                span_attributes={
-                    'traceloop.association.properties.rb.gateway.operation_category': 'cache'
-                },
-            )
-            for i in range(2)
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_category_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        categories = {r.category for r in res}
-        assert 'invocation' in categories
-        assert 'cache' in categories
-
-    def test_get_category_latencies_excludes_empty_category(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                span_name='invoke',
-                duration_ns=100_000_000,
-                span_attributes={
-                    'traceloop.association.properties.rb.gateway.operation_category': 'invocation'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=1),
-                span_name='unknown_span',
-                duration_ns=200_000_000,
-                span_attributes={},
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_category_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            include_others=False,
-        )
-
-        categories = {r.category for r in res}
-        assert 'invocation' in categories
-        assert '' not in categories
-
-    def test_get_category_latencies_includes_others(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                span_name='invoke',
-                duration_ns=100_000_000,
-                span_attributes={
-                    'traceloop.association.properties.rb.gateway.operation_category': 'invocation'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=1),
-                span_name='unknown_span',
-                duration_ns=200_000_000,
-                span_attributes={},
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_category_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            include_others=True,
-        )
-
-        categories = {r.category for r in res}
-        assert 'invocation' in categories
-        assert 'other' in categories
-
-    # --- get_category_span_latencies ---
-
-    def test_get_category_span_latencies_groups_by_category_and_name(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = (
+        self.insert(
             [
-                db_mock.get_sample_otel_span(
-                    timestamp=base_time + datetime.timedelta(minutes=i),
-                    span_name='invoke_openai',
-                    duration_ns=100_000_000,
-                    span_attributes={
-                        'traceloop.association.properties.rb.gateway.operation_category': 'invocation'
-                    },
-                )
-                for i in range(2)
-            ]
-            + [
-                db_mock.get_sample_otel_span(
-                    timestamp=base_time + datetime.timedelta(minutes=i + 2),
-                    span_name='invoke_anthropic',
-                    duration_ns=150_000_000,
-                    span_attributes={
-                        'traceloop.association.properties.rb.gateway.operation_category': 'invocation'
-                    },
-                )
-                for i in range(2)
-            ]
-            + [
-                db_mock.get_sample_otel_span(
-                    timestamp=base_time + datetime.timedelta(minutes=5),
-                    span_name='get_cached_response',
-                    duration_ns=50_000_000,
-                    span_attributes={
-                        'traceloop.association.properties.rb.gateway.operation_category': 'cache'
-                    },
-                )
+                *[
+                    _span(T0 + i * MIN, span_name=name, duration_ns=_ms(ms))
+                    for i, (name, ms) in enumerate(durations)
+                ],
+                # Outside the window: only seen without a time filter.
+                _span(T0 + 10 * D, span_name='invoke', duration_ns=_ms(1000)),
             ]
         )
-        self.insert(test_spans)
 
-        res = self.otel_traces_dao.get_category_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        invocation_spans = [r for r in res if r.category == 'invocation']
-        cache_spans = [r for r in res if r.category == 'cache']
-        assert len(invocation_spans) == 2
-        assert len(cache_spans) == 1
-        invocation_names = {r.span_name for r in invocation_spans}
-        assert invocation_names == {'invoke_openai', 'invoke_anthropic'}
-        assert cache_spans[0].span_name == 'get_cached_response'
-
-    def test_get_category_span_latencies_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        res = self.otel_traces_dao.get_category_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        assert res == []
-
-    # --- get_spans_by_trace_id ---
-
-    def test_get_spans_by_trace_id_empty(self):
-        """Test that empty list is returned for non-existent trace."""
-        spans = self.otel_traces_dao.get_spans_by_trace_id(
-            TEST_PROJECT_UUID, 'nonexistent-trace'
-        )
-        assert spans == []
-
-    def test_get_spans_by_trace_id_single_span(self):
-        """Test retrieving a single span by trace_id."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-123',
-                span_id='span-1',
-                span_name='invoke',
-                duration_ns=100_000_000,
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'test-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440003',
-                    'traceloop.association.properties.api_key_name': 'test-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440003',
-                    'traceloop.association.properties.group_name': 'test-group',
-                },
+        def latencies(**window):
+            res = self.otel_traces_dao.get_span_latencies(
+                project_uuid=TEST_PROJECT_UUID, route_names=None, **window
             )
+            return [(r.span_name, (r.p50, r.p90, r.p95, r.p99)) for r in res]
+
+        # Durations come back in milliseconds, one row per span name.
+        assert latencies(**WINDOW) == [
+            ('invoke', _approx(250, 370, 385, 397)),
+            ('set_cached_response', _approx(15, 19, 19.5, 19.9)),
+            ('single', _approx(500, 500, 500, 500)),
         ]
-        self.insert(test_spans)
-
-        spans = self.otel_traces_dao.get_spans_by_trace_id(
-            TEST_PROJECT_UUID, 'trace-123'
-        )
-
-        assert len(spans) == 1
-        span = spans[0]
-        assert span.trace_id == 'trace-123'
-        assert span.span_id == 'span-1'
-        assert span.span_name == 'invoke'
-        assert span.service_name == 'radicalbit-ai-gateway'
-        assert span.duration == 100_000_000
-        assert span.status_code == 'Unset'
-        # ClickHouse returns empty string for missing map keys
-        assert not span.parent_span_id
-        assert span.route_name == 'test-route'
-        assert span.api_key_uuid == '660e8400-e29b-41d4-a716-446655440003'
-        assert span.api_key_name == 'test-key'
-        assert span.group_uuid == '550e8400-e29b-41d4-a716-446655440003'
-        assert span.group_name == 'test-group'
-
-    def test_get_spans_by_trace_id_multiple_spans_ordered(self):
-        """Test retrieving multiple spans ordered by timestamp."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-multi',
-                span_id='span-1',
-                span_name='root',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'test-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.api_key_name': 'test-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.group_name': 'test-group',
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(milliseconds=10),
-                trace_id='trace-multi',
-                span_id='span-2',
-                span_name='child',
-                parent_span_id='span-1',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'test-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.api_key_name': 'test-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.group_name': 'test-group',
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(milliseconds=20),
-                trace_id='trace-multi',
-                span_id='span-3',
-                span_name='grandchild',
-                parent_span_id='span-2',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'test-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.api_key_name': 'test-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.group_name': 'test-group',
-                },
-            ),
+        assert latencies(_from=None, _to=None) == [
+            ('invoke', _approx(300, 760, 880, 976)),
+            ('set_cached_response', _approx(15, 19, 19.5, 19.9)),
+            ('single', _approx(500, 500, 500, 500)),
         ]
-        self.insert(test_spans)
 
-        spans = self.otel_traces_dao.get_spans_by_trace_id(
-            TEST_PROJECT_UUID, 'trace-multi'
-        )
-
-        assert len(spans) == 3
-        # Verify ordering by timestamp (ascending)
-        timestamps = [s.timestamp for s in spans]
-        assert timestamps == sorted(timestamps)
-        # Verify parent-child relationships extracted from attributes
-        # Find root span (no parent)
-        root_spans = [s for s in spans if not s.parent_span_id]
-        assert len(root_spans) == 1
-        assert root_spans[0].span_id == 'span-1'
-        # Find child spans
-        child_spans = [s for s in spans if s.parent_span_id == 'span-1']
-        assert len(child_spans) == 1
-        assert child_spans[0].span_id == 'span-2'
-
-    def test_get_spans_by_trace_id_with_error_status(self):
-        """Test that error status codes are correctly retrieved."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-error',
-                span_id='span-error',
-                status_code='ERROR',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'test-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.api_key_name': 'test-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.group_name': 'test-group',
-                },
+    def test_category_latencies(self):
+        def categorized(at, name, ms, category):
+            return _span(
+                at,
+                span_name=name,
+                duration_ns=_ms(ms),
+                span_attributes={CATEGORY: category} if category else {},
             )
-        ]
-        self.insert(test_spans)
 
-        spans = self.otel_traces_dao.get_spans_by_trace_id(
-            TEST_PROJECT_UUID, 'trace-error'
+        self.insert(
+            [
+                categorized(T0, 'invoke_openai', 100, 'invocation'),
+                categorized(T0 + MIN, 'invoke_openai', 100, 'invocation'),
+                categorized(T0 + 2 * MIN, 'invoke_anthropic', 150, 'invocation'),
+                categorized(T0 + 3 * MIN, 'invoke_anthropic', 150, 'invocation'),
+                categorized(T0 + 4 * MIN, 'get_cached_response', 50, 'cache'),
+                categorized(T0 + 5 * MIN, 'unknown_span', 200, ''),
+            ]
         )
+        dao = self.otel_traces_dao
+        args = {'project_uuid': TEST_PROJECT_UUID, 'route_names': None, **WINDOW}
 
-        assert len(spans) == 1
-        assert spans[0].status_code == 'ERROR'
+        def by_category(include_others):
+            res = dao.get_category_latencies(**args, include_others=include_others)
+            return [(r.category, r.p50, r.p99) for r in res]
 
-    def test_get_spans_by_trace_id_only_returns_requested_trace(self):
-        """Test that only spans with matching trace_id are returned."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-target',
-                span_id='span-target',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'test-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.api_key_name': 'test-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.group_name': 'test-group',
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(milliseconds=10),
-                trace_id='trace-other',
-                span_id='span-other',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'other-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440005',
-                    'traceloop.association.properties.api_key_name': 'other-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440005',
-                    'traceloop.association.properties.group_name': 'other-group',
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        spans = self.otel_traces_dao.get_spans_by_trace_id(
-            TEST_PROJECT_UUID, 'trace-target'
-        )
-
-        assert len(spans) == 1
-        assert spans[0].trace_id == 'trace-target'
-
-    # --- get_spans_stats_by_request_uuids ---
-
-    def _insert_span(
-        self,
-        timestamp: datetime.datetime,
-        span_name: str = 'invoke',
-        duration_ns: int = 100 * 1_000_000,
-        status_code: str = 'STATUS_CODE_OK',
-        span_attributes: dict | None = None,
-    ):
-        span = db_mock.get_sample_otel_span(
-            timestamp=timestamp,
-            span_name=span_name,
-            duration_ns=duration_ns,
-            status_code=status_code,
-            span_attributes=span_attributes,
-        )
-        self.insert([span])
-
-    def _insert_span_for_request(
-        self,
-        timestamp: datetime.datetime,
-        request_uuid: str,
-        span_name: str = 'invoke',
-        status_code: str = 'STATUS_CODE_OK',
-        input_tokens: int = 0,
-        output_tokens: int = 0,
-    ):
-        attrs = {'traceloop.association.properties.request_uuid': request_uuid}
-        if input_tokens:
-            attrs['gen_ai.usage.input_tokens'] = str(input_tokens)
-        if output_tokens:
-            attrs['gen_ai.usage.output_tokens'] = str(output_tokens)
-        self._insert_span(
-            timestamp=timestamp,
-            span_name=span_name,
-            duration_ns=100 * 1_000_000,
-            status_code=status_code,
-            span_attributes=attrs,
-        )
-
-    def test_get_spans_stats_empty_input(self):
-        res = self.otel_traces_dao.get_spans_stats_by_request_uuids([])
-        assert res == {}
-
-    def test_get_spans_stats_unknown_uuid(self):
-        res = self.otel_traces_dao.get_spans_stats_by_request_uuids(['unknown-uuid'])
-        assert res == {}
-
-    def test_get_spans_stats_aggregates_span_count(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        req_uuid = 'req-aaa-111'
-        self._insert_span_for_request(base_time, req_uuid, span_name='span-1')
-        self._insert_span_for_request(
-            base_time + datetime.timedelta(seconds=1), req_uuid, span_name='span-2'
-        )
-        self._insert_span_for_request(
-            base_time + datetime.timedelta(seconds=2), req_uuid, span_name='span-3'
-        )
-
-        res = self.otel_traces_dao.get_spans_stats_by_request_uuids([req_uuid])
-
-        assert req_uuid in res
-        assert res[req_uuid].span_count == 3
-
-    def test_get_spans_stats_counts_errors(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        req_uuid = 'req-bbb-222'
-        self._insert_span_for_request(base_time, req_uuid, status_code='STATUS_CODE_OK')
-        self._insert_span_for_request(
-            base_time + datetime.timedelta(seconds=1), req_uuid, status_code='Error'
-        )
-        self._insert_span_for_request(
-            base_time + datetime.timedelta(seconds=2), req_uuid, status_code='Error'
-        )
-
-        res = self.otel_traces_dao.get_spans_stats_by_request_uuids([req_uuid])
-
-        assert res[req_uuid].span_count == 3
-        assert res[req_uuid].error_count == 2
-
-    def test_get_spans_stats_sums_tokens(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        req_uuid = 'req-ccc-333'
-        self._insert_span_for_request(
-            base_time, req_uuid, input_tokens=100, output_tokens=50
-        )
-        self._insert_span_for_request(
-            base_time + datetime.timedelta(seconds=1),
-            req_uuid,
-            input_tokens=200,
-            output_tokens=80,
-        )
-
-        res = self.otel_traces_dao.get_spans_stats_by_request_uuids([req_uuid])
-
-        assert res[req_uuid].input_tokens == 300
-        assert res[req_uuid].output_tokens == 130
-
-    def test_get_spans_stats_no_tokens_defaults_to_zero(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        req_uuid = 'req-ddd-444'
-        self._insert_span_for_request(base_time, req_uuid)
-
-        res = self.otel_traces_dao.get_spans_stats_by_request_uuids([req_uuid])
-
-        assert res[req_uuid].input_tokens == 0
-        assert res[req_uuid].output_tokens == 0
-
-    def test_get_spans_stats_isolates_by_request_uuid(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        req_a = 'req-eee-111'
-        req_b = 'req-fff-222'
-        self._insert_span_for_request(base_time, req_a, input_tokens=100)
-        self._insert_span_for_request(
-            base_time + datetime.timedelta(seconds=1), req_a, input_tokens=50
-        )
-        self._insert_span_for_request(
-            base_time + datetime.timedelta(seconds=2), req_b, input_tokens=999
-        )
-
-        res = self.otel_traces_dao.get_spans_stats_by_request_uuids([req_a, req_b])
-
-        assert res[req_a].input_tokens == 150
-        assert res[req_a].span_count == 2
-        assert res[req_b].input_tokens == 999
-        assert res[req_b].span_count == 1
-
-    def test_get_spans_stats_last_span_timestamp(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        req_uuid = 'req-ggg-555'
-        t1 = base_time
-        t2 = base_time + datetime.timedelta(seconds=5)
-        self._insert_span_for_request(t1, req_uuid)
-        self._insert_span_for_request(t2, req_uuid)
-
-        res = self.otel_traces_dao.get_spans_stats_by_request_uuids([req_uuid])
-
-        assert res[req_uuid].last_span is not None
-        # last_span should be the max timestamp
-        assert res[req_uuid].last_span >= t1
-
-    # --- get_traces_chart_data ---
-
-    def test_get_traces_chart_data_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        res = self.otel_traces_dao.get_traces_chart_data(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            granularity='hours',
-            timezone_offset_seconds=0,
-        )
-
-        assert res == []
-
-    def test_get_traces_chart_data_returns_points(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        # Insert root spans (empty ParentSpanId)
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-1',
-                span_id='span-1',
-                status_code='Unset',
-                parent_span_id='',
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=30),
-                trace_id='trace-2',
-                span_id='span-2',
-                status_code='Error',
-                parent_span_id='',
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_traces_chart_data(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            granularity='hours',
-            timezone_offset_seconds=0,
-        )
-
-        assert len(res) == 2
-        by_status = {p.trace_status: p.total_requests for p in res}
-        assert by_status.get('success') == 1
-        assert by_status.get('error') == 1
-
-    def test_get_traces_chart_data_groups_by_status(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                status_code='Unset',
-                parent_span_id='',
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                status_code='Unset',
-                parent_span_id='',
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t3',
-                status_code='Error',
-                parent_span_id='',
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_traces_chart_data(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            granularity='hours',
-            timezone_offset_seconds=0,
-        )
-
-        by_status = {p.trace_status: p.total_requests for p in res}
-        assert by_status.get('success') == 2
-        assert by_status.get('error') == 1
-
-    def test_get_traces_chart_data_filters_by_route(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                status_code='Unset',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-a'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                status_code='Unset',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-b'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_traces_chart_data(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=['route-a'],
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            granularity='hours',
-            timezone_offset_seconds=0,
-        )
-
-        assert len(res) == 1
-        assert res[0].total_requests == 1
-
-    def test_get_traces_chart_data_filters_by_time(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                status_code='Unset',
-                parent_span_id='',
-            ),
-            # Outside time range
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(hours=3),
-                trace_id='t2',
-                status_code='Unset',
-                parent_span_id='',
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_traces_chart_data(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            granularity='hours',
-            timezone_offset_seconds=0,
-        )
-
-        assert len(res) == 1
-        assert res[0].total_requests == 1
-
-    def test_get_traces_chart_data_only_root_spans(self):
-        """Test that child spans are not counted."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                span_id='span-root',
-                status_code='Unset',
-                parent_span_id='',  # Root span
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                span_id='span-child',
-                status_code='Unset',
-                parent_span_id='span-root',  # Child span - should be ignored
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_traces_chart_data(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            granularity='hours',
-            timezone_offset_seconds=0,
-        )
-
-        # Only 1 root span should be counted
-        assert len(res) == 1
-        assert res[0].total_requests == 1
-
-    def test_get_traces_chart_data_excludes_rootless_traces(self):
-        """A trace with no root span must not bucket to the Unix epoch.
-
-        Regression: anyIf over a trace with no empty-ParentSpanId span returns
-        the epoch default (toDateTime(0)), which weekly-bucketed to 1969 and
-        blew the chart range up to thousands of buckets.
-        """
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            # Normal trace with a root span
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                span_id='span-root',
-                status_code='Unset',
-                parent_span_id='',
-            ),
-            # Orphan trace: only a child span, no root span
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                span_id='span-orphan-child',
-                status_code='Unset',
-                parent_span_id='span-missing-root',
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_traces_chart_data(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            granularity='weeks',
-            timezone_offset_seconds=0,
-        )
-
-        # Only the trace with a root span is counted; the orphan is dropped.
-        assert len(res) == 1
-        assert res[0].total_requests == 1
-        # No bucket should land at/near the Unix epoch.
-        assert all(p.timestamp > 0 for p in res)
-
-    # --- get_latencies ---
-
-    def test_get_latencies_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        res = self.otel_traces_dao.get_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        # ClickHouse returns nan for empty quantile results
-        assert math.isnan(res.p50) or res.p50 is None
-        assert math.isnan(res.p90) or res.p90 is None
-        assert math.isnan(res.p95) or res.p95 is None
-        assert math.isnan(res.p99) or res.p99 is None
-
-    def test_get_latencies_returns_percentiles(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        # Insert root spans with different durations (in nanoseconds)
-        durations_ms = [100, 200, 300, 400]
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=i),
-                trace_id=f'trace-{i}',
-                span_id=f'span-{i}',
-                duration_ns=ms * 1_000_000,
-                parent_span_id='',  # Root span
+        def by_category_and_span(include_others, **window):
+            res = dao.get_category_span_latencies(
+                **{**args, **window}, include_others=include_others
             )
-            for i, ms in enumerate(durations_ms)
+            return [(r.category, r.span_name, r.p50) for r in res]
+
+        cache = ('cache', *_approx(50, 50))
+        invocation = ('invocation', *_approx(125, 150))
+        # Spans without a category are dropped unless include_others.
+        assert by_category(False) == [cache, invocation]
+        assert by_category(True) == [cache, invocation, ('other', *_approx(200, 200))]
+        spans = [
+            ('cache', 'get_cached_response', pytest.approx(50, abs=1.0)),
+            ('invocation', 'invoke_anthropic', pytest.approx(150, abs=1.0)),
+            ('invocation', 'invoke_openai', pytest.approx(100, abs=1.0)),
         ]
-        self.insert(test_spans)
+        assert by_category_and_span(False) == spans
+        assert by_category_and_span(True) == [
+            *spans,
+            ('other', 'unknown_span', pytest.approx(200, abs=1.0)),
+        ]
+        assert by_category_and_span(False, **EMPTY_WINDOW) == []
 
-        res = self.otel_traces_dao.get_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+    def test_get_spans_by_trace_id_reads_category_and_kind(self):
+        self.insert(
+            [
+                _span(
+                    T0,
+                    trace_id='trace-cat',
+                    span_id='span-invoke',
+                    span_attributes={
+                        CATEGORY: 'invocation',
+                        'traceloop.span.kind': 'task',
+                    },
+                ),
+                _span(T0 + SEC, trace_id='trace-cat', span_id='span-bare'),
+            ]
         )
 
-        assert res.p50 is not None
-        assert res.p90 is not None
-        assert res.p95 is not None
-        assert res.p99 is not None
-        # p50 should be between 100 and 400
-        assert 100 <= res.p50 <= 400
-
-    def test_get_latencies_in_milliseconds(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        # Insert a single span with exactly 500ms (500,000,000 ns)
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-1',
-                span_id='span-1',
-                duration_ns=500 * 1_000_000,
-                parent_span_id='',
+        spans = {
+            s.span_id: s
+            for s in self.otel_traces_dao.get_spans_by_trace_id(
+                TEST_PROJECT_UUID, 'trace-cat'
             )
-        ]
-        self.insert(test_spans)
+        }
 
-        res = self.otel_traces_dao.get_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
+        assert spans['span-invoke'].operation_category == 'invocation'
+        assert spans['span-invoke'].span_kind == 'task'
+        # A missing map key reads as an empty string.
+        assert spans['span-bare'].operation_category == ''
+        assert spans['span-bare'].span_kind == ''
+
+    def test_get_spans_by_trace_id(self):
+        meta = _meta('test-route', KEY_1, 'test-key', GROUP_1, 'test-group')
+        self.insert(
+            [
+                _span(
+                    T0,
+                    trace_id='trace-123',
+                    span_id='span-1',
+                    duration_ns=_ms(100),
+                    span_attributes=meta,
+                ),
+                # Inserted out of order: spans come back by timestamp.
+                _span(
+                    T0 + 20 * MIN,
+                    trace_id='trace-multi',
+                    span_id='span-3',
+                    span_name='grandchild',
+                    parent_span_id='span-2',
+                    span_attributes=meta,
+                ),
+                _span(
+                    T0,
+                    trace_id='trace-multi',
+                    span_id='span-1',
+                    span_name='root',
+                    span_attributes=meta,
+                ),
+                _span(
+                    T0 + 10 * MIN,
+                    trace_id='trace-multi',
+                    span_id='span-2',
+                    span_name='child',
+                    parent_span_id='span-1',
+                    span_attributes=meta,
+                ),
+                _span(
+                    T0,
+                    trace_id='trace-error',
+                    span_id='span-error',
+                    status_code='ERROR',
+                    span_attributes={**meta, TAGS: 'env=prod'},
+                ),
+                _span(
+                    T0,
+                    trace_id='trace-other',
+                    span_id='span-other',
+                    span_attributes=_meta('other-route', KEY_2, 'other-key'),
+                ),
+            ]
         )
 
-        # With a single value, all percentiles should equal 500ms
-        assert res.p50 == pytest.approx(500.0, abs=1.0)
-        assert res.p99 == pytest.approx(500.0, abs=1.0)
-
-    def test_get_latencies_filters_by_route(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                duration_ns=100 * 1_000_000,
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-a'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                duration_ns=999 * 1_000_000,
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-b'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=['route-a'],
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        # Should only include route-a's 100ms
-        assert res.p50 == pytest.approx(100.0, abs=1.0)
-
-    def test_get_latencies_only_root_spans(self):
-        """Test that child spans are not included in latency calculation."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                span_id='span-root',
-                duration_ns=100 * 1_000_000,
-                parent_span_id='',  # Root span
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                span_id='span-child',
-                duration_ns=999 * 1_000_000,  # Much longer - should be ignored
-                parent_span_id='span-root',  # Child span
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-        )
-
-        # Should only consider root span's 100ms
-        assert res.p50 == pytest.approx(100.0, abs=1.0)
-
-    # --- get_root_traces_paginated ---
-
-    def test_get_root_traces_empty(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=['nonexistent-route'],
-            group_uuids=None,
-            key_uuids=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            params=Params(page=1, size=10),
-        )
-
-        assert res.items == []
-        assert res.total == 0
-
-    def test_get_root_traces_root_spans_only(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-1',
-                span_id='span-root',
-                duration_ns=100 * 1_000_000,
-                parent_span_id='',  # Root span
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'test-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.api_key_name': 'test-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.group_name': 'test-group',
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-1',
-                span_id='span-child',
-                duration_ns=50 * 1_000_000,
-                parent_span_id='span-root',  # Child - should be ignored
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'test-route',
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            params=Params(page=1, size=10),
-        )
-
-        assert len(res.items) == 1
-        assert res.items[0].trace_id == 'trace-1'
-        assert res.items[0].duration_ms == pytest.approx(100.0, abs=0.01)
-
-    def test_get_root_traces_ordered_by_timestamp_desc(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-1',
-                span_id='span-1',
-                duration_ns=100 * 1_000_000,
-                parent_span_id='',
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=10),
-                trace_id='trace-2',
-                span_id='span-2',
-                duration_ns=200 * 1_000_000,
-                parent_span_id='',
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
-        )
-
-        assert len(res.items) == 2
-        # Most recent first
-        assert res.items[0].trace_id == 'trace-2'
-        assert res.items[1].trace_id == 'trace-1'
-
-    def test_get_root_traces_filters_by_route(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-a'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-b'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=['route-a'],
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
-        )
-
-        assert len(res.items) == 1
-        assert res.items[0].trace_id == 't1'
-
-    def test_get_root_traces_filters_by_time(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time, trace_id='t1', parent_span_id=''
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(hours=5),
-                trace_id='t2',
-                parent_span_id='',
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            params=Params(page=1, size=10),
-        )
-
-        assert len(res.items) == 1
-        assert res.items[0].trace_id == 't1'
-
-    def test_get_root_traces_pagination(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(minutes=i),
-                trace_id=f'trace-{i}',
-                span_id=f'span-{i}',
-                parent_span_id='',
+        def record(trace_id, span_id, at=T0, **fields):
+            return SpanRecord(
+                **{
+                    'timestamp': at,
+                    'trace_id': trace_id,
+                    'request_uuid': '',
+                    'span_id': span_id,
+                    'span_name': 'invoke',
+                    'service_name': 'radicalbit-ai-gateway',
+                    'duration': _ms(100),
+                    'status_code': 'Unset',
+                    'parent_span_id': '',
+                    'route_name': 'test-route',
+                    'api_key_uuid': KEY_1,
+                    'api_key_name': 'test-key',
+                    'group_uuid': GROUP_1,
+                    'group_name': 'test-group',
+                    'output_tokens': '',
+                    'input_tokens': '',
+                    **fields,
+                }
             )
-            for i in range(5)
-        ]
-        self.insert(test_spans)
 
-        page1 = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=2),
-        )
-        page2 = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=2, size=2),
-        )
-
-        assert len(page1.items) == 2
-        assert len(page2.items) == 2
-        assert page1.total == 5
-        # No overlap
-        ids_p1 = {r.trace_id for r in page1.items}
-        ids_p2 = {r.trace_id for r in page2.items}
-        assert ids_p1.isdisjoint(ids_p2)
-
-    def test_get_root_traces_extracts_metadata(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-1',
-                span_id='span-1',
-                duration_ns=1500 * 1_000_000,  # 1500ms
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'my-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440002',
-                    'traceloop.association.properties.api_key_name': 'my-api-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440002',
-                    'traceloop.association.properties.group_name': 'my-group',
-                },
+        def spans(trace_id):
+            return self.otel_traces_dao.get_spans_by_trace_id(
+                TEST_PROJECT_UUID, trace_id
             )
-        ]
-        self.insert(test_spans)
 
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
-        )
-
-        assert len(res.items) == 1
-        row = res.items[0]
-        assert row.trace_id == 'trace-1'
-        assert row.route_name == 'my-route'
-        assert row.api_key_uuid == '660e8400-e29b-41d4-a716-446655440002'
-        assert row.api_key_name == 'my-api-key'
-        assert row.group_uuid == '550e8400-e29b-41d4-a716-446655440002'
-        assert row.group_name == 'my-group'
-        assert row.duration_ms == pytest.approx(1500.0, abs=0.01)
-
-    def test_get_root_traces_filters_by_group_uuid(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440002'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=[UUID('550e8400-e29b-41d4-a716-446655440001')],
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
-        )
-
-        assert len(res.items) == 1
-        assert res.items[0].trace_id == 't1'
-
-    def test_get_root_traces_filters_by_key_uuid(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440002'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=[UUID('660e8400-e29b-41d4-a716-446655440001')],
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
-        )
-
-        assert len(res.items) == 1
-        assert res.items[0].trace_id == 't1'
-
-    def test_get_root_traces_filters_by_multiple_groups(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440002'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t3',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440003'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=[
-                UUID('550e8400-e29b-41d4-a716-446655440001'),
-                UUID('550e8400-e29b-41d4-a716-446655440002'),
+        assert {
+            trace_id: spans(trace_id)
+            for trace_id in ('trace-123', 'trace-multi', 'trace-error', 'missing')
+        } == {
+            'trace-123': [record('trace-123', 'span-1')],
+            'trace-multi': [
+                record('trace-multi', 'span-1', span_name='root'),
+                record(
+                    'trace-multi',
+                    'span-2',
+                    T0 + 10 * MIN,
+                    span_name='child',
+                    parent_span_id='span-1',
+                ),
+                record(
+                    'trace-multi',
+                    'span-3',
+                    T0 + 20 * MIN,
+                    span_name='grandchild',
+                    parent_span_id='span-2',
+                ),
             ],
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
+            'trace-error': [
+                record(
+                    'trace-error', 'span-error', status_code='ERROR', tags=['env=prod']
+                )
+            ],
+            'missing': [],
+        }
+
+    def test_get_span_by_trace_and_span_id(self):
+        request_uuid = '12345678-1234-5678-1234-567812345678'
+        full_attrs = {
+            **_meta('test-route', KEY_3, 'test-key', GROUP_3, 'test-group'),
+            IN_TOKENS: '100',
+            OUT_TOKENS: '50',
+            f'{PROP}request_uuid': request_uuid,
+        }
+        self.insert(
+            [
+                _span(
+                    T0,
+                    trace_id='trace-123',
+                    span_id='span-456',
+                    span_attributes=full_attrs,
+                ),
+                _span(
+                    T0,
+                    trace_id='trace-with-events',
+                    span_id='span-events',
+                    status_code='Error',
+                    status_message='Something went wrong',
+                    span_attributes={'custom.attr.1': 'value1'},
+                    events_timestamp=[T0, T0 + datetime.timedelta(milliseconds=5)],
+                    events_name=['event-1', 'exception'],
+                    events_attributes=[{'key': 'value'}, {'error.type': 'test_error'}],
+                ),
+            ]
+        )
+        get = self.otel_traces_dao.get_span_by_trace_and_span_id
+        project_attr = {f'{PROP}project_uuid': str(TEST_PROJECT_UUID)}
+        assert get(TEST_PROJECT_UUID, 'trace-123', 'span-456') == SpanRecord(
+            timestamp=T0,
+            trace_id='trace-123',
+            request_uuid=request_uuid,
+            span_id='span-456',
+            span_name='invoke',
+            service_name='radicalbit-ai-gateway',
+            duration=_ms(100),
+            status_code='Unset',
+            parent_span_id='',
+            route_name='test-route',
+            api_key_uuid=KEY_3,
+            api_key_name='test-key',
+            group_uuid=GROUP_3,
+            group_name='test-group',
+            output_tokens='50',
+            input_tokens='100',
+            span_attributes={**project_attr, **full_attrs},
+            status_message='',
+            events=[],
+        )
+        with_events = get(TEST_PROJECT_UUID, 'trace-with-events', 'span-events')
+        assert (
+            with_events.status_code,
+            with_events.status_message,
+            with_events.span_attributes,
+            [(e['name'], e['attributes']) for e in with_events.events],
+        ) == (
+            'Error',
+            'Something went wrong',
+            {**project_attr, 'custom.attr.1': 'value1'},
+            [
+                ('event-1', {'key': 'value'}),
+                ('exception', {'error.type': 'test_error'}),
+            ],
+        )
+        assert [sorted(e) for e in with_events.events] == [
+            ['attributes', 'name', 'timestamp']
+        ] * 2
+        assert get(TEST_PROJECT_UUID, 'nonexistent-trace', 'nonexistent-span') is None
+        # The span exists, but in another trace.
+        assert get(TEST_PROJECT_UUID, 'wrong-trace', 'span-456') is None
+
+    def test_spans_stats_by_request_uuid_and_trace_id(self):
+        def span(request, at, status='STATUS_CODE_OK', tokens=(0, 0)):
+            attrs = {f'{PROP}request_uuid': request}
+            if tokens[0]:
+                attrs[IN_TOKENS] = str(tokens[0])
+            if tokens[1]:
+                attrs[OUT_TOKENS] = str(tokens[1])
+            return _span(
+                at,
+                trace_id=f'trace-{request}',
+                status_code=status,
+                span_attributes=attrs,
+            )
+
+        self.insert(
+            [
+                span('req-a', T0, tokens=(100, 50)),
+                span('req-a', T0 + 5 * SEC, 'Error', tokens=(200, 80)),
+                span('req-a', T0 + SEC, 'Error'),
+                # No token attributes: sums default to zero.
+                span('req-b', T0),
+                span('req-c', T0 + 2 * SEC, tokens=(999, 0)),
+            ]
+        )
+        expected = {
+            'req-a': SpanStats(
+                span_count=3,
+                error_count=2,
+                input_tokens=300,
+                output_tokens=130,
+                last_span=T0 + 5 * SEC,
+            ),
+            'req-b': SpanStats(span_count=1, last_span=T0),
+            'req-c': SpanStats(span_count=1, input_tokens=999, last_span=T0 + 2 * SEC),
+        }
+        dao = self.otel_traces_dao
+        assert dao.get_spans_stats_by_request_uuids([]) == {}
+        assert dao.get_spans_stats_by_request_uuids([*expected, 'unknown']) == expected
+        assert dao.get_spans_stats_by_request_uuids(['req-b']) == {
+            'req-b': expected['req-b']
+        }
+        assert dao.get_spans_stats_by_trace_ids([]) == {}
+        assert dao.get_spans_stats_by_trace_ids(
+            [f'trace-{r}' for r in (*expected, 'unknown')]
+        ) == {f'trace-{r}': stats for r, stats in expected.items()}
+
+    def test_span_lookups_by_trace_id_keep_to_the_date_window(self):
+        def root(trace_id, at):
+            return _span(at, trace_id=trace_id, parent_span_id='', status_code='Error')
+
+        self.insert([root('trace-in', T0), root('trace-out', T0 - 3 * D)])
+        trace_ids = ['trace-in', 'trace-out']
+        window = ((T0 - D).date(), T0.date())
+        dao = self.otel_traces_dao
+
+        assert set(dao.get_spans_stats_by_trace_ids(trace_ids, *window)) == {'trace-in'}
+        assert dao.get_root_span_error_by_trace_ids(trace_ids, *window) == {'trace-in'}
+
+    def test_get_traces_chart_data(self):
+        def root(trace_id, at, status='Unset'):
+            return _span(at, trace_id=trace_id, span_id='root', status_code=status)
+
+        def child(trace_id, at, status='Unset', parent='root'):
+            return _span(
+                at,
+                trace_id=trace_id,
+                span_id='child',
+                status_code=status,
+                parent_span_id=parent,
+            )
+
+        self.insert(
+            [
+                root('t1', T0),
+                root('t2', T0 + 30 * MIN),
+                # A child span does not count as a trace of its own.
+                child('t2', T0 + 30 * MIN),
+                root('t3', T0, 'Error'),
+                root('t4', T0 + 40 * MIN, 'Error'),
+                # A root that is fine with a failed child is a warning.
+                root('t5', T0),
+                child('t5', T0, 'Error'),
+                # Orphan trace: only a child span, no root span.
+                child('t6', T0, parent='span-missing-root'),
+                root('t7', T0 + 1 * H + 30 * MIN),
+            ]
         )
 
-        assert len(res.items) == 2
-        trace_ids = {r.trace_id for r in res.items}
-        assert trace_ids == {'t1', 't2'}
+        def chart(granularity, **window):
+            res = self.otel_traces_dao.get_traces_chart_data(
+                project_uuid=TEST_PROJECT_UUID,
+                route_names=None,
+                **(window or {'_from': T0, '_to': T0 + 2 * H}),
+                granularity=granularity,
+                timezone_offset_seconds=0,
+            )
+            return sorted(
+                (p.bucket, p.timestamp, p.trace_status, p.total_requests) for p in res
+            )
 
-    def test_get_root_traces_combined_filters(self):
-        """Test that route, group, and key filters are combined with AND logic."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            # t1: route-a + group-a + key-a (matches all filters)
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-a',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001',
-                },
-            ),
-            # t2: route-a + group-a + key-b (fails key filter)
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-a',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440002',
-                },
-            ),
-            # t3: route-a + group-b + key-a (fails group filter)
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t3',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-a',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440002',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001',
-                },
-            ),
-            # t4: route-b + group-a + key-a (fails route filter)
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t4',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-b',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440001',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440001',
-                },
-            ),
-            # t5: route-a + group-b + key-b (fails group and key filters)
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t5',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'route-a',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440002',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440002',
-                },
-            ),
+        t0, t1 = int(T0.timestamp()), int((T0 + H).timestamp())
+        assert chart('hours') == [
+            (T0, t0, 'error', 2),
+            (T0, t0, 'success', 2),
+            (T0, t0, 'warning', 1),
+            (T0 + H, t1, 'success', 1),
         ]
-        self.insert(test_spans)
-
-        # Filter: route IN (route-a, route-b) AND group IN (group-a) AND key IN (key-a)
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=['route-a', 'route-b'],
-            group_uuids=[UUID('550e8400-e29b-41d4-a716-446655440001')],
-            key_uuids=[UUID('660e8400-e29b-41d4-a716-446655440001')],
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
-        )
-
-        # Only t1 and t4 match: (route-a OR route-b) AND group-a AND key-a
-        # t1: route-a + group-a + key-a ✓
-        # t4: route-b + group-a + key-a ✓
-        assert len(res.items) == 2
-        trace_ids = {r.trace_id for r in res.items}
-        assert trace_ids == {'t1', 't4'}
-
-    def test_get_root_traces_returns_tags(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.tags': 'env=prod,cost_center=retail'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                parent_span_id='',
-                span_attributes={},
-            ),
+        # The orphan must not bucket to the Unix epoch: weeks start on Monday
+        # and come back as naive UTC dates.
+        week = datetime.datetime(2025, 1, 6)
+        week_ts = int(week.replace(tzinfo=datetime.timezone.utc).timestamp())
+        assert chart('weeks') == [
+            (week, week_ts, 'error', 2),
+            (week, week_ts, 'success', 3),
+            (week, week_ts, 'warning', 1),
         ]
-        self.insert(test_spans)
+        assert chart('hours', **EMPTY_WINDOW) == []
 
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
+    def test_get_latencies(self):
+        roots = [100, 200, 300, 400]
+        self.insert(
+            [
+                *[
+                    _span(T0 + i * MIN, trace_id=f'trace-{i}', duration_ns=_ms(ms))
+                    for i, ms in enumerate(roots)
+                ],
+                # A much longer child span is not a trace latency.
+                _span(
+                    T0,
+                    trace_id='trace-0',
+                    span_id='child',
+                    duration_ns=_ms(999),
+                    parent_span_id='span001',
+                ),
+                _span(T0 + D, trace_id='single', duration_ns=_ms(500)),
+            ]
         )
 
-        by_trace_id = {row.trace_id: row.tags for row in res.items}
-        assert by_trace_id['t1'] == ['env=prod', 'cost_center=retail']
-        assert by_trace_id['t2'] == []
+        def latencies(_from):
+            res = self.otel_traces_dao.get_latencies(
+                project_uuid=TEST_PROJECT_UUID,
+                route_names=None,
+                _from=_from,
+                _to=_from + H,
+            )
+            return (res.p50, res.p90, res.p95, res.p99)
 
-    def test_get_root_traces_returns_request_type(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        assert latencies(T0) == _approx(250, 370, 385, 397)
+        assert latencies(T0 + D) == _approx(500, 500, 500, 500)
 
-        root_names = {
+    def test_get_root_traces_paginated(self):
+        days = [T0 + n * D for n in range(4)]
+        roots = []
+
+        def root(trace_id, day, name='invoke', ms=100, **attrs):
+            at = day + len(roots) * SEC
+            roots.append((at, trace_id))
+            return _span(
+                at,
+                trace_id=trace_id,
+                span_id=f'root-{trace_id}',
+                span_name=name,
+                duration_ns=_ms(ms),
+                span_attributes=attrs,
+            )
+
+        def filtered(m, route, group, key):
+            return root(m, days[1], **_meta(route, key, group=group))
+
+        request_types = {
             't-chat': 'chat_completions.workflow',
             't-responses': 'responses.workflow',
             't-embed': 'embeddings.workflow',
@@ -1675,28 +543,121 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         }
         self.insert(
             [
-                db_mock.get_sample_otel_span(
-                    timestamp=base_time,
-                    trace_id=trace_id,
-                    span_name=span_name,
-                    parent_span_id='',
-                )
-                for trace_id, span_name in root_names.items()
+                # day 0: metadata, child spans and other projects are skipped.
+                root(
+                    'meta',
+                    days[0],
+                    ms=1500,
+                    **_meta('my-route', KEY_2, 'my-api-key', GROUP_2, 'my-group'),
+                ),
+                _span(
+                    days[0],
+                    trace_id='meta',
+                    span_id='child',
+                    duration_ns=_ms(50),
+                    parent_span_id='root-meta',
+                ),
+                root('later', days[0], ms=200),
+                _span(
+                    days[0],
+                    trace_id='foreign',
+                    span_attributes={f'{PROP}project_uuid': GROUP_3},
+                ),
+                # day 1: route, group and key filters combine with AND.
+                filtered('f1', 'route-a', GROUP_1, KEY_1),
+                filtered('f2', 'route-a', GROUP_1, KEY_2),
+                filtered('f3', 'route-a', GROUP_2, KEY_1),
+                filtered('f4', 'route-b', GROUP_1, KEY_1),
+                filtered('f5', 'route-a', GROUP_2, KEY_2),
+                filtered('f6', 'route-c', GROUP_3, KEY_3),
+                # day 2: same tag key OR's, different keys AND.
+                root('g1', days[2], **{TAGS: 'env=prod,cost_center=retail'}),
+                root('g2', days[2], **{TAGS: 'env=staging,cost_center=retail'}),
+                root('g3', days[2], **{TAGS: 'env=prod,cost_center=marketing'}),
+                root('g4', days[2]),
+                # day 3: the request type comes from the root span name.
+                *[root(t, days[3], name) for t, name in request_types.items()],
             ]
         )
+        dao = self.otel_traces_dao
 
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
-        )
+        def page(day=None, page=1, size=20, **filters):
+            args = dict.fromkeys(
+                ['route_names', 'group_uuids', 'key_uuids', '_from', '_to']
+            )
+            if day:
+                args.update(_from=day, _to=day + D)
+            return dao.get_root_traces_paginated(
+                project_uuid=TEST_PROJECT_UUID,
+                params=Params(page=page, size=size),
+                **{**args, **filters},
+            )
 
-        by_trace_id = {row.trace_id: row.request_type for row in res.items}
-        assert by_trace_id == {
+        def ids(day=None, **filters):
+            return [r.trace_id for r in page(day, **filters).items]
+
+        # Most recent first, root spans only, metadata from the root's attributes.
+        rows = [
+            (
+                r.trace_id,
+                r.route_name,
+                r.api_key_uuid,
+                r.api_key_name,
+                r.group_uuid,
+                r.group_name,
+                r.duration_ms,
+                r.tags,
+                r.request_type,
+            )
+            for r in page(days[0]).items
+        ]
+        assert rows == [
+            ('later', '', '', '', '', '', pytest.approx(200.0, abs=0.01), [], ''),
+            (
+                'meta',
+                'my-route',
+                KEY_2,
+                'my-api-key',
+                GROUP_2,
+                'my-group',
+                pytest.approx(1500.0, abs=0.01),
+                [],
+                '',
+            ),
+        ]
+
+        group_1, group_2 = UUID(GROUP_1), UUID(GROUP_2)
+        assert {
+            'group': ids(days[1], group_uuids=[group_1]),
+            'key': ids(days[1], key_uuids=[UUID(KEY_1)]),
+            'groups': ids(days[1], group_uuids=[group_1, group_2]),
+            'route': ids(days[1], route_names=['route-b']),
+            'combined': ids(
+                days[1],
+                route_names=['route-a', 'route-b'],
+                group_uuids=[group_1],
+                key_uuids=[UUID(KEY_1)],
+            ),
+        } == {
+            'group': ['f4', 'f2', 'f1'],
+            'key': ['f4', 'f3', 'f1'],
+            'groups': ['f5', 'f4', 'f3', 'f2', 'f1'],
+            'route': ['f4'],
+            'combined': ['f4', 'f1'],
+        }
+
+        assert {r.trace_id: r.tags for r in page(days[2]).items} == {
+            'g1': ['env=prod', 'cost_center=retail'],
+            'g2': ['env=staging', 'cost_center=retail'],
+            'g3': ['env=prod', 'cost_center=marketing'],
+            'g4': [],
+        }
+        assert ids(days[2], tags=['env=prod', 'env=staging', 'cost_center=retail']) == [
+            'g2',
+            'g1',
+        ]
+
+        assert {r.trace_id: r.request_type for r in page(days[3]).items} == {
             't-chat': 'chat_completions',
             't-responses': 'chat_completions',
             't-embed': 'embeddings',
@@ -1705,493 +666,96 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
             't-mcp': 'mcp',
             't-other': '',
         }
-
-    def test_get_root_traces_filters_by_request_type(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+        by_type = page(
+            days[3], request_types=[RequestType.CHAT_COMPLETIONS, RequestType.MCP]
+        )
+        assert ([r.trace_id for r in by_type.items], by_type.total) == (
+            ['t-mcp', 't-responses', 't-chat'],
+            3,
         )
 
-        root_names = {
-            't-chat': 'chat_completions.workflow',
-            't-responses': 'responses.workflow',
-            't-embed': 'embeddings.workflow',
-            't-mcp': 'mcp_request.workflow',
+        # Pages split the whole list, newest first, without overlap.
+        newest_first = [trace_id for _, trace_id in sorted(roots, reverse=True)]
+        page_1, page_2 = page(size=2), page(page=2, size=2)
+        assert (
+            [r.trace_id for r in page_1.items],
+            [r.trace_id for r in page_2.items],
+            page_1.total,
+        ) == (newest_first[:2], newest_first[2:4], len(roots))
+
+    # --- filters shared by the latency, chart and trace list queries ---
+
+    def _query_all(self, route_names=None, _from=None, _to=None, tags=None):
+        """Run each filtered query; return what each one saw."""
+        dao = self.otel_traces_dao
+        filters = {
+            'project_uuid': TEST_PROJECT_UUID,
+            'route_names': route_names,
+            '_from': _from,
+            '_to': _to,
+            'tags': tags,
         }
-        self.insert(
-            [
-                db_mock.get_sample_otel_span(
-                    timestamp=base_time,
-                    trace_id=trace_id,
-                    span_name=span_name,
-                    parent_span_id='',
-                )
-                for trace_id, span_name in root_names.items()
-            ]
-        )
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
-            request_types=[RequestType.CHAT_COMPLETIONS, RequestType.MCP],
-        )
-
-        assert {row.trace_id for row in res.items} == {
-            't-chat',
-            't-responses',
-            't-mcp',
-        }
-        assert res.total == 3
-
-    def test_get_root_traces_filters_by_tags(self):
-        """Same key OR's, different keys AND (mirrors dashboard/usage semantics)."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.tags': 'env=prod,cost_center=retail'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.tags': 'env=staging,cost_center=retail'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t3',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.tags': 'env=prod,cost_center=marketing'
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t4',
-                parent_span_id='',
-                span_attributes={},
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_root_traces_paginated(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            group_uuids=None,
-            key_uuids=None,
-            _from=None,
-            _to=None,
-            params=Params(page=1, size=10),
-            tags=['env=prod', 'env=staging', 'cost_center=retail'],
-        )
-
-        # (env=prod OR env=staging) AND cost_center=retail -> t1, t2 only
-        trace_ids = {r.trace_id for r in res.items}
-        assert trace_ids == {'t1', 't2'}
-
-    def test_get_spans_by_trace_id_returns_tags(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        self.insert(
-            [
-                db_mock.get_sample_otel_span(
-                    timestamp=base_time,
-                    trace_id='trace-tags',
-                    span_id='span-root',
-                    parent_span_id='',
-                    span_attributes={
-                        'traceloop.association.properties.tags': 'env=prod'
-                    },
-                )
-            ]
-        )
-
-        res = self.otel_traces_dao.get_spans_by_trace_id(
-            project_uuid=TEST_PROJECT_UUID, trace_id='trace-tags'
-        )
-
-        assert len(res) == 1
-        assert res[0].tags == ['env=prod']
-
-    def test_get_latencies_filters_by_tags(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                parent_span_id='',
-                duration_ns=100 * 1_000_000,
-                span_attributes={'traceloop.association.properties.tags': 'env=prod'},
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                parent_span_id='',
-                duration_ns=999 * 1_000_000,
-                span_attributes={
-                    'traceloop.association.properties.tags': 'env=staging'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=None,
-            _to=None,
-            tags=['env=prod'],
-        )
-
-        assert res.p50 == pytest.approx(100.0, abs=0.01)
-
-    def test_get_span_latencies_filters_by_tags(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                span_name='invoke',
-                duration_ns=100 * 1_000_000,
-                span_attributes={'traceloop.association.properties.tags': 'env=prod'},
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                span_name='other',
-                duration_ns=999 * 1_000_000,
-                span_attributes={
-                    'traceloop.association.properties.tags': 'env=staging'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_span_latencies(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=None,
-            _to=None,
-            tags=['env=prod'],
-        )
-
-        assert [r.span_name for r in res] == ['invoke']
-
-    def test_get_traces_chart_data_filters_by_tags(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t1',
-                parent_span_id='',
-                span_attributes={'traceloop.association.properties.tags': 'env=prod'},
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='t2',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.tags': 'env=staging'
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_traces_chart_data(
-            project_uuid=TEST_PROJECT_UUID,
-            route_names=None,
-            _from=base_time,
-            _to=base_time + datetime.timedelta(hours=1),
-            granularity='hours',
-            tags=['env=prod'],
-        )
-
-        assert sum(point.total_requests for point in res) == 1
-
-    # --- get_spans_stats_by_trace_ids ---
-
-    def test_get_spans_stats_by_trace_ids_empty_input(self):
-        res = self.otel_traces_dao.get_spans_stats_by_trace_ids([])
-        assert res == {}
-
-    def test_get_spans_stats_by_trace_ids_unknown(self):
-        res = self.otel_traces_dao.get_spans_stats_by_trace_ids(['unknown-trace-id'])
-        assert res == {}
-
-    def test_get_spans_stats_by_trace_ids_aggregates(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        trace_id = 'trace-123'
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id=trace_id,
-                span_id='span-1',
-                status_code='Unset',
-                span_attributes={
-                    'gen_ai.usage.input_tokens': '100',
-                    'gen_ai.usage.output_tokens': '50',
-                },
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time + datetime.timedelta(seconds=1),
-                trace_id=trace_id,
-                span_id='span-2',
-                status_code='Error',
-                span_attributes={
-                    'gen_ai.usage.input_tokens': '200',
-                    'gen_ai.usage.output_tokens': '80',
-                },
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_spans_stats_by_trace_ids([trace_id])
-
-        assert trace_id in res
-        assert res[trace_id].span_count == 2
-        assert res[trace_id].error_count == 1
-        assert res[trace_id].input_tokens == 300
-        assert res[trace_id].output_tokens == 130
-
-    def test_get_spans_stats_by_trace_ids_isolates_by_trace_id(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-a',
-                span_id='span-a1',
-                span_attributes={'gen_ai.usage.input_tokens': '100'},
-            ),
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-b',
-                span_id='span-b1',
-                span_attributes={'gen_ai.usage.input_tokens': '999'},
-            ),
-        ]
-        self.insert(test_spans)
-
-        res = self.otel_traces_dao.get_spans_stats_by_trace_ids(['trace-a', 'trace-b'])
-
-        assert res['trace-a'].input_tokens == 100
-        assert res['trace-a'].span_count == 1
-        assert res['trace-b'].input_tokens == 999
-        assert res['trace-b'].span_count == 1
-
-    # --- get_span_by_trace_and_span_id ---
-
-    def test_get_span_by_trace_and_span_id_not_found(self):
-        """Test that None is returned when span not found."""
-        result = self.otel_traces_dao.get_span_by_trace_and_span_id(
-            TEST_PROJECT_UUID, 'nonexistent-trace', 'nonexistent-span'
-        )
-        assert result is None
-
-    def test_get_span_by_trace_and_span_id_success(self):
-        """Test successful span retrieval with all fields."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-123',
-                span_id='span-456',
-                span_name='invoke',
-                duration_ns=100_000_000,
-                status_code='Unset',
-                parent_span_id='',
-                span_attributes={
-                    'traceloop.association.properties.route_name': 'test-route',
-                    'traceloop.association.properties.api_key_uuid': '660e8400-e29b-41d4-a716-446655440003',
-                    'traceloop.association.properties.api_key_name': 'test-key',
-                    'traceloop.association.properties.group_uuid': '550e8400-e29b-41d4-a716-446655440003',
-                    'traceloop.association.properties.group_name': 'test-group',
-                    'gen_ai.usage.input_tokens': '100',
-                    'gen_ai.usage.output_tokens': '50',
-                    'traceloop.association.properties.request_uuid': '12345678-1234-5678-1234-567812345678',
-                },
-            )
-        ]
-        self.insert(test_spans)
-
-        result = self.otel_traces_dao.get_span_by_trace_and_span_id(
-            TEST_PROJECT_UUID, 'trace-123', 'span-456'
-        )
-
-        assert result is not None
-        assert result.trace_id == 'trace-123'
-        assert result.span_id == 'span-456'
-        assert result.span_name == 'invoke'
-        assert result.duration == 100_000_000
-        assert result.status_code == 'Unset'
-        assert result.route_name == 'test-route'
-        assert result.api_key_uuid == '660e8400-e29b-41d4-a716-446655440003'
-        assert result.api_key_name == 'test-key'
-        assert result.group_uuid == '550e8400-e29b-41d4-a716-446655440003'
-        assert result.group_name == 'test-group'
-        assert result.output_tokens == '50'
-        assert result.input_tokens == '100'
-        # Verify new fields
-        assert result.span_attributes is not None
-        assert result.status_message == ''
-        assert result.events == []
-
-    def test_get_span_by_trace_and_span_id_with_events(self):
-        """Test that events are correctly retrieved as dictionaries."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-
-        event_time_1 = base_time
-        event_time_2 = base_time + datetime.timedelta(milliseconds=5)
-
-        trace = db_mock.get_sample_otel_span(
-            timestamp=base_time,
-            trace_id='trace-with-events',
-            span_id='span-events',
-            span_name='invoke',
-            span_attributes={
-                'traceloop.association.properties.route_name': 'test-route',
-                'gen_ai.usage.input_tokens': '100',
-                'gen_ai.usage.output_tokens': '50',
-            },
-            duration_ns=100_000_000,
-            status_code='Error',
-            events_timestamp=[event_time_1, event_time_2],
-            events_name=['event-1', 'exception'],
-            events_attributes=[
-                {'key': 'value'},
-                {'error.type': 'test_error'},
+        return {
+            'span_latencies': [
+                (r.span_name, r.p50) for r in dao.get_span_latencies(**filters)
             ],
-        )
-        self.insert([trace])
+            'latencies': dao.get_latencies(**filters).p50,
+            'chart': sum(
+                p.total_requests
+                for p in dao.get_traces_chart_data(**filters, granularity='hours')
+            ),
+            'traces': [
+                r.trace_id
+                for r in dao.get_root_traces_paginated(
+                    **filters,
+                    group_uuids=None,
+                    key_uuids=None,
+                    params=Params(page=1, size=10),
+                ).items
+            ],
+        }
 
-        result = self.otel_traces_dao.get_span_by_trace_and_span_id(
-            TEST_PROJECT_UUID, 'trace-with-events', 'span-events'
-        )
+    def test_queries_apply_route_time_and_tag_filters(self):
+        base_time = T0
+        window = {'_from': base_time, '_to': base_time + H}
 
-        assert result is not None
-        assert result.events is not None
-        assert len(result.events) == 2
+        empty = self._query_all(**window)
+        assert empty['span_latencies'] == []
+        # ClickHouse returns nan for empty quantile results
+        assert empty['latencies'] is None or math.isnan(empty['latencies'])
+        assert empty['chart'] == 0
+        assert empty['traces'] == []
 
-        # Verify events are dictionaries with correct keys
-        event1 = result.events[0]
-        assert isinstance(event1, dict)
-        assert 'timestamp' in event1
-        assert 'name' in event1
-        assert 'attributes' in event1
-        assert event1['name'] == 'event-1'
-        assert event1['attributes'] == {'key': 'value'}
-
-        event2 = result.events[1]
-        assert isinstance(event2, dict)
-        assert event2['name'] == 'exception'
-        assert event2['attributes'] == {'error.type': 'test_error'}
-
-    def test_get_span_by_trace_and_span_id_with_status_message(self):
-        """Test that status_message is correctly retrieved."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-status-msg',
-                span_id='span-status-msg',
-                span_name='invoke',
-                duration_ns=100_000_000,
-                status_code='Error',
+        def root_span(trace_id, name, ms, at, route, tag):
+            return _span(
+                at,
+                trace_id=trace_id,
                 parent_span_id='',
-                span_attributes={},
-                status_message='Something went wrong',
+                span_name=name,
+                duration_ns=_ms(ms),
+                span_attributes={f'{PROP}route_name': route, TAGS: tag},
             )
-        ]
-        self.insert(test_spans)
 
-        result = self.otel_traces_dao.get_span_by_trace_and_span_id(
-            TEST_PROJECT_UUID, 'trace-status-msg', 'span-status-msg'
-        )
+        kept = root_span('kept', 'invoke', 100, base_time, 'route-a', 'env=prod')
+        # Each decoy differs from the kept span in one filtered dimension only.
+        cases = {
+            'route': (
+                ('route-b', base_time, 'env=prod'),
+                {'route_names': ['route-a']},
+            ),
+            'time': (('route-a', base_time + 3 * H, 'env=prod'), window),
+            'tags': (('route-a', base_time, 'env=staging'), {'tags': ['env=prod']}),
+        }
+        for dimension, ((route, at, tag), filters) in cases.items():
+            with self.subTest(dimension=dimension):
+                self.insert([kept, root_span('decoy', 'other', 999, at, route, tag)])
 
-        assert result is not None
-        assert result.status_message == 'Something went wrong'
+                res = self._query_all(**filters)
 
-    def test_get_span_by_trace_and_span_id_wrong_trace(self):
-        """Test that None is returned when span exists but in different trace."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-correct',
-                span_id='span-456',
-                span_name='invoke',
-                parent_span_id='',
-            )
-        ]
-        self.insert(test_spans)
-
-        result = self.otel_traces_dao.get_span_by_trace_and_span_id(
-            TEST_PROJECT_UUID, 'wrong-trace', 'span-456'
-        )
-
-        assert result is None
-
-    def test_get_span_by_trace_and_span_id_with_span_attributes(self):
-        """Test that span_attributes are correctly retrieved as dict."""
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        test_spans = [
-            db_mock.get_sample_otel_span(
-                timestamp=base_time,
-                trace_id='trace-attrs',
-                span_id='span-attrs',
-                span_name='invoke',
-                parent_span_id='',
-                span_attributes={
-                    'custom.attr.1': 'value1',
-                    'custom.attr.2': 'value2',
-                    'traceloop.association.properties.route_name': 'test-route',
-                },
-            )
-        ]
-        self.insert(test_spans)
-
-        result = self.otel_traces_dao.get_span_by_trace_and_span_id(
-            TEST_PROJECT_UUID, 'trace-attrs', 'span-attrs'
-        )
-
-        assert result is not None
-        assert result.span_attributes is not None
-        assert result.span_attributes.get('custom.attr.1') == 'value1'
-        assert result.span_attributes.get('custom.attr.2') == 'value2'
+                assert res['span_latencies'] == [
+                    ('invoke', pytest.approx(100.0, abs=1.0))
+                ]
+                assert res['latencies'] == pytest.approx(100.0, abs=1.0)
+                assert res['chart'] == 1
+                assert res['traces'] == ['kept']
+                self.clean()

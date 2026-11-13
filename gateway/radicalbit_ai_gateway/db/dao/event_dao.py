@@ -30,7 +30,11 @@ from radicalbit_ai_gateway.db.models.event import (
     TokensCounter,
 )
 from radicalbit_ai_gateway.db.tables.event_table import Event
-from radicalbit_ai_gateway.models.event_type import LIMIT_BLOCK_EVENT_TYPES, EventType
+from radicalbit_ai_gateway.models.event_type import (
+    LIMIT_BLOCK_EVENT_TYPES,
+    PROCESSED_TOKEN_EVENT_TYPES,
+    EventType,
+)
 from radicalbit_ai_gateway.utils.chart_utils import (
     get_bucket_function,
     with_timezone_offset,
@@ -47,6 +51,16 @@ MCP_ENTITY_COLUMNS: dict[str, McpEntityColumn] = {
     'groups': 'GROUP_UUID',
     'keys': 'API_KEY_UUID',
 }
+
+
+# The ATTRIBUTES a limit event records to name the limit that fired.
+LIMIT_ATTRIBUTES = (
+    'limit_scope',
+    'category',
+    'window_seconds',
+    'maximum',
+    'consumption',
+)
 
 
 class EventDAO:
@@ -302,6 +316,50 @@ class EventDAO:
                 return Counters()
             return Counters.model_validate(res)
 
+    def _route_conditions(
+        self,
+        project_uuid: UUID,
+        route_names: list[str],
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None,
+    ) -> list:
+        """Build the predicate the per-route metric reads share."""
+        T = self.T
+        conditions = [T.c['ROUTE_NAME'].in_(route_names)]
+        self._add_project_filter(conditions, project_uuid)
+        self._add_tags_filter(conditions, tags=tags)
+        if _from:
+            conditions.append(T.c['TIMESTAMP'] >= _from)
+        if _to:
+            conditions.append(T.c['TIMESTAMP'] <= _to)
+        return conditions
+
+    def get_counters_of_routes(
+        self,
+        project_uuid: UUID,
+        route_names: list[str],
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Counters]:
+        """Count the events of each route, in one query for all of them.
+
+        A route with no event is absent from the result.
+        """
+        if not route_names:
+            return {}
+        T = self.T
+        stmt = (
+            select(T.c['ROUTE_NAME'].label('route_name'), *self._get_metric_columns())
+            .where(*self._route_conditions(project_uuid, route_names, _from, _to, tags))
+            .group_by(T.c['ROUTE_NAME'])
+            .select_from(Event)
+        )
+        with self.db.begin_session() as session:
+            rows = session.execute(stmt).all()
+        return {row.route_name: Counters.model_validate(row) for row in rows}
+
     def get_all_counters_by_route(
         self,
         project_uuid: UUID,
@@ -310,30 +368,89 @@ class EventDAO:
         _to: datetime | None,
         tags: list[str] | None = None,
     ) -> Counters:
+        counters = self.get_counters_of_routes(
+            project_uuid, [route_name], _from, _to, tags=tags
+        )
+        return counters.get(route_name, Counters())
+
+    _LAST_EVENT_FIELDS = (
+        'route_name',
+        'timestamp',
+        'api_key_uuid',
+        'api_key_name',
+        'target',
+        'fallback',
+        'name',
+        'type',
+        'where',
+        'parameters',
+        'behavior',
+    )
+
+    def _latest_event(self) -> ColumnElement:
+        """Aggregate a group of events down to its latest one.
+
+        argMax keeps one row per group in a single pass; ordering the events
+        by TIMESTAMP to take the first would sort every one of them.
+        """
         T = self.T
-        conditions = [T.c['ROUTE_NAME'] == route_name]
+        return F.argMax(
+            F.tuple(
+                T.c['ROUTE_NAME'],
+                T.c['TIMESTAMP'],
+                T.c['API_KEY_UUID'],
+                T.c['API_KEY_NAME'],
+                T.c['TARGET'],
+                T.c['FALLBACK'],
+                T.c['GUARDRAIL_NAME'],
+                T.c['GUARDRAIL_TYPE'],
+                T.c['GUARDRAIL_WHERE'],
+                T.c['GUARDRAIL_PARAMS'],
+                T.c['GUARDRAIL_BEHAVIOR'],
+            ),
+            T.c['TIMESTAMP'],
+        )
+
+    def _last_event(
+        self, event_type: str, values: tuple
+    ) -> LastEventFallback | LastEventGuardrail:
+        model = LastEventFallback if event_type == 'FALLBACK' else LastEventGuardrail
+        return model.model_validate(dict(zip(self._LAST_EVENT_FIELDS, values)))
+
+    def get_last_events(
+        self,
+        project_uuid: UUID,
+        event_types: list[str],
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None = None,
+    ) -> dict[str, LastEventFallback | LastEventGuardrail]:
+        """Return the project's latest event of each type, in one query.
+
+        Keyed by event type; a type with no event is absent.
+        """
+        if not event_types:
+            return {}
+        T = self.T
+        conditions = [T.c['EVENT_TYPE'].in_(event_types)]
         self._add_project_filter(conditions, project_uuid)
         self._add_tags_filter(conditions, tags=tags)
-        columns_to_select = [
-            T.c['ROUTE_NAME'].label('route_name'),
-            *self._get_metric_columns(),
-        ]
         if _from:
             conditions.append(T.c['TIMESTAMP'] >= _from)
         if _to:
             conditions.append(T.c['TIMESTAMP'] <= _to)
         stmt = (
-            select(*columns_to_select)
-            .group_by(T.c['ROUTE_NAME'])
+            select(T.c['EVENT_TYPE'], self._latest_event())
             .where(*conditions)
+            .group_by(T.c['EVENT_TYPE'])
             .select_from(Event)
         )
-
         with self.db.begin_session() as session:
-            res = session.execute(stmt).first()
-            if res is None:
-                return Counters()
-            return Counters.model_validate(res)
+            rows = session.execute(stmt).all()
+        return {
+            event_type: self._last_event(event_type, values)
+            for event_type, values in rows
+        }
 
     def get_last_event(
         self,
@@ -343,30 +460,40 @@ class EventDAO:
         _to: datetime | None,
         tags: list[str] | None = None,
     ) -> LastEventFallback | LastEventGuardrail | None:
+        last_events = self.get_last_events(
+            project_uuid, [event_type], _from, _to, tags=tags
+        )
+        return last_events.get(event_type)
+
+    def get_last_events_of_routes(
+        self,
+        project_uuid: UUID,
+        event_types: list[str],
+        route_names: list[str],
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None = None,
+    ) -> dict[tuple[str, str], LastEventFallback | LastEventGuardrail]:
+        """Return the latest event of each type on each route, in one query.
+
+        Keyed by `(route_name, event_type)`; a pair with no event is absent.
+        """
+        if not route_names or not event_types:
+            return {}
         T = self.T
-        base_cols = [
-            T.c['ROUTE_NAME'].label('route_name'),
-            T.c['TIMESTAMP'].label('timestamp'),
-            T.c['API_KEY_UUID'].label('api_key_uuid'),
-            T.c['API_KEY_NAME'].label('api_key_name'),
-        ]
-        conditions = [T.c['EVENT_TYPE'] == event_type]
-        self._add_project_filter(conditions, project_uuid)
-        self._add_tags_filter(conditions, tags=tags)
-        if _from:
-            conditions.append(T.c['TIMESTAMP'] >= _from)
-        if _to:
-            conditions.append(T.c['TIMESTAMP'] <= _to)
-        extra_attrs = self._get_attrs_per_metric(event_type=event_type)
-        stmt = select(*base_cols, *extra_attrs).where(*conditions)
-        stmt = stmt.order_by(desc(T.c['TIMESTAMP']))
+        conditions = self._route_conditions(project_uuid, route_names, _from, _to, tags)
+        stmt = (
+            select(T.c['ROUTE_NAME'], T.c['EVENT_TYPE'], self._latest_event())
+            .where(T.c['EVENT_TYPE'].in_(event_types), *conditions)
+            .group_by(T.c['ROUTE_NAME'], T.c['EVENT_TYPE'])
+            .select_from(Event)
+        )
         with self.db.begin_session() as session:
-            res = session.execute(stmt).first()
-            if res is None:
-                return None
-            if event_type == 'FALLBACK':
-                return LastEventFallback.model_validate(res)
-            return LastEventGuardrail.model_validate(res)
+            rows = session.execute(stmt).all()
+        return {
+            (route_name, event_type): self._last_event(event_type, values)
+            for route_name, event_type, values in rows
+        }
 
     def get_last_event_route(
         self,
@@ -377,36 +504,10 @@ class EventDAO:
         _to: datetime | None,
         tags: list[str] | None = None,
     ) -> LastEventFallback | LastEventGuardrail | None:
-        T = self.T
-        base_cols = [
-            T.c['ROUTE_NAME'].label('route_name'),
-            T.c['TIMESTAMP'].label('timestamp'),
-            T.c['API_KEY_UUID'].label('api_key_uuid'),
-            T.c['API_KEY_NAME'].label('api_key_name'),
-        ]
-        conditions = [T.c['EVENT_TYPE'] == event_type, T.c['ROUTE_NAME'] == route_name]
-        self._add_project_filter(conditions, project_uuid)
-        self._add_tags_filter(conditions, tags=tags)
-        if _from:
-            conditions.append(T.c['TIMESTAMP'] >= _from)
-        if _to:
-            conditions.append(T.c['TIMESTAMP'] <= _to)
-        extra_attrs = self._get_attrs_per_metric(event_type=event_type)
-        stmt = (
-            select(
-                *base_cols,
-                *extra_attrs,
-            )
-            .where(*conditions)
-            .order_by(T.c['TIMESTAMP'].desc())
+        last_events = self.get_last_events_of_routes(
+            project_uuid, [event_type], [route_name], _from, _to, tags=tags
         )
-        with self.db.begin_session() as session:
-            res = session.execute(stmt).first()
-            if res is None:
-                return None
-            if event_type == 'FALLBACK':
-                return LastEventFallback.model_validate(res)
-            return LastEventGuardrail.model_validate(res)
+        return last_events.get((route_name, event_type))
 
     def get_routing_model_counters(
         self,
@@ -478,6 +579,38 @@ class EventDAO:
                 for row_tuple in res
             ]
 
+    def get_tokens_by_model_of_routes(
+        self,
+        project_uuid: UUID,
+        route_names: list[str],
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None = None,
+    ) -> list[TokensCounter]:
+        """Sum the tokens of each model on each route, in one query."""
+        if not route_names:
+            return []
+        T = self.T
+        FIELD_NAMES = ['event_type', 'route_name', 'model_id', 'value']
+        conditions = self._route_conditions(project_uuid, route_names, _from, _to, tags)
+        stmt = (
+            select(
+                T.c['EVENT_TYPE'],
+                T.c['ROUTE_NAME'],
+                self.T.c['MODEL_ID'].label('model_id'),
+                F.sum(self.T.c['VALUE']).cast(Float).label('value'),
+            )
+            .where(T.c['EVENT_TYPE'].in_(self._token_metric_types), *conditions)
+            .group_by(T.c['EVENT_TYPE'], T.c['ROUTE_NAME'], self.T.c['MODEL_ID'])
+            .select_from(Event)
+        )
+        with self.db.begin_session() as session:
+            res = session.execute(stmt).all()
+        return [
+            TokensCounter.model_validate(dict(zip(FIELD_NAMES, row_tuple)))
+            for row_tuple in res
+        ]
+
     def get_tokens_by_model_per_route(
         self,
         project_uuid: UUID,
@@ -486,35 +619,44 @@ class EventDAO:
         _to: datetime | None,
         tags: list[str] | None = None,
     ) -> list[TokensCounter]:
+        return self.get_tokens_by_model_of_routes(
+            project_uuid, [route_name], _from, _to, tags=tags
+        )
+
+    def get_routing_model_counters_of_routes(
+        self,
+        project_uuid: UUID,
+        route_names: list[str],
+        _from: datetime | None,
+        _to: datetime | None,
+        tags: list[str] | None = None,
+    ) -> dict[str, list[ModelInvocationCounter]]:
+        """Count the models routing chose on each route, in one query.
+
+        A route where routing never ran is absent from the result.
+        """
+        if not route_names:
+            return {}
         T = self.T
-        FIELD_NAMES = ['event_type', 'route_name', 'model_id', 'value']
-        conditions = [
-            T.c['EVENT_TYPE'].in_(self._token_metric_types),
-            T.c['ROUTE_NAME'] == route_name,
-        ]
-        self._add_project_filter(conditions, project_uuid)
-        self._add_tags_filter(conditions, tags=tags)
-        if _from:
-            conditions.append(T.c['TIMESTAMP'] >= _from)
-        if _to:
-            conditions.append(T.c['TIMESTAMP'] <= _to)
+        conditions = self._route_conditions(project_uuid, route_names, _from, _to, tags)
         stmt = (
             select(
-                T.c['EVENT_TYPE'],
                 T.c['ROUTE_NAME'],
-                self.T.c['MODEL_ID'].label('model_id'),
-                F.sum(self.T.c['VALUE']).cast(Float).label('value'),
+                T.c['ROUTING_SELECTED_MODEL_ID'],
+                F.count(),
             )
-            .where(*conditions)
-            .group_by(T.c['EVENT_TYPE'], T.c['ROUTE_NAME'], self.T.c['MODEL_ID'])
+            .where(T.c['EVENT_TYPE'] == 'ROUTING', *conditions)
+            .group_by(T.c['ROUTE_NAME'], T.c['ROUTING_SELECTED_MODEL_ID'])
             .select_from(Event)
         )
+        counters: dict[str, list[ModelInvocationCounter]] = {}
         with self.db.begin_session() as session:
-            res = session.execute(stmt).all()
-            return [
-                TokensCounter.model_validate(dict(zip(FIELD_NAMES, row_tuple)))
-                for row_tuple in res
-            ]
+            rows = session.execute(stmt).all()
+        for route_name, model_id, value in rows:
+            counters.setdefault(route_name, []).append(
+                ModelInvocationCounter(model_id=model_id, value=value)
+            )
+        return counters
 
     def get_latest_n_per_event_type(
         self,
@@ -539,15 +681,13 @@ class EventDAO:
             'where',
             'parameters',
             'behavior',
+            *LIMIT_ATTRIBUTES,
         ]
         event_types = [
             'FALLBACK',
             'GUARDRAIL',
-            'RATE_LIMIT',
-            'TOKEN_INPUT_LIMIT',
-            'TOKEN_OUTPUT_LIMIT',
-            'AUDIO_DURATION_LIMIT',
             'CACHE_HIT',
+            *LIMIT_BLOCK_EVENT_TYPES,
         ]
         row_number_col = (
             F.row_number()
@@ -567,6 +707,11 @@ class EventDAO:
             self.T.c['GUARDRAIL_WHERE'].label('where'),
             self.T.c['GUARDRAIL_PARAMS'].label('parameters'),
             self.T.c['GUARDRAIL_BEHAVIOR'].label('behavior'),
+            *(
+                # A missing map key reads as '', so it becomes NULL.
+                F.nullIf(self._attribute(attribute), '').label(attribute)
+                for attribute in LIMIT_ATTRIBUTES
+            ),
             row_number_col,
         ]
 
@@ -596,6 +741,7 @@ class EventDAO:
             subquery_stmt.c['where'],
             subquery_stmt.c['parameters'],
             subquery_stmt.c['behavior'],
+            *(subquery_stmt.c[attribute] for attribute in LIMIT_ATTRIBUTES),
         ]
 
         final_stmt = (
@@ -855,9 +1001,7 @@ class EventDAO:
             return {}
 
         T = self.T
-        processed_tokens = T.c['EVENT_TYPE'].in_(
-            ['INPUT_TOKEN_PROCESSED', 'OUTPUT_TOKEN_PROCESSED']
-        )
+        processed_tokens = T.c['EVENT_TYPE'].in_(PROCESSED_TOKEN_EVENT_TYPES)
         conditions = [
             T.c['REQUEST_UUID'].in_(request_uuids),
             T.c['DATE'] >= date_from,
