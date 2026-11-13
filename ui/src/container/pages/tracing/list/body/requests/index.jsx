@@ -11,6 +11,7 @@ import { useEffect, useRef } from 'react';
 import { useNavigationType, useSearchParams } from 'react-router-dom';
 import { FILTER_PARAMS, REQUESTS_PAGE_PARAM, SELECTED_REQUEST_PARAM } from './constants';
 import RequestPanel from './panel';
+import PanelSkeleton from './panel-skeleton';
 import RequestsList from './list';
 
 function Requests() {
@@ -37,7 +38,7 @@ function Requests() {
         </div>
 
         <div className="c-observability__pane">
-          <Board main={<Skeleton active block />} width="100%" />
+          <PanelSkeleton />
         </div>
       </div>
     );

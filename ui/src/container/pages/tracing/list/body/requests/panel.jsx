@@ -2,14 +2,16 @@ import HtmlAnchor from '@Components/html-anchor';
 import InfoPopover from '@Components/info-popover';
 import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
-import { formatInt, formatMs, formatTimestamp } from '@Src/helpers/column-formatters';
+import { DATE_FORMAT } from '@Src/constants';
+import { formatInt, formatMs } from '@Src/helpers/column-formatters';
 import formatCost from '@Src/helpers/format-cost';
 import { useGetRequestByIdVertical, useGetRequestsWithRange } from '@State/requests/vertical-hooks';
 import {
   Board,
   Button,
   NewHeader,
-  Skeleton,
+  RelativeDateTime,
+  Spin,
   Tag,
   TextWithBold,
   Timeline,
@@ -17,9 +19,10 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { TriangleAlert } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import { REQUESTS_PAGE_PARAM, SELECTED_REQUEST_PARAM } from './constants';
+import { RELATIVE_DATE_REFRESH_SECONDS, REQUESTS_PAGE_PARAM, SELECTED_REQUEST_PARAM } from './constants';
 import { CredentialLink, GroupLink } from './entity-links';
 import { formatOffset, requestSteps, selectedRequestUuid } from './helpers';
+import PanelSkeleton from './panel-skeleton';
 
 const VISIBLE_TAGS = 3;
 
@@ -40,27 +43,42 @@ function RequestPanel() {
 
   const selectedUuid = selectedRequestUuid(items, requestUuid);
 
-  const { currentData, isError, isFetching, isSuccess, refetch } = useGetRequestByIdVertical(selectedUuid);
+  const {
+    currentData, data, isError, isFetching, isSuccess, refetch,
+  } = useGetRequestByIdVertical(selectedUuid);
 
-  const isLoading = isFetching && !currentData;
+  const isFirstLoad = isFetching && !data;
+  const isSwitching = isFetching && !currentData && !!data;
 
-  if (isLoading) {
-    return <Board main={<Skeleton active block />} width="100%" />;
+  if (isFirstLoad) {
+    return <PanelSkeleton />;
   }
 
   if (isError) {
     return <IsError isFetching={isFetching} refetch={refetch} />;
   }
 
+  if (isSwitching) {
+    return (
+      <Spin spinning>
+        <RequestDetail request={data} />
+      </Spin>
+    );
+  }
+
   if (!isSuccess || !currentData) {
     return false;
   }
 
+  return <RequestDetail request={currentData} />;
+}
+
+function RequestDetail({ request }) {
   return (
     <section aria-label="Selected request" className="flex flex-col gap-4">
-      <Summary request={currentData} />
+      <Summary request={request} />
 
-      <StepByStep request={currentData} />
+      <StepByStep request={request} />
     </section>
   );
 }
@@ -155,7 +173,7 @@ function StepByStep({ request }) {
       footer={<TraceLink request={request} />}
       header={(
         <NewHeader
-          details={{ one: <span className="text-xs">{formatTimestamp(createdAt)}</span> }}
+          details={{ one: <span className="text-xs"><RelativeDateTime format={DATE_FORMAT} formatTooltip={DATE_FORMAT} refreshInterval={RELATIVE_DATE_REFRESH_SECONDS} threshold={0} timestamp={createdAt * 1000} withTooltip /></span> }}
           padding="none"
           title={<TextWithBold bold={eventLabel} boldProps={LABEL_PROPS} text={<strong>Step by step</strong>} />}
         />

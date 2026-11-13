@@ -131,7 +131,7 @@ describe('requestSteps', () => {
 
     expect(step.fields).toEqual([
       { name: 'value', value: '298' },
-      { name: 'cost', value: '< $0.01' },
+      { name: 'cost', value: '< $0.001' },
       { name: 'modelId', value: 'gpt-4o-mini' },
       { name: 'isJudge', value: 'true' },
     ]);
@@ -168,7 +168,7 @@ describe('requestSteps', () => {
 
     expect(step.fields).toEqual([
       { name: 'value', value: '1' },
-      { name: 'cost', value: '$0.00' },
+      { name: 'cost', value: '$0.000' },
       { name: 'modelId', value: 'jev' },
     ]);
   });
