@@ -289,3 +289,24 @@ def test_an_api_name_that_is_a_keyword_or_starts_with_an_underscore():
     assert "'from': from_" in keywords['query']
     assert "'_page': page" in keywords['query']
     assert 'from_: Query parameter ``from``.' in ast.get_docstring(method)
+
+
+def test_an_inline_set_of_strings_is_a_literal():
+    spec = _spec()
+    spec['components']['schemas']['ThingIn']['properties']['mode'] = {
+        'type': 'string',
+        'enum': ['b', 'a'],
+    }
+    method = _method(render(spec, MODELS), 'ThingsResource', 'update')
+    annotations = {a.arg: ast.unparse(a.annotation) for a in method.args.kwonlyargs}
+    assert annotations['mode'] == "Literal['a', 'b'] | NotGiven"
+
+
+def test_an_inline_set_of_numbers_is_refused():
+    spec = _spec()
+    spec['components']['schemas']['ThingIn']['properties']['level'] = {
+        'type': 'integer',
+        'enum': [1, 2],
+    }
+    with pytest.raises(UnsupportedSpecError):
+        render(spec, MODELS)

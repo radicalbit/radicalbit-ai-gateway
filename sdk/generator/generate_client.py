@@ -176,7 +176,18 @@ class Spec:
             name = self.ref(schema, where)[0]
             check(name in self.model_names, f'{where}: no model {name!r} in models.py')
             return f'models.{name}'
-        for key in ('oneOf', 'allOf', 'not', 'enum', 'const'):
+        if 'enum' in schema:
+            # A closed set of strings declared in place (a Literal field):
+            # the same plain strings as the models' named sets
+            values = schema['enum']
+            check(
+                schema.get('type') in (None, 'string')
+                and values
+                and all(isinstance(v, str) for v in values),
+                f'{where}: inline enum of non-strings',
+            )
+            return f'Literal[{", ".join(repr(v) for v in sorted(values))}]'
+        for key in ('oneOf', 'allOf', 'not', 'const'):
             check(key not in schema, f'{where}: inline {key!r} schema')
         if 'anyOf' in schema or isinstance(schema.get('type'), list):
             options = schema.get('anyOf') or [
