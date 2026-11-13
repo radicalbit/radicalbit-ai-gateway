@@ -8,7 +8,7 @@ function RequestTypeCell({ requestType }) {
     return '--';
   }
 
-  return <Tag size="large" type="primary-outlined">{label}</Tag>;
+  return <Tag type="primary-outlined">{label}</Tag>;
 }
 
 export default RequestTypeCell;

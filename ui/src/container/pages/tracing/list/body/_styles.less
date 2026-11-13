@@ -1,0 +1,21 @@
+.c-observability {
+	&__filters {
+		position: sticky;
+		top: 0;
+		z-index: 100;
+		background: var(--coo-bk-lv0);
+		padding-bottom: 1.25rem;
+	}
+
+	&__pane {
+		flex: 1 1 420px;
+		min-width: 0;
+	}
+
+	&__panel {
+		position: sticky;
+		top: var(--observability-filters-height, 0px);
+		max-height: calc(var(--observability-viewport-height, 100vh) - var(--observability-filters-height, 0px) - 1.25rem);
+		overflow: auto;
+	}
+}
