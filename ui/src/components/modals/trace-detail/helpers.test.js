@@ -9,6 +9,7 @@ import {
   spanIo,
   spanErrorLines,
   spanShare,
+  spanTreeRows,
   waterfallBar,
 } from './helpers';
 
@@ -243,5 +244,20 @@ describe('spanErrorLines', () => {
 
   it('has no lines for a clean span', () => {
     expect(spanErrorLines({ statusMessage: '', errorEvents: [] })).toEqual([]);
+  });
+});
+
+describe('spanTreeRows', () => {
+  it('keeps the tree for the table, with children only on spans that have them', () => {
+    const rows = spanTreeRows(TREE);
+
+    expect(rows.map(({ spanId }) => spanId)).toEqual(['root']);
+    expect(rows[0].children.map(({ spanId }) => spanId)).toEqual(['auth', 'guard', 'invoke']);
+    expect(rows[0].children[1].children.map(({ spanId }) => spanId)).toEqual(['judge']);
+    expect(rows[0].children[0]).not.toHaveProperty('children');
+  });
+
+  it('has no rows without a tree', () => {
+    expect(spanTreeRows(null)).toEqual([]);
   });
 });

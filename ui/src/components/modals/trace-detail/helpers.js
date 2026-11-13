@@ -136,3 +136,19 @@ export function spanErrorLines(span) {
 
   return [...new Set([span?.statusMessage, ...eventLines].filter(Boolean))];
 }
+
+export function spanTreeRows(tree) {
+  if (!tree) {
+    return [];
+  }
+
+  const row = ({ children, ...span }) => {
+    if (!children?.length) {
+      return span;
+    }
+
+    return { ...span, children: children.map(row) };
+  };
+
+  return [row(tree)];
+}

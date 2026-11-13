@@ -1,3 +1,4 @@
+import Lucide from '@Components/lucide';
 import useModals from '@Hooks/use-modals';
 import { formatInt, formatMs } from '@Src/helpers/column-formatters';
 import { useGetRequestByIdVertical } from '@State/requests/vertical-hooks';
@@ -5,18 +6,37 @@ import { useGetTraceByIdVertical } from '@State/tracing/vertical-hooks';
 import {
   BarChart, Board, DataTable, NewHeader, SectionTitle,
 } from '@radicalbit/radicalbit-design-system';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { SPAN_PARAM } from './constants';
 import {
-  flattenSpans, isSpanError, selectedSpanId, waterfallBar,
+  isSpanError, selectedSpanId, spanTreeRows, waterfallBar,
 } from './helpers';
 
 const COLUMNS = [
   {
-    key: 'span',
-    render: (_, span) => <SpanRow span={span} />,
+    key: 'name',
+    render: (_, span) => <SpanName span={span} />,
+    width: '45%',
+  },
+  {
+    key: 'bar',
+    render: (_, span) => <SpanBar span={span} />,
+    width: '40%',
+  },
+  {
+    align: 'right',
+    key: 'duration',
+    render: (_, span) => <SpanDuration span={span} />,
+    width: '15%',
   },
 ];
+
+const EXPANDABLE = {
+  defaultExpandAllRows: true,
+  expandIcon: (props) => <ExpandIcon {...props} />,
+  indentSize: 16,
+};
 
 const HEADER_PROPS = { divider: true, padding: 'compact' };
 
@@ -38,7 +58,7 @@ function Spans() {
   const tree = trace?.tree;
 
   const selectedId = selectedSpanId(tree, spanIdParam);
-  const rows = flattenSpans(tree).map(({ depth, span }) => ({ ...span, children: undefined, depth }));
+  const rows = spanTreeRows(tree);
   const spansLabel = totalSpans === 1 ? '1 span' : `${formatInt(totalSpans)} spans`;
   const countLabel = `${spansLabel} · ${formatMs(durationMs)}`;
 
@@ -74,8 +94,8 @@ function Spans() {
           clickable
           columns={COLUMNS}
           dataSource={rows}
+          expandable={EXPANDABLE}
           noHead
-          noPadding
           onRow={handleOnRow}
           pagination={false}
           rowClassName={handleOnRowClassName}
@@ -89,7 +109,56 @@ function Spans() {
   );
 }
 
-function SpanRow({ span }) {
+function SpanName({ span }) {
+  const operationCategory = span?.operationCategory;
+  const spanKind = span?.spanKind;
+  const spanName = span?.spanName;
+  const totalTokens = span?.totalTokens;
+
+  const category = operationCategory ?? spanKind ?? 'span';
+  const subtitle = `${category} · ${formatInt(totalTokens)} tokens`;
+
+  if (isSpanError(span)) {
+    return (
+      <div className="flow-root">
+        <SectionTitle size="small" subtitle={subtitle} title={spanName} titleColor="error" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flow-root">
+      <SectionTitle size="small" subtitle={subtitle} title={spanName} />
+    </div>
+  );
+}
+
+function ExpandIcon({ expandable, expanded, onExpand, record }) {
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+    onExpand(record, e);
+  };
+
+  if (!expandable) {
+    return <span className="float-left mr-2 w-4 h-4" />;
+  }
+
+  if (expanded) {
+    return (
+      <button aria-label="Collapse" className="float-left mr-2" onClick={handleOnClick} type="button">
+        <Lucide icon={ChevronDown} />
+      </button>
+    );
+  }
+
+  return (
+    <button aria-label="Expand" className="float-left mr-2" onClick={handleOnClick} type="button">
+      <Lucide icon={ChevronRight} />
+    </button>
+  );
+}
+
+function SpanBar({ span }) {
   const { modalPayload } = useModals();
   const requestUuid = modalPayload?.data?.requestUuid;
 
@@ -99,41 +168,19 @@ function SpanRow({ span }) {
   const { data: trace } = useGetTraceByIdVertical(traceId);
   const traceDurationMs = trace?.durationMs;
 
-  const durationMs = span?.durationMs;
-  const operationCategory = span?.operationCategory;
-  const spanKind = span?.spanKind;
-  const spanName = span?.spanName;
-  const totalTokens = span?.totalTokens;
-
   const { offset, value } = waterfallBar(span, traceDurationMs);
-  const category = operationCategory ?? spanKind ?? 'span';
-  const subtitle = `${category} · ${formatInt(totalTokens)} tokens`;
 
   if (isSpanError(span)) {
-    return (
-      <div className="flex flex-col gap-2 px-4 py-3">
-        <NewHeader
-          details={{ one: <span className="text-xs">{formatMs(durationMs)}</span> }}
-          padding="none"
-          title={<SectionTitle size="small" subtitle={subtitle} title={spanName} titleColor="error" />}
-        />
-
-        <BarChart offset={offset} type="error" value={value} />
-      </div>
-    );
+    return <BarChart offset={offset} type="error" value={value} />;
   }
 
-  return (
-    <div className="flex flex-col gap-2 px-4 py-3">
-      <NewHeader
-        details={{ one: <span className="text-xs">{formatMs(durationMs)}</span> }}
-        padding="none"
-        title={<SectionTitle size="small" subtitle={subtitle} title={spanName} />}
-      />
+  return <BarChart offset={offset} value={value} />;
+}
 
-      <BarChart offset={offset} value={value} />
-    </div>
-  );
+function SpanDuration({ span }) {
+  const durationMs = span?.durationMs;
+
+  return <span className="text-xs">{formatMs(durationMs)}</span>;
 }
 
 export default Spans;

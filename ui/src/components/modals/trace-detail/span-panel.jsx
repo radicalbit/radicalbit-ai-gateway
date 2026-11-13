@@ -78,6 +78,7 @@ function SpanDetail({ span }) {
           padding="none"
           title={(
             <SectionTitle
+              subtitle={<TextWithBold bold={spanId} size="small" text="Span" textProps={LABEL_PROPS} />}
               title={spanName}
               titleSuffix={<SpanTags spanId={spanId} />}
               wrapTitle
@@ -87,11 +88,7 @@ function SpanDetail({ span }) {
       )}
       main={(
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <SpanKpis span={span} />
-
-            <TextWithBold bold={spanId} size="small" text="Span" textProps={LABEL_PROPS} />
-          </div>
+          <SpanKpis span={span} />
 
           <SpanErrors span={span} />
 

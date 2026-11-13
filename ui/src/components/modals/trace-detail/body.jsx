@@ -40,11 +40,11 @@ function Body() {
 
   return (
     <div className="flex flex-row items-start gap-4">
-      <div className="basis-1/3 min-w-0">
+      <div className="basis-2/5 min-w-0">
         <Spans />
       </div>
 
-      <div className="basis-2/3 min-w-0">
+      <div className="basis-3/5 min-w-0">
         <SpanPanel />
       </div>
     </div>
@@ -54,11 +54,11 @@ function Body() {
 function IsLoading() {
   return (
     <div className="flex flex-row items-start gap-4">
-      <div className="basis-1/3">
+      <div className="basis-2/5">
         <Skeleton active block />
       </div>
 
-      <div className="basis-2/3">
+      <div className="basis-3/5">
         <Skeleton active block />
       </div>
     </div>
