@@ -1,4 +1,5 @@
 import SomethingWentWrong from '@Components/error-page/something-went-wrong';
+import RequestTags from '@Container/pages/tracing/list/body/requests/request-tags';
 import useModals from '@Hooks/use-modals';
 import { formatInt, formatMs, formatTimestamp } from '@Src/helpers/column-formatters';
 import { useGetRequestByIdVertical } from '@State/requests/vertical-hooks';
@@ -17,9 +18,9 @@ import {
   TextWithBold,
 } from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
-import { SPAN_PARAM, SPAN_TAB_PARAM } from './constants';
+import { SPAN_PARAM, SPAN_TAB_PARAM, TAGS_ATTRIBUTE } from './constants';
 import {
-  attributeCount, attributeGroups, flattenSpans, selectedSpanId, selectedSpanTab, spanErrorLines, spanIo, spanShare,
+  attributeCount, attributeGroups, attributeTags, flattenSpans, selectedSpanId, selectedSpanTab, spanErrorLines, spanIo, spanShare,
 } from './helpers';
 
 const LABEL_PROPS = { type: 'secondary' };
@@ -143,7 +144,7 @@ function SpanKpis({ span }) {
 
   const items = [
     { title: 'Duration', value: formatMs(durationMs) },
-    { title: 'Share', value: `${spanShare(span, traceDurationMs)}% of trace` },
+    { title: 'Share of trace', value: `${spanShare(span, traceDurationMs)}% of ${formatMs(traceDurationMs)}` },
     { title: 'Tokens', value: `${formatInt(inputTokens)} in · ${formatInt(outputTokens)} out` },
     { title: 'Errors', type: errorType, value: formatInt(errorCount) },
     { title: 'Created', value: formatTimestamp(createdAt).trim() },
@@ -225,7 +226,7 @@ function SpanAttributes({ attributes }) {
 }
 
 function AttributeGroup({ items, title }) {
-  const listItems = items.map(({ name, value }) => ({ title: name, value: <AttributeValue value={value} /> }));
+  const listItems = items.map(({ name, value }) => ({ title: name, value: <AttributeValue group={title} name={name} value={value} /> }));
 
   return (
     <section aria-label={title} className="flex flex-col gap-2">
@@ -236,7 +237,11 @@ function AttributeGroup({ items, title }) {
   );
 }
 
-function AttributeValue({ value }) {
+function AttributeValue({ group, name, value }) {
+  if (group === TAGS_ATTRIBUTE.group && name === TAGS_ATTRIBUTE.name) {
+    return <RequestTags tags={attributeTags(value)} />;
+  }
+
   if (value !== null && typeof value === 'object') {
     return <Json data={value} expandUntil={1} />;
   }
