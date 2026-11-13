@@ -189,6 +189,26 @@ def mock_anthropic_stream(sse_text: str | None = None):
     return mock
 
 
+def cut_off_tool_stream() -> str:
+    """Return a stream that ``max_tokens`` cuts inside a tool use: the JSON
+    text of the tool's input stops half way.
+    """
+    events = canned.anthropic_stream(
+        ['Let me check.'], tool_use=[canned.ANTHROPIC_WEATHER_TOOL_USE]
+    ).sse_events
+    # The second half of the tool's input never comes.
+    last_input = max(
+        index
+        for index, event in enumerate(events)
+        if event.get('delta', {}).get('type') == 'input_json_delta'
+    )
+    del events[last_input]
+    for event in events:
+        if event['type'] == 'message_delta':
+            event['delta']['stop_reason'] = 'max_tokens'
+    return ''.join(f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n' for e in events)
+
+
 def refuse(status: int, body: dict):
     """Mock one Anthropic refusal."""
     mock = pook.post(ANTHROPIC_URL).times(1)

@@ -15,7 +15,6 @@ from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config
 from radicalbit_ai_gateway.endpoints.common.streams import stream_of
 from radicalbit_ai_gateway.endpoints.messages.cache import MessagesEntry, is_complete
 from radicalbit_ai_gateway.endpoints.messages.events import (
-    MessageCollector,
     message_events,
     relay_frame,
     sse,
@@ -26,7 +25,7 @@ from radicalbit_ai_gateway.endpoints.messages.request import MessagesRequest
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation
 from radicalbit_ai_gateway.limiting.limits import Usage
-from radicalbit_ai_gateway.llm.messages_stream import stream_usage
+from radicalbit_ai_gateway.llm.messages_stream import MessageBuilder
 from radicalbit_ai_gateway.llm.usage import messages_token_counts
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
@@ -95,7 +94,8 @@ async def _prepare(
     set_operation_category(OperationCategory.PREPROCESSING)
     messages = await run_preprocessing(request.messages(), config.plugins)
     redaction = await scope.guardrails.redact_input(Conversation(messages))
-    # Route on the redacted messages, as the chat path does (ADR 0010).
+    # Route on the redacted messages, as the chat path does (ADR 0010, redact
+    # guardrails run before routing).
     model = await route_chat(scope, redaction.payload.messages())
     if not route.chat_invoker.supports_messages(model.model_id):
         raise GatewayBadRequest(
@@ -146,16 +146,23 @@ async def _respond(scope: RequestScope, prepared: _Prepared) -> dict:
     message, answering = await scope.route.chat_invoker.complete_messages(
         **_call(scope, prepared)
     )
-    return await _screened(scope, answering, message)
+    return await _count_screen_and_store(scope, answering, message)
 
 
-async def _screened(scope: RequestScope, answering: Model, message: dict) -> dict:
+async def _count_screen_and_store(
+    scope: RequestScope, answering: Model, message: dict, cacheable: bool = True
+) -> dict:
     """Count the answer of the ``answering`` model, apply the output
     guardrails to it, cache it and return it as the client gets it.
+
+    Whether the answer is cached is decided on the model's answer, before
+    the guardrails: a soft block does not make a cut-off answer complete.
     """
     await _count(scope, answering, message.get('usage'))
+    cacheable = cacheable and is_complete(message)
     message = await screen_output(scope, message)
-    await _store(scope, answering, message)
+    if cacheable:
+        await _store(scope, answering, message)
     return {**message, 'model': scope.route.gateway_route_config.route_name}
 
 
@@ -169,7 +176,7 @@ def _call(scope: RequestScope, prepared: _Prepared) -> dict:
     }
 
 
-class _Answering:
+class _AnsweringModel:
     """The model that answers a stream: the routed one, until the invoker
     tells that another one answers (after a fallback).
     """
@@ -188,19 +195,17 @@ async def _live(scope: RequestScope, prepared: _Prepared) -> AsyncIterator[str]:
     set_streaming()
     set_operation_category(OperationCategory.INVOCATION)
     route_name = scope.route.gateway_route_config.route_name
-    usage: dict = {}
-    # The answer is built from its events only on a route with a cache.
-    collector = MessageCollector() if scope.route.cache.backend else None
-    answering = _Answering(prepared)
+    # The one reader of the stream: its usage, and the answer to cache.
+    builder = MessageBuilder()
+    answering = _AnsweringModel(prepared)
     async for event, data in scope.route.chat_invoker.stream_messages(
         **_call(scope, prepared), on_answer=answering
     ):
-        usage = stream_usage(event, data, usage)
-        if collector:
-            collector.add(event, data)
+        builder.add(event, data)
         yield relay_frame(event, data, route_name)
-    await _count(scope, answering.model, usage)
-    if collector and (message := collector.message()):
+    await _count(scope, answering.model, builder.usage)
+    message = builder.message()
+    if message and _is_cacheable(builder) and is_complete(message):
         await _store(scope, answering.model, message)
 
 
@@ -216,22 +221,34 @@ async def _buffered(scope: RequestScope, prepared: _Prepared) -> list[str]:
         return message_events(await _respond(scope, prepared))
 
     set_operation_category(OperationCategory.INVOCATION)
-    collector = MessageCollector()
-    answering = _Answering(prepared)
+    builder = MessageBuilder()
+    answering = _AnsweringModel(prepared)
     async for event, data in scope.route.chat_invoker.stream_messages(
         **_call(scope, prepared), on_answer=answering
     ):
-        collector.add(event, data)
-    message = collector.message()
-    if message is None:
-        # The answer was cut off: none of its text goes out unscreened.
-        await _count(scope, answering.model, collector.usage)
-        if collector.error is None:
+        builder.add(event, data)
+    message = builder.message()
+    if message is None or not builder.complete:
+        # The stream ended before the answer was whole: none of its text
+        # goes out unscreened.
+        await _count(scope, answering.model, builder.usage)
+        if builder.error is None:
             raise ModelInvokerInternalError(
                 'The model stream ended before the answer was complete'
             )
-        return [sse('error', collector.error)]
-    return message_events(await _screened(scope, answering.model, message))
+        return [sse('error', builder.error)]
+    return message_events(
+        await _count_screen_and_store(
+            scope, answering.model, message, cacheable=_is_cacheable(builder)
+        )
+    )
+
+
+def _is_cacheable(builder: MessageBuilder) -> bool:
+    """Tell whether a stream gave a whole answer: it gave its stop reason
+    and no tool input stopped half way.
+    """
+    return builder.complete and not builder.has_cut_off_input
 
 
 async def _count(scope: RequestScope, answering: Model, usage: dict | None) -> None:
@@ -247,8 +264,7 @@ async def _count(scope: RequestScope, answering: Model, usage: dict | None) -> N
 
 
 async def _store(scope: RequestScope, answering: Model, message: dict) -> None:
-    """Cache a screened answer, when it is complete, under the model that
-    answered: a later hit is recorded on it.
+    """Cache a screened answer under the model that answered: a later hit
+    is recorded on it. The caller checks that the model's answer is complete.
     """
-    if is_complete(message):
-        await scope.cached.store({**message, 'model': answering.model_id})
+    await scope.cached.store({**message, 'model': answering.model_id})

@@ -1,7 +1,7 @@
 """Chat model interface implemented by every chat provider."""
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any, ClassVar
 import uuid
 
@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
 from radicalbit_ai_gateway.llm.tracing import ChatTrace, MessagesTrace, ResponsesTrace
-from radicalbit_ai_gateway.llm.usage import MessagesUsage
+from radicalbit_ai_gateway.llm.usage import MessagesCost
 
 
 def _run_id() -> str:
@@ -176,7 +176,7 @@ class ChatModel(ABC):
         self,
         body: dict,
         headers: dict[str, str],
-        cost: Callable[[MessagesUsage], Any] | None = None,
+        cost: MessagesCost | None = None,
     ) -> dict:
         """Send a Messages API request body and return the message object."""
         trace = MessagesTrace.start(self, body, cost=cost)
@@ -194,7 +194,7 @@ class ChatModel(ABC):
         self,
         body: dict,
         headers: dict[str, str],
-        cost: Callable[[MessagesUsage], Any] | None = None,
+        cost: MessagesCost | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
         """Send a streaming Messages API request; yield ``(event, data)`` pairs."""
         trace = MessagesTrace.start(self, body, stream=True, cost=cost)

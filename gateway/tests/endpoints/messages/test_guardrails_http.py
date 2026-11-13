@@ -33,8 +33,8 @@ from tests.common.messages_api import (
     stream_frames,
 )
 
-from radicalbit_ai_gateway.endpoints.messages.events import MessageCollector
 from radicalbit_ai_gateway.limiting.limits import RequestLimits, Usage
+from radicalbit_ai_gateway.llm.messages_stream import MessageBuilder
 from radicalbit_ai_gateway.models.event_type import EventType
 
 EMAIL = 'mario.rossi@example.com'
@@ -436,10 +436,10 @@ def _thinking_stream(text: str | None) -> str:
 
 def _blocks_of(frames: list[tuple[str, dict]]) -> list[dict]:
     """Return the content blocks a stream carries, put together."""
-    collector = MessageCollector()
+    builder = MessageBuilder()
     for event, data in frames:
-        collector.add(event, json.dumps(data))
-    return collector.message()['content']
+        builder.add(event, json.dumps(data))
+    return builder.message()['content']
 
 
 def test_a_buffered_stream_keeps_thinking_and_tool_use_blocks(gateway):

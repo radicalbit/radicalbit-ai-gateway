@@ -56,10 +56,10 @@ from radicalbit_ai_gateway.llm.messages import (
     BaseMessage,
     tool_call_chunk,
 )
-from radicalbit_ai_gateway.llm.messages_stream import MESSAGE_DELTA, MESSAGE_START
+from radicalbit_ai_gateway.llm.messages_stream import MessageBuilder
 from radicalbit_ai_gateway.llm.providers._openai_common import _image_block
 from radicalbit_ai_gateway.llm.providers._schema import is_data_content_block
-from radicalbit_ai_gateway.llm.usage import MessagesUsage, messages_usage
+from radicalbit_ai_gateway.llm.usage import MessagesCost, messages_usage
 
 if TYPE_CHECKING:
     from radicalbit_ai_gateway.llm.chat_model import ChatModel
@@ -1140,72 +1140,6 @@ def _messages_input_attributes(body: dict) -> dict[str, str]:
     return attributes
 
 
-class _MessagesStreamReply:
-    """The message object of a Messages API stream, built from its events."""
-
-    def __init__(self) -> None:
-        self.message: dict | None = None
-        self.error: dict | None = None
-        self._blocks: dict[int, dict] = {}
-        # The input of each tool call, streamed as pieces of a JSON text.
-        self._inputs: dict[int, str] = {}
-
-    @property
-    def complete(self) -> bool:
-        """Whether the stream gave the reason the message stopped."""
-        return bool(self.message and self.message.get('stop_reason'))
-
-    def add(self, event: str, data: str) -> None:
-        if event == 'error':
-            self.error = json.loads(data).get('error') or {}
-        elif event == MESSAGE_START:
-            self.message = dict(json.loads(data).get('message') or {})
-        elif self.message is None:
-            return
-        elif event == 'content_block_start':
-            payload = json.loads(data)
-            self._blocks[payload.get('index', 0)] = dict(
-                payload.get('content_block') or {}
-            )
-        elif event == 'content_block_delta':
-            payload = json.loads(data)
-            self._add_delta(payload.get('index', 0), payload.get('delta') or {})
-        elif event == MESSAGE_DELTA:
-            payload = json.loads(data)
-            self.message.update(payload.get('delta') or {})
-            self.message['usage'] = {
-                **(self.message.get('usage') or {}),
-                **(payload.get('usage') or {}),
-            }
-
-    def _add_delta(self, index: int, delta: dict) -> None:
-        block = self._blocks.setdefault(index, {})
-        delta_type = delta.get('type')
-        if delta_type == 'text_delta':
-            block['text'] = (block.get('text') or '') + delta.get('text', '')
-        elif delta_type == 'thinking_delta':
-            block['thinking'] = (block.get('thinking') or '') + delta.get(
-                'thinking', ''
-            )
-        elif delta_type == 'input_json_delta':
-            self._inputs[index] = self._inputs.get(index, '') + delta.get(
-                'partial_json', ''
-            )
-
-    def built(self) -> dict | None:
-        """Return the message with its content blocks, in their order."""
-        if self.message is None:
-            return None
-        content = []
-        for index in sorted(self._blocks):
-            block = self._blocks[index]
-            if text := self._inputs.get(index):
-                with contextlib.suppress(json.JSONDecodeError):
-                    block = {**block, 'input': json.loads(text)}
-            content.append(block)
-        return {**self.message, 'content': content}
-
-
 class MessagesTrace:
     """The span of one native Messages API call, from the request to its reply.
 
@@ -1223,13 +1157,13 @@ class MessagesTrace:
         model: 'ChatModel',
         body: dict,
         stream: bool = False,
-        cost: Callable[[MessagesUsage], Any] | None = None,
+        cost: MessagesCost | None = None,
     ):
         self._model = model
         self._provider = model._gen_ai_provider
         self._cost = cost
         self._start_time = time.time()
-        self._reply = _MessagesStreamReply()
+        self._reply = MessageBuilder()
         self._first_event = True
         settings = model._serialized_kwargs()
         self._request_model = (
@@ -1269,7 +1203,7 @@ class MessagesTrace:
         model: 'ChatModel',
         body: dict,
         stream: bool = False,
-        cost: Callable[[MessagesUsage], Any] | None = None,
+        cost: MessagesCost | None = None,
     ) -> 'MessagesTrace':
         return cls(model, body, stream, cost)
 
@@ -1283,11 +1217,11 @@ class MessagesTrace:
 
     @_dont_throw
     def end_stream(self) -> None:
-        error = self._reply.error
-        if error is not None and not self._reply.complete:
+        if self._reply.error is not None and not self._reply.complete:
+            error = json.loads(self._reply.error).get('error') or {}
             _fail(self.span, error.get('type') or 'error', error.get('message') or '')
             return
-        self.end(self._reply.built())
+        self.end(self._reply.message())
 
     @_dont_throw
     def end(self, message: dict | None) -> None:
@@ -1354,7 +1288,7 @@ class MessagesTrace:
             # The stream already gave its stop reason: the call is done,
             # whatever stops the stream after it (a client that closes the
             # connection once it has the whole message).
-            self.end(self._reply.built())
+            self.end(self._reply.message())
             return
         _fail(self.span, self._model._error_type(error), str(error), error)
 

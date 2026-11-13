@@ -118,12 +118,6 @@ class TestMessagesOutput:
         with pytest.raises(GatewayInternalError):
             output.write_back(messages)
 
-    def test_usage_is_the_answer_usage(self):
-        assert MessagesOutput(_message([_text('Hi')])).usage() == USAGE
-
-    def test_usage_is_empty_when_the_answer_has_none(self):
-        assert MessagesOutput(_message([_text('Hi')], usage=None)).usage() == {}
-
 
 class TestBuiltAnswer:
     def test_built_answer_is_a_valid_message_with_one_text_block(self):

@@ -1,7 +1,7 @@
 """The output side of a Messages API request.
 
 ``MessagesOutput`` shows an answer's text to the output guardrails as one
-message, writes their changes back and reads the answer's ``usage``.
+message and writes their changes back.
 ``gateway_message`` builds the answer of a reply no model gave (a soft block);
 ``with_text`` puts the gateway's text in place of a model's reply.
 """
@@ -9,20 +9,12 @@ message, writes their changes back and reads the answer's ``usage``.
 from __future__ import annotations
 
 import copy
-from typing import Any
 
+from radicalbit_ai_gateway.endpoints.messages.request import is_text_block
 from radicalbit_ai_gateway.llm.messages import AIMessage, BaseMessage
 from radicalbit_ai_gateway.utils.exceptions import GatewayInternalError
 
 # ── Output text ──────────────────────────────────────────────────────────
-
-
-def _is_text_block(block: Any) -> bool:
-    return (
-        isinstance(block, dict)
-        and block.get('type') == 'text'
-        and isinstance(block.get('text'), str)
-    )
 
 
 class MessagesOutput:
@@ -35,7 +27,7 @@ class MessagesOutput:
         self.message = copy.deepcopy(message)
         content = self.message.get('content')
         self._blocks = (
-            [block for block in content if _is_text_block(block)]
+            [block for block in content if is_text_block(block)]
             if isinstance(content, list)
             else []
         )
@@ -72,7 +64,7 @@ class MessagesOutput:
         texts = (
             [content]
             if isinstance(content, str)
-            else [block['text'] for block in content if _is_text_block(block)]
+            else [block['text'] for block in content if is_text_block(block)]
         )
         if len(texts) != len(self._blocks):
             raise GatewayInternalError(
@@ -81,23 +73,15 @@ class MessagesOutput:
         for block, text in zip(self._blocks, texts, strict=True):
             block['text'] = text
 
-    def usage(self) -> dict:
-        """Return the answer's ``usage`` object, empty when it has none.
-
-        ``messages_token_counts`` turns it into the gateway's token counts.
-        """
-        usage = self.message.get('usage')
-        return usage if isinstance(usage, dict) else {}
-
 
 # ── Answers the gateway builds ───────────────────────────────────────────
 
 
-def gateway_message_id(request_id: str) -> str:
+def _gateway_message_id(request_id: str) -> str:
     return f'msg_{request_id.replace("-", "")}'
 
 
-def text_block(text: str) -> dict:
+def _text_block(text: str) -> dict:
     return {'type': 'text', 'text': text}
 
 
@@ -106,11 +90,11 @@ def gateway_message(request_id: str, route_name: str, text: str) -> dict:
     so its usage is zero.
     """
     return {
-        'id': gateway_message_id(request_id),
+        'id': _gateway_message_id(request_id),
         'type': 'message',
         'role': 'assistant',
         'model': route_name,
-        'content': [text_block(text)],
+        'content': [_text_block(text)],
         'stop_reason': 'end_turn',
         'stop_sequence': None,
         'usage': {
@@ -128,7 +112,7 @@ def with_text(message: dict, text: str) -> dict:
     """
     return {
         **message,
-        'content': [text_block(text)],
+        'content': [_text_block(text)],
         'stop_reason': 'end_turn',
         'stop_sequence': None,
     }

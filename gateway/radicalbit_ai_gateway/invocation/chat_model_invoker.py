@@ -33,6 +33,7 @@ from radicalbit_ai_gateway.llm.messages_thinking import (
 )
 from radicalbit_ai_gateway.llm.responses_stream import NativeResponsesEvent
 from radicalbit_ai_gateway.llm.usage import (
+    MessagesCost,
     MessagesUsage,
     StreamUsage,
     cache_tokens,
@@ -474,7 +475,7 @@ class ChatModelInvoker(ModelInvoker):
         )
         return retry_body
 
-    def _messages_cost(self, model: Model) -> Callable[[MessagesUsage], Decimal]:
+    def _messages_cost(self, model: Model) -> MessagesCost:
         """Return what prices a Messages usage on ``model``, for the call's span.
 
         Each count has the price its event has (see ``_messages_tokens``).
@@ -484,8 +485,8 @@ class ChatModelInvoker(ModelInvoker):
         def cost(usage: MessagesUsage) -> Decimal:
             return sum(
                 (
-                    price(count, where, model.model_id)
-                    for where, count in (
+                    price(count, token_kind, model.model_id)
+                    for token_kind, count in (
                         ('input', usage.uncached_input),
                         ('output', usage.output),
                         ('cached', usage.cache_read),

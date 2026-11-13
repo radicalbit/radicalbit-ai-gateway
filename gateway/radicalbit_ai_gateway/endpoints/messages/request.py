@@ -1,7 +1,7 @@
 """An Anthropic Messages API request as the gateway's policies see it.
 
 The request goes upstream as the client sent it. The gateway's policies
-(preprocessing plugins, routing, limits, and later guardrails and cache) read
+(preprocessing plugins, routing, limits, guardrails and cache) read
 chat messages, so ``MessagesRequest`` shows the request's texts as messages and
 writes the texts they change back into the body. The text of a tool result is
 its own tool message, so no policy reads a tool's output as the user's words.
@@ -67,7 +67,8 @@ class _MessageTexts:
         return self.message_type(content=content)
 
 
-def _is_text_block(block: Any) -> bool:
+def is_text_block(block: Any) -> bool:
+    """Tell whether ``block`` is a text block of a request or of an answer."""
     return (
         isinstance(block, dict)
         and block.get('type') == 'text'
@@ -80,7 +81,7 @@ def _content_texts(container: dict, key: str) -> list[_Text]:
     if isinstance(content, str):
         return [_Text(container, key)]
     if isinstance(content, list):
-        return [_Text(block, 'text') for block in content if _is_text_block(block)]
+        return [_Text(block, 'text') for block in content if is_text_block(block)]
     return []
 
 
@@ -88,7 +89,7 @@ def _texts_of(content: MessageContent) -> list[str]:
     """Return the texts of a chat message's content."""
     if isinstance(content, str):
         return [content]
-    return [block['text'] for block in content if _is_text_block(block)]
+    return [block['text'] for block in content if is_text_block(block)]
 
 
 def _one_message_texts(
@@ -106,7 +107,7 @@ def _one_message_texts(
     all_texts = []
     run: list[_Text] = []
     for block in content:
-        if _is_text_block(block):
+        if is_text_block(block):
             run.append(_Text(block, 'text'))
         elif isinstance(block, dict) and block.get('type') == 'tool_result':
             if run:
@@ -138,6 +139,23 @@ def _all_message_texts(body: dict) -> list[_MessageTexts]:
         if message_type:
             all_texts.extend(_one_message_texts(message, message_type))
     return all_texts
+
+
+def last_user_text(body: dict) -> str:
+    """Return the text of the request's last user message, empty when it has
+    none (a turn of tool results only, say).
+    """
+    messages = body.get('messages')
+    for message in reversed(messages if isinstance(messages, list) else []):
+        if not isinstance(message, dict) or message.get('role') != 'user':
+            continue
+        content = message.get('content')
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ''
+        return ' '.join(block['text'] for block in content if is_text_block(block))
+    return ''
 
 
 class MessagesRequest:
