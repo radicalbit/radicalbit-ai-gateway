@@ -1,9 +1,7 @@
-import Lucide from '@Components/lucide';
 import { RangePicker } from '@radicalbit/radicalbit-design-system';
 import dayjs from 'dayjs';
 import localeData from 'dayjs/plugin/localeData';
 import weekday from 'dayjs/plugin/weekday';
-import { CircleX } from 'lucide-react';
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -35,36 +33,14 @@ function CustomRange({ id }) {
 
   return (
     <RangePicker
-      allowClear={false}
+      allowClear
       format="YYYY-MMM-DD HH:mm"
       id={id}
       onChange={handleRangeChange}
       placeholder={['Start date (no limit)', 'End date (no limit)']}
       showTime
       style={{ width: 360 }}
-      suffixIcon={<SuffixIcon />}
       value={rangeValue}
-    />
-  );
-}
-
-function SuffixIcon() {
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  const handleOnClick = () => {
-    searchParams.delete('from');
-    searchParams.delete('to');
-    searchParams.delete('preset');
-    searchParams.delete('gte');
-    setSearchParams(searchParams, { replace: true });
-  };
-
-  return (
-    <Lucide
-      aria-label="Clear date range"
-      className="anticon anticon-close-circle"
-      icon={CircleX}
-      onClick={handleOnClick}
     />
   );
 }
