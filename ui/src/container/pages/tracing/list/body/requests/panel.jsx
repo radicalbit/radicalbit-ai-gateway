@@ -26,6 +26,8 @@ import RequestTags from './request-tags';
 
 const LABEL_PROPS = { type: 'secondary' };
 
+const MAIN_PROPS = { divider: true };
+
 const STATUS_PROPS = {
   handled_error: { type: 'error' },
   unhandled_error: { type: 'error' },
@@ -143,6 +145,7 @@ function StepByStep({ request }) {
         />
       )}
       main={<Timeline items={items} mode="start" titleSpan={3} />}
+      mainProps={MAIN_PROPS}
       width="100%"
     />
   );
