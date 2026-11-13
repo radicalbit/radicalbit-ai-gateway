@@ -689,7 +689,7 @@ wheels = [
 ]
 
 [[package]]
-name = "radicalbit-gateway"
+name = "radicalbit-ai-gateway-sdk"
 source = { editable = "." }
 dependencies = [
     { name = "httpx2" },

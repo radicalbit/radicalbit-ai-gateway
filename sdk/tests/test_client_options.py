@@ -219,7 +219,7 @@ def test_with_options_sets_the_timeout_of_its_calls():
 def test_the_user_agent_names_the_sdk_and_its_version():
     seen: list = []
     _gateway(_ok(), seen=seen).credentials.list()
-    assert seen[0].headers['User-Agent'].startswith('radicalbit-gateway-python/')
+    assert seen[0].headers['User-Agent'].startswith('radicalbit-ai-gateway-sdk-python/')
 
 
 def test_the_url_comes_from_the_environment(monkeypatch):

@@ -1,4 +1,4 @@
-# radicalbit-gateway
+# radicalbit-ai-gateway-sdk
 
 Python SDK for the management API (`/public/api/v1`) of the Radicalbit AI Gateway:
 projects, credentials, groups and configs. Each method calls exactly one API
@@ -107,7 +107,7 @@ does not match the model (a wrong type, a missing field) still raises.
 - `auth` is any `httpx2.Auth` (e.g. one that sets a cookie or a header),
   `transport` any httpx2 transport (`httpx2.MockTransport` in tests), `headers`
   are sent with every request. Every request also sends
-  `User-Agent: radicalbit-gateway-python/<version>`.
+  `User-Agent: radicalbit-ai-gateway-sdk-python/<version>`.
 
 Use it as a context manager, or call `close()`. For some calls only,
 `with_options` gives a copy that shares the connections:

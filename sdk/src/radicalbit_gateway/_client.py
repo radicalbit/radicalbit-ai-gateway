@@ -66,12 +66,12 @@ _async_sleep = asyncio.sleep
 
 def _sdk_version() -> str:
     try:
-        return version('radicalbit-gateway')
+        return version('radicalbit-ai-gateway-sdk')
     except PackageNotFoundError:
         return 'unknown'
 
 
-USER_AGENT = f'radicalbit-gateway-python/{_sdk_version()}'
+USER_AGENT = f'radicalbit-ai-gateway-sdk-python/{_sdk_version()}'
 
 
 @lru_cache

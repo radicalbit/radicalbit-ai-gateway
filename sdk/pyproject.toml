@@ -1,5 +1,5 @@
 [project]
-name = "radicalbit-gateway"
+name = "radicalbit-ai-gateway-sdk"
 dynamic = ["version"]
 description = "Python SDK for the management API of the Radicalbit AI Gateway."
 readme = "README.md"
