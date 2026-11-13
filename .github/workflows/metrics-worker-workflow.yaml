@@ -22,7 +22,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.13"
-  UV_VERSION: "0.7.13"
+  UV_VERSION: "0.13.8"
   IMAGES_TAG: main
   # Dependency-Track project names (registry-independent, stable across builds)
   WORKER_PYTHON_PROJECT: metrics-worker-python
