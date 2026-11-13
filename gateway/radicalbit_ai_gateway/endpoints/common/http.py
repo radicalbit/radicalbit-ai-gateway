@@ -9,6 +9,7 @@ import logging
 import time
 
 from fastapi import Request
+from opentelemetry import trace
 from pydantic import BaseModel
 from traceloop.sdk.decorators import workflow
 
@@ -31,6 +32,19 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
 )
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
+
+# The span attribute naming the endpoint a request came in through.
+ENTRY_ENDPOINT = 'gateway.entry_endpoint'
+
+
+def set_entry_endpoint(path: str) -> None:
+    """Record on the current span the endpoint the request came in through.
+
+    Call it first in an endpoint, while its workflow span, the root of the
+    trace, is the current one. Two endpoints can share a request type
+    (``/v1/messages`` requests are traced as chat): this tells them apart.
+    """
+    trace.get_current_span().set_attribute(ENTRY_ENDPOINT, path)
 
 
 def record_metrics(
