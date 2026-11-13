@@ -2250,6 +2250,18 @@ async def test_messages_string_system_and_no_usage(spans, metrics):
     assert _token_points(metrics) == {}
 
 
+async def test_messages_content_that_is_not_a_block_is_still_recorded(spans):
+    message = {'id': 'msg_3', 'role': 'assistant', 'content': [], 'stop_reason': None}
+    body = {'messages': [{'role': 'user', 'content': ['Hello']}]}
+
+    await _MessagesModel(message, model='m').ainvoke_native_messages(body, {})
+
+    attributes = _only_span(spans).attributes
+    assert json.loads(attributes['gen_ai.input.messages']) == [
+        {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}
+    ]
+
+
 async def test_messages_error_event_fails_the_span(spans):
     events = [
         *_message_events(MESSAGE)[:3],

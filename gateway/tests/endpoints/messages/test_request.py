@@ -1,7 +1,10 @@
 import pytest
 
 from radicalbit_ai_gateway.endpoints.chat_like.limits import chat_demand
-from radicalbit_ai_gateway.endpoints.messages.request import MessagesRequest
+from radicalbit_ai_gateway.endpoints.messages.request import (
+    MessagesRequest,
+    last_user_text,
+)
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     HumanMessage,
@@ -335,3 +338,44 @@ def test_the_input_token_estimate_counts_the_tool_result_text():
 
     assert estimate.text == 'Be brief. Weather? 18 degrees in Milan'
     assert count_tokens(estimate.text, estimate.model) == 10
+
+
+# ── The last user text (semantic cache) ─────────────────────────────────────
+
+
+def test_the_last_user_text_skips_the_turns_after_it():
+    body = _body(
+        messages=[
+            {'role': 'user', 'content': 'Weather in Milan?'},
+            {'role': 'assistant', 'content': 'Sunny.'},
+            'not a message',
+        ]
+    )
+
+    assert last_user_text(body) == 'Weather in Milan?'
+
+
+def test_the_last_user_text_joins_the_text_blocks():
+    content = [
+        {'type': 'text', 'text': 'Weather'},
+        {'type': 'image', 'source': {'type': 'url', 'url': 'https://x/y.png'}},
+        {'type': 'text', 'text': 'in Milan?'},
+    ]
+
+    assert last_user_text(_body(messages=[{'role': 'user', 'content': content}])) == (
+        'Weather in Milan?'
+    )
+
+
+@pytest.mark.parametrize(
+    'messages',
+    [
+        [{'role': 'user', 'content': None}],
+        [{'role': 'assistant', 'content': 'Sunny.'}],
+        [],
+        None,
+    ],
+    ids=['content is no text', 'no user turn', 'no turn', 'no messages'],
+)
+def test_the_last_user_text_is_empty_when_there_is_none(messages):
+    assert last_user_text(_body(messages=messages)) == ''
