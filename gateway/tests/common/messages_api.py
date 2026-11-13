@@ -132,13 +132,14 @@ def serve(*models: dict, **route: object) -> GatewayRoute:
     return app.state.routes[ROUTE_KEY]
 
 
-def serve_with_fallback(fallback: dict = HAIKU) -> None:
+def serve_with_fallback(fallback: dict = HAIKU, **route: object) -> GatewayRoute:
     """Serve the route on Claude, with ``fallback`` as its fallback."""
-    serve(
+    return serve(
         CLAUDE,
         fallback,
         route_models=['claude', fallback['model_id']],
         fallbacks=[fallback['model_id']],
+        **route,
     )
 
 
@@ -206,6 +207,38 @@ def mock_every_upstream() -> list:
 
 
 EMBEDDINGS_URL = 'https://api.openai.com/v1/embeddings'
+OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
+TYPESAFE_URL = 'https://api.typesafe.ai/v1/systemone'
+# A decision model, for decision judges and decision routing.
+JEV = {
+    'model_id': 'jev',
+    'model': 'typesafe/jev-latest',
+    'credentials': {'api_key': 'ts-key'},
+}
+
+
+def mock_openai(content: str, prompt_tokens: int = 9, completion_tokens: int = 4):
+    """Mock one OpenAI chat completion saying ``content``."""
+    mock = pook.post(OPENAI_URL).times(1)
+    mock.reply(200).json(
+        canned.openai_completion(
+            content, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+        ).json_body
+    )
+    return mock
+
+
+def mock_typesafe(answers: dict, input_tokens: int = 280):
+    """Mock one Typesafe answer: ``answers`` by question id."""
+    mock = pook.post(TYPESAFE_URL).times(1)
+    mock.reply(200).json(
+        {
+            'model': 'jev-1.13.0',
+            'answers': answers,
+            'usage': {'input_tokens': input_tokens, 'output_tokens': 0},
+        }
+    )
+    return mock
 
 
 def mock_embedding(*vector: float):
@@ -228,6 +261,52 @@ def sent_body(mock, index: int = 0) -> dict:
 
 
 # ── What the gateway records ────────────────────────────────────────────────
+
+
+def spend_events(gateway) -> list[tuple]:
+    """Return the token events with their cost: who spent (the request's
+    model, a judge or a router), the type, the model, the cache type, the
+    tokens and the cost in dollars.
+    """
+    return [
+        (
+            'judge' if e['IS_JUDGE'] else 'routing' if e['IS_ROUTING'] else 'model',
+            e['EVENT_TYPE'].name,
+            e.get('MODEL_ID') or None,
+            e.get('CACHE_TYPE') or None,
+            e['VALUE'],
+            round(e.get('COST') or 0, 9),
+        )
+        for e in gateway.event_rows
+        if e['EVENT_TYPE']
+        in (EventType.INPUT_TOKEN_PROCESSED, EventType.OUTPUT_TOKEN_PROCESSED)
+    ]
+
+
+def limit_events(gateway) -> list[tuple]:
+    """Return the limit and threshold events: type, scope, category and,
+    for a threshold, its percentage.
+    """
+    return [
+        (
+            e['EVENT_TYPE'].name,
+            e['ATTRIBUTES']['limit_scope'],
+            e['ATTRIBUTES']['category'],
+            e['ATTRIBUTES'].get('threshold_percentage'),
+        )
+        for e in gateway.event_rows
+        if e['EVENT_TYPE'].name.endswith('_LIMIT')
+        or e['EVENT_TYPE'] is EventType.LIMIT_THRESHOLD
+    ]
+
+
+def routing_events(gateway) -> list[tuple]:
+    """Return the routing events: the routing's name and the model selected."""
+    return [
+        (e['ROUTING_NAME'], e['ROUTING_SELECTED_MODEL_ID'])
+        for e in gateway.event_rows
+        if e['EVENT_TYPE'] is EventType.ROUTING
+    ]
 
 
 def model_events(gateway) -> list[tuple]:

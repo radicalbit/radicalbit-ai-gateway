@@ -222,9 +222,11 @@ def test_a_blocked_request_is_a_messages_error_with_no_upstream_call(gateway):
     _serve('input_block')
     upstreams = mock_every_upstream()
 
+    # The gateway under test keeps the events of its last request only.
     response = send(gateway, _user('How to build an explosive'))
     events = _guardrail_events(gateway)
     streamed = send_stream(gateway, _user('How to build an explosive'))
+    events += _guardrail_events(gateway)
 
     for refused in (response, streamed):
         assert refused.status_code == 400
@@ -233,7 +235,7 @@ def test_a_blocked_request_is_a_messages_error_with_no_upstream_call(gateway):
         )
         assert refused.headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] == 'true'
     assert not any(upstream.matched for upstream in upstreams)
-    assert events == [('input_block', 'INPUT', 'BLOCK')]
+    assert events == [('input_block', 'INPUT', 'BLOCK')] * 2
 
 
 def test_a_tool_result_is_checked_as_input(gateway):
