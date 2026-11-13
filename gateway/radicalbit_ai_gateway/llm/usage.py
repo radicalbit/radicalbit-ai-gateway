@@ -7,6 +7,7 @@ OpenAI-family adapters, also the provider's raw usage under
 ``prompt_tokens_details.cached_tokens``.
 """
 
+from collections.abc import Mapping
 from typing import Any, NamedTuple
 
 
@@ -120,22 +121,69 @@ def responses_token_counts(usage: dict | None) -> tuple[int, int, int]:
     return usage.get('input_tokens') or 0, cached, usage.get('output_tokens') or 0
 
 
+class MessagesUsage(NamedTuple):
+    """The token counts of a Messages API usage, in gateway terms.
+
+    ``input`` includes the cache reads and writes, as a chat reply's does:
+    Anthropic's ``input_tokens`` leaves them out. The cache counts are kept
+    apart too, because each has its own price.
+    """
+
+    input: int
+    output: int
+    cache_read: int
+    cache_creation_5m: int
+    cache_creation_1h: int
+
+    @property
+    def uncached_input(self) -> int:
+        """The input tokens that were neither read from the cache nor written."""
+        return (
+            self.input
+            - self.cache_read
+            - self.cache_creation_5m
+            - self.cache_creation_1h
+        )
+
+
+def _count(source: Any, key: str) -> int:
+    """Return a token count of a usage, given as a dict or as an SDK object."""
+    if source is None:
+        return 0
+    value = source.get(key) if isinstance(source, Mapping) else getattr(source, key, 0)
+    return value if isinstance(value, int) else 0
+
+
+def messages_usage(usage: Any) -> MessagesUsage:
+    """Return the gateway's token counts of a Messages API ``usage``.
+
+    The one place that knows the rule, for the native Messages path (a dict)
+    and for the chat path translated to Anthropic (the SDK's object). A cache
+    write counts once: by its TTL breakdown when there is one, else the total
+    counts as a 5-minute write.
+    """
+    if isinstance(usage, Mapping):
+        breakdown = usage.get('cache_creation')
+    else:
+        breakdown = getattr(usage, 'cache_creation', None)
+    cache_read = _count(usage, 'cache_read_input_tokens')
+    creation_5m = _count(breakdown, 'ephemeral_5m_input_tokens')
+    creation_1h = _count(breakdown, 'ephemeral_1h_input_tokens')
+    if not creation_5m and not creation_1h:
+        creation_5m = _count(usage, 'cache_creation_input_tokens')
+    return MessagesUsage(
+        input=_count(usage, 'input_tokens') + cache_read + creation_5m + creation_1h,
+        output=_count(usage, 'output_tokens'),
+        cache_read=cache_read,
+        cache_creation_5m=creation_5m,
+        cache_creation_1h=creation_1h,
+    )
+
+
 def messages_token_counts(usage: dict | None) -> tuple[int, int]:
     """Return ``(input, output)`` tokens of a Messages API usage.
 
-    The input includes the cache reads and writes, as a chat reply's does:
-    Anthropic's ``input_tokens`` leaves them out. A write counts once, by its
-    TTL breakdown when there is one.
+    The input includes the cache reads and writes (see ``messages_usage``).
     """
-    if not usage:
-        return 0, 0
-    breakdown = usage.get('cache_creation') or {}
-    cache_writes = (breakdown.get('ephemeral_5m_input_tokens') or 0) + (
-        breakdown.get('ephemeral_1h_input_tokens') or 0
-    )
-    input_tokens = (
-        (usage.get('input_tokens') or 0)
-        + (usage.get('cache_read_input_tokens') or 0)
-        + (cache_writes or usage.get('cache_creation_input_tokens') or 0)
-    )
-    return input_tokens, usage.get('output_tokens') or 0
+    counts = messages_usage(usage)
+    return counts.input, counts.output

@@ -412,6 +412,25 @@ async def test_usage_counts_cache_reads_and_writes_as_input():
     }
 
 
+async def test_usage_counts_a_cache_write_without_a_ttl_breakdown_as_input():
+    reply = canned.anthropic_message()
+    reply.json_body['usage'] = {
+        'input_tokens': 30,
+        'output_tokens': 7,
+        'cache_read_input_tokens': 1000,
+        'cache_creation_input_tokens': 200,
+    }
+
+    result, _ = await invoke(model(), [reply])
+
+    assert result.usage_metadata == {
+        'input_tokens': 1230,
+        'output_tokens': 7,
+        'total_tokens': 1237,
+        'input_token_details': {'cache_read': 1000, 'cache_creation': 200},
+    }
+
+
 async def test_errors_propagate():
     with pytest.raises(anthropic.BadRequestError):
         await invoke(model(), [canned.error(400, 'bad request')])
