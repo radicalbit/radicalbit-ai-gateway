@@ -190,9 +190,9 @@ too. When in doubt, run `generate.sh`: no diff means nothing to commit.
    ```python
    @router.patch(
        '/projects/{project_uuid}/configs/{config_uuid}/serve',
-       response_model=ProjectOut,            # the method's return type
-       tags=['configs'],                     # gw.configs
-       operation_id='configs_serve',         # <tag>_<action>: gw.configs.serve()
+       response_model=ProjectOut,  # the method's return type
+       tags=['configs'],  # gw.configs
+       operation_id='configs_serve',  # <tag>_<action>: gw.configs.serve()
        responses=error_responses(400, 404, 409),  # the errors it can answer
    )
    async def serve_config(project_uuid: UUID, config_uuid: UUID):
