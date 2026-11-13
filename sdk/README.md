@@ -262,7 +262,3 @@ Nothing to do by hand. Publishing a GitHub release with a `vX.Y.Z` tag runs
 `publish-sdk-pypi` in `.github/workflows/release.yaml`: it tests, builds and
 uploads `radicalbit-ai-gateway-sdk` X.Y.Z to PyPI, the same version as the
 gateway (both read the tag). Merging to `main` publishes nothing.
-
-The Enterprise SDK (`radicalbit-ai-gateway-enterprise-sdk`, in the Enterprise
-repo) builds on this package: a change here reaches it when its dependency is
-re-pinned (see its README).
