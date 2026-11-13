@@ -10,6 +10,7 @@ import json
 from openai.types.completion_usage import CompletionUsage
 
 from radicalbit_ai_gateway.caching.route_cache import Hit
+from radicalbit_ai_gateway.endpoints.messages.request import last_user_text
 from radicalbit_ai_gateway.llm.usage import messages_token_counts
 
 # The fields that do not change the answer: how it is sent, and who asked.
@@ -22,29 +23,6 @@ _COMPLETE_STOP_REASONS = ('end_turn', 'stop_sequence', 'tool_use')
 def is_complete(message: dict) -> bool:
     """Tell whether ``message`` is an answer the cache keeps."""
     return message.get('stop_reason') in _COMPLETE_STOP_REASONS
-
-
-def last_user_text(body: dict) -> str:
-    """Return the text of the request's last user message, empty when it has
-    none (a turn of tool results only, say).
-    """
-    messages = body.get('messages')
-    for message in reversed(messages if isinstance(messages, list) else []):
-        if not isinstance(message, dict) or message.get('role') != 'user':
-            continue
-        content = message.get('content')
-        if isinstance(content, str):
-            return content
-        if not isinstance(content, list):
-            return ''
-        return ' '.join(
-            block['text']
-            for block in content
-            if isinstance(block, dict)
-            and block.get('type') == 'text'
-            and isinstance(block.get('text'), str)
-        )
-    return ''
 
 
 @dataclass(frozen=True)

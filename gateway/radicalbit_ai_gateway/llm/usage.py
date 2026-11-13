@@ -7,7 +7,8 @@ OpenAI-family adapters, also the provider's raw usage under
 ``prompt_tokens_details.cached_tokens``.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from decimal import Decimal
 from typing import Any, NamedTuple
 
 
@@ -146,7 +147,11 @@ class MessagesUsage(NamedTuple):
         )
 
 
-def _count(source: Any, key: str) -> int:
+# What prices the token counts of a Messages API call, in dollars.
+MessagesCost = Callable[[MessagesUsage], Decimal]
+
+
+def _token_count(source: Any, key: str) -> int:
     """Return a token count of a usage, given as a dict or as an SDK object."""
     if source is None:
         return 0
@@ -166,14 +171,17 @@ def messages_usage(usage: Any) -> MessagesUsage:
         breakdown = usage.get('cache_creation')
     else:
         breakdown = getattr(usage, 'cache_creation', None)
-    cache_read = _count(usage, 'cache_read_input_tokens')
-    creation_5m = _count(breakdown, 'ephemeral_5m_input_tokens')
-    creation_1h = _count(breakdown, 'ephemeral_1h_input_tokens')
+    cache_read = _token_count(usage, 'cache_read_input_tokens')
+    creation_5m = _token_count(breakdown, 'ephemeral_5m_input_tokens')
+    creation_1h = _token_count(breakdown, 'ephemeral_1h_input_tokens')
     if not creation_5m and not creation_1h:
-        creation_5m = _count(usage, 'cache_creation_input_tokens')
+        creation_5m = _token_count(usage, 'cache_creation_input_tokens')
     return MessagesUsage(
-        input=_count(usage, 'input_tokens') + cache_read + creation_5m + creation_1h,
-        output=_count(usage, 'output_tokens'),
+        input=_token_count(usage, 'input_tokens')
+        + cache_read
+        + creation_5m
+        + creation_1h,
+        output=_token_count(usage, 'output_tokens'),
         cache_read=cache_read,
         cache_creation_5m=creation_5m,
         cache_creation_1h=creation_1h,

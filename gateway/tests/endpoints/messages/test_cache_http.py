@@ -7,6 +7,7 @@ and what the gateway records.
 """
 
 import asyncio
+from contextlib import contextmanager
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -22,6 +23,7 @@ from tests.common.messages_api import (
     CLAUDE,
     EMBEDDING,
     ROUTE_NAME,
+    cut_off_tool_stream,
     messages_routes,
     mock_anthropic,
     mock_anthropic_stream,
@@ -61,9 +63,39 @@ def gateway():
         yield gateway
 
 
-def _serve_cached() -> GatewayRoute:
-    """Serve the ``assistant`` route on Claude with an exact cache."""
-    return serve(CLAUDE, caching={'type': 'exact'}, config=REDIS)
+OUTPUT_GUARDRAILS = [
+    {
+        'name': 'output_soft_block',
+        'type': 'contains',
+        'behavior': 'soft_block',
+        'where': 'output',
+        'parameters': {'values': ['secret']},
+        'response_message': 'The answer was withheld.',
+    },
+    {
+        'name': 'output_warn',
+        'type': 'contains',
+        'behavior': 'warn',
+        'where': 'output',
+        'parameters': {'values': ['secret']},
+    },
+]
+
+
+def _serve_cached(*guardrails: str) -> GatewayRoute:
+    """Serve the ``assistant`` route on Claude with an exact cache and the
+    named output guardrails.
+    """
+    return serve(
+        CLAUDE,
+        caching={'type': 'exact'},
+        guardrails=list(guardrails),
+        config={**REDIS, 'guardrails': OUTPUT_GUARDRAILS},
+    )
+
+
+def _answer(text: str) -> dict:
+    return canned.anthropic_message(text).json_body
 
 
 def _ask(text: str, **fields: object) -> dict:
@@ -75,9 +107,11 @@ def _cut_off(answer: dict) -> dict:
     return {**answer, 'stop_reason': 'max_tokens'}
 
 
-def _cut_off_stream() -> str:
-    """Return the canned stream, ended by ``max_tokens``."""
-    events = canned.anthropic_stream().sse_events
+def _cut_off_stream(*parts: str) -> str:
+    """Return the canned stream, or one of ``parts``, ended by ``max_tokens``."""
+    events = (
+        canned.anthropic_stream(list(parts)) if parts else canned.anthropic_stream()
+    ).sse_events
     for event in events:
         if event['type'] == 'message_delta':
             event['delta']['stop_reason'] = 'max_tokens'
@@ -264,6 +298,126 @@ def test_an_answer_cut_off_by_max_tokens_is_not_cached(gateway, stream):
     assert cut_off.isdone() and complete.isdone()
     assert CACHE_HIT not in second.headers
     assert second.json() == SERVED
+
+
+@contextmanager
+def _limit_counts():
+    """Collect what the request counts on the limits."""
+    counted = []
+    count = RequestLimits.count
+
+    async def spy(limits, usage):
+        counted.append(usage)
+        await count(limits, usage)
+
+    with patch.object(RequestLimits, 'count', spy):
+        yield counted
+
+
+# The canned usage at Sonnet 4.5's prices: $3 and $15 per million tokens.
+COUNTED = Usage(input_tokens=21, output_tokens=7, costs=(63000, 105000))
+# The half of the tool's input that came before the cut.
+PARTIAL_INPUT = '{"city": "Paris'
+
+
+def test_a_relayed_stream_cut_inside_a_tool_use_is_relayed_and_counted(gateway):
+    _serve_cached()
+    mock_anthropic_stream(cut_off_tool_stream())
+    complete = mock_anthropic()
+
+    with _limit_counts() as counted:
+        first = send_stream(gateway)
+    second = send(gateway)
+
+    assert first.status_code == 200
+    frames = stream_frames(first.text)
+    assert frames[-1][0] == 'message_stop'
+    assert frames[-2][1]['delta']['stop_reason'] == 'max_tokens'
+    assert [
+        data['delta']['partial_json']
+        for event, data in frames
+        if event == 'content_block_delta'
+        and data['delta']['type'] == 'input_json_delta'
+    ] == [PARTIAL_INPUT]
+    assert counted == [COUNTED]
+    assert complete.isdone()
+    assert CACHE_HIT not in second.headers
+
+
+def test_a_buffered_stream_cut_inside_a_tool_use_is_a_valid_answer(gateway):
+    """The tool use keeps no input: half a JSON text is not an input."""
+    _serve_cached('output_warn')
+    mock_anthropic_stream(cut_off_tool_stream())
+    complete = mock_anthropic()
+
+    with _limit_counts() as counted:
+        first = send_stream(gateway)
+    second = send(gateway)
+
+    assert first.status_code == 200
+    assert _answer_of(first) == {
+        'model': ROUTE_NAME,
+        'content': [
+            {'type': 'text', 'text': 'Let me check.'},
+            {**TOOL_USE, 'input': {}},
+        ],
+        'stop_reason': 'max_tokens',
+    }
+    assert counted == [COUNTED]
+    assert complete.isdone()
+    assert CACHE_HIT not in second.headers
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['json', 'stream'])
+def test_a_cut_off_answer_is_not_cached_when_a_soft_block_replaces_it(gateway, stream):
+    _serve_cached('output_soft_block')
+    if stream:
+        cut_off = mock_anthropic_stream(_cut_off_stream('The secret is'))
+    else:
+        cut_off = mock_anthropic(_cut_off(_answer('The secret is')))
+    complete = mock_anthropic()
+
+    first = send(gateway, {**BODY, 'stream': stream})
+    second = send(gateway)
+
+    assert first.status_code == 200
+    assert 'The answer was withheld.' in first.text
+    assert cut_off.isdone() and complete.isdone()
+    assert CACHE_HIT not in second.headers
+    assert second.json() == SERVED
+
+
+# ── Cache and output guardrails ─────────────────────────────────────────────
+
+
+def test_a_hit_is_screened_by_the_output_guardrails(gateway):
+    _serve_cached('output_warn')
+    upstream = mock_anthropic(_answer('The secret is 42'))
+
+    first = send(gateway)
+    hit = send(gateway)
+
+    assert len(upstream.matches) == 1
+    assert hit.headers[CACHE_HIT] == 'true'
+    assert hit.headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] == 'true'
+    assert first.json() == hit.json()
+    assert hit.json()['content'] == [{'type': 'text', 'text': 'The secret is 42'}]
+
+
+def test_a_stream_the_output_guardrails_read_is_cached(gateway):
+    _serve_cached('output_warn')
+    upstream = mock_anthropic_stream()
+
+    first = send_stream(gateway)
+    as_json = send(gateway)
+    as_stream = send_stream(gateway)
+
+    assert first.status_code == as_json.status_code == as_stream.status_code == 200
+    assert len(upstream.matches) == 1
+    assert CACHE_HIT not in first.headers
+    assert as_json.headers[CACHE_HIT] == as_stream.headers[CACHE_HIT] == 'true'
+    assert as_json.json()['content'] == ANSWER['content']
+    assert _answer_of(as_stream) == _answer_of(first)
 
 
 def test_an_error_is_not_cached(gateway):
