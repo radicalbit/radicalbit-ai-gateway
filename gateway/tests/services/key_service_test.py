@@ -26,6 +26,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     GroupOut,
     KeyFullOut,
     KeyGroupIn,
+    KeyUpdateIn,
 )
 from radicalbit_ai_gateway.models.credential_limiting import (
     CredentialLimitCategory,
@@ -128,6 +129,19 @@ class KeyServiceTest(unittest.TestCase):
             key.uuid,
         )
         self.key_dao.delete_by_uuid.assert_not_called()
+
+    def test_rename_keycloak_key_raises(self):
+        key = db_mock.get_sample_key()
+        key.owner = 'keycloak'
+        self.key_dao.get_by_uuid = MagicMock(return_value=key)
+        self.key_dao.update_key_name = MagicMock()
+        pytest.raises(
+            KeyExternallyManagedError,
+            self.key_service.update_key_name,
+            key.uuid,
+            KeyUpdateIn(name='renamed'),
+        )
+        self.key_dao.update_key_name.assert_not_called()
 
     def test_delete_key_ko(self):
         key = db_mock.get_sample_key()

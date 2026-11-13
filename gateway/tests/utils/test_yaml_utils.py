@@ -3,6 +3,7 @@ import time
 import pytest
 
 from radicalbit_ai_gateway.prompt_manager import PromptManager
+from radicalbit_ai_gateway.utils import yaml_utils
 from radicalbit_ai_gateway.utils.app_config import PromptManagerConfig, get_app_config
 from radicalbit_ai_gateway.utils.exceptions import ProjectConfigValidationError
 from radicalbit_ai_gateway.utils.yaml_utils import (
@@ -252,6 +253,23 @@ def test_validate_gateway_config_rejects_with_message(
     message = str(exc_info.value)
     for fragment in fragments:
         assert fragment in message
+
+
+@pytest.mark.parametrize('error', [KeyError('routes'), TypeError('not a mapping')])
+def test_validate_gateway_config_reports_a_non_validation_error(monkeypatch, error):
+    def fail(parsed):
+        raise error
+
+    monkeypatch.setattr(yaml_utils.GatewayConfig, 'model_validate', fail)
+    with pytest.raises(ProjectConfigValidationError) as exc_info:
+        validate_gateway_config('routes: {}\n', check_secrets=False)
+    assert exc_info.value.details == [
+        {
+            'loc': [],
+            'msg': f'Invalid gateway configuration: {error}',
+            'type': 'invalid_config',
+        }
+    ]
 
 
 def test_validate_gateway_config_rejects_missing_model_prompt_file(tmp_path):

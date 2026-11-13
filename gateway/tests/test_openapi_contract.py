@@ -3,8 +3,13 @@ and only change on purpose (the SDK is regenerated from them).
 """
 
 from collections import Counter
+from importlib.metadata import PackageNotFoundError
 import warnings
 
+from fastapi import FastAPI
+import pytest
+
+from radicalbit_ai_gateway import server
 from radicalbit_ai_gateway.sdk_spec import build_sdk_spec
 from radicalbit_ai_gateway.server import app
 
@@ -33,3 +38,18 @@ def test_sdk_operations_document_their_errors():
         for operation in path.values():
             assert operation.get('description'), operation['operationId']
             assert any(s.startswith('4') for s in operation['responses'])
+
+
+def test_sdk_spec_refuses_an_app_without_the_sdk_operations():
+    with pytest.raises(ValueError, match='SDK operations not found'):
+        build_sdk_spec(FastAPI())
+
+
+def test_the_spec_version_falls_back_when_the_package_is_not_installed(
+    monkeypatch,
+):
+    def not_installed(name):
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr(server, 'package_version', not_installed)
+    assert server._gateway_version() == '0.1.0'
