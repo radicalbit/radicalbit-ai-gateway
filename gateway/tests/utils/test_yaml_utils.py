@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from radicalbit_ai_gateway.prompt_manager import PromptManager
@@ -37,6 +39,25 @@ from radicalbit_ai_gateway.utils.yaml_utils import (
 )
 def test_check_no_literal_secrets(yaml_content, expected):
     assert check_no_literal_secrets(yaml_content) == expected
+
+
+def test_check_no_literal_secrets_counts_lines_after_blank_lines():
+    assert check_no_literal_secrets('a: 1\n\n\napi_key: sk-1\n') == [
+        'line 4: api_key: sk-1'
+    ]
+
+
+def test_check_no_literal_secrets_value_on_the_next_line_is_checked():
+    assert check_no_literal_secrets('api_key:\n  sk-1\n') == [
+        'line 1: api_key:\n  sk-1'
+    ]
+
+
+def test_check_no_literal_secrets_is_linear_on_a_crafted_config():
+    # The previous pattern took about 25 s on this: quadratic in the newlines
+    started = time.perf_counter()
+    assert check_no_literal_secrets('api_key:' + '\n' * 200_000) == []
+    assert time.perf_counter() - started < 1
 
 
 def test_parse_yaml_with_secret_placeholders():

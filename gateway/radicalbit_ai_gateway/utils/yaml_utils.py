@@ -77,8 +77,12 @@ def _format_validation_error(err: ErrorDetails, yaml_str: str) -> str:
     return f"'{loc}'{location}: {msg}"
 
 
+# [ \t]* rather than \s* before the key, and \S to start the value: with \s*
+# on both sides of what follows, a run of newlines after "api_key:" made the
+# match time grow with the square of its length (a crafted config could hold
+# a worker). Same violations: a value that is only whitespace never was one.
 SENSITIVE_FIELD_PATTERN = re.compile(
-    r'^\s*(?:api_key|azure_ad_token):\s*(.+)$',
+    r'^[ \t]*(?:api_key|azure_ad_token):\s*(\S.*)$',
     re.MULTILINE,
 )
 SECRET_REF_PATTERN = re.compile(r'^!secret\s+\S+$')
