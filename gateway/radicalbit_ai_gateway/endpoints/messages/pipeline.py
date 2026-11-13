@@ -3,8 +3,7 @@ route's policies.
 
 The policies read the request's texts as chat messages (see
 ``MessagesRequest``); what they change is written back into the body that
-goes upstream. The input and output guardrails and the cache do not apply to
-the Messages API yet (AG-1132).
+goes upstream. The order is the one of the Responses API.
 """
 
 from collections.abc import AsyncIterator
@@ -13,15 +12,27 @@ from dataclasses import dataclass
 from radicalbit_ai_gateway.endpoints.chat_like.limits import check_chat_limits
 from radicalbit_ai_gateway.endpoints.chat_like.model_selection import route_chat
 from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config_prompt
-from radicalbit_ai_gateway.endpoints.messages.events import relay_frame
+from radicalbit_ai_gateway.endpoints.common.streams import stream_of
+from radicalbit_ai_gateway.endpoints.messages.cache import MessagesEntry, is_complete
+from radicalbit_ai_gateway.endpoints.messages.events import (
+    message_events,
+    relay_frame,
+    sse,
+)
+from radicalbit_ai_gateway.endpoints.messages.guardrails import screen_output
+from radicalbit_ai_gateway.endpoints.messages.output import gateway_message
 from radicalbit_ai_gateway.endpoints.messages.request import MessagesRequest
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
+from radicalbit_ai_gateway.guardrails.guardrails import Conversation
 from radicalbit_ai_gateway.limiting.limits import Usage
-from radicalbit_ai_gateway.llm.messages_stream import stream_usage
+from radicalbit_ai_gateway.llm.messages_stream import MessageBuilder
 from radicalbit_ai_gateway.llm.usage import messages_token_counts
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
-from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
+from radicalbit_ai_gateway.utils.exceptions import (
+    GatewayBadRequest,
+    ModelInvokerInternalError,
+)
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
     set_operation_category,
@@ -33,34 +44,37 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
 class _Prepared:
     """A request after its input policies, before the model call: the body
     and the client's ``anthropic-*`` headers to forward upstream.
+
+    ``soft_block`` is the message object of an input soft block.
     """
 
     body: dict
     headers: dict[str, str]
     model: Model
+    soft_block: dict | None = None
 
 
 async def respond(scope: RequestScope, body: dict, headers: dict[str, str]) -> dict:
     """Answer a Messages API request with one message object."""
-    prepared = await _prepare(scope, body, headers)
-    set_operation_category(OperationCategory.INVOCATION)
-    message, _ = await scope.route.chat_invoker.complete_messages(
-        **_call(scope, prepared)
-    )
-    await _count(scope, prepared, message.get('usage'))
-    return {**message, 'model': scope.route.gateway_route_config.route_name}
+    return await _respond(scope, await _prepare(scope, body, headers))
 
 
 async def stream(
     scope: RequestScope, body: dict, headers: dict[str, str]
 ) -> AsyncIterator[str]:
-    """Answer a Messages API request with SSE frames: the upstream's events,
-    relayed as they come.
+    """Answer a Messages API request with SSE frames.
+
+    The upstream's events are relayed as they come, unless the whole answer
+    must be known first: a soft block, a cache hit, or an answer the output
+    guardrails must pass. Then the frames are known when this returns.
 
     The input policies run before this returns, so a request they refuse
     gets an HTTP error.
     """
-    return _live(scope, await _prepare(scope, body, headers))
+    prepared = await _prepare(scope, body, headers)
+    if prepared.soft_block or scope.cached.hit or scope.route.guardrails.has_output:
+        return stream_of(await _buffered(scope, prepared))
+    return _live(scope, prepared)
 
 
 async def _prepare(
@@ -73,27 +87,83 @@ async def _prepare(
         raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
 
     request = MessagesRequest(body)
-    # Limits come first, before anything that spends (routing, the model),
-    # as on chat.
+    # Limits come first, before anything that spends (routing, judges, the
+    # model), as on chat.
     await check_chat_limits(scope, request.messages())
 
     set_operation_category(OperationCategory.PREPROCESSING)
     messages = await run_preprocessing(request.messages(), config.plugins)
-    model = await route_chat(scope, messages)
+    redaction = await scope.guardrails.redact_input(Conversation(messages))
+    # Route on the redacted messages, as the chat path does (ADR 0010, redact
+    # guardrails run before routing).
+    model = await route_chat(scope, redaction.payload.messages())
     if not route.chat_invoker.supports_messages(model.model_id):
         raise GatewayBadRequest(
             f'Model {model.model_id} of route {route_name} '
             'does not serve the Messages API'
         )
 
+    messages = redaction.payload.messages()
     added = apply_config_prompt(messages, model)
+    screened = await scope.guardrails.check_input(
+        Conversation(messages, skip=added), redaction.flags
+    )
+    scope.flags |= screened.flags
+    if screened.soft_block:
+        return _Prepared(
+            request.body,
+            headers,
+            model,
+            soft_block=gateway_message(
+                scope.identity.request_uuid,
+                route_name,
+                screened.soft_block.get_soft_block_message(),
+            ),
+        )
+
     request.write_back(messages[added:])
     if added:
         # A deliberate choice, as on the Responses API: the configured prompt
         # goes first in ``system``. It changes the prefix the client's prompt
         # cache sees.
         request.insert_system_prompt(messages[0])
+
+    # The lookup is on the body as it goes upstream.
+    scope.cached = await scope.cache.lookup(MessagesEntry(request.body))
     return _Prepared(request.body, headers, model)
+
+
+async def _respond(scope: RequestScope, prepared: _Prepared) -> dict:
+    if prepared.soft_block:
+        return prepared.soft_block
+    if scope.cached.hit:
+        # A hit is screened as a model's answer is. No model was called, so
+        # nothing is counted on the limits.
+        message = await screen_output(scope, scope.cached.value)
+        return {**message, 'model': scope.route.gateway_route_config.route_name}
+
+    set_operation_category(OperationCategory.INVOCATION)
+    message, answering = await scope.route.chat_invoker.complete_messages(
+        **_call(scope, prepared)
+    )
+    return await _count_screen_and_store(scope, answering, message)
+
+
+async def _count_screen_and_store(
+    scope: RequestScope, answering: Model, message: dict, cacheable: bool = True
+) -> dict:
+    """Count the answer of the ``answering`` model, apply the output
+    guardrails to it, cache it and return it as the client gets it.
+
+    Whether the answer is cached is decided on the model's answer, before
+    the guardrails: a soft block does not make a cut-off answer complete.
+    """
+    await _count(scope, answering, message.get('usage'))
+    cacheable = cacheable and is_complete(message)
+    message = await screen_output(scope, message)
+    if cacheable:
+        await _store(scope, answering, message)
+    return {**message, 'model': scope.route.gateway_route_config.route_name}
 
 
 def _call(scope: RequestScope, prepared: _Prepared) -> dict:
@@ -106,23 +176,95 @@ def _call(scope: RequestScope, prepared: _Prepared) -> dict:
     }
 
 
+class _AnsweringModel:
+    """The model that answers a stream: the routed one, until the invoker
+    tells that another one answers (after a fallback).
+    """
+
+    def __init__(self, prepared: _Prepared) -> None:
+        self.model = prepared.model
+
+    def __call__(self, model: Model) -> None:
+        self.model = model
+
+
 async def _live(scope: RequestScope, prepared: _Prepared) -> AsyncIterator[str]:
-    """Relay the upstream's events, then count the reply on the limits."""
+    """Relay the upstream's events, then count the reply on the limits and
+    cache it.
+    """
     set_streaming()
     set_operation_category(OperationCategory.INVOCATION)
     route_name = scope.route.gateway_route_config.route_name
-    usage: dict = {}
+    # The one reader of the stream: its usage, and the answer to cache.
+    builder = MessageBuilder()
+    answering = _AnsweringModel(prepared)
     async for event, data in scope.route.chat_invoker.stream_messages(
-        **_call(scope, prepared)
+        **_call(scope, prepared), on_answer=answering
     ):
-        usage = stream_usage(event, data, usage)
+        builder.add(event, data)
         yield relay_frame(event, data, route_name)
-    await _count(scope, prepared, usage)
+    await _count(scope, answering.model, builder.usage)
+    message = builder.message()
+    if message and _is_cacheable(builder) and is_complete(message):
+        await _store(scope, answering.model, message)
 
 
-async def _count(scope: RequestScope, prepared: _Prepared, usage: dict | None) -> None:
-    """Count a model's reply against the limits."""
+async def _buffered(scope: RequestScope, prepared: _Prepared) -> list[str]:
+    """Return the frames of an answer known whole before streaming.
+
+    The model's answer is collected from its stream, so a long answer comes
+    as it would to the client. The answer is then streamed as Anthropic
+    streams it, each block in one delta.
+    """
+    set_streaming()
+    if prepared.soft_block or scope.cached.hit:
+        return message_events(await _respond(scope, prepared))
+
+    set_operation_category(OperationCategory.INVOCATION)
+    builder = MessageBuilder()
+    answering = _AnsweringModel(prepared)
+    async for event, data in scope.route.chat_invoker.stream_messages(
+        **_call(scope, prepared), on_answer=answering
+    ):
+        builder.add(event, data)
+    message = builder.message()
+    if message is None or not builder.complete:
+        # The stream ended before the answer was whole: none of its text
+        # goes out unscreened.
+        await _count(scope, answering.model, builder.usage)
+        if builder.error is None:
+            raise ModelInvokerInternalError(
+                'The model stream ended before the answer was complete'
+            )
+        return [sse('error', builder.error)]
+    return message_events(
+        await _count_screen_and_store(
+            scope, answering.model, message, cacheable=_is_cacheable(builder)
+        )
+    )
+
+
+def _is_cacheable(builder: MessageBuilder) -> bool:
+    """Tell whether a stream gave a whole answer: it gave its stop reason
+    and no tool input stopped half way.
+    """
+    return builder.complete and not builder.has_cut_off_input
+
+
+async def _count(scope: RequestScope, answering: Model, usage: dict | None) -> None:
+    """Count a reply against the limits, at the prices of the model that
+    answered: after a fallback, not the routed one. It runs before the
+    output guardrails: the model was paid for even when they refuse the
+    reply (ADR 0006).
+    """
     if not usage:
         return
     input_tokens, output_tokens = messages_token_counts(usage)
-    await scope.limits.count(Usage.priced(prepared.model, input_tokens, output_tokens))
+    await scope.limits.count(Usage.priced(answering, input_tokens, output_tokens))
+
+
+async def _store(scope: RequestScope, answering: Model, message: dict) -> None:
+    """Cache a screened answer under the model that answered: a later hit
+    is recorded on it. The caller checks that the model's answer is complete.
+    """
+    await scope.cached.store({**message, 'model': answering.model_id})

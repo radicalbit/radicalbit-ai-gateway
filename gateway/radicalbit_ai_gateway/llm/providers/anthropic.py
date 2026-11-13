@@ -42,6 +42,7 @@ from radicalbit_ai_gateway.llm.providers._schema import (
     rm_titles,
 )
 from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
+from radicalbit_ai_gateway.llm.usage import messages_usage
 
 logger = logging.getLogger(__name__)
 
@@ -1482,32 +1483,30 @@ def _chunk_from_event(
 
 
 def _usage_metadata(usage: Any) -> dict[str, Any]:
-    """Usage in gateway terms: input_tokens includes cache reads and writes."""
+    """Usage in gateway terms: input_tokens includes cache reads and writes.
+
+    The counts come from ``messages_usage``, as on the native Messages path.
+    """
+    counts = messages_usage(usage)
     input_token_details: dict[str, Any] = {
         'cache_read': getattr(usage, 'cache_read_input_tokens', None),
         'cache_creation': getattr(usage, 'cache_creation_input_tokens', None),
     }
     cache_creation = getattr(usage, 'cache_creation', None)
-    specific_cache_creation = 0
     if cache_creation:
         if isinstance(cache_creation, BaseModel):
             cache_creation = cache_creation.model_dump()
         for key in ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens'):
-            specific_cache_creation += cache_creation.get(key, 0)
             input_token_details[key] = cache_creation.get(key)
-        if not isinstance(specific_cache_creation, int):
-            specific_cache_creation = 0
-        if specific_cache_creation > 0:
+        if any(
+            isinstance(input_token_details[key], int) and input_token_details[key] > 0
+            for key in ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens')
+        ):
             # The TTL breakdown replaces the total, so it is not counted twice.
             input_token_details['cache_creation'] = 0
 
-    # Anthropic's input_tokens excludes the cached ones.
-    input_tokens = (
-        (getattr(usage, 'input_tokens', 0) or 0)
-        + (input_token_details['cache_read'] or 0)
-        + (specific_cache_creation or input_token_details['cache_creation'] or 0)
-    )
-    output_tokens = getattr(usage, 'output_tokens', 0) or 0
+    input_tokens = counts.input
+    output_tokens = counts.output
     usage_metadata: dict[str, Any] = {
         'input_tokens': input_tokens,
         'output_tokens': output_tokens,

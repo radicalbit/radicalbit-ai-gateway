@@ -177,6 +177,7 @@ SPANS = (
     'set_cached_stream_response',
     'generate_semantic_cache_embedding',
     'lookup_responses_cache',
+    'lookup_messages_cache',
 )
 _IN_SPAN = {name: task(name=name)(_call) for name in SPANS}
 

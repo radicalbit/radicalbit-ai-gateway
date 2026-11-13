@@ -1,4 +1,5 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from decimal import Decimal
 import logging
 from typing import NoReturn
 
@@ -25,15 +26,18 @@ from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.factory import build_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
-from radicalbit_ai_gateway.llm.messages_stream import stream_usage
+from radicalbit_ai_gateway.llm.messages_stream import MESSAGE_START, stream_usage
 from radicalbit_ai_gateway.llm.messages_thinking import (
     is_invalid_thinking_signature,
     without_old_thinking,
 )
 from radicalbit_ai_gateway.llm.responses_stream import NativeResponsesEvent
 from radicalbit_ai_gateway.llm.usage import (
+    MessagesCost,
+    MessagesUsage,
     StreamUsage,
     cache_tokens,
+    messages_usage,
     responses_token_counts,
 )
 from radicalbit_ai_gateway.models.fallback import Fallback
@@ -471,15 +475,41 @@ class ChatModelInvoker(ModelInvoker):
         )
         return retry_body
 
+    def _messages_cost(self, model: Model) -> MessagesCost:
+        """Return what prices a Messages usage on ``model``, for the call's span.
+
+        Each count has the price its event has (see ``_messages_tokens``).
+        """
+        price = self.recorder.cost_service.compute_cost
+
+        def cost(usage: MessagesUsage) -> Decimal:
+            return sum(
+                (
+                    price(count, token_kind, model.model_id)
+                    for token_kind, count in (
+                        ('input', usage.uncached_input),
+                        ('output', usage.output),
+                        ('cached', usage.cache_read),
+                        ('cached_creation', usage.cache_creation_5m),
+                        ('cached_creation_1h', usage.cache_creation_1h),
+                    )
+                    if count
+                ),
+                Decimal(0),
+            )
+
+        return cost
+
     async def _invoke_messages(
         self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
     ) -> dict:
         """Make one Messages call to one model (see ``_signature_retry_body``)."""
+        cost = self._messages_cost(model)
         try:
-            return await chat_model.ainvoke_native_messages(body, headers)
+            return await chat_model.ainvoke_native_messages(body, headers, cost)
         except Exception as error:
             retry_body = self._signature_retry_body(model, body, error)
-        return await chat_model.ainvoke_native_messages(retry_body, headers)
+        return await chat_model.ainvoke_native_messages(retry_body, headers, cost)
 
     async def _stream_messages(
         self, model: Model, chat_model: ChatModel, body: dict, headers: dict[str, str]
@@ -489,8 +519,11 @@ class ChatModelInvoker(ModelInvoker):
         The refusal comes before the first event, so the retry is safe.
         """
         started = False
+        cost = self._messages_cost(model)
         try:
-            async for event, data in chat_model.astream_native_messages(body, headers):
+            async for event, data in chat_model.astream_native_messages(
+                body, headers, cost
+            ):
                 started = True
                 yield event, data
         except Exception as error:
@@ -500,7 +533,7 @@ class ChatModelInvoker(ModelInvoker):
         else:
             return
         async for event, data in chat_model.astream_native_messages(
-            retry_body, headers
+            retry_body, headers, cost
         ):
             yield event, data
 
@@ -539,11 +572,16 @@ class ChatModelInvoker(ModelInvoker):
         body: dict,
         headers: dict[str, str],
         model_id: str,
+        on_answer: Callable[[Model], None] | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
         """Stream a Messages API request and yield the upstream's ``(event, data)``.
 
         A fallback is tried only while nothing has been yielded: once the
         client has part of a reply, an error ends the stream.
+
+        ``on_answer`` is called with the model that answers, when its
+        ``message_start`` comes and before that event is yielded: after a
+        fallback it is not the model asked for.
         """
         call = self._call(model_id, identity)
         chain = self._messages_chain(model_id, call)
@@ -556,6 +594,8 @@ class ChatModelInvoker(ModelInvoker):
                     attempt.candidate.model, attempt.candidate.client, body, headers
                 ):
                     attempt.usage = stream_usage(event, data, attempt.usage)
+                    if on_answer and event == MESSAGE_START:
+                        on_answer(attempt.candidate.model)
                     started = True
                     yield event, data
             except Exception as error:
@@ -575,14 +615,13 @@ def _log_responses_failure(candidate: Candidate, error: BaseException) -> None:
 
 def _messages_tokens(usage: dict | None) -> Tokens:
     """Return the tokens of a Messages API usage object; 0 is not reported."""
-    usage = usage or {}
-    cache_creation = usage.get('cache_creation') or {}
+    counts = messages_usage(usage)
     return Tokens(
-        input=usage.get('input_tokens') or None,
-        output=usage.get('output_tokens') or None,
-        cached=usage.get('cache_read_input_tokens') or None,
-        cache_5m=cache_creation.get('ephemeral_5m_input_tokens') or None,
-        cache_1h=cache_creation.get('ephemeral_1h_input_tokens') or None,
+        input=counts.uncached_input or None,
+        output=counts.output or None,
+        cached=counts.cache_read or None,
+        cache_5m=counts.cache_creation_5m or None,
+        cache_1h=counts.cache_creation_1h or None,
     )
 
 

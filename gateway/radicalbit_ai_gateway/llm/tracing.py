@@ -56,8 +56,10 @@ from radicalbit_ai_gateway.llm.messages import (
     BaseMessage,
     tool_call_chunk,
 )
+from radicalbit_ai_gateway.llm.messages_stream import MessageBuilder
 from radicalbit_ai_gateway.llm.providers._openai_common import _image_block
 from radicalbit_ai_gateway.llm.providers._schema import is_data_content_block
+from radicalbit_ai_gateway.llm.usage import MessagesCost, messages_usage
 
 if TYPE_CHECKING:
     from radicalbit_ai_gateway.llm.chat_model import ChatModel
@@ -84,6 +86,8 @@ _token_histogram = _meter.create_histogram(
 _RESPONSE_TIME_TO_FIRST_CHUNK = 'gen_ai.response.time_to_first_chunk'
 _REQUEST_PREVIOUS_RESPONSE_ID = 'gen_ai.request.previous_response.id'
 _REQUEST_REASONING_LEVEL = 'gen_ai.request.reasoning.level'
+# The price of the call's tokens, in the currency of the model's prices.
+_USAGE_COST = 'gen_ai.usage.cost'
 _DEFAULT_PORTS = {'https': 443, 'http': 80}
 
 _FINISH_REASONS = {
@@ -1064,6 +1068,227 @@ class ResponsesTrace:
             # does) cancels the stream while it waits for the upstream to
             # close.
             self.end(self._response)
+            return
+        _fail(self.span, self._model._error_type(error), str(error), error)
+
+
+# ── Messages API ─────────────────────────────────────────────────────────────
+
+
+def _messages_block_parts(block: dict) -> list[dict]:
+    """Return the parts of one content block of a Messages API message."""
+    block_type = block.get('type')
+    if block_type in ('tool_use', 'server_tool_use'):
+        call = {
+            'id': block.get('id', ''),
+            'name': block.get('name', ''),
+            'args': block.get('input'),
+        }
+        return _tool_calls_to_parts([call])
+    if block_type == 'tool_result':
+        content = block.get('content')
+        part = {
+            'type': 'tool_call_response',
+            'id': block.get('tool_use_id', ''),
+            'response': content if isinstance(content, str) else _dumps(content),
+        }
+        return [part]
+    if block_type == 'thinking':
+        thinking = block.get('thinking')
+        return [{'type': 'reasoning', 'content': thinking}] if thinking else []
+    if block_type == 'redacted_thinking':
+        # Encrypted reasoning is not reported.
+        return []
+    if block_type == 'image':
+        source = block.get('source') or {}
+        if source.get('type') == 'url':
+            return [{'type': 'uri', 'modality': 'image', 'uri': source.get('url', '')}]
+        return _content_to_parts([{**source, 'type': 'image'}])
+    return _content_to_parts([block])
+
+
+def _messages_content_parts(content: Any) -> list[dict]:
+    """Return the parts of a Messages API ``content``, a string or blocks."""
+    if not isinstance(content, list):
+        return _content_to_parts(content)
+    parts = []
+    for block in content:
+        if isinstance(block, dict):
+            parts.extend(_messages_block_parts(block))
+        else:
+            parts.extend(_content_to_parts([block]))
+    return parts
+
+
+def _messages_input_attributes(body: dict) -> dict[str, str]:
+    """Return the system instructions and input messages of a Messages request."""
+    attributes = {}
+    if system_instructions := _messages_content_parts(body.get('system')):
+        attributes[GenAIAttributes.GEN_AI_SYSTEM_INSTRUCTIONS] = _dumps(
+            system_instructions
+        )
+    input_messages = [
+        {
+            'role': message.get('role', 'user'),
+            'parts': _messages_content_parts(message.get('content')),
+        }
+        for message in body.get('messages') or []
+        if isinstance(message, dict)
+    ]
+    if input_messages:
+        attributes[GenAIAttributes.GEN_AI_INPUT_MESSAGES] = _dumps(input_messages)
+    return attributes
+
+
+class MessagesTrace:
+    """The span of one native Messages API call, from the request to its reply.
+
+    It is the span of a chat call (``ChatTrace``), with the same name,
+    attributes and metrics, read from the client's request body and the
+    upstream's message object rather than from messages. The token counts are
+    the gateway's (``messages_usage``): the input includes the cache reads and
+    writes, as on a chat span. ``cost`` prices these counts: the span carries
+    the cost when it is given. Create it with ``start``; it is ``None`` when
+    tracing failed to start.
+    """
+
+    def __init__(
+        self,
+        model: 'ChatModel',
+        body: dict,
+        stream: bool = False,
+        cost: MessagesCost | None = None,
+    ):
+        self._model = model
+        self._provider = model._gen_ai_provider
+        self._cost = cost
+        self._start_time = time.time()
+        self._reply = MessageBuilder()
+        self._first_event = True
+        settings = model._serialized_kwargs()
+        self._request_model = (
+            settings.get('model') or settings.get('model_name') or 'unknown'
+        )
+        self.span = _start_span(model, stream)
+        span = self.span
+        if not span.is_recording():
+            return
+        span.set_attribute(GenAIAttributes.GEN_AI_REQUEST_MODEL, self._request_model)
+        # Replaced by the message's model.
+        span.set_attribute(GenAIAttributes.GEN_AI_RESPONSE_MODEL, self._request_model)
+        # The body goes upstream as the client sent it: the model's settings
+        # are not merged into it.
+        _set(span, GenAIAttributes.GEN_AI_REQUEST_MAX_TOKENS, body.get('max_tokens'))
+        _set(span, GenAIAttributes.GEN_AI_REQUEST_TEMPERATURE, body.get('temperature'))
+        _set(span, GenAIAttributes.GEN_AI_REQUEST_TOP_P, body.get('top_p'))
+        if tools := body.get('tools'):
+            # Server tools (web search...) have a type and no input schema.
+            definitions = [
+                _tool_definition(
+                    {**tool, 'name': tool.get('name') or tool.get('type')}, tool
+                )
+                for tool in tools
+            ]
+            span.set_attribute(
+                GenAIAttributes.GEN_AI_TOOL_DEFINITIONS, _dumps(definitions)
+            )
+        if _should_send_prompts():
+            for key, value in _messages_input_attributes(body).items():
+                span.set_attribute(key, value)
+
+    @classmethod
+    @_dont_throw
+    def start(
+        cls,
+        model: 'ChatModel',
+        body: dict,
+        stream: bool = False,
+        cost: MessagesCost | None = None,
+    ) -> 'MessagesTrace':
+        return cls(model, body, stream, cost)
+
+    @_dont_throw
+    def add_event(self, event: str, data: str) -> None:
+        """Add a stream event to the message the span reports at the end."""
+        if self._first_event:
+            self._first_event = False
+            _set_time_to_first_chunk(self.span, self._start_time)
+        self._reply.add(event, data)
+
+    @_dont_throw
+    def end_stream(self) -> None:
+        if self._reply.error is not None and not self._reply.complete:
+            error = json.loads(self._reply.error).get('error') or {}
+            _fail(self.span, error.get('type') or 'error', error.get('message') or '')
+            return
+        self.end(self._reply.message())
+
+    @_dont_throw
+    def end(self, message: dict | None) -> None:
+        span = self.span
+        if not span.is_recording() or message is None:
+            span.end()
+            return
+        model_name = message.get('model') or self._request_model
+        span.set_attribute(GenAIAttributes.GEN_AI_RESPONSE_MODEL, model_name)
+        _set(span, GenAIAttributes.GEN_AI_RESPONSE_ID, message.get('id'))
+        self._set_usage(message.get('usage'), model_name)
+        stop_reason = message.get('stop_reason')
+        finish_reason = _FINISH_REASONS.get(stop_reason, stop_reason)
+        if finish_reason:
+            span.set_attribute(
+                GenAIAttributes.GEN_AI_RESPONSE_FINISH_REASONS, [finish_reason]
+            )
+        if _should_send_prompts():
+            output = {
+                'role': message.get('role') or 'assistant',
+                'parts': _messages_content_parts(message.get('content') or []),
+                'finish_reason': finish_reason or '',
+            }
+            span.set_attribute(GenAIAttributes.GEN_AI_OUTPUT_MESSAGES, _dumps([output]))
+        _duration_histogram.record(
+            time.time() - self._start_time,
+            attributes={
+                GenAIAttributes.GEN_AI_PROVIDER_NAME: self._provider,
+                GenAIAttributes.GEN_AI_RESPONSE_MODEL: model_name,
+            },
+        )
+        span.end()
+
+    def _set_usage(self, usage: dict | None, model_name: str) -> None:
+        if not usage:
+            return
+        span = self.span
+        counts = messages_usage(usage)
+        span.set_attribute(GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS, counts.input)
+        span.set_attribute(GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS, counts.output)
+        span.set_attribute(
+            SpanAttributes.GEN_AI_USAGE_TOTAL_TOKENS, counts.input + counts.output
+        )
+        # Each set when non-zero, as the semantic conventions recommend.
+        for attribute, count in (
+            (GenAIAttributes.GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, counts.cache_read),
+            (
+                GenAIAttributes.GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS,
+                counts.cache_creation_5m + counts.cache_creation_1h,
+            ),
+        ):
+            if count:
+                span.set_attribute(attribute, count)
+        if self._cost is not None:
+            try:
+                span.set_attribute(_USAGE_COST, float(self._cost(counts)))
+            except Exception:
+                logger.debug('Failed to price a Messages call', exc_info=True)
+        _record_tokens(self._provider, counts.input, counts.output, model_name)
+
+    @_dont_throw
+    def fail(self, error: BaseException) -> None:
+        if self._reply.complete:
+            # The stream already gave its stop reason: the call is done,
+            # whatever stops the stream after it (a client that closes the
+            # connection once it has the whole message).
+            self.end(self._reply.message())
             return
         _fail(self.span, self._model._error_type(error), str(error), error)
 
