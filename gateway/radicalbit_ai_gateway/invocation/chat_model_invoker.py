@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 import logging
 from typing import NoReturn
 
@@ -25,7 +25,7 @@ from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.llm.chat_model import ChatModel
 from radicalbit_ai_gateway.llm.factory import build_chat_model
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
-from radicalbit_ai_gateway.llm.messages_stream import stream_usage
+from radicalbit_ai_gateway.llm.messages_stream import MESSAGE_START, stream_usage
 from radicalbit_ai_gateway.llm.messages_thinking import (
     is_invalid_thinking_signature,
     without_old_thinking,
@@ -34,6 +34,7 @@ from radicalbit_ai_gateway.llm.responses_stream import NativeResponsesEvent
 from radicalbit_ai_gateway.llm.usage import (
     StreamUsage,
     cache_tokens,
+    messages_usage,
     responses_token_counts,
 )
 from radicalbit_ai_gateway.models.fallback import Fallback
@@ -539,11 +540,16 @@ class ChatModelInvoker(ModelInvoker):
         body: dict,
         headers: dict[str, str],
         model_id: str,
+        on_answer: Callable[[Model], None] | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
         """Stream a Messages API request and yield the upstream's ``(event, data)``.
 
         A fallback is tried only while nothing has been yielded: once the
         client has part of a reply, an error ends the stream.
+
+        ``on_answer`` is called with the model that answers, when its
+        ``message_start`` comes and before that event is yielded: after a
+        fallback it is not the model asked for.
         """
         call = self._call(model_id, identity)
         chain = self._messages_chain(model_id, call)
@@ -556,6 +562,8 @@ class ChatModelInvoker(ModelInvoker):
                     attempt.candidate.model, attempt.candidate.client, body, headers
                 ):
                     attempt.usage = stream_usage(event, data, attempt.usage)
+                    if on_answer and event == MESSAGE_START:
+                        on_answer(attempt.candidate.model)
                     started = True
                     yield event, data
             except Exception as error:
@@ -575,14 +583,13 @@ def _log_responses_failure(candidate: Candidate, error: BaseException) -> None:
 
 def _messages_tokens(usage: dict | None) -> Tokens:
     """Return the tokens of a Messages API usage object; 0 is not reported."""
-    usage = usage or {}
-    cache_creation = usage.get('cache_creation') or {}
+    counts = messages_usage(usage)
     return Tokens(
-        input=usage.get('input_tokens') or None,
-        output=usage.get('output_tokens') or None,
-        cached=usage.get('cache_read_input_tokens') or None,
-        cache_5m=cache_creation.get('ephemeral_5m_input_tokens') or None,
-        cache_1h=cache_creation.get('ephemeral_1h_input_tokens') or None,
+        input=counts.uncached_input or None,
+        output=counts.output or None,
+        cached=counts.cache_read or None,
+        cache_5m=counts.cache_creation_5m or None,
+        cache_1h=counts.cache_creation_1h or None,
     )
 
 
