@@ -3,8 +3,10 @@
 The request goes upstream as the client sent it. The gateway's policies
 (preprocessing plugins, routing, limits, and later guardrails and cache) read
 chat messages, so ``MessagesRequest`` shows the request's texts as messages and
-writes the texts they change back into the body. Blocks without text (images,
-documents, tool use, thinking...) are never touched.
+writes the texts they change back into the body. The text of a tool result is
+its own tool message, so no policy reads a tool's output as the user's words.
+Blocks without text (images, documents, tool use, thinking...) are never
+touched.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from radicalbit_ai_gateway.llm.messages import (
     HumanMessage,
     MessageContent,
     SystemMessage,
+    ToolMessage,
 )
 from radicalbit_ai_gateway.utils.exceptions import GatewayInternalError
 
@@ -44,10 +47,13 @@ class _Text:
 
 @dataclass
 class _MessageTexts:
-    """The texts of the system prompt or of one message, read as one message."""
+    """Texts of the request read as one message: the system prompt, the text
+    blocks of a message, or one tool result.
+    """
 
     message_type: type[BaseMessage]
     texts: list[_Text]
+    tool_call_id: str = ''
 
     def message(self) -> BaseMessage:
         values = [text.get() for text in self.texts]
@@ -56,6 +62,8 @@ class _MessageTexts:
             if len(values) == 1
             else [{'type': 'text', 'text': value} for value in values]
         )
+        if self.message_type is ToolMessage:
+            return ToolMessage(content=content, tool_call_id=self.tool_call_id)
         return self.message_type(content=content)
 
 
@@ -83,6 +91,41 @@ def _texts_of(content: MessageContent) -> list[str]:
     return [block['text'] for block in content if _is_text_block(block)]
 
 
+def _one_message_texts(
+    message: dict, message_type: type[BaseMessage]
+) -> list[_MessageTexts]:
+    """Return the texts of one message, in the order of its blocks.
+
+    Each tool result with text is a tool message. The text blocks before,
+    between and after the tool results are each one message of the role.
+    """
+    content = message.get('content')
+    if not isinstance(content, list):
+        texts = _content_texts(message, 'content')
+        return [_MessageTexts(message_type, texts)] if texts else []
+    all_texts = []
+    run: list[_Text] = []
+    for block in content:
+        if _is_text_block(block):
+            run.append(_Text(block, 'text'))
+        elif isinstance(block, dict) and block.get('type') == 'tool_result':
+            if run:
+                all_texts.append(_MessageTexts(message_type, run))
+                run = []
+            if texts := _content_texts(block, 'content'):
+                tool_use_id = block.get('tool_use_id')
+                all_texts.append(
+                    _MessageTexts(
+                        ToolMessage,
+                        texts,
+                        tool_use_id if isinstance(tool_use_id, str) else '',
+                    )
+                )
+    if run:
+        all_texts.append(_MessageTexts(message_type, run))
+    return all_texts
+
+
 def _all_message_texts(body: dict) -> list[_MessageTexts]:
     all_texts = []
     if system_texts := _content_texts(body, 'system'):
@@ -92,9 +135,8 @@ def _all_message_texts(body: dict) -> list[_MessageTexts]:
         if not isinstance(message, dict):
             continue
         message_type = _MESSAGE_TYPES.get(message.get('role'))
-        texts = _content_texts(message, 'content')
-        if message_type and texts:
-            all_texts.append(_MessageTexts(message_type, texts))
+        if message_type:
+            all_texts.extend(_one_message_texts(message, message_type))
     return all_texts
 
 
@@ -106,7 +148,10 @@ class MessagesRequest:
         self._message_texts = _all_message_texts(self.body)
 
     def messages(self) -> list[BaseMessage]:
-        """Read the system prompt, then each message that has text, as one message."""
+        """Read the system prompt, then the texts of each message, as messages.
+
+        The text of a tool result is a tool message of its own.
+        """
         return [texts.message() for texts in self._message_texts]
 
     def write_back(self, messages: list[BaseMessage]) -> None:
