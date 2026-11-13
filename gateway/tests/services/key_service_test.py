@@ -132,7 +132,7 @@ class KeyServiceTest(unittest.TestCase):
 
     def test_rename_externally_managed_key_raises(self):
         key = db_mock.get_sample_key()
-        key.owner = 'idp'
+        key.owner = 'external'
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
         self.key_dao.update_key_name = MagicMock()
         pytest.raises(

@@ -240,7 +240,7 @@ class GroupServiceTest(unittest.TestCase):
 
     def test_rename_externally_managed_group_raises(self):
         group = db_mock.get_sample_group_plain()
-        group.owner = 'idp'
+        group.owner = 'external'
         self.group_dao.get_by_uuid = MagicMock(return_value=group)
         self.group_dao.update_group_name = MagicMock()
         pytest.raises(

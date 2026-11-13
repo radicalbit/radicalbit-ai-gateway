@@ -429,8 +429,7 @@ def render(spec: dict, models_source: str, package: str = 'radicalbit_gateway') 
     """The source of ``_resources.py``; ``ruff`` drops the unused imports and formats it.
 
     ``package`` is the package the generated code imports its ``models`` and
-    its clients (``_client``) from: this SDK's by default, or another package
-    built on it.
+    its clients (``_client``) from.
     """
     # The models are classes; the closed sets of values, type aliases
     model_names = set()

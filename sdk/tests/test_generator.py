@@ -255,15 +255,15 @@ def test_the_output_says_it_is_generated():
     )
 
 
-def test_renders_for_another_package_built_on_this_sdk():
-    source = render(_spec(), MODELS, package='other_sdk')
+def test_renders_for_the_package_given():
+    source = render(_spec(), MODELS, package='my_sdk')
     imports = [
         ast.unparse(n)
         for n in ast.walk(ast.parse(source))
         if isinstance(n, ast.ImportFrom)
     ]
-    assert 'from other_sdk import models' in imports
-    assert 'from other_sdk._client import AsyncGateway, Gateway' in imports
+    assert 'from my_sdk import models' in imports
+    assert 'from my_sdk._client import AsyncGateway, Gateway' in imports
     # NOT_GIVEN, the file type: still this SDK's
     assert 'from radicalbit_gateway._types import NOT_GIVEN, FileTypes, NotGiven' in (
         imports
@@ -272,7 +272,7 @@ def test_renders_for_another_package_built_on_this_sdk():
 
 def test_refuses_a_package_that_is_not_a_dotted_name():
     with pytest.raises(UnsupportedSpecError):
-        render(_spec(), MODELS, package='other-sdk')
+        render(_spec(), MODELS, package='my-sdk')
 
 
 def test_an_api_name_that_is_a_keyword_or_starts_with_an_underscore():

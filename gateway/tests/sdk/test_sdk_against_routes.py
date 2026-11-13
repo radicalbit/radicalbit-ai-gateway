@@ -228,9 +228,9 @@ def test_an_upload_that_is_not_yaml_is_a_validation_error(gw, monkeypatch):
             errors.ConflictError, 'key_rotation_conflict', id='rotation-conflict',
         ),
         pytest.param(
-            'key', 'delete_key', KeyExternallyManagedError('owned by the IdP'),
+            'key', 'delete_key', KeyExternallyManagedError('managed outside the gateway'),
             lambda gw: gw.credentials.delete(KEY.uuid),
-            errors.ConflictError, 'key_externally_managed', id='idp-credential',
+            errors.ConflictError, 'key_externally_managed', id='externally-managed-credential',
         ),
         pytest.param(
             'project', 'serve_config',

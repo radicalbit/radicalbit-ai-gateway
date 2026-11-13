@@ -608,7 +608,8 @@ class KeyOperationNotAllowedError(AuthRegistryError):
 
 
 class KeyExternallyManagedError(KeyOperationNotAllowedError):
-    """A change to a credential the IdP owns: its lifecycle stays with the IdP.
+    """A change to a credential managed outside the gateway (its owner is not
+    ``gateway``): its lifecycle is managed where it comes from.
 
     A KeyOperationNotAllowedError for the callers that catch that, but a 409
     with a code of its own: the UI reads a 405 as an expired credential.
@@ -711,7 +712,7 @@ class GroupOperationNotAllowedError(AuthRegistryError):
 
 
 class GroupExternallyManagedError(GroupOperationNotAllowedError):
-    """A change to a group the IdP owns: its lifecycle stays with the IdP."""
+    """A change to a group managed outside the gateway (its owner is not ``gateway``)."""
 
     def __init__(self, message: str, *, log_message: str | None = None):
         super().__init__(message, log_message=log_message)
