@@ -143,19 +143,19 @@ async def _respond(scope: RequestScope, prepared: _Prepared) -> dict:
         return {**message, 'model': scope.route.gateway_route_config.route_name}
 
     set_operation_category(OperationCategory.INVOCATION)
-    message, _ = await scope.route.chat_invoker.complete_messages(
+    message, answering = await scope.route.chat_invoker.complete_messages(
         **_call(scope, prepared)
     )
-    return await _screened(scope, prepared, message)
+    return await _screened(scope, answering, message)
 
 
-async def _screened(scope: RequestScope, prepared: _Prepared, message: dict) -> dict:
-    """Count a model's answer, apply the output guardrails to it, cache it
-    and return it as the client gets it.
+async def _screened(scope: RequestScope, answering: Model, message: dict) -> dict:
+    """Count the answer of the ``answering`` model, apply the output
+    guardrails to it, cache it and return it as the client gets it.
     """
-    await _count(scope, prepared, message.get('usage'))
+    await _count(scope, answering, message.get('usage'))
     message = await screen_output(scope, message)
-    await _store(scope, prepared, message)
+    await _store(scope, answering, message)
     return {**message, 'model': scope.route.gateway_route_config.route_name}
 
 
@@ -169,6 +169,18 @@ def _call(scope: RequestScope, prepared: _Prepared) -> dict:
     }
 
 
+class _Answering:
+    """The model that answers a stream: the routed one, until the invoker
+    tells that another one answers (after a fallback).
+    """
+
+    def __init__(self, prepared: _Prepared) -> None:
+        self.model = prepared.model
+
+    def __call__(self, model: Model) -> None:
+        self.model = model
+
+
 async def _live(scope: RequestScope, prepared: _Prepared) -> AsyncIterator[str]:
     """Relay the upstream's events, then count the reply on the limits and
     cache it.
@@ -179,16 +191,17 @@ async def _live(scope: RequestScope, prepared: _Prepared) -> AsyncIterator[str]:
     usage: dict = {}
     # The answer is built from its events only on a route with a cache.
     collector = MessageCollector() if scope.route.cache.backend else None
+    answering = _Answering(prepared)
     async for event, data in scope.route.chat_invoker.stream_messages(
-        **_call(scope, prepared)
+        **_call(scope, prepared), on_answer=answering
     ):
         usage = stream_usage(event, data, usage)
         if collector:
             collector.add(event, data)
         yield relay_frame(event, data, route_name)
-    await _count(scope, prepared, usage)
+    await _count(scope, answering.model, usage)
     if collector and (message := collector.message()):
-        await _store(scope, prepared, message)
+        await _store(scope, answering.model, message)
 
 
 async def _buffered(scope: RequestScope, prepared: _Prepared) -> list[str]:
@@ -204,34 +217,38 @@ async def _buffered(scope: RequestScope, prepared: _Prepared) -> list[str]:
 
     set_operation_category(OperationCategory.INVOCATION)
     collector = MessageCollector()
+    answering = _Answering(prepared)
     async for event, data in scope.route.chat_invoker.stream_messages(
-        **_call(scope, prepared)
+        **_call(scope, prepared), on_answer=answering
     ):
         collector.add(event, data)
     message = collector.message()
     if message is None:
         # The answer was cut off: none of its text goes out unscreened.
-        await _count(scope, prepared, collector.usage)
+        await _count(scope, answering.model, collector.usage)
         if collector.error is None:
             raise ModelInvokerInternalError(
                 'The model stream ended before the answer was complete'
             )
         return [sse('error', collector.error)]
-    return message_events(await _screened(scope, prepared, message))
+    return message_events(await _screened(scope, answering.model, message))
 
 
-async def _count(scope: RequestScope, prepared: _Prepared, usage: dict | None) -> None:
-    """Count a model's reply against the limits. It runs before the output
-    guardrails: the model was paid for even when they refuse the reply
-    (ADR 0006).
+async def _count(scope: RequestScope, answering: Model, usage: dict | None) -> None:
+    """Count a reply against the limits, at the prices of the model that
+    answered: after a fallback, not the routed one. It runs before the
+    output guardrails: the model was paid for even when they refuse the
+    reply (ADR 0006).
     """
     if not usage:
         return
     input_tokens, output_tokens = messages_token_counts(usage)
-    await scope.limits.count(Usage.priced(prepared.model, input_tokens, output_tokens))
+    await scope.limits.count(Usage.priced(answering, input_tokens, output_tokens))
 
 
-async def _store(scope: RequestScope, prepared: _Prepared, message: dict) -> None:
-    """Cache a model's screened answer, when it is complete."""
+async def _store(scope: RequestScope, answering: Model, message: dict) -> None:
+    """Cache a screened answer, when it is complete, under the model that
+    answered: a later hit is recorded on it.
+    """
     if is_complete(message):
-        await scope.cached.store({**message, 'model': prepared.model.model_id})
+        await scope.cached.store({**message, 'model': answering.model_id})
