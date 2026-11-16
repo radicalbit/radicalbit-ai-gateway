@@ -1,14 +1,12 @@
 import InfoPopover from '@Components/info-popover';
 import { Pin } from '@radicalbit/radicalbit-design-system';
 
-const LIVE_HELP = 'Updates in real time.';
-
 function LivePin() {
   return (
-    <InfoPopover content={LIVE_HELP}>
+    <InfoPopover content="Updates in real time">
       <Pin noMargins size="micro" type="animated" />
 
-      <span className="sr-only">{LIVE_HELP}</span>
+      <span className="sr-only">Updates in real time</span>
     </InfoPopover>
   );
 }
