@@ -1,19 +1,14 @@
+import { WINDOW_STATUS_LABELS } from '@Components/limits/constants';
 import { formatCount } from '@Components/limits/helpers';
 
-const STATUS_NAMES = {
-  ok: 'Normal',
-  warning: 'Warning',
-  critical: 'Critical',
-};
-
-const STATUS_ORDER = Object.keys(STATUS_NAMES);
+const STATUS_ORDER = Object.keys(WINDOW_STATUS_LABELS);
 
 const CHANGE_FILTER = 'Change the Limit status filter to see them.';
 
 const formatStatuses = (windowStatuses) => {
   const names = STATUS_ORDER
     .filter((status) => windowStatuses.includes(status))
-    .map((status) => STATUS_NAMES[status]);
+    .map((status) => WINDOW_STATUS_LABELS[status]);
 
   if (names.length === 1) {
     return names[0];
@@ -33,6 +28,10 @@ export const filterBudgetsByStatus = ({ limits, consumption, windowStatuses }) =
   return limits.filter(({ uuid }) => windowStatuses.includes(consumption[uuid]?.windowStatus));
 };
 
-export const formatNoBudgetMatches = ({ count, windowStatuses }) => `None of this project's ${formatCount(count, 'budget')} is ${formatStatuses(windowStatuses)} right now. ${CHANGE_FILTER}`;
+export const formatNoBudgetMatches = ({ count, windowStatuses }) => {
+  const verb = count === 1 ? 'is' : 'are';
+
+  return `None of this project's ${formatCount(count, 'budget')} ${verb} ${formatStatuses(windowStatuses)} right now. ${CHANGE_FILTER}`;
+};
 
 export const formatNoRouteMatches = (windowStatuses) => `No route is ${formatStatuses(windowStatuses)} right now. ${CHANGE_FILTER}`;

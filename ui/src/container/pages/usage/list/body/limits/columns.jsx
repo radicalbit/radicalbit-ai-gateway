@@ -78,13 +78,17 @@ function RouteName({ routeName }) {
 }
 
 function BudgetLimit({ progressBar, routeName }) {
-  const { data } = useGetProjectBudgetWithRange();
+  const { data, isLoading } = useGetProjectBudgetWithRange();
   const limits = data?.limits ?? [];
 
   const budget = progressBar?.budget;
   const value = numberFormatterInt(budget?.windowFilledPercentage ?? DEFAULT_VALUE);
   const status = budget?.windowStatus ?? DEFAULT_STATUS;
   const type = STATUS_TO_TYPE[status];
+
+  if (isLoading) {
+    return '--';
+  }
 
   if (limits.length) {
     return (

@@ -1,11 +1,12 @@
+import { WINDOW_STATUS_LABELS, WindowStatusEnum } from '@Components/limits/constants';
 import { Select } from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
 import { parseWindowStatuses } from './helpers';
 
 const OPTIONS = [
-  { label: 'Normal (0-70%)', tagLabel: 'Normal', value: 'ok' },
-  { label: 'Warning (71-90%)', tagLabel: 'Warning', value: 'warning' },
-  { label: 'Critical (91-100%)', tagLabel: 'Critical', value: 'critical' },
+  { label: 'Normal (0-70%)', tagLabel: WINDOW_STATUS_LABELS[WindowStatusEnum.OK], value: WindowStatusEnum.OK },
+  { label: 'Warning (71-90%)', tagLabel: WINDOW_STATUS_LABELS[WindowStatusEnum.WARNING], value: WindowStatusEnum.WARNING },
+  { label: 'Critical (91-100%)', tagLabel: WINDOW_STATUS_LABELS[WindowStatusEnum.CRITICAL], value: WindowStatusEnum.CRITICAL },
 ];
 
 function LimitStatusFilter({ id }) {

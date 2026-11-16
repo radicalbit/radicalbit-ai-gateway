@@ -29,7 +29,7 @@ describe('filterBudgetsByStatus', () => {
 describe('formatNoBudgetMatches', () => {
   it('names the budgets count and the selected statuses', () => {
     expect(formatNoBudgetMatches({ count: 3, windowStatuses: ['warning', 'critical'] }))
-      .toBe("None of this project's 3 budgets is Warning or Critical right now. Change the Limit status filter to see them.");
+      .toBe("None of this project's 3 budgets are Warning or Critical right now. Change the Limit status filter to see them.");
   });
 
   it('reads a single budget in the singular', () => {
@@ -39,7 +39,7 @@ describe('formatNoBudgetMatches', () => {
 
   it('names the statuses from Normal to Critical whatever the selection order', () => {
     expect(formatNoBudgetMatches({ count: 2, windowStatuses: ['critical', 'ok', 'warning'] }))
-      .toBe("None of this project's 2 budgets is Normal, Warning or Critical right now. Change the Limit status filter to see them.");
+      .toBe("None of this project's 2 budgets are Normal, Warning or Critical right now. Change the Limit status filter to see them.");
   });
 });
 
