@@ -15,10 +15,6 @@ import {
 import { schema } from './schema';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
-const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
-
-const UNAVAILABLE_MESSAGE = 'Unable to load this group, please close and retry later';
-
 function DeleteGroupWithAssociatedItems() {
   return (
     <FormbitContextProvider schema={schema}>
@@ -71,12 +67,12 @@ function Body() {
   }
 
   if (isError) {
-    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
+    return <Alert title="Unable to load this group, please close and retry later" type="error" />;
   }
 
   if (isExternallyManaged) {
     return (
-      <Alert title={DISABLED_GROUP_TOOLTIP} type="warning" />
+      <Alert title="This group is managed externally and cannot be modified" type="warning" />
     );
   }
 

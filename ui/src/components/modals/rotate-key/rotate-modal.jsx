@@ -19,8 +19,6 @@ import {
 } from './grace-period';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
-const NO_GRACE_ONLY_TOOLTIP = 'The credential expires in less than 1 hour: only no grace period is possible';
-
 // The design system forces its own widths on these inputs: they fill flex-1 wrappers instead
 const FULL_WIDTH = { width: '100%' };
 
@@ -139,7 +137,7 @@ function GracePeriod() {
 
   const graceRadio = isNoGraceOnly
     ? (
-      <Tooltip title={NO_GRACE_ONLY_TOOLTIP}>
+      <Tooltip title="The credential expires in less than 1 hour: only no grace period is possible">
         <span><Radio disabled value={GraceModeEnum.GRACE}>Grace period</Radio></span>
       </Tooltip>
     )

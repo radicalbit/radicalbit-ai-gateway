@@ -20,14 +20,6 @@ import { useMemo, useState } from 'react';
 import LimitMenu from './limit-menu';
 import { ScreenEnum } from './schema';
 
-const EXPIRED_MESSAGE = 'This credential has expired: its limits can no longer be changed.';
-
-const NO_LIMITS_TITLE = 'This credential has no limits';
-
-const ROUTE_WARNINGS_TITLE = 'Saved. Some routes this credential reaches have a stricter limit';
-
-const NO_LIMITS_DESCRIPTION = 'Only route and project limits apply.';
-
 const getRowClassName = () => DataTable.ROW_NOT_CLICKABLE;
 
 const getRowKey = ({ uuid }) => uuid;
@@ -52,7 +44,7 @@ function IsEmpty() {
       <ExpiredAlert />
 
       <Board
-        main={<Void actions={<AddLimits />} description={NO_LIMITS_DESCRIPTION} size="small" title={NO_LIMITS_TITLE} />}
+        main={<Void actions={<AddLimits />} description="Only route and project limits apply." size="small" title="This credential has no limits" />}
         width="100%"
       />
     </div>
@@ -98,7 +90,7 @@ function ExpiredAlert() {
     return false;
   }
 
-  return <Alert title={EXPIRED_MESSAGE} type="info" />;
+  return <Alert title="This credential has expired: its limits can no longer be changed." type="info" />;
 }
 
 function SavedWarnings() {
@@ -109,7 +101,7 @@ function SavedWarnings() {
 
   const lines = warnings.map((warning) => formatRouteLimitWarning(warning));
 
-  return <RouteLimitWarnings lines={lines} onClose={clearWarnings} title={ROUTE_WARNINGS_TITLE} />;
+  return <RouteLimitWarnings lines={lines} onClose={clearWarnings} title="Saved. Some routes this credential reaches have a stricter limit" />;
 }
 
 function AddLimits() {

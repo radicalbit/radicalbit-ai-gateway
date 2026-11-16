@@ -1,8 +1,6 @@
 import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { Alert } from '@radicalbit/radicalbit-design-system';
 
-const MESSAGE = 'This project has a project budget: routes can\'t declare budget_limiting.';
-
 function BudgetBanner({ projectUuid }) {
   const { data, isError, isLoading, isSuccess } = useGetProjectBudgetQuery(projectUuid, { skip: !projectUuid });
   const hasBudget = (data?.limits ?? []).length > 0;
@@ -27,7 +25,7 @@ function BudgetBanner({ projectUuid }) {
     return false;
   }
 
-  return <Alert showIcon title={MESSAGE} type="info" />;
+  return <Alert showIcon title="This project has a project budget: routes can't declare budget_limiting." type="info" />;
 }
 
 export default BudgetBanner;

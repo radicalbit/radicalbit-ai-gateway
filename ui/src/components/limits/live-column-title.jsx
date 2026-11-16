@@ -1,7 +1,7 @@
 import InfoPopover from '@Components/info-popover';
 import { Pin } from '@radicalbit/radicalbit-design-system';
 
-const LIVE_HELP = 'Live: usage updates on its own while this page is open.';
+const LIVE_HELP = 'Updates in real time.';
 
 /**
  * A column title followed by an animated pin, for a column whose values update while the page is open.

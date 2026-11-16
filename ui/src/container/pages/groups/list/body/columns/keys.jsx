@@ -8,8 +8,6 @@ import classNames from 'classnames';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 
-const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
-
 function Keys({ keys }) {
   return (
     <InfoPopover content={<PopoverContent keys={keys} />} minWidth="200" title={<strong>Credentials</strong>}>
@@ -79,7 +77,7 @@ function ExpiresOn({ expiresOn, owner, state }) {
   });
 
   return (
-    <Tooltip placement="topLeft" title={EXPIRES_ON_TOOLTIP}>
+    <Tooltip placement="topLeft" title="Expires at end of day (UTC)">
       <span className={className}>{label}</span>
     </Tooltip>
   );

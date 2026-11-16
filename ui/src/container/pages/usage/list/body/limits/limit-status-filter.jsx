@@ -1,18 +1,17 @@
 import { Select } from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
+import { parseWindowStatuses } from './helpers';
 
 const OPTIONS = [
-  { label: 'Normal (0-70%)', value: 'ok' },
-  { label: 'Warning (71-90%)', value: 'warning' },
-  { label: 'Critical (91-100%)', value: 'critical' },
+  { label: 'Normal (0-70%)', tagLabel: 'Normal', value: 'ok' },
+  { label: 'Warning (71-90%)', tagLabel: 'Warning', value: 'warning' },
+  { label: 'Critical (91-100%)', tagLabel: 'Critical', value: 'critical' },
 ];
 
 function LimitStatusFilter({ id }) {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const selectedStatuses = searchParams.get('windowStatuses')
-    ? searchParams.get('windowStatuses').split(',')
-    : [];
+  const selectedStatuses = parseWindowStatuses(searchParams.get('windowStatuses'));
 
   const handleOnChange = (values) => {
     setSearchParams((prev) => {
@@ -29,12 +28,12 @@ function LimitStatusFilter({ id }) {
     <Select
       allowClear
       id={id}
-      maxTagCount="responsive"
+      minWidth={240}
       mode="multiple"
       onChange={handleOnChange}
+      optionLabelProp="tagLabel"
       options={OPTIONS}
       placeholder="Please select"
-      style={{ width: 400 }}
       value={selectedStatuses}
     />
   );

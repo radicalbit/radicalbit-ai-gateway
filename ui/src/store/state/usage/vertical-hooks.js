@@ -1,4 +1,5 @@
 import { mcpKeysPageSize } from '@Src/constants';
+import { useGetProjectBudgetQuery } from '@State/projects/api';
 import { useGetRoutesQuery } from '@State/routes/api';
 import { parseTagsFromTagsKey } from '@State/tags-query-params-factory';
 import {
@@ -36,6 +37,12 @@ const useGetProjectRoutesWithRange = (options) => {
   const { gte, from, to, projectUuid } = useQueryRangeParams();
 
   return useGetRoutesQuery({ projectUuid, gte, from, to }, { skip: !projectUuid, ...options });
+};
+
+const useGetProjectBudgetWithRange = (options) => {
+  const { projectUuid } = useQueryRangeParams();
+
+  return useGetProjectBudgetQuery(projectUuid, { skip: !projectUuid, ...options });
 };
 
 const useGetCostsSummaryStreamWithRange = ({ routes, withSavedTokens }, options) => {
@@ -155,6 +162,7 @@ export {
   useGetMcpInvocationsByServiceStreamWithRange,
   useGetMcpKeyUsageWithRange,
   useGetMcpServersChartSseWithRange,
+  useGetProjectBudgetWithRange,
   useGetProjectRoutesWithRange,
   useGetTokensChartStreamWithRange,
 };

@@ -16,12 +16,6 @@ import BudgetMenu from './budget-menu';
 import Conflicts from './conflicts';
 import { ScreenEnum } from './schema';
 
-const NO_BUDGET_TITLE = 'This project has no budget';
-
-const NO_BUDGET_DESCRIPTION = 'Spending is capped only by route and credential budgets, if any.';
-
-const BLOCKED_TOOLTIP = 'Routes of the published configuration have their own budget';
-
 const getRowKey = ({ uuid }) => uuid;
 
 const getRowClassName = () => DataTable.ROW_NOT_CLICKABLE;
@@ -66,7 +60,7 @@ function IsEmpty() {
       <Conflicts />
 
       <Board
-        main={<Void actions={<AddBudget />} description={NO_BUDGET_DESCRIPTION} size="small" title={NO_BUDGET_TITLE} />}
+        main={<Void actions={<AddBudget />} description="Spending is capped only by route and credential budgets, if any." size="small" title="This project has no budget" />}
         width="100%"
       />
     </div>
@@ -124,7 +118,7 @@ function AddBudget() {
 
   if (isBlocked) {
     return (
-      <Tooltip title={BLOCKED_TOOLTIP}>
+      <Tooltip title="Routes of the published configuration have their own budget">
         <span>
           <Button disabled icon={<Lucide icon={Plus} />}>Add budgets</Button>
         </span>
