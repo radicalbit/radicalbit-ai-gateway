@@ -10,7 +10,7 @@ from radicalbit_ai_gateway.endpoints.common.dependencies import (
     get_gateway_routes,
     get_request_uuid,
 )
-from radicalbit_ai_gateway.endpoints.common.http import endpoint
+from radicalbit_ai_gateway.endpoints.common.http import endpoint, set_entry_endpoint
 from radicalbit_ai_gateway.endpoints.common.streaming_response import (
     StreamingResponseWithStatusCode,
 )
@@ -61,6 +61,8 @@ class MessagesRoute:
             gateway_routes: dict[str, GatewayRoute] = Depends(get_gateway_routes),
             request_uuid: str = Depends(get_request_uuid),
         ):
+            set_entry_endpoint('/v1/messages')
+
             def announce(route_name: str) -> None:
                 logger.info('Invoked route name (messages): %s', route_name)
 

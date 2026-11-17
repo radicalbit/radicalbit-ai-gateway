@@ -626,10 +626,10 @@
     uuid "^14.0.2"
     yup "^1.7.1"
 
-"@radicalbit/radicalbit-design-system@4.15.0":
-  version "4.15.0"
-  resolved "https://registry.yarnpkg.com/@radicalbit/radicalbit-design-system/-/radicalbit-design-system-4.15.0.tgz#c801745f4148b445627786ead4ef3bf5d8dbbe34"
-  integrity sha512-VfkeaLP0UebJe3Nvv4Zsuwk47CHpMXbhIr949RMbs0MAUF0kN3bTNXBkOxqhxKrUiN6ej8B7yM0qqmQYm0K++w==
+"@radicalbit/radicalbit-design-system@4.15.2":
+  version "4.15.2"
+  resolved "https://registry.yarnpkg.com/@radicalbit/radicalbit-design-system/-/radicalbit-design-system-4.15.2.tgz#2ca61c67b3b7fae5eac718a8a0190e433d24a50c"
+  integrity sha512-OEDkyDxBLFlUYV3TxSMi2JOyksh4wukVkFJ6rlHiBWoPuMqmMRHM/sRBTgq/szPbZoxtF7PqOTny1dG1r7WcAg==
   dependencies:
     "@ant-design/icons" "^6.3.4"
     "@fortawesome/fontawesome-svg-core" "6.7.2"

@@ -8,7 +8,8 @@ import uuid
 from pydantic import BaseModel
 
 from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
-from radicalbit_ai_gateway.llm.tracing import ChatTrace, ResponsesTrace
+from radicalbit_ai_gateway.llm.tracing import ChatTrace, MessagesTrace, ResponsesTrace
+from radicalbit_ai_gateway.llm.usage import MessagesCost
 
 
 def _run_id() -> str:
@@ -162,25 +163,53 @@ class ChatModel(ABC):
     # ── Native Anthropic Messages API ────────────────────────────────────
     # A provider that serves the Messages API takes a client's request body as
     # is. Such a provider implements ``_ainvoke_native_messages`` and
-    # ``_astream_native_messages``. ``headers`` are the client's
-    # ``anthropic-version`` and ``anthropic-beta`` headers.
+    # ``_astream_native_messages``; the public methods trace every call
+    # (``MessagesTrace`` in ``llm/tracing.py``). ``headers`` are the client's
+    # ``anthropic-version`` and ``anthropic-beta`` headers. ``cost`` prices
+    # the call's token counts for its span: the model does not know its prices.
 
     def supports_native_messages(self) -> bool:
         """Whether this model can serve a Messages API request body as is."""
         return False
 
     async def ainvoke_native_messages(
-        self, body: dict, headers: dict[str, str]
+        self,
+        body: dict,
+        headers: dict[str, str],
+        cost: MessagesCost | None = None,
     ) -> dict:
         """Send a Messages API request body and return the message object."""
-        return await self._ainvoke_native_messages(body, headers)
+        trace = MessagesTrace.start(self, body, cost=cost)
+        try:
+            message = await self._ainvoke_native_messages(body, headers)
+        except Exception as e:
+            if trace:
+                trace.fail(e)
+            raise
+        if trace:
+            trace.end(message)
+        return message
 
     async def astream_native_messages(
-        self, body: dict, headers: dict[str, str]
+        self,
+        body: dict,
+        headers: dict[str, str],
+        cost: MessagesCost | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
         """Send a streaming Messages API request; yield ``(event, data)`` pairs."""
-        async for event, data in self._astream_native_messages(body, headers):
-            yield event, data
+        trace = MessagesTrace.start(self, body, stream=True, cost=cost)
+        try:
+            async for event, data in self._astream_native_messages(body, headers):
+                if trace:
+                    trace.add_event(event, data)
+                yield event, data
+        except BaseException as e:
+            # Also when the consumer stops early (GeneratorExit).
+            if trace:
+                trace.fail(e)
+            raise
+        if trace:
+            trace.end_stream()
 
     async def _ainvoke_native_messages(
         self, body: dict, headers: dict[str, str]

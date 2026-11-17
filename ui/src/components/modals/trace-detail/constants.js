@@ -16,3 +16,5 @@ export const ATTRIBUTE_PREFIXES = [
   { prefix: 'gen_ai.usage.', title: 'Usage' },
   { prefix: 'traceloop.association.properties.', title: 'Association properties' },
 ];
+
+export const TAGS_ATTRIBUTE = { group: 'Association properties', name: 'tags' };

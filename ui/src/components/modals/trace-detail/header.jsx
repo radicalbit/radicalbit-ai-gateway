@@ -1,5 +1,6 @@
 import Lucide from '@Components/lucide';
 import { CredentialLink, GroupLink } from '@Container/pages/tracing/list/body/requests/entity-links';
+import RequestTags from '@Container/pages/tracing/list/body/requests/request-tags';
 import RequestTypeCell from '@Container/pages/tracing/list/body/requests/request-type-cell';
 import useModals from '@Hooks/use-modals';
 import { formatInt, formatMs, formatTimestamp } from '@Src/helpers/column-formatters';
@@ -126,8 +127,6 @@ function Meta() {
   const tags = data?.tags ?? [];
   const traceId = data?.traceId;
 
-  const tagsLine = tags.length ? tags.join(', ') : '--';
-
   return (
     <div className="flex flex-wrap gap-x-5 gap-y-1">
       <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={LABEL_PROPS} />
@@ -136,7 +135,7 @@ function Meta() {
 
       <TextWithBold bold={formatTimestamp(createdAt).trim()} size="small" text="Created" textProps={LABEL_PROPS} />
 
-      <TextWithBold bold={tagsLine} size="small" text="Tags" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<RequestTags tags={tags} />} size="small" text="Tags" textProps={LABEL_PROPS} />
 
       <TextWithBold bold={traceId ?? '--'} size="small" text="Trace" textProps={LABEL_PROPS} />
 

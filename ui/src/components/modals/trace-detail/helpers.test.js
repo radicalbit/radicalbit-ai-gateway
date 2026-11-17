@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   attributeCount,
+  attributeTags,
   attributeGroups,
   flattenSpans,
   isSpanError,
@@ -259,5 +260,20 @@ describe('spanTreeRows', () => {
 
   it('has no rows without a tree', () => {
     expect(spanTreeRows(null)).toEqual([]);
+  });
+});
+
+describe('attributeTags', () => {
+  it('splits the comma-separated tags attribute', () => {
+    expect(attributeTags('field=random,foo=bar, osd=asd')).toEqual(['field=random', 'foo=bar', 'osd=asd']);
+  });
+
+  it('has no tags for an empty value', () => {
+    expect(attributeTags('')).toEqual([]);
+    expect(attributeTags(undefined)).toEqual([]);
+  });
+
+  it('keeps tags that are already a list', () => {
+    expect(attributeTags(['a=1', 'b=2'])).toEqual(['a=1', 'b=2']);
   });
 });
