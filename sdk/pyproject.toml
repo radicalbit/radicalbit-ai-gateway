@@ -56,8 +56,8 @@ use-standard-collections = true
 use-schema-description = true
 use-field-description = true
 # A closed set of values is a Literal type alias, not an Enum class: callers
-# pass and compare plain strings (filter='prod'), as in the OpenAI and
-# Anthropic SDKs, and the editor still completes them
+# pass and compare plain strings (filter='prod'), and the editor still
+# completes them
 enum-field-as-literal = "all"
 use-type-alias = true
 # Tolerates values and fields added by newer gateways (see _models.py)
