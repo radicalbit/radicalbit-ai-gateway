@@ -14,8 +14,6 @@ import {
 import { schema } from './schema';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
-const UNAVAILABLE_MESSAGE = 'Unable to load this project, please close and retry later';
-
 function DeleteProject() {
   return (
     <FormbitContextProvider schema={schema}>
@@ -62,7 +60,7 @@ function Body() {
   }
 
   if (isError) {
-    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
+    return <Alert title="Unable to load this project, please close and retry later" type="error" />;
   }
 
   return (

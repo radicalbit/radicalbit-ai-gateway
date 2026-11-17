@@ -18,8 +18,6 @@ const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this budget.';
 
 const LAST_BUDGET_NOTE = 'Once the project has no budget, routes can declare their own budget_limiting again.';
 
-const FLUSH_BUTTON = '!min-w-0 !px-0';
-
 function DeleteScreen() {
   const { modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
@@ -44,7 +42,7 @@ function DeleteScreen() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnCancel} type="text">Back</Button>
+        <Button className="!min-w-0 !px-0" icon={<Lucide icon={ArrowLeft} />} onClick={handleOnCancel} type="text">Back</Button>
       </div>
 
       <div className="flex flex-col gap-2 focus:outline-none" data-confirm-question tabIndex={-1}>

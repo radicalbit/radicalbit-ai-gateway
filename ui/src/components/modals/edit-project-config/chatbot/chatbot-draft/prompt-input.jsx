@@ -7,8 +7,6 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { Send } from 'lucide-react';
 
-const TEXTAREA_ROWS = 4;
-
 function PromptInput({
   config, projectUuid, description, setDescription, setError, setIsGenerated, isGenerated,
 }) {
@@ -100,7 +98,7 @@ function PromptInput({
           onChange={handleOnChangeDescription}
           onKeyDown={handleOnKeyDown}
           placeholder="Type here..."
-          rows={TEXTAREA_ROWS}
+          rows={4}
           value={description}
         />
       )}

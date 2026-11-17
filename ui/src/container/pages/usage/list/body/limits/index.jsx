@@ -1,91 +1,41 @@
-import Lucide from '@Components/lucide';
-import { useGetLimitsStreamWithRange } from '@State/usage/vertical-hooks';
-import {
-  Board, Button, DataTable, FormField, Void,
-} from '@radicalbit/radicalbit-design-system';
-import { TriangleAlert } from 'lucide-react';
+import { FormField } from '@radicalbit/radicalbit-design-system';
 import { useId } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import ProjectFilter from '../project-filter';
 import RoutesFilter from '../routes-filter';
-import columns from './columns';
 import LimitStatusFilter from './limit-status-filter';
+import ProjectBudget from './project-budget';
+import Routes from './routes';
 
 function Limits() {
   const projectId = useId();
-  const routesId = useId();
   const statusId = useId();
+  const routesId = useId();
 
   return (
-    <div className="flex flex-col gap-4 h-full p-4">
-      <div className="flex flex-row items-center gap-4">
-        <FormField htmlFor={projectId} label="Project">
-          <ProjectFilter id={projectId} />
-        </FormField>
+    <div className="flex flex-col gap-8 h-full p-4">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-row items-center gap-4">
+          <FormField htmlFor={projectId} label="Project">
+            <ProjectFilter id={projectId} />
+          </FormField>
 
-        <FormField htmlFor={routesId} label="Routes">
-          <RoutesFilter id={routesId} />
-        </FormField>
+          <FormField htmlFor={statusId} label="Limit status">
+            <LimitStatusFilter id={statusId} />
+          </FormField>
+        </div>
 
-        <FormField htmlFor={statusId} label="Limit status">
-          <LimitStatusFilter id={statusId} />
-        </FormField>
+        <ProjectBudget />
       </div>
 
-      <DataContent />
-    </div>
-  );
-}
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-row items-center gap-4">
+          <FormField htmlFor={routesId} label="Routes">
+            <RoutesFilter id={routesId} />
+          </FormField>
+        </div>
 
-function DataContent() {
-  const [searchParams] = useSearchParams();
-  const routes = searchParams.get('routes')
-    ? searchParams.get('routes').split(',')
-    : [];
-  const windowStatuses = searchParams.get('windowStatuses')
-    ? searchParams.get('windowStatuses').split(',')
-    : [];
-
-  const { data, isFetching, refetch } = useGetLimitsStreamWithRange({ routes, windowStatuses });
-  const isSseLoading = data?.isSseLoading;
-  const isSseError = data?.isSseError;
-  const dataSource = data?.limits || [];
-
-  if (isSseError) {
-    return <IsError isFetching={isFetching} refetch={refetch} />;
-  }
-
-  return (
-    <DataTable
-      columns={columns}
-      dataSource={dataSource}
-      loading={isSseLoading}
-      pagination={false}
-      rowKey={({ routeName: key }) => key}
-    />
-  );
-}
-
-function IsError({ isFetching, refetch }) {
-  return (
-    <div className="flex justify-center h-full">
-      <Board
-        main={(
-          <Void
-            actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
-            description={(
-              <>
-                This might be temporary
-                <br />
-                please retry later
-              </>
-            )}
-            image={<Lucide icon={TriangleAlert} />}
-            title="Unable to load usage data"
-          />
-        )}
-        width="100%"
-      />
+        <Routes />
+      </div>
     </div>
   );
 }

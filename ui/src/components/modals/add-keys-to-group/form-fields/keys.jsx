@@ -17,8 +17,6 @@ import dayjs from 'dayjs';
 import { Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
-
 function Keys() {
   const { modalPayload } = useModals();
   const groupUuid = modalPayload?.data?.uuid;
@@ -140,7 +138,7 @@ function ExpiresOn({ expiresOn, owner, state }) {
   });
 
   return (
-    <Tooltip placement="topLeft" title={EXPIRES_ON_TOOLTIP}>
+    <Tooltip placement="topLeft" title="Expires at end of day (UTC)">
       <span className={className}>{label}</span>
     </Tooltip>
   );

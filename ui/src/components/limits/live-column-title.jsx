@@ -1,8 +1,6 @@
 import InfoPopover from '@Components/info-popover';
 import { Pin } from '@radicalbit/radicalbit-design-system';
 
-const LIVE_HELP = 'Live: usage updates on its own while this page is open.';
-
 /**
  * A column title followed by an animated pin, for a column whose values update while the page is open.
  *
@@ -18,10 +16,10 @@ function LiveColumnTitle({ title }) {
     <div className="flex items-center gap-2">
       {title}
 
-      <InfoPopover childClassName="flex" content={LIVE_HELP}>
+      <InfoPopover childClassName="flex" content="Updates in real time">
         <Pin noMargins size="micro" type="animated" />
 
-        <span className="sr-only">{LIVE_HELP}</span>
+        <span className="sr-only">Updates in real time</span>
       </InfoPopover>
     </div>
   );

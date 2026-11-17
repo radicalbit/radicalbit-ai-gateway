@@ -1,7 +1,5 @@
 const NOTE = 'text-xs opacity-70';
 
-const WARNING_NOTE = 'text-xs text-[var(--coo-warning)]';
-
 /**
  * The notes under the limit fields, in field order: category, window type, max.
  * Key words are in bold so the user can spot the concept without reading the whole sentence.
@@ -72,7 +70,7 @@ function EditNote({ isEditing, isWindowChanged }) {
 
   if (isWindowChanged) {
     return (
-      <span aria-live="polite" className={WARNING_NOTE}>
+      <span aria-live="polite" className="text-xs text-[var(--coo-warning)]">
         {'A new '}
 
         <strong>window type</strong>

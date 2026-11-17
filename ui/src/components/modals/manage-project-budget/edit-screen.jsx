@@ -6,8 +6,6 @@ import { Button, FormField } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft } from 'lucide-react';
 import useHandleOnEdit from './useHandleOnEdit';
 
-const FLUSH_BUTTON = '!min-w-0 !px-0';
-
 function EditScreen() {
   const { form, write } = useFormbitContext();
   const row = form?.limits?.[0];
@@ -28,7 +26,7 @@ function EditScreen() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnCancel} type="text">Back</Button>
+        <Button className="!min-w-0 !px-0" icon={<Lucide icon={ArrowLeft} />} onClick={handleOnCancel} type="text">Back</Button>
       </div>
 
       <div className="flex flex-col gap-4">

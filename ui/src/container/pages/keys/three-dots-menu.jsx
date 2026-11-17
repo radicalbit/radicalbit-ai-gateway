@@ -61,10 +61,6 @@ const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and 
 
 const EXPIRED_CREDENTIALS_TOOLTIP = 'This credential has expired: it can only be deleted or removed from its group';
 
-const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
-
-const IN_GRACE_TOOLTIP = 'A grace period is running: end it before rotating again';
-
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { showModal } = useModals();
 
@@ -102,7 +98,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   if (isError) {
     return [
       {
-        label: <Tooltip title={UNAVAILABLE_TOOLTIP}>Unable to load credential</Tooltip>,
+        label: <Tooltip title="Unable to load the latest data, please retry later">Unable to load credential</Tooltip>,
         disabled: true,
       },
     ];
@@ -149,7 +145,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
 
   // A credential holds at most two values: no new rotation while the previous value still works
   const rotateItem = isGraceRunning
-    ? { label: <Tooltip title={IN_GRACE_TOOLTIP}>Rotate credential</Tooltip>, disabled: true }
+    ? { label: <Tooltip title="A grace period is running: end it before rotating again">Rotate credential</Tooltip>, disabled: true }
     : { label: 'Rotate credential', onClick: handleOnRotateKey };
 
   // Only while a grace period is running

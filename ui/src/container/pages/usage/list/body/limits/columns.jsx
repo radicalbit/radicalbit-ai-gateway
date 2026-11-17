@@ -1,5 +1,6 @@
 import InfoPopover from '@Components/info-popover';
 import { numberFormatterFloat, numberFormatterInt } from '@Src/constants';
+import { useGetProjectBudgetWithRange } from '@State/usage/vertical-hooks';
 import { BarChart } from '@radicalbit/radicalbit-design-system';
 
 const STATUS_TO_TYPE = {
@@ -77,10 +78,25 @@ function RouteName({ routeName }) {
 }
 
 function BudgetLimit({ progressBar, routeName }) {
+  const { data, isLoading } = useGetProjectBudgetWithRange();
+  const limits = data?.limits ?? [];
+
   const budget = progressBar?.budget;
   const value = numberFormatterInt(budget?.windowFilledPercentage ?? DEFAULT_VALUE);
   const status = budget?.windowStatus ?? DEFAULT_STATUS;
   const type = STATUS_TO_TYPE[status];
+
+  if (isLoading) {
+    return '--';
+  }
+
+  if (limits.length) {
+    return (
+      <InfoPopover content="Routes can't set their own budget. Spend on this route counts toward the project budget.">
+        <span>Project budget</span>
+      </InfoPopover>
+    );
+  }
 
   if (!budget) {
     return (

@@ -15,8 +15,6 @@ import Header from './header';
 import { schema } from './schema';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
-const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
-
 function AddKeysToGroups() {
   return (
     <FormbitContextProvider initialValues={{}} schema={schema}>
@@ -58,7 +56,7 @@ function Body() {
 
   if (isExternallyManaged) {
     return (
-      <Alert title={DISABLED_GROUP_TOOLTIP} type="warning" />
+      <Alert title="This group is managed externally and cannot be modified" type="warning" />
     );
   }
 

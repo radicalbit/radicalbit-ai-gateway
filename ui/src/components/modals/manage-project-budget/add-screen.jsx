@@ -17,10 +17,6 @@ import {
   ScreenEnum, getEditRow, getInitialValues, newRow,
 } from './schema';
 
-const FLUSH_BUTTON = '!min-w-0 !px-0';
-
-const INLINE_LINK = 'p-0 border-0 bg-transparent text-inherit underline cursor-pointer font-[inherit]';
-
 function AddScreen() {
   const { error, form, initialize, write } = useFormbitContext();
   const rows = form?.limits ?? [];
@@ -42,7 +38,7 @@ function AddScreen() {
       <Conflicts />
 
       <div className="flex items-center justify-between">
-        <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Budget limits</Button>
+        <Button className="!min-w-0 !px-0" icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Budget limits</Button>
 
         <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another budget</Button>
       </div>
@@ -150,7 +146,7 @@ function DuplicateMessage({ limit }) {
     <span>
       {DUPLICATE_BUDGET_PREFIX}
 
-      <button className={INLINE_LINK} onClick={handleOnEdit} type="button">{DUPLICATE_EDIT_LINK}</button>
+      <button className="p-0 border-0 bg-transparent text-inherit underline cursor-pointer font-[inherit]" onClick={handleOnEdit} type="button">{DUPLICATE_EDIT_LINK}</button>
 
       {DUPLICATE_SUFFIX}
     </span>
