@@ -17,8 +17,6 @@ import dayjs from 'dayjs';
 import { Trash } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 
-const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
-
 const columns = [
   {
     title: 'Name',
@@ -49,8 +47,6 @@ const columns = [
     render: (uuid, record) => <DataTableAction noHide><Actions record={record} uuid={uuid} /></DataTableAction>,
   },
 ];
-
-const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
 
 function Name({ record }) {
   const {
@@ -99,7 +95,7 @@ function ExpiresOn({ expiresOn, owner, state }) {
   });
 
   return (
-    <Tooltip placement="topLeft" title={EXPIRES_ON_TOOLTIP}>
+    <Tooltip placement="topLeft" title="Expires at end of day (UTC)">
       <span className={className}>{label}</span>
     </Tooltip>
   );
@@ -160,7 +156,7 @@ function Actions({ uuid: keyUUID, record: { name } }) {
 
   if (isExternallyManaged) {
     return (
-      <Tooltip title={DISABLED_GROUP_TOOLTIP}>
+      <Tooltip title="This group is managed externally and cannot be modified">
         <div>
           <Button aria-label="Remove" disabled size="small" type="text">
             <Lucide disabled icon={Trash} />

@@ -15,8 +15,6 @@ import Header from './header';
 import { schema } from './schema';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
-const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and cannot be modified';
-
 function AddGroupToKey() {
   return (
     <FormbitContextProvider initialValues={{}} schema={schema}>
@@ -58,7 +56,7 @@ function Body() {
 
   if (isExternallyManaged) {
     return (
-      <Alert title={DISABLED_CREDENTIALS_TOOLTIP} type="warning" />
+      <Alert title="This credential is managed externally and cannot be modified" type="warning" />
     );
   }
 

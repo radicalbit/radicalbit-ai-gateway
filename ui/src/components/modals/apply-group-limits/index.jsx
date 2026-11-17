@@ -18,12 +18,6 @@ import useHandleOnSubmit from './useHandleOnSubmit';
 import useMembers from './use-members';
 import useTouchedCount from './use-touched-count';
 
-const UNAVAILABLE_MESSAGE = 'Unable to load this group, please close and retry later';
-
-const MODAL_WIDTH = 820;
-
-const ROUTE_WARNINGS_TITLE = 'Some routes these credentials reach have a stricter limit';
-
 const OutcomeEnum = {
   ADDED: 'added',
   OVERWRITTEN: 'overwritten',
@@ -51,7 +45,7 @@ function ApplyGroupLimitsInner() {
       header={<Header />}
       onCancel={hideModal}
       open
-      width={MODAL_WIDTH}
+      width={820}
     >
       <Body />
     </RbitModal>
@@ -91,7 +85,7 @@ function Body() {
   }
 
   if (group.isError || keys.isError) {
-    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
+    return <Alert title="Unable to load this group, please close and retry later" type="error" />;
   }
 
   if (!group.isSuccess || !keys.isSuccess) {
@@ -213,7 +207,7 @@ function Result({ result }) {
         </span>
       </div>
 
-      <RouteLimitWarnings lines={warningLines} title={ROUTE_WARNINGS_TITLE} />
+      <RouteLimitWarnings lines={warningLines} title="Some routes these credentials reach have a stricter limit" />
     </div>
   );
 }

@@ -17,6 +17,18 @@ export const WindowTypeEnum = {
   ALIGNED: 'ALIGNED_FIXED_WINDOW',
 };
 
+export const WindowStatusEnum = {
+  OK: 'ok',
+  WARNING: 'warning',
+  CRITICAL: 'critical',
+};
+
+export const WINDOW_STATUS_LABELS = {
+  [WindowStatusEnum.OK]: 'Normal',
+  [WindowStatusEnum.WARNING]: 'Warning',
+  [WindowStatusEnum.CRITICAL]: 'Critical',
+};
+
 export const LIMIT_CATEGORIES = [
   LimitCategoryEnum.REQUEST_RATE,
   LimitCategoryEnum.TOKEN_INPUT,

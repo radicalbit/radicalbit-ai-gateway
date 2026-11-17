@@ -1,18 +1,18 @@
+import { WINDOW_STATUS_LABELS, WindowStatusEnum } from '@Components/limits/constants';
 import { Select } from '@radicalbit/radicalbit-design-system';
 import { useSearchParams } from 'react-router-dom';
+import { parseWindowStatuses } from './helpers';
 
 const OPTIONS = [
-  { label: 'Normal (0-70%)', value: 'ok' },
-  { label: 'Warning (71-90%)', value: 'warning' },
-  { label: 'Critical (91-100%)', value: 'critical' },
+  { label: 'Normal (0-70%)', tagLabel: WINDOW_STATUS_LABELS[WindowStatusEnum.OK], value: WindowStatusEnum.OK },
+  { label: 'Warning (71-90%)', tagLabel: WINDOW_STATUS_LABELS[WindowStatusEnum.WARNING], value: WindowStatusEnum.WARNING },
+  { label: 'Critical (91-100%)', tagLabel: WINDOW_STATUS_LABELS[WindowStatusEnum.CRITICAL], value: WindowStatusEnum.CRITICAL },
 ];
 
 function LimitStatusFilter({ id }) {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const selectedStatuses = searchParams.get('windowStatuses')
-    ? searchParams.get('windowStatuses').split(',')
-    : [];
+  const selectedStatuses = parseWindowStatuses(searchParams.get('windowStatuses'));
 
   const handleOnChange = (values) => {
     setSearchParams((prev) => {
@@ -29,12 +29,12 @@ function LimitStatusFilter({ id }) {
     <Select
       allowClear
       id={id}
-      maxTagCount="responsive"
+      minWidth={240}
       mode="multiple"
       onChange={handleOnChange}
+      optionLabelProp="tagLabel"
       options={OPTIONS}
       placeholder="Please select"
-      style={{ width: 400 }}
       value={selectedStatuses}
     />
   );

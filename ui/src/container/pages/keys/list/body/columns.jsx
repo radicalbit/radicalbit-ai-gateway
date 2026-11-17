@@ -26,8 +26,6 @@ import { useRef, useState } from 'react';
 
 const MENU_TRIGGER = ['click'];
 
-const EXPIRES_ON_TOOLTIP = 'Expires at end of day (UTC)';
-
 const columns = [
   {
     title: '',
@@ -134,7 +132,7 @@ function ExpiresOn({ expiresOn, owner, state }) {
   });
 
   return (
-    <Tooltip placement="topLeft" title={EXPIRES_ON_TOOLTIP}>
+    <Tooltip placement="topLeft" title="Expires at end of day (UTC)">
       <span className={className}>{label}</span>
     </Tooltip>
   );

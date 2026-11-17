@@ -14,10 +14,6 @@ import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
 import { ScreenEnum, getInitialValues, newRow } from './schema';
 
-const FLUSH_BUTTON = '!min-w-0 !px-0';
-
-const INLINE_LINK = 'p-0 border-0 bg-transparent text-inherit underline cursor-pointer font-[inherit]';
-
 function AddScreen() {
   const { error, form, initialize, write } = useFormbitContext();
   const rows = form?.limits ?? [];
@@ -37,7 +33,7 @@ function AddScreen() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <Button className={FLUSH_BUTTON} icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Limits</Button>
+        <Button className="!min-w-0 !px-0" icon={<Lucide icon={ArrowLeft} />} onClick={handleOnBack} type="text">Limits</Button>
 
         <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another limit</Button>
       </div>
@@ -145,7 +141,7 @@ function DuplicateMessage({ limit }) {
     <span>
       {DUPLICATE_LIMIT_PREFIX}
 
-      <button className={INLINE_LINK} onClick={handleOnEdit} type="button">{DUPLICATE_EDIT_LINK}</button>
+      <button className="p-0 border-0 bg-transparent text-inherit underline cursor-pointer font-[inherit]" onClick={handleOnEdit} type="button">{DUPLICATE_EDIT_LINK}</button>
 
       {DUPLICATE_SUFFIX}
     </span>

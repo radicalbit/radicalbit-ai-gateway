@@ -6,8 +6,6 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import { Send, WandSparkles } from 'lucide-react';
 
-const TEXTAREA_ROWS = 4;
-
 function ChatbotServed() {
   return (
     <div className="flex flex-col min-h-0 opacity-50 pointer-events-none">
@@ -57,7 +55,7 @@ function ChatbotServed() {
             <TextArea
               aria-label="Prompt"
               placeholder="Type here..."
-              rows={TEXTAREA_ROWS}
+              rows={4}
             />
           )}
           size="small"

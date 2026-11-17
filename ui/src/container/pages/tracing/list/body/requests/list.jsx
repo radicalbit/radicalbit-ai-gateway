@@ -16,12 +16,6 @@ const COLUMNS = [
   },
 ];
 
-const HEADER_PROPS = { divider: true, padding: 'compact' };
-
-const MAIN_PROPS = { divider: true, padding: 'compact', type: 'secondary' };
-
-const SECONDARY_PROPS = { padding: 'none' };
-
 function RequestsList() {
   const [searchParams, setSearchParams] = useSearchParams();
   const page = Number(searchParams.get(REQUESTS_PAGE_PARAM)) || 1;
@@ -69,9 +63,9 @@ function RequestsList() {
           title={<SectionTitle title="Requests" />}
         />
       )}
-      headerProps={HEADER_PROPS}
+      headerProps={{ divider: true, padding: 'compact' }}
       main={<Legend />}
-      mainProps={MAIN_PROPS}
+      mainProps={{ divider: true, padding: 'compact', type: 'secondary' }}
       secondary={(
         <DataTable
           clickable
@@ -92,7 +86,7 @@ function RequestsList() {
           size="small"
         />
       )}
-      secondaryProps={SECONDARY_PROPS}
+      secondaryProps={{ padding: 'none' }}
       width="100%"
     />
   );

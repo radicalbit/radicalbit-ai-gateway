@@ -38,10 +38,6 @@ const EXPANDABLE = {
   indentSize: 16,
 };
 
-const HEADER_PROPS = { divider: true, padding: 'compact' };
-
-const SECONDARY_PROPS = { padding: 'none' };
-
 function Spans() {
   const { modalPayload } = useModals();
   const requestUuid = modalPayload?.data?.requestUuid;
@@ -88,7 +84,7 @@ function Spans() {
           title={<SectionTitle title="Spans" />}
         />
       )}
-      headerProps={HEADER_PROPS}
+      headerProps={{ divider: true, padding: 'compact' }}
       secondary={(
         <DataTable
           clickable
@@ -103,7 +99,7 @@ function Spans() {
           size="small"
         />
       )}
-      secondaryProps={SECONDARY_PROPS}
+      secondaryProps={{ padding: 'none' }}
       width="100%"
     />
   );
