@@ -57,10 +57,6 @@ function ThreeDotsMenu() {
   );
 }
 
-const DISABLED_CREDENTIALS_TOOLTIP = 'This credential is managed externally and cannot be modified';
-
-const EXPIRED_CREDENTIALS_TOOLTIP = 'This credential has expired: it can only be deleted or removed from its group';
-
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { showModal } = useModals();
 
@@ -113,18 +109,18 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   if (isExternallyManaged) {
     return [
       {
-        label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>Edit credential</Tooltip>,
+        label: <Tooltip title="This credential is managed externally and cannot be modified">Edit credential</Tooltip>,
         disabled: true,
       },
       {
-        label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>Rotate credential</Tooltip>,
+        label: <Tooltip title="This credential is managed externally and cannot be modified">Rotate credential</Tooltip>,
         disabled: true,
       },
       {
         type: 'divider',
       },
       {
-        label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}>Associate group</Tooltip>,
+        label: <Tooltip title="This credential is managed externally and cannot be modified">Associate group</Tooltip>,
         disabled: true,
       },
       manageLimitsItem,
@@ -132,7 +128,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         type: 'divider',
       },
       {
-        label: <Tooltip title={DISABLED_CREDENTIALS_TOOLTIP}><div className="is-error">Delete credential</div></Tooltip>,
+        label: <Tooltip title="This credential is managed externally and cannot be modified"><div className="is-error">Delete credential</div></Tooltip>,
         disabled: true,
       },
     ];
@@ -152,18 +148,18 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   const endGraceItem = isGraceRunning ? endGracePeriodItem : false;
   // An expired credential can still leave its group (cleanup), but can't join one
   const expiredGroupItem = group ? removeGroupItem : {
-    label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Associate group</Tooltip>,
+    label: <Tooltip title="This credential has expired: it can only be deleted or removed from its group">Associate group</Tooltip>,
     disabled: true,
   };
 
   if (state === CredentialStateEnum.EXPIRED) {
     return [
       {
-        label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Edit credential</Tooltip>,
+        label: <Tooltip title="This credential has expired: it can only be deleted or removed from its group">Edit credential</Tooltip>,
         disabled: true,
       },
       {
-        label: <Tooltip title={EXPIRED_CREDENTIALS_TOOLTIP}>Rotate credential</Tooltip>,
+        label: <Tooltip title="This credential has expired: it can only be deleted or removed from its group">Rotate credential</Tooltip>,
         disabled: true,
       },
       {

@@ -17,8 +17,6 @@ const STATUS_PINS = {
 
 const UNKNOWN_STATUS_PIN = { label: 'Status: unknown', type: 'filled-secondary' };
 
-const LABEL_PROPS = { type: 'secondary' };
-
 function RequestRow({ request }) {
   const apiKeyName = request?.apiKeyName;
   const cost = request?.cost;
@@ -40,11 +38,11 @@ function RequestRow({ request }) {
           size="small"
           subtitle={(
             <div className="flex flex-wrap gap-x-4 gap-y-1">
-              <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={LABEL_PROPS} />
+              <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={{ type: 'secondary' }} />
 
-              <TextWithBold bold={formatMs(durationMs)} size="small" text="Duration" textProps={LABEL_PROPS} />
+              <TextWithBold bold={formatMs(durationMs)} size="small" text="Duration" textProps={{ type: 'secondary' }} />
 
-              <TextWithBold bold={formatCost(cost)} size="small" text="Cost" textProps={LABEL_PROPS} />
+              <TextWithBold bold={formatCost(cost)} size="small" text="Cost" textProps={{ type: 'secondary' }} />
             </div>
           )}
           title={(

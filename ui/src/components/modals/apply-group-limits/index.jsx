@@ -1,4 +1,5 @@
-import { formatCount, formatRouteLimitWarning, isLimitComplete } from '@Components/limits/helpers';
+import HtmlAnchor from '@Components/html-anchor';
+import { formatCount, formatRouteLimitWarning } from '@Components/limits/helpers';
 import RouteLimitWarnings from '@Components/limits/route-limit-warnings';
 import useModals from '@Hooks/use-modals';
 import { PathsEnum } from '@Src/constants';
@@ -10,7 +11,6 @@ import {
   Alert, Button, Divider, FormField, RbitModal, SectionTitle, Skeleton, Spinner,
 } from '@radicalbit/radicalbit-design-system';
 import { useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import LimitsToApply from './limits-to-apply';
 import Preview from './preview';
 import { getInitialValues, schema } from './schema';
@@ -126,7 +126,6 @@ function ApplyForm() {
   const { members } = useMembers();
 
   const backendError = error('silent.backend');
-  const backendErrorField = backendError ? <FormField message={backendError} /> : false;
 
   return (
     <div className="flex flex-col gap-6">
@@ -138,7 +137,7 @@ function ApplyForm() {
 
       <Preview />
 
-      {backendErrorField}
+      {backendError && <FormField message={backendError} />}
     </div>
   );
 }
@@ -159,25 +158,17 @@ function CopyExplanation({ count }) {
 function ApplyActions() {
   const { hideModal } = useModals();
 
-  const { form } = useFormbitContext();
-  const rows = form?.limits ?? [];
-
   const { handleOnSubmit, args: { isLoading }, isSubmitDisabled } = useHandleOnSubmit();
 
   const touchedCount = useTouchedCount();
 
   const applyLabel = `Apply to ${formatCount(touchedCount, 'credential')}`;
-  const isIncomplete = !rows.every(isLimitComplete);
-  const hint = isIncomplete ? <span className="mr-auto self-center text-xs text-[var(--coo-fg-secondary)]" id="apply-group-limits-hint">Fill in every field of each limit to apply</span> : false;
-  const hintId = isIncomplete ? 'apply-group-limits-hint' : undefined;
 
   return (
     <div className="flex gap-2 justify-end">
-      {hint}
-
       <Button onClick={hideModal} type="secondary-light">Cancel</Button>
 
-      <Button aria-describedby={hintId} disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{applyLabel}</Button>
+      <Button disabled={isSubmitDisabled} loading={isLoading} onClick={handleOnSubmit} type="primary">{applyLabel}</Button>
     </div>
   );
 }
@@ -201,7 +192,7 @@ function Result({ result }) {
         <span className="text-xs opacity-70">
           {'These limits now belong to each credential: change or delete them from '}
 
-          <Link className="c-anchor light" onClick={hideModal} to={`/${PathsEnum.CREDENTIALS}`}><strong>Credentials</strong></Link>
+          <HtmlAnchor className="light" onClick={hideModal} to={`/${PathsEnum.CREDENTIALS}`}><strong>Credentials</strong></HtmlAnchor>
 
           .
         </span>

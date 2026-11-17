@@ -19,20 +19,20 @@ function LimitsToApply() {
   };
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <strong>Limits to apply</strong>
 
         <Button icon={<Lucide icon={Plus} />} onClick={handleOnAddRow}>Add another limit</Button>
       </div>
 
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
           <Rows />
         </div>
-
-        <LimitNotes />
       </div>
+
+      <LimitNotes />
     </div>
   );
 }
@@ -81,23 +81,23 @@ function Row({
     onRemove(index);
   };
 
-  const rowLabel = `limit ${index + 1}`;
   const message = error ?? formError(`silent.limits.${index}`);
-  const errorField = message ? <FormField message={message} /> : false;
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex gap-2 items-end">
+      <div className="flex gap-2 items-start">
         <div className="flex-1 min-w-0">
-          <LimitFields limit={row} onChange={handleOnChange} rowLabel={rowLabel} />
+          <LimitFields limit={row} onChange={handleOnChange} path={`limits[${index}]`} rowLabel={`limit ${index + 1}`} />
         </div>
 
-        <Button aria-label={`Remove limit ${index + 1}`} disabled={isOnlyRow} onClick={handleOnRemove} type="text">
-          <Lucide icon={Trash2} />
-        </Button>
+        <div className="flex h-8 items-center mt-4">
+          <Button aria-label={`Remove limit ${index + 1}`} disabled={isOnlyRow} onClick={handleOnRemove} type="text">
+            <Lucide icon={Trash2} />
+          </Button>
+        </div>
       </div>
 
-      {errorField}
+      {message && <FormField message={message} />}
     </div>
   );
 }

@@ -9,9 +9,6 @@ import { useId } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTagsFilterContext } from './context';
 
-const KEY_SELECT_WIDTH = 180;
-const VALUE_SELECT_WIDTH = 260;
-
 const writeRowsToSearchParams = (prev, rows) => {
   prev.delete('tags');
 
@@ -98,7 +95,7 @@ function TagRow({ index, rowId, tagKeys }) {
           onChange={handleOnKeyChange}
           options={keyOptions}
           placeholder="Select key"
-          style={{ width: KEY_SELECT_WIDTH }}
+          style={{ width: 180 }}
           value={row.key || undefined}
         />
 
@@ -112,7 +109,7 @@ function TagRow({ index, rowId, tagKeys }) {
           onChange={handleOnValuesChange}
           options={valueOptions}
           placeholder={valuesPlaceholder}
-          style={{ width: VALUE_SELECT_WIDTH }}
+          style={{ width: 260 }}
           value={row.values}
         />
 

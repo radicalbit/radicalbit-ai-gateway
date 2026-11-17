@@ -1,3 +1,4 @@
+import HtmlAnchor from '@Components/html-anchor';
 import useModals from '@Hooks/use-modals';
 import { PathsEnum } from '@Src/constants';
 import Lucide from '@Components/lucide';
@@ -11,7 +12,6 @@ import {
   Tooltip,
 } from '@radicalbit/radicalbit-design-system';
 import { Key, Search } from 'lucide-react';
-import { Link } from 'react-router-dom';
 
 function Group() {
   const { modalPayload } = useModals();
@@ -110,7 +110,7 @@ function NoGroupsAlert() {
 
             {'. Please go to the '}
 
-            <Link className="c-anchor light" to={`/${PathsEnum.GROUPS}`}><strong>groups section</strong></Link>
+            <HtmlAnchor className="light" to={`/${PathsEnum.GROUPS}`}><strong>groups section</strong></HtmlAnchor>
 
             {' and create a new group if needed.'}
           </span>

@@ -11,8 +11,6 @@ const PAGE_SEARCH_PARAM = 'mcpKeysTablePage';
 
 const tableHeight = { height: '20rem', width: '100%' };
 
-const BOARD_TITLE = 'MCP Key Usage';
-
 const useMcpKeyUsage = () => {
   const [searchParams] = useSearchParams();
   const page = Number(searchParams.get(PAGE_SEARCH_PARAM)) || 1;
@@ -50,7 +48,7 @@ function McpKeysTable() {
 function IsLoading() {
   return (
     <Board
-      header={<SectionTitle modifier="pl-4" size="medium" title={BOARD_TITLE} />}
+      header={<SectionTitle modifier="pl-4" size="medium" title="MCP Key Usage" />}
       main={<Skeleton.Node active style={tableHeight} />}
     />
   );
@@ -59,7 +57,7 @@ function IsLoading() {
 function IsError({ isFetching, refetch }) {
   return (
     <Board
-      header={<SectionTitle modifier="pl-4" size="medium" title={BOARD_TITLE} />}
+      header={<SectionTitle modifier="pl-4" size="medium" title="MCP Key Usage" />}
       main={(
         <Void
           actions={<Button loading={isFetching} onClick={refetch}>Retry</Button>}
@@ -82,7 +80,7 @@ function IsError({ isFetching, refetch }) {
 function IsEmpty() {
   return (
     <Board
-      header={<SectionTitle modifier="pl-4" size="medium" title={BOARD_TITLE} />}
+      header={<SectionTitle modifier="pl-4" size="medium" title="MCP Key Usage" />}
       main={(
         <Void
           description="No MCP key usage data available yet. Table will appear automatically when some data arrived."
@@ -106,7 +104,7 @@ function IsSuccess({ data }) {
 
   return (
     <Board
-      header={<SectionTitle modifier="pl-4" size="medium" title={BOARD_TITLE} />}
+      header={<SectionTitle modifier="pl-4" size="medium" title="MCP Key Usage" />}
       main={(
         <DataTable
           columns={columns}

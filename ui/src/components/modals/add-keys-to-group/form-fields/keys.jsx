@@ -1,3 +1,4 @@
+import HtmlAnchor from '@Components/html-anchor';
 import useModals from '@Hooks/use-modals';
 import {
   CredentialStateEnum, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum,
@@ -15,7 +16,6 @@ import {
 import classNames from 'classnames';
 import dayjs from 'dayjs';
 import { Search } from 'lucide-react';
-import { Link } from 'react-router-dom';
 
 function Keys() {
   const { modalPayload } = useModals();
@@ -183,7 +183,7 @@ function NoKeysAlert() {
 
             {'. Please go to the '}
 
-            <Link className="c-anchor light" to={`/${PathsEnum.CREDENTIALS}`}><strong>credentials section</strong></Link>
+            <HtmlAnchor className="light" to={`/${PathsEnum.CREDENTIALS}`}><strong>credentials section</strong></HtmlAnchor>
 
             {' and create a new credential if needed.'}
           </span>

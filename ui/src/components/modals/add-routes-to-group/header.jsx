@@ -51,28 +51,6 @@ function AssociatedRoutes() {
   const { data } = useGetGroupQuery(uuid, { skip: !uuid });
   const routes = data?.routes || [];
 
-  const popoverContent = (
-    <div>
-      <strong>Routes already associated</strong>
-
-      <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-        {routes.map(({ name, projectUuid }) => {
-          const handleOnClick = () => {
-            navigate(`/${PathsEnum.ROUTES}/${name}?${SEARCH_PARAMS.routes}=${name}&projectUuid=${projectUuid}`);
-          };
-
-          return (
-            <div key={name}>
-              <HtmlAnchor onClick={handleOnClick}>
-                {name}
-              </HtmlAnchor>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
   if (routes.length === 0) {
     return <span>{`Routes already associated: ${routes.length}`}</span>;
   }
@@ -81,7 +59,29 @@ function AssociatedRoutes() {
     <div className="flex flex-row items-center gap-2">
       <span>{`Routes already associated: ${routes.length}`}</span>
 
-      <InfoPopover content={popoverContent}>
+      <InfoPopover
+        content={(
+          <div>
+            <strong>Routes already associated</strong>
+
+            <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+              {routes.map(({ name, projectUuid }) => {
+                const handleOnClick = () => {
+                  navigate(`/${PathsEnum.ROUTES}/${name}?${SEARCH_PARAMS.routes}=${name}&projectUuid=${projectUuid}`);
+                };
+
+                return (
+                  <div key={name}>
+                    <HtmlAnchor onClick={handleOnClick}>
+                      {name}
+                    </HtmlAnchor>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      >
         <Lucide icon={Info} />
       </InfoPopover>
     </div>

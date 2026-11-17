@@ -18,14 +18,6 @@ export default function MainHeaderContentSwitch() {
     return null;
   }
 
-  const alertsRoutes = FEATURE_FLAGS.ALERTS ? (
-    <>
-      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}`} />
-
-      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}/:uuid`} />
-    </>
-  ) : false;
-
   return (
     <Routes>
       <Route element={<RoutesListHeader />} path={`/${PathsEnum.ROUTES}`} />
@@ -48,7 +40,13 @@ export default function MainHeaderContentSwitch() {
 
       <Route element={<SecretsListHeader />} path={`/${PathsEnum.SECRETS}`} />
 
-      {alertsRoutes}
+      {FEATURE_FLAGS.ALERTS && (
+        <>
+          <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}`} />
+
+          <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}/:uuid`} />
+        </>
+      )}
     </Routes>
   );
 }

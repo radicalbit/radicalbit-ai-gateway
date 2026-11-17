@@ -1,6 +1,6 @@
+import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
-import TableRowLink from '@Components/table-row-link';
 import { ROUTE_DETAIL_TABS } from '@Container/pages/routes/detail/body';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useRemoveRouteFromGroupMutation } from '@State/groups/api';
@@ -11,28 +11,22 @@ import {
   SectionTitle, Skeleton, TextWithBold, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
 import { Trash } from 'lucide-react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 
 const columns = [
-  {
-    title: 'Name',
-    dataIndex: 'name',
-    key: 'name',
-    width: '40%',
-    render: (value, { projectUuid }) => (
-      <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <TableRowLink to={`/${PathsEnum.ROUTES}/${value}?tab=${ROUTE_DETAIL_TABS.associations.key}&${SEARCH_PARAMS.routes}=${encodeURIComponent(value)}&projectUuid=${projectUuid}`}>
-          <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
-        </TableRowLink>
-      </Truncate>
-    ),
-  },
   {
     title: 'Project',
     dataIndex: 'projectUuid',
     key: 'projectUuid',
     width: '40%',
     render: (projectUuid) => <ProjectName projectUuid={projectUuid} />,
+  },
+  {
+    title: 'Route',
+    dataIndex: 'name',
+    key: 'name',
+    width: '40%',
+    render: (name, { projectUuid }) => <RouteLink name={name} projectUuid={projectUuid} />,
   },
   {
     title: '',
@@ -42,6 +36,21 @@ const columns = [
     render: (name, record) => <DataTableAction noHide><Actions name={name} record={record} /></DataTableAction>,
   },
 ];
+
+function RouteLink({ name, projectUuid }) {
+  const navigate = useNavigate();
+
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+    navigate(`/${PathsEnum.ROUTES}/${name}?tab=${ROUTE_DETAIL_TABS.associations.key}&${SEARCH_PARAMS.routes}=${encodeURIComponent(name)}&projectUuid=${projectUuid}`);
+  };
+
+  return (
+    <Truncate tooltip={{ title: name, placement: 'topLeft' }}>
+      <HtmlAnchor className="font-[var(--coo-font-weight-bold)]" onClick={handleOnClick}>{name}</HtmlAnchor>
+    </Truncate>
+  );
+}
 
 function ProjectName({ projectUuid }) {
   const { data, isLoading, isError, isSuccess } = useGetProjectQuery(projectUuid, { skip: !projectUuid });

@@ -121,24 +121,7 @@ function Expiration() {
 
   const handleOnDisabledDate = (date) => date.format(EXPIRES_ON_FORMAT) < getUtcToday();
 
-  const datePicker = isDate ? (
-    <DatePicker
-      disabled={isLoading}
-      disabledDate={handleOnDisabledDate}
-      format="DD MMM YYYY"
-      id={id}
-      modifier="w-full"
-      onChange={handleOnChangeExpiresOn}
-      placeholder="Select a date"
-      presets={EXPIRES_ON_PRESETS}
-      showToday={false}
-      styles={PICKER_STYLES}
-      value={pickerValue}
-    />
-  ) : false;
-
   // FormField's description prop renders an info-icon tooltip, not helper text
-  const helperText = isDate ? <span className="text-xs opacity-70">Expires at the end of the chosen day (UTC)</span> : false;
 
   return (
     <FormField
@@ -153,9 +136,23 @@ function Expiration() {
           <Radio value={ExpiryModeEnum.DATE}>On date</Radio>
         </Radio.Group>
 
-        {datePicker}
+        {isDate && (
+          <DatePicker
+            disabled={isLoading}
+            disabledDate={handleOnDisabledDate}
+            format="DD MMM YYYY"
+            id={id}
+            modifier="w-full"
+            onChange={handleOnChangeExpiresOn}
+            placeholder="Select a date"
+            presets={EXPIRES_ON_PRESETS}
+            showToday={false}
+            styles={PICKER_STYLES}
+            value={pickerValue}
+          />
+        )}
 
-        {helperText}
+        {isDate && <span className="text-xs opacity-70">Expires at the end of the chosen day (UTC)</span>}
       </div>
     </FormField>
   );

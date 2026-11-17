@@ -1,3 +1,4 @@
+import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
 import { RuleScopeEnum, formatCount, getRulesMadeStale } from '@Components/limits/helpers';
 import { getMessageFromQueryError } from '@Helpers/errors';
@@ -8,13 +9,8 @@ import { useGetKeyQuery } from '@State/keys/api';
 import { useFormbitContext } from '@radicalbit/formbit';
 import { Button, FormField, Skeleton, TextWithBold } from '@radicalbit/radicalbit-design-system';
 import { ArrowLeft } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { getLimitLabel } from './helpers';
 import useHandleOnDelete from './useHandleOnDelete';
-
-const STALE_RULES_SUBJECT = 'on this limit';
-
-const STALE_RULES_UNAVAILABLE = 'Unable to check alert rules on this limit.';
 
 function DeleteScreen() {
   const { modalPayload } = useModals();
@@ -29,7 +25,6 @@ function DeleteScreen() {
   const limit = (data?.limits ?? []).find((item) => item.uuid === limitUuid);
 
   const label = getLimitLabel(limit);
-  const errorField = isError ? <FormField message={getMessageFromQueryError(error)} /> : false;
 
   if (!limit) {
     return false;
@@ -46,7 +41,7 @@ function DeleteScreen() {
 
         <StaleRules limit={limit} />
 
-        {errorField}
+        {isError && <FormField message={getMessageFromQueryError(error)} />}
       </div>
     </div>
   );
@@ -66,7 +61,7 @@ function StaleRules({ limit }) {
   }
 
   if (isError) {
-    return <span className="text-[var(--coo-warning)]">{STALE_RULES_UNAVAILABLE}</span>;
+    return <span className="text-[var(--coo-warning)]">Unable to check alert rules on this limit.</span>;
   }
 
   if (!isSuccess) {
@@ -94,21 +89,21 @@ function StaleRulesText({ rules }) {
       <span className="text-[var(--coo-warning)]">
         {'Alert rule '}
 
-        <Link className="c-anchor light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}><strong>{rule.name}</strong></Link>
+        <HtmlAnchor className="light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}><strong>{rule.name}</strong></HtmlAnchor>
 
-        {` ${STALE_RULES_SUBJECT} will become stale.`}
+        {' on this limit will become stale.'}
       </span>
     );
   }
 
-  const title = `${formatCount(rules.length, 'alert rule')} ${STALE_RULES_SUBJECT} will become stale:`;
+  const title = `${formatCount(rules.length, 'alert rule')} on this limit will become stale:`;
 
   return (
     <div className="flex flex-col gap-1 text-[var(--coo-warning)]">
       <span>{title}</span>
 
       <ul className="m-0 pl-5 list-disc">
-        {rules.map((rule) => <li key={rule.uuid}><Link className="c-anchor light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}>{rule.name}</Link></li>)}
+        {rules.map((rule) => <li key={rule.uuid}><HtmlAnchor className="light" onClick={hideModal} to={`/${PathsEnum.ALERTS}/${rule.uuid}`}>{rule.name}</HtmlAnchor></li>)}
       </ul>
     </div>
   );

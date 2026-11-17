@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { WindowTypeEnum } from './constants';
 import {
-  formatBlockedBy, formatLimitCategory, formatResetsIn, formatWindowSeconds, getDuplicateLimit, getMostConsumed,
+  formatBlockedBy, formatLimitCategory, formatResetsIn, formatWindowSeconds, getDuplicateLimit, getMaxTypeError, getMostConsumed,
 } from './helpers';
 
 const SAVED = {
@@ -178,5 +178,15 @@ describe('formatWindowSeconds', () => {
   it('shows a dash when the event did not record its window', () => {
     expect(formatWindowSeconds(undefined)).toBe('—');
     expect(formatWindowSeconds(null)).toBe('—');
+  });
+});
+
+describe('getMaxTypeError', () => {
+  it('asks for a valid number when the max is not a number', () => {
+    expect(getMaxTypeError({ originalValue: '0.0.0.0' })).toBe('Enter a valid number');
+  });
+
+  it('asks for a max when the field is empty', () => {
+    expect(getMaxTypeError({ originalValue: null })).toBe('Enter a max');
   });
 });

@@ -9,8 +9,6 @@ import TagRow from './tag-row';
 
 const OVERLAY_SELECTORS = '.c-popover, .ant-select-dropdown';
 
-const TRIGGER_WIDTH = 150;
-
 const OPEN_KEYS = ['Enter', ' ', 'ArrowDown'];
 
 function TagsFilter({ id }) {
@@ -37,7 +35,7 @@ function TagsFilterInner({ id }) {
       <Select
         disabled
         id={id}
-        minWidth={TRIGGER_WIDTH}
+        minWidth={150}
         placeholder="Select a project first"
       />
     );
@@ -54,7 +52,7 @@ function TagsFilterInner({ id }) {
       <div ref={wrapperRef}>
         <Select
           id={id}
-          minWidth={TRIGGER_WIDTH}
+          minWidth={150}
           onClick={handleOnTriggerClick}
           onKeyDown={handleOnTriggerKeyDown}
           open={false}

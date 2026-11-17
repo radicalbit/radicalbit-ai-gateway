@@ -23,8 +23,6 @@ import {
   attributeCount, attributeGroups, attributeTags, flattenSpans, selectedSpanId, selectedSpanTab, spanErrorLines, spanIo, spanShare,
 } from './helpers';
 
-const LABEL_PROPS = { type: 'secondary' };
-
 function SpanPanel() {
   const { modalPayload } = useModals();
   const requestUuid = modalPayload?.data?.requestUuid;
@@ -79,7 +77,7 @@ function SpanDetail({ span }) {
           padding="none"
           title={(
             <SectionTitle
-              subtitle={<TextWithBold bold={spanId} size="small" text="Span" textProps={LABEL_PROPS} />}
+              subtitle={<TextWithBold bold={spanId} size="small" text="Span" textProps={{ type: 'secondary' }} />}
               title={spanName}
               titleSuffix={<SpanTags spanId={spanId} />}
               wrapTitle
@@ -230,7 +228,7 @@ function AttributeGroup({ items, title }) {
 
   return (
     <section aria-label={title} className="flex flex-col gap-2">
-      <TextWithBold bold={items.length} boldProps={LABEL_PROPS} text={<strong>{`${title} ·`}</strong>} />
+      <TextWithBold bold={items.length} boldProps={{ type: 'secondary' }} text={<strong>{`${title} ·`}</strong>} />
 
       <DescriptionList items={listItems} noMargin />
     </section>

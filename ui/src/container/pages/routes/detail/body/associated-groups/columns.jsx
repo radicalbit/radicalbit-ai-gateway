@@ -1,6 +1,6 @@
+import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
-import TableRowLink from '@Components/table-row-link';
 import { DATE_FORMAT, PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import { useRemoveRouteFromGroupMutation } from '@State/groups/api';
 import {
@@ -9,20 +9,14 @@ import {
   Popconfirm, RelativeDateTime, SectionTitle, TextWithBold, Tooltip, Truncate,
 } from '@radicalbit/radicalbit-design-system';
 import { Trash } from 'lucide-react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 const columns = [
   {
     title: 'Name',
     dataIndex: 'name',
     key: 'name',
-    render: (value, { uuid }) => (
-      <Truncate tooltip={{ title: value, placement: 'topLeft' }}>
-        <TableRowLink to={`/${PathsEnum.GROUPS}/${uuid}?${SEARCH_PARAMS.groups}=${encodeURIComponent(value)}`}>
-          <span className="font-[var(--coo-font-weight-bold)]">{value}</span>
-        </TableRowLink>
-      </Truncate>
-    ),
+    render: (name, { uuid }) => <GroupLink name={name} uuid={uuid} />,
   },
   {
     title: 'Created',
@@ -45,6 +39,21 @@ const columns = [
     render: (name, record) => <DataTableAction noHide><Actions name={name} record={record} /></DataTableAction>,
   },
 ];
+
+function GroupLink({ name, uuid }) {
+  const navigate = useNavigate();
+
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+    navigate(`/${PathsEnum.GROUPS}/${uuid}?${SEARCH_PARAMS.groups}=${encodeURIComponent(name)}`);
+  };
+
+  return (
+    <Truncate tooltip={{ title: name, placement: 'topLeft' }}>
+      <HtmlAnchor className="font-[var(--coo-font-weight-bold)]" onClick={handleOnClick}>{name}</HtmlAnchor>
+    </Truncate>
+  );
+}
 
 function Actions({ record: { uuid } }) {
   const { name } = useParams();

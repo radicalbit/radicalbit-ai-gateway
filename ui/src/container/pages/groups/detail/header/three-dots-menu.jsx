@@ -50,8 +50,6 @@ function ThreeDotsMenu() {
   );
 }
 
-const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
-
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { showModal } = useModals();
   const { data, isLoading, isError, isSuccess } = useGetGroupQuery(uuid, { skip: !uuid });
@@ -93,7 +91,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   if (isExternallyManaged) {
     return [
       {
-        label: <Tooltip title={DISABLED_GROUP_TOOLTIP}>Edit group</Tooltip>,
+        label: <Tooltip title="This group is managed externally and cannot be modified">Edit group</Tooltip>,
         disabled: true,
       },
       {
@@ -104,7 +102,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         onClick: handleOnAssociateRoutes,
       },
       {
-        label: <Tooltip title={DISABLED_GROUP_TOOLTIP}>Associate credentials</Tooltip>,
+        label: <Tooltip title="This group is managed externally and cannot be modified">Associate credentials</Tooltip>,
         disabled: true,
       },
       applyLimitsItem,
@@ -112,7 +110,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
         type: 'divider',
       },
       {
-        label: <Tooltip title={DISABLED_GROUP_TOOLTIP}><div className="is-error">Delete group</div></Tooltip>,
+        label: <Tooltip title="This group is managed externally and cannot be modified"><div className="is-error">Delete group</div></Tooltip>,
         disabled: true,
       },
     ];

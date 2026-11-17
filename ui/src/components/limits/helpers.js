@@ -236,3 +236,11 @@ export const formatWindowSeconds = (windowSeconds) => {
 
   return `${count} ${plural}`;
 };
+
+export const getMaxTypeError = ({ originalValue }) => {
+  if (originalValue == null || originalValue === '') {
+    return 'Enter a max';
+  }
+
+  return 'Enter a valid number';
+};
