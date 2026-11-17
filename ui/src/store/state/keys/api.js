@@ -1,4 +1,14 @@
+import { API_BASE_URL } from '@Api/config';
 import { API_TAGS, apiService } from '@Src/store/apis';
+import eventSourceWithBackoff from '@State/event-source-with-backoff';
+
+const DEFAULT_CONSUMPTION_STATE = {
+  consumption: null,
+  isSseLoading: true,
+  isSseError: false,
+  isSseSuccess: false,
+  sseErrorMessage: null,
+};
 
 export const keysApiSlice = apiService.injectEndpoints({
   endpoints: (builder) => ({
@@ -187,10 +197,60 @@ export const keysApiSlice = apiService.injectEndpoints({
         return [];
       },
     }),
+    getKeyLimitsConsumptionStream: builder.query({
+      keepUnusedDataFor: 0,
+      queryFn: () => ({ data: DEFAULT_CONSUMPTION_STATE }),
+      async onCacheEntryAdded(
+        { keys },
+        { cacheDataLoaded, cacheEntryRemoved, updateCachedData },
+      ) {
+        try {
+          await cacheDataLoaded;
+
+          const params = new URLSearchParams();
+          [...keys].sort().forEach((uuid) => { params.append('keys', uuid); });
+
+          const url = `${API_BASE_URL}/keys/limits/stream?${params.toString()}`;
+          const subscription = eventSourceWithBackoff({
+            url,
+            onMessage: (parsed) => {
+              updateCachedData(() => ({
+                consumption: parsed,
+                isSseLoading: false,
+                isSseError: false,
+                isSseSuccess: true,
+                sseErrorMessage: null,
+              }));
+            },
+            onStreamError: () => {
+              updateCachedData((draft) => {
+                draft.isSseLoading = false;
+                draft.isSseError = true;
+                draft.isSseSuccess = false;
+                draft.sseErrorMessage = 'Unable to stream limits consumption';
+              });
+            },
+          });
+
+          await cacheEntryRemoved;
+          subscription.close();
+        } catch (error) {
+          console.error(error);
+
+          updateCachedData((draft) => {
+            draft.isSseLoading = false;
+            draft.isSseError = true;
+            draft.isSseSuccess = false;
+            draft.sseErrorMessage = error?.message ?? null;
+          });
+        }
+      },
+    }),
   }),
 });
 
 export const {
+  useGetKeyLimitsConsumptionStreamQuery,
   useGetKeysQuery,
   useGetAssociableGroupsByKeyQuery,
   useGetKeyQuery,

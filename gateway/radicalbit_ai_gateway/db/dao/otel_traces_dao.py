@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -37,6 +37,7 @@ _INPUT_TOKENS_ATTR = "SpanAttributes['gen_ai.usage.input_tokens']"
 _OPERATION_CATEGORY_ATTR = (
     "SpanAttributes['traceloop.association.properties.rb.gateway.operation_category']"
 )
+_SPAN_KIND_ATTR = "SpanAttributes['traceloop.span.kind']"
 _TAGS_ATTR = "SpanAttributes['traceloop.association.properties.tags']"
 # Tags are stamped as one comma-joined "key=value,..." string (see
 # set_trace_attributes) since SpanAttributes values are scalar - splitByChar
@@ -50,6 +51,7 @@ _ROOT_SPAN_NAMES_BY_REQUEST_TYPE: dict[RequestType, list[str]] = {
     RequestType.CHAT_COMPLETIONS: [
         'chat_completions.workflow',
         'responses.workflow',
+        'messages.workflow',
     ],
     RequestType.EMBEDDINGS: ['embeddings.workflow'],
     RequestType.TRANSCRIPTIONS: ['audio_transcriptions.workflow'],
@@ -92,6 +94,8 @@ _SPAN_FIELD_NAMES = [
     'output_tokens',
     'input_tokens',
     'tags',
+    'operation_category',
+    'span_kind',
 ]
 _SPAN_DETAIL_FIELD_NAMES = [
     'timestamp',
@@ -313,6 +317,8 @@ class OtelTracesDAO:
                 literal_column(_OUTPUT_TOKENS_ATTR).label('output_tokens'),
                 literal_column(_INPUT_TOKENS_ATTR).label('input_tokens'),
                 literal_column(_TAGS_EXPR).label('tags'),
+                literal_column(_OPERATION_CATEGORY_ATTR).label('operation_category'),
+                literal_column(_SPAN_KIND_ATTR).label('span_kind'),
             )
             .select_from(OtelTraces)
             .where(
@@ -418,6 +424,45 @@ class OtelTracesDAO:
                 for row in res
             }
 
+    def get_trace_ids_by_request_uuids(
+        self,
+        project_uuid: UUID,
+        request_uuids: list[str],
+        date_from: date,
+        date_to: date,
+    ) -> dict[str, str]:
+        """Map each request UUID to the trace its root span belongs to.
+
+        Requests that left no trace are absent from the result. Spans are
+        bounded to `[date_from, date_to]` so ClickHouse prunes partitions.
+        """
+        if not request_uuids:
+            return {}
+
+        T = self.T
+        req_uuid_attr = literal_column(_REQUEST_UUID_ATTR)
+        stmt = (
+            select(
+                req_uuid_attr.label('request_uuid'),
+                F.any(T.c['TraceId']).label('trace_id'),
+            )
+            .select_from(OtelTraces)
+            .where(
+                T.c['ParentSpanId'] == '',
+                literal_column(_PROJECT_UUID_ATTR) == str(project_uuid),
+                req_uuid_attr.in_(request_uuids),
+                # Timestamp has no column timezone: read its date in UTC, as
+                # event and request_event DATE are, or the window shifts on a
+                # server whose timezone is not UTC.
+                F.toDate(T.c['Timestamp'], 'UTC') >= date_from,
+                F.toDate(T.c['Timestamp'], 'UTC') <= date_to,
+            )
+            .group_by(text(_REQUEST_UUID_ATTR))
+        )
+
+        with self.db.begin_session() as session:
+            return {row[0]: row[1] for row in session.execute(stmt).all()}
+
     def get_traces_chart_data(
         self,
         project_uuid: UUID,
@@ -521,8 +566,30 @@ class OtelTracesDAO:
                 for row_tuple in res
             ]
 
-    def get_root_span_error_by_trace_ids(self, trace_ids: list[str]) -> set[str]:
-        """Return trace IDs where the root span has StatusCode = 'Error'."""
+    def _date_window(self, date_from: date | None, date_to: date | None) -> list:
+        """Bound spans to `[date_from, date_to]` so ClickHouse prunes partitions.
+
+        Timestamp has no column timezone: its date is read in UTC, as the
+        callers compute theirs.
+        """
+        conditions = []
+        if date_from is not None:
+            conditions.append(F.toDate(self.T.c['Timestamp'], 'UTC') >= date_from)
+        if date_to is not None:
+            conditions.append(F.toDate(self.T.c['Timestamp'], 'UTC') <= date_to)
+        return conditions
+
+    def get_root_span_error_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> set[str]:
+        """Return trace IDs where the root span has StatusCode = 'Error'.
+
+        A lookup by TraceId alone reads every partition: pass the dates the
+        traces span to bound it.
+        """
         if not trace_ids:
             return set()
 
@@ -534,6 +601,7 @@ class OtelTracesDAO:
                 T.c['TraceId'].in_(trace_ids),
                 T.c['ParentSpanId'] == '',
                 T.c['StatusCode'] == 'Error',
+                *self._date_window(date_from, date_to),
             )
         )
 
@@ -660,8 +728,14 @@ class OtelTracesDAO:
     def get_spans_stats_by_trace_ids(
         self,
         trace_ids: list[str],
+        date_from: date | None = None,
+        date_to: date | None = None,
     ) -> dict[str, SpanStats]:
-        """Aggregate span stats by TraceId."""
+        """Aggregate span stats by TraceId.
+
+        A lookup by TraceId alone reads every partition: pass the dates the
+        traces span to bound it.
+        """
         if not trace_ids:
             return {}
 
@@ -681,7 +755,10 @@ class OtelTracesDAO:
                 F.max(T.c['Timestamp']).label('last_span'),
             )
             .select_from(OtelTraces)
-            .where(T.c['TraceId'].in_(trace_ids))
+            .where(
+                T.c['TraceId'].in_(trace_ids),
+                *self._date_window(date_from, date_to),
+            )
             .group_by(T.c['TraceId'])
         )
 

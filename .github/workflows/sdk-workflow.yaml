@@ -1,0 +1,109 @@
+name: sdk-wf
+
+# The Python SDK of the management API (sdk/), generated from the gateway's
+# routes: any gateway change can change it, so both paths trigger it.
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - "gateway/**"
+      - "sdk/**"
+      - ".github/workflows/sdk-workflow.yaml"
+  pull_request:
+    branches:
+      - "*"
+    paths:
+      - "gateway/**"
+      - "sdk/**"
+      - ".github/workflows/sdk-workflow.yaml"
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  UV_VERSION: "0.13.8"
+  # Pinned tool versions (bump deliberately, like any dependency)
+  REDOCLY_VERSION: "2.77.0"
+
+jobs:
+  test:
+    name: lint, types, tests, wheel
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: ./sdk
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup uv
+        run: |
+          curl -LsSf https://astral.sh/uv/${{ env.UV_VERSION }}/install.sh | sh
+
+      # The generated files are formatted by generate.sh and checked by the
+      # drift job
+      - name: Ruff
+        run: |
+          uv run ruff check --exclude src/radicalbit_gateway/models.py --exclude src/radicalbit_gateway/_resources.py
+          uv run ruff format --check --exclude src/radicalbit_gateway/models.py --exclude src/radicalbit_gateway/_resources.py
+
+      # Generated code included: the package ships py.typed, users' editors
+      # rely on these hints
+      - name: Type check
+        run: uv run ty check src
+
+      - name: Tests
+        run: uv run pytest -v
+
+      - name: Build the wheel
+        run: uv build
+
+  drift:
+    name: generated SDK is up to date
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup uv
+        run: |
+          curl -LsSf https://astral.sh/uv/${{ env.UV_VERSION }}/install.sh | sh
+
+      # Exports sdk/openapi.json from the gateway app, then regenerates the
+      # models and the client methods: the committed files must not change
+      - name: Regenerate
+        run: ./sdk/scripts/generate.sh
+
+      - name: Check for differences
+        run: |
+          if ! git diff --exit-code -- sdk/ || [ -n "$(git ls-files --others --exclude-standard -- sdk/)" ]; then
+            git status --short -- sdk/
+            echo "::error::The SDK is out of date with the gateway routes: run sdk/scripts/generate.sh and commit the result"
+            exit 1
+          fi
+
+      # The SDK against the gateway's real routes and error handlers (services
+      # mocked). Also part of the gateway's tests: run here too, because a
+      # change to sdk/ alone does not trigger the gateway workflow
+      - name: SDK against the gateway routes
+        working-directory: ./gateway
+        run: uv run pytest tests/sdk --no-cov
+
+  lint-spec:
+    name: lint the SDK spec
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Redocly lint
+        run: npx -y "@redocly/cli@${REDOCLY_VERSION}" lint --config sdk/redocly.yaml sdk/openapi.json

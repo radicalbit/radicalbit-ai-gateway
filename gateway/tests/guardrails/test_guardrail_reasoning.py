@@ -9,12 +9,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.common.guardrails import apply_check, apply_redact
+
 from radicalbit_ai_gateway.guardrails.guardrail_check import (
-    GuardrailCheck,
     _judge_texts,
     _select_messages,
 )
-from radicalbit_ai_gateway.guardrails.guardrail_redact import GuardrailRedact
+from radicalbit_ai_gateway.guardrails.guardrails import Guardrails
 from radicalbit_ai_gateway.llm.messages import (
     REASONING_KEY,
     AIMessage,
@@ -74,18 +75,23 @@ def _route(name='g'):
     return cfg
 
 
-async def _run(guardrail: Guardrail, messages, where) -> GuardrailBadRequest | None:
-    check = GuardrailCheck(
+def _guardrails(guardrail: Guardrail) -> Guardrails:
+    return Guardrails(
         presidio_engine=MagicMock(),
         judge_engine=MagicMock(),
         cost_service=MagicMock(),
-        guardrails_by_name={guardrail.name: guardrail},
+        guardrails=[guardrail],
     )
+
+
+async def _run(guardrail: Guardrail, messages, where) -> GuardrailBadRequest | None:
+    check = _guardrails(guardrail)
     with patch(
         'radicalbit_ai_gateway.guardrails.guardrail_check.emit_event', autospec=True
     ):
         try:
-            await check.apply_guardrails(
+            await apply_check(
+                check,
                 route_config=_route(),
                 messages=messages,
                 where=where,
@@ -201,9 +207,7 @@ class TestJudgeContent:
 
 class TestRedact:
     async def _redact(self, guardrail: Guardrail, messages, where):
-        redact = GuardrailRedact(
-            presidio_engine=MagicMock(), guardrails_by_name={guardrail.name: guardrail}
-        )
+        redact = _guardrails(guardrail)
 
         async def fake_anonymize(text, *args, **kwargs):
             replaced = text.replace(BAD, '<FRUIT>')
@@ -219,7 +223,8 @@ class TestRedact:
                 autospec=True,
             ),
         ):
-            return await redact.apply_guardrails(
+            return await apply_redact(
+                redact,
                 route_config=_route(guardrail.name),
                 messages=list(messages),
                 where=where,

@@ -3,14 +3,15 @@ import logging
 
 from cron_converter import Cron
 
-from radicalbit_ai_gateway.limiting.budget_limiting import BudgetLimiter
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiting.windows import Window
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
     DeterministicRoutingConfig,
     RoutingRuleType,
 )
-from radicalbit_ai_gateway.routing.common import last_human_text
+from radicalbit_ai_gateway.routing.common import RoutingSpendRecorder, last_human_text
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import build_user_content
 from radicalbit_ai_gateway.utils.token_encoding import count_tokens
@@ -24,13 +25,18 @@ class DeterministicRouter:
         self,
         config: DeterministicRoutingConfig,
         models_by_id: dict[str, Model],
-        budget_limiter: BudgetLimiter | None,
+        budget: Window | None,
     ):
         self._config = config
         self._models_by_id = models_by_id
-        self.budget_limiter = budget_limiter
+        # The route's budget, for the budget rule.
+        self.budget = budget
 
-    async def select_model(self, messages: list[BaseMessage]) -> Model:
+    async def select_model(
+        self,
+        messages: list[BaseMessage],
+        record_spend: RoutingSpendRecorder | None = None,
+    ) -> Model:
         if self._config.rule == RoutingRuleType.KEYWORD:
             return self._apply_keyword_rule(messages)
         if self._config.rule == RoutingRuleType.TOKEN_LENGTH:
@@ -143,16 +149,11 @@ class DeterministicRouter:
         return self._default_model()
 
     async def _apply_budget_rule(self) -> Model:
-        if self.budget_limiter:
-            remaining = await self.budget_limiter.get_total_current_usage()
-            max_budget = (
-                self.budget_limiter.item.limit if self.budget_limiter.item else 0
-            )
-
-            if max_budget == 0:
+        if self.budget:
+            if self.budget.config.limit == 0:
                 return self._default_model()
 
-            usage_ratio = 1 - (remaining / max_budget)
+            usage_ratio = await shared_limits.usage_ratio(self.budget)
             logger.debug('Budget usage ratio: %.4f', usage_ratio)
 
             sorted_entries = sorted(

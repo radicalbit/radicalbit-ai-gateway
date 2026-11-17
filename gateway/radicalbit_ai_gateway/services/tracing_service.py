@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -280,6 +280,10 @@ class TracingService:
                 total_tokens=total,
                 error_count=number_of_errors,
                 created_at=int(span.timestamp.timestamp()),
+                start_offset_ms=(span.timestamp - root_span.timestamp)
+                / timedelta(milliseconds=1),
+                operation_category=span.operation_category or None,
+                span_kind=span.span_kind or None,
                 children=[build_tree(child) for child in children],
             )
 
@@ -360,9 +364,16 @@ class TracingService:
 
         # Enrich with span stats
         trace_ids = [row.trace_id for row in traces_page.items]
-        spans_stats = self.otel_traces_dao.get_spans_stats_by_trace_ids(trace_ids)
+        # The spans of the page's traces lie around their root spans: a day
+        # of margin each side covers a trace that crossed midnight.
+        root_dates = [row.created_at.date() for row in traces_page.items]
+        date_from = min(root_dates) - timedelta(days=1)
+        date_to = max(root_dates) + timedelta(days=1)
+        spans_stats = self.otel_traces_dao.get_spans_stats_by_trace_ids(
+            trace_ids, date_from, date_to
+        )
         root_error_trace_ids = self.otel_traces_dao.get_root_span_error_by_trace_ids(
-            trace_ids
+            trace_ids, date_from, date_to
         )
 
         # TODO: Implement soft delete for keys/groups in Postgres (deleted_at column)

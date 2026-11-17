@@ -1,4 +1,6 @@
 import LimitsSummary from '@Components/limits/limits-summary';
+import LiveColumnTitle from '@Components/limits/live-column-title';
+import { useRegisterVisibleRow, useVisibleRowUuids } from '@Components/limits/visible-rows-context';
 import Lucide from '@Components/lucide';
 import ConfigStatusTag from '@Container/pages/projects/components/config-status-tag';
 import ProjectStatusTag from '@Container/pages/projects/components/project-status-tag';
@@ -6,6 +8,7 @@ import { useGetThreeDotsMenuItems } from '@Container/pages/projects/list/body/th
 import useGetVisibleConfig from '@Container/pages/projects/use-get-visible-config';
 import useModals, { modals } from '@Hooks/use-modals';
 import { DATE_FORMAT, DATE_FORMAT_SHORT } from '@Src/constants';
+import { useProjectBudgetLimitsConsumption } from '@State/projects/hooks';
 import {
   Button,
   DataTableAction,
@@ -65,7 +68,7 @@ const getColumns = () => [
   },
 
   {
-    title: 'Budget',
+    title: <LiveColumnTitle title="Budget" />,
     dataIndex: 'limits',
     key: 'budget',
     render: (limits, { routeBudgets, uuid }) => <BudgetCell limits={limits} routeBudgets={routeBudgets} uuid={uuid} />,
@@ -101,13 +104,20 @@ const getColumns = () => [
 function BudgetCell({ limits, routeBudgets, uuid }) {
   const { showModal } = useModals();
 
+  const visibleUuids = useVisibleRowUuids();
+
+  const consumption = useProjectBudgetLimitsConsumption(visibleUuids);
+
   const routes = routeBudgets?.published ?? [];
+  const hasLimits = !!limits?.length;
 
   const handleOnManage = () => {
     showModal(modals.MANAGE_PROJECT_BUDGET, { uuid });
   };
 
-  if (!limits?.length && routes.length) {
+  useRegisterVisibleRow(hasLimits ? uuid : undefined);
+
+  if (!hasLimits && routes.length) {
     const tooltip = `Budget set on routes: ${routes.join(', ')}`;
 
     return (
@@ -117,7 +127,7 @@ function BudgetCell({ limits, routeBudgets, uuid }) {
     );
   }
 
-  return <LimitsSummary limits={limits} noun="budget" onManage={handleOnManage} withCategory={false} />;
+  return <LimitsSummary consumption={consumption} limits={limits} noun="budget" onManage={handleOnManage} withCategory={false} />;
 }
 
 function ConfigurationCell({ configs }) {

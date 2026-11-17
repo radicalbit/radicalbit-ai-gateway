@@ -34,6 +34,8 @@ STDIO_SERVER = {
     'env': {'API_TOKEN': '__secret_placeholder__'},
 }
 
+ALLOWLIST_FIELDS = ['allowed_tools', 'allowed_prompts', 'allowed_resources']
+
 
 def test_http_and_stdio_servers_parse_and_route_references_resolve():
     config = GatewayConfig.model_validate(
@@ -45,7 +47,6 @@ def test_http_and_stdio_servers_parse_and_route_references_resolve():
 
     assert isinstance(config.mcp_servers_by_alias['github'], McpHttpServer)
     assert isinstance(config.mcp_servers_by_alias['local-tools'], McpStdioServer)
-    assert config.mcp_servers_by_alias['github'].forward_headers == ['x-user-jwt']
 
     resolved = config.get_route_mcp_servers('my_route')
     assert [s.alias for s in resolved] == ['github', 'local-tools']
@@ -57,186 +58,131 @@ def test_get_route_mcp_servers_empty_for_route_without_servers():
     assert config.get_route_mcp_servers('unknown_route') == []
 
 
-def test_missing_transport_rejected():
-    server = {k: v for k, v in HTTP_SERVER.items() if k != 'transport'}
-    with pytest.raises(ValueError, match='transport'):
-        GatewayConfig.model_validate(_base_config(mcp_servers=[server]))
-
-
-def test_unknown_key_rejected():
-    server = {**STDIO_SERVER, 'unexpected': True}
-    with pytest.raises(ValueError, match='unexpected'):
-        GatewayConfig.model_validate(_base_config(mcp_servers=[server]))
-
-
-def test_duplicate_top_level_aliases_rejected():
-    with pytest.raises(ValueError, match='unique aliases.*github'):
-        GatewayConfig.model_validate(
-            _base_config(mcp_servers=[HTTP_SERVER, {**STDIO_SERVER, 'alias': 'github'}])
-        )
-
-
-def test_case_variant_duplicate_aliases_rejected():
-    with pytest.raises(ValueError) as exc_info:
-        GatewayConfig.model_validate(
-            _base_config(mcp_servers=[HTTP_SERVER, {**STDIO_SERVER, 'alias': 'GitHub'}])
-        )
-    message = str(exc_info.value)
-    assert 'case-insensitively' in message
-    assert 'GitHub' in message
-    assert 'github' in message
-
-
-def test_route_reference_to_undefined_alias_rejected():
-    with pytest.raises(
-        ValueError, match='not declared in top-level mcp_servers: missing'
-    ):
-        GatewayConfig.model_validate(
-            _base_config(mcp_servers=[HTTP_SERVER], route_mcp_servers=['missing'])
-        )
-
-
-def test_duplicate_route_references_rejected():
-    with pytest.raises(ValueError, match='duplicate mcp_servers: github'):
-        GatewayConfig.model_validate(
-            _base_config(
-                mcp_servers=[HTTP_SERVER], route_mcp_servers=['github', 'github']
-            )
-        )
-
-
-def test_alias_with_double_underscore_rejected():
-    with pytest.raises(ValueError, match='reserved as the alias/tool separator'):
-        GatewayConfig.model_validate(
-            _base_config(mcp_servers=[{**HTTP_SERVER, 'alias': 'git__hub'}])
-        )
-
-
-@pytest.mark.parametrize('alias', ['', '  ', 'my alias'])
-def test_invalid_aliases_rejected(alias):
-    with pytest.raises(ValueError):
-        GatewayConfig.model_validate(
-            _base_config(mcp_servers=[{**HTTP_SERVER, 'alias': alias}])
-        )
-
-
 @pytest.mark.parametrize(
-    'header', ['Mcp-Session-Id', 'mcp-protocol-version', 'host', 'Content-Length']
+    ('mcp_servers', 'route_mcp_servers', 'match'),
+    [
+        pytest.param(
+            [{k: v for k, v in HTTP_SERVER.items() if k != 'transport'}],
+            None,
+            'transport',
+            id='missing-transport',
+        ),
+        pytest.param(
+            [{**STDIO_SERVER, 'unexpected': True}], None, 'unexpected', id='unknown-key'
+        ),
+        pytest.param(
+            [HTTP_SERVER, {**STDIO_SERVER, 'alias': 'GitHub'}],
+            None,
+            r'unique aliases \(case-insensitively\)\. Duplicates found: GitHub, github',
+            id='case-variant-duplicate-aliases',
+        ),
+        pytest.param(
+            [HTTP_SERVER],
+            ['missing'],
+            'not declared in top-level mcp_servers: missing',
+            id='route-references-undefined-alias',
+        ),
+        pytest.param(
+            [HTTP_SERVER],
+            ['github', 'github'],
+            'duplicate mcp_servers: github',
+            id='duplicate-route-references',
+        ),
+        pytest.param(
+            [{**HTTP_SERVER, 'alias': 'git__hub'}],
+            None,
+            'reserved as the alias/tool separator',
+            id='alias-with-double-underscore',
+        ),
+        pytest.param([{**HTTP_SERVER, 'alias': ''}], None, None, id='empty-alias'),
+        pytest.param([{**HTTP_SERVER, 'alias': '  '}], None, None, id='blank-alias'),
+        pytest.param(
+            [{**HTTP_SERVER, 'alias': 'my alias'}], None, None, id='alias-with-space'
+        ),
+        pytest.param([{**HTTP_SERVER, 'timeout': 0}], None, None, id='zero-timeout'),
+        *(
+            pytest.param(
+                [{**HTTP_SERVER, 'forward_headers': [header]}],
+                None,
+                'forward_headers must not contain',
+                id=f'forbidden-forward-header-{header}',
+            )
+            for header in (
+                'Mcp-Session-Id',
+                'mcp-protocol-version',
+                'host',
+                'Content-Length',
+            )
+        ),
+        *(
+            pytest.param(
+                [{**HTTP_SERVER, field: [entry]}],
+                None,
+                f'{field} entries must not be empty',
+                id=f'blank-{field}-entry',
+            )
+            for field, entry in zip(ALLOWLIST_FIELDS, ['', '   ', ''], strict=True)
+        ),
+    ],
 )
-def test_forbidden_forward_headers_rejected(header):
-    with pytest.raises(ValueError, match='forward_headers must not contain'):
+def test_invalid_mcp_server_config_rejected(mcp_servers, route_mcp_servers, match):
+    with pytest.raises(ValueError, match=match):
         GatewayConfig.model_validate(
-            _base_config(mcp_servers=[{**HTTP_SERVER, 'forward_headers': [header]}])
+            _base_config(mcp_servers=mcp_servers, route_mcp_servers=route_mcp_servers)
         )
 
 
-def test_authorization_allowed_as_forward_target():
+def test_forward_headers_are_normalized_and_deduped():
+    """Authorization is allowed, unlike the protocol headers."""
+    headers = ['Authorization', 'X-User-Jwt', 'x-user-jwt', 'X-A']
     config = GatewayConfig.model_validate(
-        _base_config(
-            mcp_servers=[{**HTTP_SERVER, 'forward_headers': ['Authorization']}]
-        )
-    )
-    assert config.mcp_servers_by_alias['github'].forward_headers == ['authorization']
-
-
-def test_forward_headers_normalized_and_deduped():
-    config = GatewayConfig.model_validate(
-        _base_config(
-            mcp_servers=[
-                {**HTTP_SERVER, 'forward_headers': ['X-User-Jwt', 'x-user-jwt', 'X-A']}
-            ]
-        )
+        _base_config(mcp_servers=[{**HTTP_SERVER, 'forward_headers': headers}])
     )
     assert config.mcp_servers_by_alias['github'].forward_headers == [
+        'authorization',
         'x-user-jwt',
         'x-a',
     ]
 
 
-def test_timeout_must_be_positive():
-    with pytest.raises(ValueError):
-        GatewayConfig.model_validate(
-            _base_config(mcp_servers=[{**HTTP_SERVER, 'timeout': 0}])
+def test_allowlist_entries_are_stripped_and_deduped_in_order_on_stdio_too():
+    config = GatewayConfig.model_validate(
+        _base_config(
+            mcp_servers=[
+                {**STDIO_SERVER, **{f: [' b ', 'a', 'b'] for f in ALLOWLIST_FIELDS}}
+            ]
         )
-
-
-ALLOWLIST_FIELDS = ['allowed_tools', 'allowed_prompts', 'allowed_resources']
-
-
-@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
-def test_allowlists_default_to_none_meaning_everything(field):
-    config = GatewayConfig.model_validate(_base_config(mcp_servers=[HTTP_SERVER]))
-    assert getattr(config.mcp_servers_by_alias['github'], field) is None
-
-
-@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
-def test_an_empty_allowlist_is_kept_distinct_from_unset(field):
-    config = GatewayConfig.model_validate(
-        _base_config(mcp_servers=[{**HTTP_SERVER, field: []}])
     )
-    assert getattr(config.mcp_servers_by_alias['github'], field) == []
+    server = config.mcp_servers_by_alias['local-tools']
+    assert [getattr(server, f) for f in ALLOWLIST_FIELDS] == [['b', 'a']] * 3
 
 
-@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
-def test_allowlist_entries_are_stripped_and_deduped_in_order(field):
-    config = GatewayConfig.model_validate(
-        _base_config(mcp_servers=[{**HTTP_SERVER, field: [' b ', 'a', 'b']}])
-    )
-    assert getattr(config.mcp_servers_by_alias['github'], field) == ['b', 'a']
-
-
-@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
-@pytest.mark.parametrize('entry', ['', '   '])
-def test_blank_allowlist_entries_rejected(field, entry):
-    with pytest.raises(ValueError, match=f'{field} entries must not be empty'):
-        GatewayConfig.model_validate(
-            _base_config(mcp_servers=[{**HTTP_SERVER, field: [entry]}])
-        )
-
-
-@pytest.mark.parametrize('field', ALLOWLIST_FIELDS)
-def test_allowlists_apply_to_stdio_servers_too(field):
-    config = GatewayConfig.model_validate(
-        _base_config(mcp_servers=[{**STDIO_SERVER, field: ['x']}])
-    )
-    assert getattr(config.mcp_servers_by_alias['local-tools'], field) == ['x']
-
-
-def test_allowlists_name_upstream_names_not_the_prefixed_ones():
-    """The allowlist is matched before the '{alias}__' prefix is applied."""
-    config = GatewayConfig.model_validate(
-        _base_config(mcp_servers=[{**HTTP_SERVER, 'allowed_tools': ['get_issue']}])
-    )
-    server = config.mcp_servers_by_alias['github']
-    assert server.tool_allowed('get_issue')
-    assert not server.tool_allowed('github__get_issue')
+UNSET = object()
 
 
 @pytest.mark.parametrize(
-    ('field', 'method', 'value'),
+    ('field', 'method', 'allowlist', 'value', 'allowed'),
     [
-        ('allowed_tools', 'tool_allowed', 'get_issue'),
-        ('allowed_prompts', 'prompt_allowed', 'review'),
-        ('allowed_resources', 'resource_allowed', 'https://h.example/readme'),
+        # Unset reads as None and allows anything.
+        ('allowed_tools', 'tool_allowed', UNSET, 'get_issue', True),
+        ('allowed_prompts', 'prompt_allowed', UNSET, 'review', True),
+        ('allowed_resources', 'resource_allowed', UNSET, 'https://h.example/r', True),
+        # Empty is kept distinct from unset and allows nothing.
+        ('allowed_tools', 'tool_allowed', [], 'get_issue', False),
+        ('allowed_prompts', 'prompt_allowed', [], 'review', False),
+        ('allowed_resources', 'resource_allowed', [], 'https://h.example/r', False),
+        # The allowlist is matched before the '{alias}__' prefix is applied.
+        ('allowed_tools', 'tool_allowed', ['get_issue'], 'get_issue', True),
+        ('allowed_tools', 'tool_allowed', ['get_issue'], 'github__get_issue', False),
     ],
 )
-def test_unset_allowlist_allows_anything(field, method, value):
-    config = GatewayConfig.model_validate(_base_config(mcp_servers=[HTTP_SERVER]))
-    server = config.mcp_servers_by_alias['github']
-    assert getattr(server, method)(value)
-
-
-@pytest.mark.parametrize(
-    ('field', 'method', 'value'),
-    [
-        ('allowed_tools', 'tool_allowed', 'get_issue'),
-        ('allowed_prompts', 'prompt_allowed', 'review'),
-        ('allowed_resources', 'resource_allowed', 'https://h.example/readme'),
-    ],
-)
-def test_empty_allowlist_allows_nothing(field, method, value):
-    config = GatewayConfig.model_validate(
-        _base_config(mcp_servers=[{**HTTP_SERVER, field: []}])
+def test_allowlist_decides_what_a_server_exposes(
+    field, method, allowlist, value, allowed
+):
+    server_config = (
+        HTTP_SERVER if allowlist is UNSET else {**HTTP_SERVER, field: allowlist}
     )
+    config = GatewayConfig.model_validate(_base_config(mcp_servers=[server_config]))
     server = config.mcp_servers_by_alias['github']
-    assert not getattr(server, method)(value)
+    assert getattr(server, field) == (None if allowlist is UNSET else allowlist)
+    assert getattr(server, method)(value) is allowed

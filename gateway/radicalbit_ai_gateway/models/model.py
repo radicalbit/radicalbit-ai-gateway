@@ -1,5 +1,6 @@
 import asyncio
 from decimal import Decimal
+import functools
 import json
 import logging
 import time
@@ -29,6 +30,24 @@ from radicalbit_ai_gateway.utils.app_config import get_app_config
 app_config = get_app_config()
 logging_config_dict = app_config.log_config.model_dump()
 logger = logging.getLogger(app_config.log_config.logger_name)
+
+
+@functools.cache
+def _model_prices() -> dict | None:
+    """Read the model prices file once per process: it is a few megabytes,
+    and every model of every route reads its prices from it.
+    """
+    try:
+        with open('radicalbit_ai_gateway/resources/model_prices.json') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error('Model prices file not found. Skipping cost assignment.')
+    except json.JSONDecodeError:
+        logger.error(
+            'Error decoding JSON from model prices file. Skipping cost assignment.'
+        )
+    return None
+
 
 # Gateway-specific param keys intercepted before forwarding params to the provider
 ENABLE_PROMPT_CACHE_PARAM = 'enable_prompt_cache'
@@ -159,6 +178,12 @@ class Model(BaseModel):
             return pm.get_model_prompt(self.prompt_ref)
         return self.prompt
 
+    def to_json(self) -> dict:
+        """Return what tracing records for the model: everything but its
+        credentials, so a span never carries a provider's API key.
+        """
+        return self.model_dump(exclude={'credentials'})
+
     @model_validator(mode='before')
     @classmethod
     def validate_prompt_and_role(cls, data: Any) -> Any:
@@ -184,16 +209,8 @@ class Model(BaseModel):
 
     @model_validator(mode='after')
     def set_costs(self) -> Self:
-        try:
-            with open('radicalbit_ai_gateway/resources/model_prices.json') as f:
-                costs = json.load(f)
-        except FileNotFoundError:
-            logger.error('Model prices file not found. Skipping cost assignment.')
-            return self
-        except json.JSONDecodeError:
-            logger.error(
-                'Error decoding JSON from model prices file. Skipping cost assignment.'
-            )
+        costs = _model_prices()
+        if costs is None:
             return self
         model = self.model
         if self.model not in costs and '/' in self.model:

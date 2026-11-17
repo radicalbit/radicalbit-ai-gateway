@@ -1,9 +1,9 @@
-import unittest
 from unittest.mock import AsyncMock, MagicMock
 import uuid
 
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
+import pytest
 from starlette.testclient import TestClient
 
 from tests.common import db_mock
@@ -37,642 +37,441 @@ from radicalbit_ai_gateway.utils.exceptions import (
     auth_registry_exception_handler,
 )
 
+PREFIX = '/public/api/v1'
+GROUP_UUID = db_mock.RANDOM_UUID
+PROJECT_UUID = uuid.UUID('77777777-7777-7777-7777-777777777777')
+PROJECT_ROUTES = f'{PREFIX}/groups/{GROUP_UUID}/projects/{PROJECT_UUID}'
 
-class TestGroupRoute(unittest.TestCase):
-    def setUp(self):
-        self.prefix = '/public/api/v1'
-        self.group_service = MagicMock(spec_set=GroupService)
-        self.project_service = MagicMock(spec_set=ProjectService)
-        router = GroupRoute.get_group_router(self.group_service, self.project_service)
-        app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
-        app.include_router(router, prefix=self.prefix)
 
-        self.client = TestClient(app)
+@pytest.fixture
+def group_service():
+    return MagicMock(spec_set=GroupService)
 
-    def test_create_group(self):
-        group_in = db_mock.get_sample_group_in()
-        group = db_mock.get_sample_group()
-        group_out = GroupFullOut.from_group(group)
-        self.group_service.create_group = MagicMock(return_value=group_out)
-        res = self.client.post(f'{self.prefix}/groups', json=jsonable_encoder(group_in))
-        assert res.status_code == 201
-        assert res.json() == jsonable_encoder(group_out)
-        self.group_service.create_group.assert_called_once_with(group_in)
 
-    def test_exception_handler_group_internal_error(self):
-        group_in = db_mock.get_sample_group_in()
-        self.group_service.create_group = MagicMock(
-            side_effect=GroupInternalError('error')
-        )
-        res = self.client.post(
-            f'{self.prefix}/groups',
-            json=jsonable_encoder(group_in),
-        )
-        assert res.status_code == 500
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_internal_error', param=None
-            ).error
-        )
-        self.group_service.create_group.assert_called_once_with(group_in)
+@pytest.fixture
+def project_service():
+    service = MagicMock(spec_set=ProjectService)
+    service.get_by_uuid.return_value = db_mock.get_sample_project_out(
+        uuid=PROJECT_UUID, name='my-project'
+    )
+    return service
 
-    def test_get_all(self):
-        groups = [
-            GroupFullOut.from_group(
-                db_mock.get_sample_group(uuid=uuid.uuid4(), name='one')
-            ),
-            GroupFullOut.from_group(
-                db_mock.get_sample_group(uuid=uuid.uuid4(), name='two')
-            ),
-            GroupFullOut.from_group(
-                db_mock.get_sample_group(uuid=uuid.uuid4(), name='three')
-            ),
+
+def _client(group_service, project_service) -> TestClient:
+    app = FastAPI(title='AI Gateway', debug=True)
+    app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+    app.include_router(
+        GroupRoute.get_group_router(group_service, project_service), prefix=PREFIX
+    )
+    return TestClient(app)
+
+
+@pytest.fixture
+def client(group_service, project_service):
+    return _client(group_service, project_service)
+
+
+def test_create_group(client, group_service):
+    group_in = db_mock.get_sample_group_in()
+    group_out = GroupFullOut.from_group(db_mock.get_sample_group())
+    group_service.create_group.return_value = group_out
+
+    res = client.post(f'{PREFIX}/groups', json=jsonable_encoder(group_in))
+
+    assert res.status_code == 201
+    assert res.json() == jsonable_encoder(group_out)
+    group_service.create_group.assert_called_once_with(group_in)
+
+
+def test_get_all(client, group_service):
+    groups = [
+        GroupFullOut.from_group(db_mock.get_sample_group(uuid=uuid.uuid4(), name=n))
+        for n in ('one', 'two', 'three')
+    ]
+    group_service.get_all.return_value = groups
+
+    res = client.get(f'{PREFIX}/groups')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(groups)
+    group_service.get_all.assert_called_once()
+
+
+def test_add_key(client, group_service):
+    keys_uuid = [uuid.uuid4() for _ in range(3)]
+    group = db_mock.get_sample_group(
+        keys=[db_mock.get_sample_key(uuid=i) for i in keys_uuid]
+    )
+    key_uuids_in = db_mock.get_sample_keys_uuid_in(keys_uuid)
+    group_out = GroupFullOut.from_group(group)
+    group_service.add_keys.return_value = group_out
+
+    res = client.patch(
+        f'{PREFIX}/groups/{group.uuid}/keys', json=jsonable_encoder(key_uuids_in)
+    )
+
+    assert res.status_code == 201
+    assert res.json() == jsonable_encoder(group_out)
+    group_service.add_keys.assert_called_once_with(
+        group.uuid, key_uuids_in, False, False
+    )
+
+
+def test_remove_key(client, group_service):
+    key = db_mock.get_sample_key()
+    group = db_mock.get_sample_group(keys=[key])
+    group_out = GroupFullOut.from_group(group, False, True)
+    group_service.remove_key = AsyncMock(return_value=group_out)
+
+    res = client.delete(f'{PREFIX}/groups/{group.uuid}/keys/{key.uuid}')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(group_out)
+    group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
+
+
+def test_apply_limits_to_group(client, group_service):
+    key_uuid = uuid.uuid4()
+    body = {
+        'limits': [
+            {
+                'category': 'request_rate',
+                'algorithm': 'FIXED_WINDOW',
+                'windowSize': '60 seconds',
+                'value': 50,
+            }
+        ],
+        'skip': [
+            {
+                'keyUuid': str(key_uuid),
+                'category': 'request_rate',
+                'algorithm': 'FIXED_WINDOW',
+                'windowSize': '1 minute',
+            }
+        ],
+    }
+    group_service.apply_limits_to_group.return_value = GroupLimitsApplyOut(
+        members=[
+            GroupMemberLimitsOut(
+                key_uuid=key_uuid,
+                key_name='billing-service',
+                expired=False,
+                limits=[
+                    GroupLimitResultOut(
+                        category=CredentialLimitCategory.RATE,
+                        algorithm=LimitingAlgorithmType.FIXED_WINDOW,
+                        window_size='1 minute',
+                        outcome=GroupLimitOutcome.SKIPPED,
+                        previous_value=100,
+                        new_value=50,
+                    )
+                ],
+                warnings=[],
+            )
         ]
-        self.group_service.get_all = MagicMock(return_value=groups)
-        res = self.client.get(f'{self.prefix}/groups')
-        assert res.status_code == 200
-        assert jsonable_encoder(groups) == res.json()
-        self.group_service.get_all.assert_called_once()
+    )
 
-    def test_add_key(self):
-        keys_uuid = [uuid.uuid4() for i in range(3)]
-        keys = [db_mock.get_sample_key(uuid=i) for i in keys_uuid]
-        group = db_mock.get_sample_group(keys=keys)
-        key_uuids_in = db_mock.get_sample_keys_uuid_in(keys_uuid)
-        group_out = GroupFullOut.from_group(group)
-        self.group_service.add_keys = MagicMock(return_value=group_out)
-        res = self.client.patch(
-            f'{self.prefix}/groups/{group.uuid}/keys',
-            json=jsonable_encoder(key_uuids_in),
-        )
-        assert res.status_code == 201
-        assert jsonable_encoder(group_out) == res.json()
-        self.group_service.add_keys.assert_called_once_with(
-            group.uuid, key_uuids_in, False, False
-        )
+    res = client.post(f'{PREFIX}/groups/{GROUP_UUID}/limits', json=body)
 
-    def test_add_key_ko(self):
-        group = db_mock.get_sample_group()
-        keys_uuid = [uuid.uuid4() for i in range(3)]
-        key_uuids_in = db_mock.get_sample_keys_uuid_in(keys_uuid)
-        self.group_service.add_keys = MagicMock(side_effect=GroupInternalError('error'))
-        res = self.client.patch(
-            f'{self.prefix}/groups/{group.uuid}/keys',
-            json=jsonable_encoder(key_uuids_in),
-        )
-        assert res.status_code == 500
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_internal_error', param=None
-            ).error
-        )
-        self.group_service.add_keys.assert_called_once_with(
-            group.uuid, key_uuids_in, False, False
-        )
-
-    def test_add_missing_key(self):
-        group = db_mock.get_sample_group()
-        keys_uuid = [uuid.uuid4() for i in range(3)]
-        key_uuids_in = db_mock.get_sample_keys_uuid_in(keys_uuid)
-        self.group_service.add_keys = MagicMock(side_effect=KeyNotFoundError('error'))
-        res = self.client.patch(
-            f'{self.prefix}/groups/{group.uuid}/keys',
-            json=jsonable_encoder(key_uuids_in),
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_not_found', param=None
-            ).error
-        )
-        self.group_service.add_keys.assert_called_once_with(
-            group.uuid, key_uuids_in, False, False
-        )
-
-    def test_add_key_missing_group(self):
-        group = db_mock.get_sample_group()
-        keys_uuid = [uuid.uuid4() for i in range(3)]
-        key_uuids_in = db_mock.get_sample_keys_uuid_in(keys_uuid)
-        self.group_service.add_keys = MagicMock(side_effect=GroupNotFoundError('error'))
-        res = self.client.patch(
-            f'{self.prefix}/groups/{group.uuid}/keys',
-            json=jsonable_encoder(key_uuids_in),
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_not_found', param=None
-            ).error
-        )
-        self.group_service.add_keys.assert_called_once_with(
-            group.uuid, key_uuids_in, False, False
-        )
-
-    def test_remove_key(self):
-        key = db_mock.get_sample_key()
-        group = db_mock.get_sample_group(keys=[key])
-        group_out = GroupFullOut.from_group(group, False, True)
-        self.group_service.remove_key = AsyncMock(return_value=group_out)
-        res = self.client.delete(
-            f'{self.prefix}/groups/{group.uuid}/keys/{key.uuid}',
-        )
-        assert res.status_code == 200
-        assert jsonable_encoder(group_out) == res.json()
-        self.group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
-
-    def test_remove_key_ko(self):
-        group = db_mock.get_sample_group()
-        key = db_mock.get_sample_key()
-        self.group_service.remove_key = AsyncMock(
-            side_effect=GroupInternalError('error')
-        )
-        res = self.client.delete(
-            f'{self.prefix}/groups/{group.uuid}/keys/{key.uuid}',
-        )
-        assert res.status_code == 500
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_internal_error', param=None
-            ).error
-        )
-        self.group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
-
-    def test_remove_missing_key(self):
-        group = db_mock.get_sample_group()
-        key = db_mock.get_sample_key()
-        self.group_service.remove_key = AsyncMock(side_effect=KeyNotFoundError('error'))
-        res = self.client.delete(
-            f'{self.prefix}/groups/{group.uuid}/keys/{key.uuid}',
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='key_not_found', param=None
-            ).error
-        )
-        self.group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
-
-    def test_remove_key_missing_group(self):
-        group = db_mock.get_sample_group()
-        key = db_mock.get_sample_key()
-        self.group_service.remove_key = AsyncMock(
-            side_effect=GroupNotFoundError('error')
-        )
-        res = self.client.delete(
-            f'{self.prefix}/groups/{group.uuid}/keys/{key.uuid}',
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_not_found', param=None
-            ).error
-        )
-        self.group_service.remove_key.assert_awaited_once_with(group.uuid, key.uuid)
-
-    def test_apply_limits_to_group(self):
-        group = db_mock.get_sample_group()
-        key_uuid = uuid.uuid4()
-        body = {
-            'limits': [
-                {
-                    'category': 'request_rate',
-                    'algorithm': 'FIXED_WINDOW',
-                    'windowSize': '60 seconds',
-                    'value': 50,
-                }
-            ],
-            'skip': [
-                {
-                    'keyUuid': str(key_uuid),
-                    'category': 'request_rate',
-                    'algorithm': 'FIXED_WINDOW',
-                    'windowSize': '1 minute',
-                }
-            ],
-        }
-        result = GroupLimitsApplyOut(
-            members=[
-                GroupMemberLimitsOut(
-                    key_uuid=key_uuid,
-                    key_name='billing-service',
-                    expired=False,
-                    limits=[
-                        GroupLimitResultOut(
-                            category=CredentialLimitCategory.RATE,
-                            algorithm=LimitingAlgorithmType.FIXED_WINDOW,
-                            window_size='1 minute',
-                            outcome=GroupLimitOutcome.SKIPPED,
-                            previous_value=100,
-                            new_value=50,
-                        )
-                    ],
-                    warnings=[],
-                )
-            ]
-        )
-        self.group_service.apply_limits_to_group = MagicMock(return_value=result)
-
-        res = self.client.post(f'{self.prefix}/groups/{group.uuid}/limits', json=body)
-
-        assert res.status_code == 201
-        assert res.json() == {
-            'members': [
-                {
-                    'keyUuid': str(key_uuid),
-                    'keyName': 'billing-service',
-                    'expired': False,
-                    'limits': [
-                        {
-                            'category': 'request_rate',
-                            'algorithm': 'FIXED_WINDOW',
-                            'windowSize': '1 minute',
-                            'outcome': 'skipped',
-                            'previousValue': 100.0,
-                            'newValue': 50.0,
-                        }
-                    ],
-                    'warnings': [],
-                }
-            ]
-        }
-        self.group_service.apply_limits_to_group.assert_called_once_with(
-            group.uuid, GroupLimitsIn.model_validate(body), {}
-        )
-
-    def test_apply_limits_to_group_with_no_credentials(self):
-        group = db_mock.get_sample_group()
-        self.group_service.apply_limits_to_group = MagicMock(
-            side_effect=GroupHasNoCredentialsError('error')
-        )
-        res = self.client.post(
-            f'{self.prefix}/groups/{group.uuid}/limits',
-            json=jsonable_encoder(db_mock.get_sample_group_limits_in()),
-        )
-        assert res.status_code == 400
-        assert res.json()['error']['code'] == 'group_has_no_credentials_bad_request'
-
-    def test_apply_limits_to_group_not_found(self):
-        group = db_mock.get_sample_group()
-        self.group_service.apply_limits_to_group = MagicMock(
-            side_effect=GroupNotFoundError('error')
-        )
-        res = self.client.post(
-            f'{self.prefix}/groups/{group.uuid}/limits',
-            json=jsonable_encoder(db_mock.get_sample_group_limits_in()),
-        )
-        assert res.status_code == 404
-
-    def test_a_group_has_no_limits_to_read_or_delete(self):
-        group = db_mock.get_sample_group()
-        res = self.client.get(f'{self.prefix}/groups/{group.uuid}/limits')
-        assert res.status_code == 405
-        res = self.client.delete(
-            f'{self.prefix}/groups/{group.uuid}/limits/{uuid.uuid4()}'
-        )
-        assert res.status_code == 404
-
-    def test_delete_group(self):
-        group = db_mock.get_sample_group_plain()
-        group_full_out = GroupFullOut.from_group(group)
-        self.group_service.delete_group = MagicMock(return_value=group_full_out)
-        res = self.client.delete(f'{self.prefix}/groups/{db_mock.RANDOM_UUID}')
-        assert res.status_code == 200
-        self.group_service.delete_group.assert_called_once_with(
-            db_mock.RANDOM_UUID, False, False
-        )
-        assert res.json() == jsonable_encoder(group_full_out)
-
-    def test_delete_group_only_routes(self):
-        group_uuid = uuid.uuid4()
-        group_route = db_mock.get_sample_group_route_plain(group_uuid=group_uuid)
-        group = db_mock.get_sample_group(uuid=group_uuid, group_routes=[group_route])
-        group_full_out = GroupFullOut.from_group(group, True)
-        self.group_service.delete_group = MagicMock(return_value=group_full_out)
-        res = self.client.delete(
-            f'{self.prefix}/groups/{db_mock.RANDOM_UUID}?include_routes=true'
-        )
-        assert res.status_code == 200
-        self.group_service.delete_group.assert_called_once_with(
-            db_mock.RANDOM_UUID, True, False
-        )
-        assert res.json() == jsonable_encoder(group_full_out)
-
-    def test_delete_group_ko(self):
-        self.group_service.delete_group = MagicMock(
-            side_effect=GroupInternalError('error')
-        )
-        res = self.client.delete(f'{self.prefix}/groups/{db_mock.RANDOM_UUID}')
-        assert res.status_code == 500
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_internal_error', param=None
-            ).error
-        )
-        self.group_service.delete_group.assert_called_once_with(
-            db_mock.RANDOM_UUID, False, False
-        )
-
-    def test_delete_missing_group(self):
-        self.group_service.delete_group = MagicMock(
-            side_effect=GroupNotFoundError('error')
-        )
-        res = self.client.delete(f'{self.prefix}/groups/{db_mock.RANDOM_UUID}')
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_not_found', param=None
-            ).error
-        )
-        self.group_service.delete_group.assert_called_once_with(
-            db_mock.RANDOM_UUID, False, False
-        )
-
-    def test_get_group_by_uuid(self):
-        group = db_mock.get_sample_group()
-        group_out = GroupFullOut.from_group(group)
-        self.group_service.get_group_by_uuid = MagicMock(return_value=group_out)
-        res = self.client.get(f'{self.prefix}/groups/{group.uuid}')
-        assert res.status_code == 200
-        assert jsonable_encoder(group_out) == res.json()
-        self.group_service.get_group_by_uuid.assert_called_once_with(
-            group.uuid, False, False
-        )
-
-    def test_get_group_by_uuid_ko(self):
-        group = db_mock.get_sample_group()
-        self.group_service.get_group_by_uuid = MagicMock(
-            side_effect=GroupInternalError('error')
-        )
-        res = self.client.get(f'{self.prefix}/groups/{group.uuid}')
-        assert res.status_code == 500
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_internal_error', param=None
-            ).error
-        )
-        self.group_service.get_group_by_uuid.assert_called_once_with(
-            group.uuid, False, False
-        )
-
-    def test_get_missing_group_by_uuid(self):
-        group = db_mock.get_sample_group()
-        self.group_service.get_group_by_uuid = MagicMock(
-            side_effect=GroupNotFoundError('error')
-        )
-        res = self.client.get(f'{self.prefix}/groups/{group.uuid}')
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_not_found', param=None
-            ).error
-        )
-        self.group_service.get_group_by_uuid.assert_called_once_with(
-            group.uuid, False, False
-        )
-
-    def test_update_group_name(self):
-        group = db_mock.get_sample_group()
-        group_in = db_mock.get_sample_group_in()
-        group_out = GroupFullOut.from_group(group)
-        self.group_service.update_group_name = MagicMock(return_value=group_out)
-        res = self.client.patch(
-            f'{self.prefix}/groups/{group.uuid}', json=jsonable_encoder(group_in)
-        )
-        assert res.status_code == 200
-        assert jsonable_encoder(group_out) == res.json()
-        self.group_service.update_group_name.assert_called_once_with(
-            group.uuid, group_in
-        )
-
-    def test_update_missing_group_name(self):
-        group = db_mock.get_sample_group()
-        group_in = db_mock.get_sample_group_in()
-        self.group_service.update_group_name = MagicMock(
-            side_effect=GroupNotFoundError('error')
-        )
-        res = self.client.patch(
-            f'{self.prefix}/groups/{group.uuid}', json=jsonable_encoder(group_in)
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_not_found', param=None
-            ).error
-        )
-        self.group_service.update_group_name.assert_called_once_with(
-            group.uuid, group_in
-        )
-
-    def test_get_associable_keys(self):
-        group = db_mock.get_sample_group()
-        keys_out = [
-            KeyFullOut.from_key_obscured(
-                db_mock.get_sample_key(uuid=uuid.uuid4(), name='k1')
-            ),
-            KeyFullOut.from_key_obscured(
-                db_mock.get_sample_key(uuid=uuid.uuid4(), name='k2')
-            ),
+    assert res.status_code == 201
+    assert res.json() == {
+        'members': [
+            {
+                'keyUuid': str(key_uuid),
+                'keyName': 'billing-service',
+                'expired': False,
+                'limits': [
+                    {
+                        'category': 'request_rate',
+                        'algorithm': 'FIXED_WINDOW',
+                        'windowSize': '1 minute',
+                        'outcome': 'skipped',
+                        'previousValue': 100.0,
+                        'newValue': 50.0,
+                    }
+                ],
+                'warnings': [],
+            }
         ]
-        self.group_service.get_associable_keys = MagicMock(return_value=keys_out)
-        res = self.client.get(f'{self.prefix}/groups/{group.uuid}/associable-keys')
-        assert res.status_code == 200
-        assert jsonable_encoder(keys_out) == res.json()
-        self.group_service.get_associable_keys.assert_called_once_with(group.uuid)
-
-    def test_get_associable_keys_empty(self):
-        group = db_mock.get_sample_group()
-        self.group_service.get_associable_keys = MagicMock(return_value=[])
-        res = self.client.get(f'{self.prefix}/groups/{group.uuid}/associable-keys')
-        assert res.status_code == 200
-        assert res.json() == []
-        self.group_service.get_associable_keys.assert_called_once_with(group.uuid)
-
-    def test_get_associable_keys_group_not_found(self):
-        group = db_mock.get_sample_group()
-        self.group_service.get_associable_keys = MagicMock(
-            side_effect=GroupNotFoundError('error')
-        )
-        res = self.client.get(f'{self.prefix}/groups/{group.uuid}/associable-keys')
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_not_found', param=None
-            ).error
-        )
-        self.group_service.get_associable_keys.assert_called_once_with(group.uuid)
+    }
+    group_service.apply_limits_to_group.assert_called_once_with(
+        GROUP_UUID, GroupLimitsIn.model_validate(body), {}
+    )
 
 
-class TestGroupRouteWithProject(unittest.TestCase):
-    def setUp(self):
-        self.prefix = '/public/api/v1'
-        self.group_service = MagicMock(spec_set=GroupService)
-        self.project_service = MagicMock(spec_set=ProjectService)
-        router = GroupRoute.get_group_router(self.group_service, self.project_service)
-        app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
-        app.include_router(router, prefix=self.prefix)
-        self.client = TestClient(app)
-        self.project_uuid = uuid.uuid4()
-        self.project_out = db_mock.get_sample_project_out(
-            uuid=self.project_uuid, name='my-project'
-        )
-        self.project_service.get_by_uuid = MagicMock(return_value=self.project_out)
+def test_a_group_has_no_limits_to_read_or_delete(group_service, project_service):
+    # Builds its own router, so the router's construction runs inside a test
+    client = _client(group_service, project_service)
+    assert client.get(f'{PREFIX}/groups/{GROUP_UUID}/limits').status_code == 405
+    res = client.delete(f'{PREFIX}/groups/{GROUP_UUID}/limits/{uuid.uuid4()}')
+    assert res.status_code == 404
 
-    # ------------------------------------------------------------------
-    # PATCH /groups/{group_uuid}/projects/{project_uuid}/routes
-    # ------------------------------------------------------------------
 
-    def test_add_project_route(self):
-        group_route = db_mock.get_sample_group_route(
-            route_name='my-route', project_uuid=self.project_uuid
-        )
-        group = db_mock.get_sample_group(group_routes=[group_route])
-        group_out = GroupFullOut.from_group(group, True)
-        group_routes_in = db_mock.get_sample_group_routes_in(['my-route'])
-        self.group_service.add_project_routes = MagicMock(return_value=group_out)
-        res = self.client.patch(
-            f'{self.prefix}/groups/{group.uuid}/projects/{self.project_uuid}/routes',
-            json=jsonable_encoder(group_routes_in),
-        )
-        assert res.status_code == 201
-        assert jsonable_encoder(group_out) == res.json()
-        self.group_service.add_project_routes.assert_called_once_with(
-            group.uuid,
-            self.project_uuid,
-            'my-project',
-            group_routes_in,
-            False,
-            False,
-        )
-
-    def test_add_project_route_not_found(self):
-        group = db_mock.get_sample_group()
-        group_routes_in = db_mock.get_sample_group_routes_in(['nonexistent'])
-        self.group_service.add_project_routes = MagicMock(
-            side_effect=RouteNotFoundError('error')
-        )
-        res = self.client.patch(
-            f'{self.prefix}/groups/{group.uuid}/projects/{self.project_uuid}/routes',
-            json=jsonable_encoder(group_routes_in),
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='route_not_found', param=None
-            ).error
-        )
-
-    # ------------------------------------------------------------------
-    # DELETE /groups/{group_uuid}/projects/{project_uuid}/routes/{route_name}
-    # ------------------------------------------------------------------
-
-    def test_remove_project_route(self):
-        group = db_mock.get_sample_group()
-        group_out = GroupFullOut.from_group(group)
-        self.group_service.remove_project_route = MagicMock(return_value=group_out)
-        res = self.client.delete(
-            f'{self.prefix}/groups/{group.uuid}/projects/{self.project_uuid}/routes/my-route',
-        )
-        assert res.status_code == 200
-        assert jsonable_encoder(group_out) == res.json()
-        self.group_service.remove_project_route.assert_called_once_with(
-            group.uuid, self.project_uuid, 'my-project', 'my-route'
-        )
-
-    def test_remove_project_route_not_found(self):
-        group = db_mock.get_sample_group()
-        self.group_service.remove_project_route = MagicMock(
-            side_effect=RouteNotFoundError('error')
-        )
-        res = self.client.delete(
-            f'{self.prefix}/groups/{group.uuid}/projects/{self.project_uuid}/routes/my-route',
-        )
-        assert res.status_code == 404
-
-    # ------------------------------------------------------------------
-    # GET /groups/{group_uuid}/projects/{project_uuid}/associable-routes
-    # ------------------------------------------------------------------
-
-    def test_get_associable_routes(self):
-        group = db_mock.get_sample_group()
-        _proj_uuid = uuid.uuid4()
-        routes_out = [
-            GroupRouteOut(
-                name='route-A', project_uuid=_proj_uuid, project_name='my-project'
+@pytest.mark.parametrize(
+    ('query', 'group', 'include_routes'),
+    [
+        pytest.param('', db_mock.get_sample_group_plain(), False, id='default'),
+        pytest.param(
+            '?include_routes=true',
+            db_mock.get_sample_group(
+                uuid=GROUP_UUID,
+                group_routes=[
+                    db_mock.get_sample_group_route_plain(group_uuid=GROUP_UUID)
+                ],
             ),
-            GroupRouteOut(
-                name='route-B', project_uuid=_proj_uuid, project_name='my-project'
-            ),
-        ]
-        self.group_service.get_associable_routes = MagicMock(return_value=routes_out)
-        res = self.client.get(
-            f'{self.prefix}/groups/{group.uuid}/projects/{self.project_uuid}/associable-routes'
-        )
-        assert res.status_code == 200
-        assert jsonable_encoder(routes_out) == res.json()
-        self.group_service.get_associable_routes.assert_called_once_with(
-            group.uuid, 'my-project'
-        )
+            True,
+            id='include-routes',
+        ),
+    ],
+)
+def test_delete_group(client, group_service, query, group, include_routes):
+    group_full_out = GroupFullOut.from_group(group, include_routes)
+    group_service.delete_group.return_value = group_full_out
 
-    def test_get_associable_routes_empty(self):
-        group = db_mock.get_sample_group()
-        self.group_service.get_associable_routes = MagicMock(return_value=[])
-        res = self.client.get(
-            f'{self.prefix}/groups/{group.uuid}/projects/{self.project_uuid}/associable-routes'
-        )
-        assert res.status_code == 200
-        assert res.json() == []
-        self.group_service.get_associable_routes.assert_called_once_with(
-            group.uuid, 'my-project'
-        )
+    res = client.delete(f'{PREFIX}/groups/{GROUP_UUID}{query}')
 
-    def test_get_associable_routes_group_not_found(self):
-        group = db_mock.get_sample_group()
-        self.group_service.get_associable_routes = MagicMock(
-            side_effect=GroupNotFoundError('error')
-        )
-        res = self.client.get(
-            f'{self.prefix}/groups/{group.uuid}/projects/{self.project_uuid}/associable-routes'
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='group_not_found', param=None
-            ).error
-        )
-        self.group_service.get_associable_routes.assert_called_once_with(
-            group.uuid, 'my-project'
-        )
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(group_full_out)
+    group_service.delete_group.assert_called_once_with(
+        GROUP_UUID, include_routes, False
+    )
 
-    def test_get_associable_routes_project_not_found(self):
-        group = db_mock.get_sample_group()
-        self.project_service.get_by_uuid = MagicMock(
-            side_effect=ProjectNotFoundError('error')
-        )
-        res = self.client.get(
-            f'{self.prefix}/groups/{group.uuid}/projects/{self.project_uuid}/associable-routes'
-        )
-        assert res.status_code == 404
-        assert (
-            res.json()['error']
-            == ErrorOut(
-                'error', 'auth_registry_error', code='project_not_found', param=None
-            ).error
-        )
-        self.group_service.get_associable_routes.assert_not_called()
+
+def test_get_group_by_uuid(client, group_service):
+    group = db_mock.get_sample_group()
+    group_out = GroupFullOut.from_group(group)
+    group_service.get_group_by_uuid.return_value = group_out
+
+    res = client.get(f'{PREFIX}/groups/{group.uuid}')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(group_out)
+    group_service.get_group_by_uuid.assert_called_once_with(group.uuid, False, False)
+
+
+def test_update_group_name(client, group_service):
+    group = db_mock.get_sample_group()
+    group_in = db_mock.get_sample_group_in()
+    group_out = GroupFullOut.from_group(group)
+    group_service.update_group_name.return_value = group_out
+
+    res = client.patch(f'{PREFIX}/groups/{group.uuid}', json=jsonable_encoder(group_in))
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(group_out)
+    group_service.update_group_name.assert_called_once_with(group.uuid, group_in)
+
+
+def test_get_associable_keys(client, group_service):
+    keys_out = [
+        KeyFullOut.from_key_obscured(db_mock.get_sample_key(uuid=uuid.uuid4(), name=n))
+        for n in ('k1', 'k2')
+    ]
+    group_service.get_associable_keys.return_value = keys_out
+
+    res = client.get(f'{PREFIX}/groups/{GROUP_UUID}/associable-keys')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(keys_out)
+    group_service.get_associable_keys.assert_called_once_with(GROUP_UUID)
+
+
+def test_add_project_route(client, group_service):
+    group_route = db_mock.get_sample_group_route(
+        route_name='my-route', project_uuid=PROJECT_UUID
+    )
+    group_out = GroupFullOut.from_group(
+        db_mock.get_sample_group(uuid=GROUP_UUID, group_routes=[group_route]), True
+    )
+    group_routes_in = db_mock.get_sample_group_routes_in(['my-route'])
+    group_service.add_project_routes.return_value = group_out
+
+    res = client.patch(
+        f'{PROJECT_ROUTES}/routes', json=jsonable_encoder(group_routes_in)
+    )
+
+    assert res.status_code == 201
+    assert res.json() == jsonable_encoder(group_out)
+    group_service.add_project_routes.assert_called_once_with(
+        GROUP_UUID, PROJECT_UUID, 'my-project', group_routes_in, False, False
+    )
+
+
+def test_remove_project_route(client, group_service):
+    group_out = GroupFullOut.from_group(db_mock.get_sample_group())
+    group_service.remove_project_route.return_value = group_out
+
+    res = client.delete(f'{PROJECT_ROUTES}/routes/my-route')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(group_out)
+    group_service.remove_project_route.assert_called_once_with(
+        GROUP_UUID, PROJECT_UUID, 'my-project', 'my-route'
+    )
+
+
+def test_get_associable_routes(client, group_service):
+    routes_out = [
+        GroupRouteOut(name=n, project_uuid=PROJECT_UUID, project_name='my-project')
+        for n in ('route-A', 'route-B')
+    ]
+    group_service.get_associable_routes.return_value = routes_out
+
+    res = client.get(f'{PROJECT_ROUTES}/associable-routes')
+
+    assert res.status_code == 200
+    assert res.json() == jsonable_encoder(routes_out)
+    group_service.get_associable_routes.assert_called_once_with(
+        GROUP_UUID, 'my-project'
+    )
+
+
+def test_associable_routes_of_an_unknown_project_are_not_looked_up(
+    client, group_service, project_service
+):
+    project_service.get_by_uuid.side_effect = ProjectNotFoundError('error')
+
+    res = client.get(f'{PROJECT_ROUTES}/associable-routes')
+
+    assert res.status_code == 404
+    assert (
+        res.json()['error']
+        == ErrorOut('error', 'auth_registry_error', code='project_not_found').error
+    )
+    group_service.get_associable_routes.assert_not_called()
+
+
+KEY_UUID = uuid.UUID('88888888-8888-8888-8888-888888888888')
+
+# (HTTP method, path, service method, body, raised error, status, error code).
+# The handler is global: one row per endpoint, each error type at least once.
+GROUP_ERRORS = [
+    pytest.param(
+        'POST',
+        f'{PREFIX}/groups',
+        'create_group',
+        jsonable_encoder(db_mock.get_sample_group_in()),
+        GroupInternalError('error'),
+        500,
+        'group_internal_error',
+        id='create-internal-error',
+    ),
+    pytest.param(
+        'PATCH',
+        f'{PREFIX}/groups/{GROUP_UUID}/keys',
+        'add_keys',
+        jsonable_encoder(db_mock.get_sample_keys_uuid_in([KEY_UUID])),
+        KeyNotFoundError('error'),
+        404,
+        'key_not_found',
+        id='add-missing-key',
+    ),
+    pytest.param(
+        'DELETE',
+        f'{PREFIX}/groups/{GROUP_UUID}/keys/{KEY_UUID}',
+        'remove_key',
+        None,
+        GroupNotFoundError('error'),
+        404,
+        'group_not_found',
+        id='remove-key-missing-group',
+    ),
+    pytest.param(
+        'POST',
+        f'{PREFIX}/groups/{GROUP_UUID}/limits',
+        'apply_limits_to_group',
+        jsonable_encoder(db_mock.get_sample_group_limits_in()),
+        GroupHasNoCredentialsError('error'),
+        400,
+        'group_has_no_credentials_bad_request',
+        id='apply-limits-no-credentials',
+    ),
+    pytest.param(
+        'DELETE',
+        f'{PREFIX}/groups/{GROUP_UUID}',
+        'delete_group',
+        None,
+        GroupInternalError('error'),
+        500,
+        'group_internal_error',
+        id='delete-internal-error',
+    ),
+    pytest.param(
+        'GET',
+        f'{PREFIX}/groups/{GROUP_UUID}',
+        'get_group_by_uuid',
+        None,
+        GroupNotFoundError('error'),
+        404,
+        'group_not_found',
+        id='get-missing-group',
+    ),
+    pytest.param(
+        'PATCH',
+        f'{PREFIX}/groups/{GROUP_UUID}',
+        'update_group_name',
+        jsonable_encoder(db_mock.get_sample_group_in()),
+        GroupNotFoundError('error'),
+        404,
+        'group_not_found',
+        id='update-missing-group',
+    ),
+    pytest.param(
+        'GET',
+        f'{PREFIX}/groups/{GROUP_UUID}/associable-keys',
+        'get_associable_keys',
+        None,
+        GroupNotFoundError('error'),
+        404,
+        'group_not_found',
+        id='associable-keys-missing-group',
+    ),
+    pytest.param(
+        'PATCH',
+        f'{PROJECT_ROUTES}/routes',
+        'add_project_routes',
+        jsonable_encoder(db_mock.get_sample_group_routes_in(['nonexistent'])),
+        RouteNotFoundError('error'),
+        404,
+        'route_not_found',
+        id='add-missing-project-route',
+    ),
+    pytest.param(
+        'DELETE',
+        f'{PROJECT_ROUTES}/routes/my-route',
+        'remove_project_route',
+        None,
+        RouteNotFoundError('error'),
+        404,
+        'route_not_found',
+        id='remove-missing-project-route',
+    ),
+    pytest.param(
+        'GET',
+        f'{PROJECT_ROUTES}/associable-routes',
+        'get_associable_routes',
+        None,
+        GroupNotFoundError('error'),
+        404,
+        'group_not_found',
+        id='associable-routes-missing-group',
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ('method', 'path', 'service_method', 'body', 'error', 'status_code', 'code'),
+    GROUP_ERRORS,
+)
+def test_a_service_error_becomes_its_auth_registry_error_response(
+    client, group_service, method, path, service_method, body, error, status_code, code
+):
+    getattr(group_service, service_method).side_effect = error
+
+    res = client.request(method, path, json=body)
+
+    assert res.status_code == status_code
+    assert (
+        res.json()['error']
+        == ErrorOut('error', 'auth_registry_error', code=code, param=None).error
+    )

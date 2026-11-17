@@ -25,6 +25,20 @@ async def test_the_scheduler_ticks_until_cancelled():
     assert len(ticks) == count
 
 
+async def test_a_scheduler_cancelled_while_waiting_never_ticks():
+    ticks = []
+    task = asyncio.create_task(
+        run_alert_window_scheduler(lambda: ticks.append(1), interval_seconds=60)
+    )
+    await asyncio.sleep(0)
+
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert task.cancelled()
+    assert ticks == []
+
+
 async def test_a_failing_tick_does_not_stop_the_scheduler():
     ticks = []
 

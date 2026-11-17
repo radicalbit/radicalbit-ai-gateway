@@ -1,6 +1,6 @@
 import formatUsd from '@Helpers/format-usd';
 import {
-  DUPLICATE_LIMIT_ERROR, DUPLICATE_ROW_ERROR, LIMIT_CATEGORIES, LIMIT_EVENT_CATEGORIES, LIMIT_WINDOWS, LimitCategoryEnum,
+  AUDIO_DURATION_CATEGORY, DUPLICATE_LIMIT_ERROR, DUPLICATE_ROW_ERROR, LIMIT_CATEGORIES, LIMIT_CATEGORY_LABELS, LIMIT_EVENT_CATEGORIES, LIMIT_WINDOWS, LimitCategoryEnum, LimitScopeEnum,
   WindowTypeEnum,
 } from './constants';
 
@@ -146,3 +146,93 @@ export const getDuplicateLimit = ({ limits, rows }) => {
 };
 
 export const isLimitComplete = ({ algorithm, category, value, windowSize }) => !!category && !!algorithm && !!windowSize && typeof value === 'number' && value > 0;
+
+const SECONDS_PER_MINUTE = 60;
+const SECONDS_PER_HOUR = 3600;
+const SECONDS_PER_DAY = 86400;
+
+export const WINDOW_NOT_STARTED = 'Starts at the first request';
+
+// A Fixed window starts at the first request: with nothing consumed it has not started,
+// and its end time is only "one window from now".
+export const formatResetsIn = ({ algorithm, bar, now }) => {
+  if (!bar) {
+    return undefined;
+  }
+
+  if (algorithm === WindowTypeEnum.FIXED && !bar.windowFilledSize) {
+    return WINDOW_NOT_STARTED;
+  }
+
+  const seconds = Math.max(0, bar.windowEndTime - now);
+
+  if (seconds < SECONDS_PER_HOUR) {
+    return `resets in ${Math.max(1, Math.ceil(seconds / SECONDS_PER_MINUTE))} min`;
+  }
+
+  if (seconds < SECONDS_PER_DAY) {
+    return `resets in ${Math.floor(seconds / SECONDS_PER_HOUR)} h`;
+  }
+
+  return `resets in ${formatCount(Math.floor(seconds / SECONDS_PER_DAY), 'day')}`;
+};
+
+export const getMostConsumed = (limits, consumption) => {
+  const bars = (limits ?? [])
+    .map(({ uuid }) => consumption?.[uuid])
+    .filter((bar) => Math.round(bar?.windowFilledPercentage ?? 0) > 0);
+
+  if (!bars.length) {
+    return null;
+  }
+
+  const most = bars.reduce((a, b) => (b.windowFilledPercentage > a.windowFilledPercentage ? b : a));
+
+  return { percentage: Math.round(most.windowFilledPercentage), status: most.windowStatus };
+};
+
+// Who blocked a request: a credential's own limit is named after the credential that sent it.
+export const formatBlockedBy = ({ apiKeyName, limitScope }) => {
+  if (limitScope === LimitScopeEnum.CREDENTIAL) {
+    return `Credential "${apiKeyName}"`;
+  }
+
+  if (limitScope === LimitScopeEnum.PROJECT) {
+    return 'Project';
+  }
+
+  return 'Route';
+};
+
+export const formatLimitCategory = (category) => {
+  if (category === AUDIO_DURATION_CATEGORY) {
+    return 'Audio duration';
+  }
+
+  return LIMIT_CATEGORY_LABELS[category] ?? category;
+};
+
+const WINDOW_SECONDS_UNITS = [
+  { seconds: SECONDS_PER_DAY * 30, singular: 'month', plural: 'months' },
+  { seconds: SECONDS_PER_DAY * 7, singular: 'week', plural: 'weeks' },
+  { seconds: SECONDS_PER_DAY, singular: 'day', plural: 'days' },
+  { seconds: SECONDS_PER_HOUR, singular: 'h', plural: 'h' },
+  { seconds: SECONDS_PER_MINUTE, singular: 'min', plural: 'min' },
+  { seconds: 1, singular: 's', plural: 's' },
+];
+
+// A limit event records its window in seconds; route windows need not be on the credential list.
+export const formatWindowSeconds = (windowSeconds) => {
+  if (!windowSeconds) {
+    return '—';
+  }
+
+  const { plural, seconds, singular } = WINDOW_SECONDS_UNITS.find((unit) => windowSeconds % unit.seconds === 0);
+  const count = windowSeconds / seconds;
+
+  if (count === 1) {
+    return `1 ${singular}`;
+  }
+
+  return `${count} ${plural}`;
+};

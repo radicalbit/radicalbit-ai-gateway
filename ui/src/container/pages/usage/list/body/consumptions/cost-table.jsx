@@ -1,7 +1,7 @@
 import { DataTable } from '@radicalbit/radicalbit-design-system';
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import formatUsd from '@Helpers/format-usd';
+import formatCost from '@Helpers/format-cost';
 import { useGetCostsSummaryStreamWithRange } from '@Src/store/state/usage/vertical-hooks';
 import columns from './columns';
 
@@ -36,40 +36,40 @@ const useGetDataSource = () => {
   return useMemo(() => [
     {
       label: 'Input',
-      chatModels: chatModels ? formatUsd(chatModels?.input?.direct) : '--',
-      judge: chatModels ? formatUsd(chatModels?.input?.judges) : '--',
-      embedding: embeddingModels ? formatUsd(embeddingModels?.input?.embedding) : '--',
-      semanticCache: embeddingModels ? formatUsd(embeddingModels?.input?.semanticCache) : '--',
+      chatModels: chatModels ? formatCost(chatModels?.input?.direct) : '--',
+      judge: chatModels ? formatCost(chatModels?.input?.judges) : '--',
+      embedding: embeddingModels ? formatCost(embeddingModels?.input?.embedding) : '--',
+      semanticCache: embeddingModels ? formatCost(embeddingModels?.input?.semanticCache) : '--',
       transcription: transcriptionModels
         ? {
-          total: formatUsd(transcriptionModels?.input?.total),
-          duration: formatUsd(transcriptionModels?.input?.duration),
-          audio: formatUsd(transcriptionModels?.input?.audio),
-          text: formatUsd(transcriptionModels?.input?.text),
+          total: formatCost(transcriptionModels?.input?.total),
+          duration: formatCost(transcriptionModels?.input?.duration),
+          audio: formatCost(transcriptionModels?.input?.audio),
+          text: formatCost(transcriptionModels?.input?.text),
         }
         : '--',
-      decision: decisionModels?.input == null ? '--' : formatUsd(decisionModels.input),
-      total: formatUsd(totals?.input),
+      decision: decisionModels?.input == null ? '--' : formatCost(decisionModels.input),
+      total: formatCost(totals?.input),
     },
     {
       label: 'Cached input',
-      chatModels: chatModels ? formatUsd(chatModels?.cachedInput?.direct) : '--',
-      judge: chatModels ? formatUsd(chatModels?.cachedInput?.judges) : '--',
+      chatModels: chatModels ? formatCost(chatModels?.cachedInput?.direct) : '--',
+      judge: chatModels ? formatCost(chatModels?.cachedInput?.judges) : '--',
       embedding: '--',
       semanticCache: '--',
       transcription: '--',
       decision: '--',
-      total: formatUsd(totals?.cachedInput),
+      total: formatCost(totals?.cachedInput),
     },
     {
       label: 'Output',
-      chatModels: chatModels ? formatUsd(chatModels?.output?.direct) : '--',
-      judge: chatModels ? formatUsd(chatModels?.output?.judges) : '--',
+      chatModels: chatModels ? formatCost(chatModels?.output?.direct) : '--',
+      judge: chatModels ? formatCost(chatModels?.output?.judges) : '--',
       embedding: '--',
       semanticCache: '--',
-      transcription: transcriptionModels ? formatUsd(transcriptionModels?.output) : '--',
+      transcription: transcriptionModels ? formatCost(transcriptionModels?.output) : '--',
       decision: '--',
-      total: formatUsd(totals?.output),
+      total: formatCost(totals?.output),
     },
   ], [chatModels, embeddingModels, transcriptionModels, decisionModels, totals]);
 };

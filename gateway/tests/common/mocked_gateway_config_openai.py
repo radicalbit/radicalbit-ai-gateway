@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 from radicalbit_ai_gateway.models.caching import CacheConfig, Caching
 from radicalbit_ai_gateway.models.credentials import Credentials
 from radicalbit_ai_gateway.models.fallback import Fallback, FallbackModelType
@@ -12,7 +10,6 @@ from radicalbit_ai_gateway.models.guardrails import (
     GuardrailWhereType,
 )
 from radicalbit_ai_gateway.models.limiting import (
-    BudgetLimiting,
     Limiting,
     LimitingAlgorithmType,
     RateLimiting,
@@ -131,33 +128,6 @@ def _openai_route_guardrail_names() -> list[str]:
     ]
 
 
-def get_gateway_openai_with_guardrails() -> GatewayConfig:
-    chat_models = [
-        make_chat_model(
-            'openai-o4-mini', 'openai/gpt-4o-mini', temperature=0.9, max_tokens=150
-        ),
-        make_chat_model(
-            'openai-o3-mini', 'openai/o3-mini', temperature=0.9, max_tokens=150
-        ),
-    ]
-    embedding_models = [
-        make_embedding_model('text-embedding-3-small', 'openai/text-embedding-3-small'),
-    ]
-    guardrails = _openai_guardrails()
-    route = GatewayRouteConfig(
-        route_name='rb-gateway',
-        chat_models=[m.model_id for m in chat_models],
-        embedding_models=[m.model_id for m in embedding_models],
-        guardrails=_openai_route_guardrail_names(),
-    )
-    return GatewayConfig(
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        routes={'rb-gateway': route},
-        guardrails=guardrails,
-    )
-
-
 def get_gateway_openai_cached() -> GatewayConfig:
     chat_models = [
         make_chat_model(
@@ -202,44 +172,6 @@ def get_gateway_embedded_cached() -> GatewayConfig:
         embedding_models=embedding_models,
         routes={'rb-gateway': route},
         cache=CacheConfig(redis_host='localhost', redis_port=6379),
-    )
-
-
-def get_gateway_embedded_limiting() -> GatewayConfig:
-    chat_models = [
-        make_chat_model(
-            'openai-o4-mini', 'openai/gpt-4o-mini', temperature=0.9, max_tokens=150
-        ),
-    ]
-    embedding_models = [
-        Model(
-            model_id='text-embedding-3-small',
-            model='openai/text-embedding-3-small',
-            credentials=Credentials(api_key='sk-123'),
-            input_cost_per_million_tokens=Decimal('0.25'),
-        ),
-    ]
-    route = GatewayRouteConfig(
-        route_name='rb-gateway',
-        chat_models=[m.model_id for m in chat_models],
-        embedding_models=[m.model_id for m in embedding_models],
-        token_limiting=TokenLimiting(
-            input=Limiting(
-                algorithm=LimitingAlgorithmType.FIXED_WINDOW,
-                window_size='10 seconds',
-                max_token=5,
-            ),
-        ),
-        budget_limiting=BudgetLimiting(
-            algorithm=LimitingAlgorithmType.FIXED_WINDOW,
-            window_size='10 seconds',
-            max_budget=10,
-        ),
-    )
-    return GatewayConfig(
-        chat_models=chat_models,
-        embedding_models=embedding_models,
-        routes={'rb-gateway': route},
     )
 
 

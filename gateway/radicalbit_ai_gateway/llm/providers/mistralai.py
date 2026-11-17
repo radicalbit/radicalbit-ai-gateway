@@ -36,6 +36,12 @@ from radicalbit_ai_gateway.llm.messages import (
     tool_call,
     tool_call_chunk,
 )
+from radicalbit_ai_gateway.llm.providers._openai_common import convert_data_block
+from radicalbit_ai_gateway.llm.providers._schema import (
+    OutputParserError,
+    is_data_content_block,
+    pydantic_to_function,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +97,6 @@ _RETRY_MAX_WAIT = 10
 
 _TOOL_CALL_ID = re.compile(r'^[a-zA-Z0-9]{9}$')
 _BASE62 = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-
-_DATA_BLOCK_TYPES = ('image', 'video', 'audio', 'text-plain', 'file')
 
 
 def build_chat_model(model_name: str, **kwargs: Any) -> 'ChatMistralAI':
@@ -288,7 +292,8 @@ class ChatMistralAI(ChatModel):
         self, schema: type[BaseModel], include_raw: bool = False
     ) -> '_MistralStructuredModel':
         # Mistral's default structured-output method: a forced function call.
-        bound = self.bind_tools([_pydantic_to_tool(schema)], tool_choice='any')
+        tool = {'type': 'function', 'function': pydantic_to_function(schema)}
+        bound = self.bind_tools([tool], tool_choice='any')
         return _MistralStructuredModel(bound, schema, include_raw)
 
 
@@ -309,10 +314,6 @@ class _MistralStructuredModel(StructuredChatModel):
         except Exception as e:
             return {'raw': raw, 'parsed': None, 'parsing_error': e}
         return {'raw': raw, 'parsed': parsed, 'parsing_error': None}
-
-
-class OutputParserError(ValueError):
-    """The model's reply could not be parsed into the requested schema."""
 
 
 def _parse_first_tool_call(message: AIMessage, schema: type[BaseModel]) -> Any:
@@ -368,54 +369,6 @@ def _tool_kwargs(tools: list[dict], tool_choice: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _pydantic_to_tool(schema: type[BaseModel]) -> dict[str, Any]:
-    """Describe a pydantic model as an OpenAI-format function tool."""
-    json_schema = _dereference(schema.model_json_schema())
-    json_schema.pop('$defs', None)
-    name = json_schema.pop('title', '')
-    description = json_schema.pop('description', '')
-    return {
-        'type': 'function',
-        'function': {
-            'name': name,
-            'description': description,
-            'parameters': _rm_titles(json_schema),
-        },
-    }
-
-
-def _dereference(schema: dict[str, Any]) -> dict[str, Any]:
-    defs = schema.get('$defs', {})
-
-    def resolve(node: Any) -> Any:
-        if isinstance(node, dict):
-            ref = node.get('$ref')
-            if isinstance(ref, str) and ref.startswith('#/$defs/'):
-                target = resolve(defs[ref.removeprefix('#/$defs/')])
-                rest = {k: resolve(v) for k, v in node.items() if k != '$ref'}
-                return {**target, **rest}
-            return {k: resolve(v) for k, v in node.items()}
-        if isinstance(node, list):
-            return [resolve(v) for v in node]
-        return node
-
-    return {k: (v if k == '$defs' else resolve(v)) for k, v in schema.items()}
-
-
-def _rm_titles(kv: dict[str, Any], prev_key: str = '') -> dict[str, Any]:
-    # Drop schema titles, but keep properties that are themselves named title.
-    new_kv = {}
-    for k, v in kv.items():
-        if k == 'title':
-            if isinstance(v, dict) and prev_key == 'properties':
-                new_kv[k] = _rm_titles(v, k)
-        elif isinstance(v, dict):
-            new_kv[k] = _rm_titles(v, k)
-        else:
-            new_kv[k] = v
-    return new_kv
-
-
 # ── Request conversion ───────────────────────────────────────────────────────
 
 
@@ -432,78 +385,12 @@ def _mistral_tool_call_id(tool_call_id: str) -> str:
     return base62[:9] if len(base62) >= 9 else base62.rjust(9, '0')
 
 
-def _is_data_block(block: dict) -> bool:
-    if block.get('type') not in _DATA_BLOCK_TYPES:
-        return False
-    if any(key in block for key in ('url', 'base64', 'file_id', 'text')):
-        return not (block['type'] == 'text' and 'source_type' not in block)
-    if 'source_type' in block:
-        source_type = block['source_type']
-        return (
-            (source_type == 'url' and 'url' in block)
-            or (source_type == 'base64' and 'data' in block)
-            or (source_type == 'id' and 'id' in block)
-            or (source_type == 'text' and 'url' in block)
-        )
-    return False
-
-
-def _to_chat_completions_block(block: dict) -> dict:
-    """Translate a standard data block into the chat-completions shape."""
-    block_type = block['type']
-    if block_type == 'image':
-        if 'url' in block:
-            return {'type': 'image_url', 'image_url': {'url': block['url']}}
-        if 'base64' in block or block.get('source_type') == 'base64':
-            if 'mime_type' not in block:
-                raise ValueError('mime_type key is required for base64 data.')
-            data = block['data'] if 'data' in block else block['base64']
-            return {
-                'type': 'image_url',
-                'image_url': {'url': f'data:{block["mime_type"]};base64,{data}'},
-            }
-        raise ValueError(
-            "Unsupported source type. Only 'url' and 'base64' are supported."
-        )
-    if block_type == 'file':
-        if block.get('source_type') == 'base64' or 'base64' in block:
-            data = block['data'] if 'source_type' in block else block['base64']
-            file = {'file_data': f'data:{block["mime_type"]};base64,{data}'}
-            if filename := block.get('filename'):
-                file['filename'] = filename
-            elif 'filename' in (extras := block.get('extras') or {}) or (
-                'filename' in (extras := block.get('metadata') or {})
-            ):
-                file['filename'] = extras['filename']
-            else:
-                file['filename'] = 'LC_AUTOGENERATED'
-            return {'type': 'file', 'file': file}
-        if block.get('source_type') == 'id' or 'file_id' in block:
-            file_id = block['id'] if 'source_type' in block else block['file_id']
-            return {'type': 'file', 'file': {'file_id': file_id}}
-        if 'url' in block:
-            raise ValueError('OpenAI Chat Completions does not support file URLs.')
-        raise ValueError('Keys base64, url, or file_id required for file blocks.')
-    if block_type == 'audio':
-        if 'base64' in block or block.get('source_type') == 'base64':
-            data = block['data'] if 'source_type' in block else block['base64']
-            return {
-                'type': 'input_audio',
-                'input_audio': {
-                    'data': data,
-                    'format': block['mime_type'].split('/')[-1],
-                },
-            }
-        raise ValueError('Key base64 is required for audio blocks.')
-    raise ValueError(f'Block of type {block_type} is not supported.')
-
-
 def _format_user_content(content: Any) -> Any:
     if not isinstance(content, list):
         return content
     return [
-        _to_chat_completions_block(block)
-        if isinstance(block, dict) and _is_data_block(block)
+        convert_data_block(block, api='chat/completions')
+        if isinstance(block, dict) and is_data_content_block(block)
         else block
         for block in content
     ]

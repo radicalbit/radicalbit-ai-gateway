@@ -14,11 +14,11 @@ from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
-from radicalbit_ai_gateway.limiting.project_budget_limiter import (
-    clear_project_budget_limit_counter,
-)
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiting.windows import project_window
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitConflictsOut,
     ProjectBudgetLimitDraftConflictOut,
@@ -41,6 +41,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ProjectBudgetLimitAlreadyExistsError,
     ProjectBudgetLimitConflictError,
     ProjectBudgetLimitNotFoundError,
+    ProjectConfigStateError,
     ProjectConfigValidationError,
     ProjectInternalError,
     ProjectNotFoundError,
@@ -194,8 +195,9 @@ class ProjectService:
 
         config = self._get_config_or_raise(project_uuid, config_uuid)
         if config.config_status == ConfigStatus.SERVED.value:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} is served and cannot be edited'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} is served and cannot be edited',
+                'config_served_not_editable',
             )
 
         rows_updated = self.project_config_dao.update_config_file(
@@ -210,8 +212,9 @@ class ProjectService:
         config = self._get_config_or_raise(project_uuid, config_uuid)
 
         if config.config_status != ConfigStatus.DRAFT.value or not config.config_file:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} has no draft configuration to approve'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} has no draft configuration to approve',
+                'config_no_draft_to_approve',
             )
 
         validate_gateway_config(config.config_file, check_secrets=True)
@@ -224,8 +227,9 @@ class ProjectService:
         config = self._get_config_or_raise(project_uuid, config_uuid)
 
         if config.config_status != ConfigStatus.READY_TO_SERVE.value:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} is not in READY_TO_SERVE state'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} is not in READY_TO_SERVE state',
+                'config_not_ready_to_serve',
             )
 
         self.project_config_dao.set_status(config_uuid, ConfigStatus.DRAFT)
@@ -239,8 +243,9 @@ class ProjectService:
                 f'Config {config_uuid} has no configuration to serve'
             )
         if config.config_status != ConfigStatus.READY_TO_SERVE.value:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} must be approved before serving'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} must be approved before serving',
+                'config_not_approved',
             )
 
         validate_gateway_config(config.config_file, check_secrets=True)
@@ -257,7 +262,9 @@ class ProjectService:
         config = self._get_config_or_raise(project_uuid, config_uuid)
 
         if config.config_status != ConfigStatus.SERVED.value:
-            raise ProjectConfigValidationError(f'Config {config_uuid} is not served')
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} is not served', 'config_not_served'
+            )
 
         rows_updated = self.project_config_dao.unserve(config_uuid)
         if rows_updated == 0:
@@ -346,8 +353,9 @@ class ProjectService:
         self._get_project_or_raise(project_uuid)
         config = self._get_config_or_raise(project_uuid, config_uuid)
         if config.config_status == ConfigStatus.SERVED.value:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} is served and cannot be overwritten by import'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} is served and cannot be overwritten by import',
+                'config_served_not_importable',
             )
         try:
             config_file = content.decode('utf-8')
@@ -425,6 +433,22 @@ class ProjectService:
             for limit in self.project_budget_limit_dao.get_by_project_uuid(project_uuid)
         ]
 
+    async def get_budget_limits_consumption(
+        self, project_uuids: list[UUID]
+    ) -> dict[str, WindowProgressBarDTO]:
+        """Consumption of every budget of *project_uuids*, keyed by limit uuid:
+        the counters requests write, read without consuming them.
+        """
+        windows = {}
+        for row in self.project_budget_limit_dao.get_all_by_project_uuids(
+            project_uuids
+        ):
+            limit = ProjectBudgetLimitOut.from_project_budget_limit(row)
+            windows[str(limit.uuid)] = project_window(
+                str(row.project_uuid), limit.algorithm, limit.window_size, limit.value
+            )
+        return await shared_limits.consumption(windows)
+
     def update_budget_limit_value(
         self,
         project_uuid: UUID,
@@ -472,10 +496,10 @@ class ProjectService:
         """Best-effort: the DB rows are already gone, that's what matters."""
         for limit in limits:
             try:
-                await clear_project_budget_limit_counter(
-                    project_uuid=str(project_uuid),
-                    algorithm=limit.algorithm,
-                    window_size=limit.window_size,
+                await shared_limits.clear(
+                    project_window(
+                        str(project_uuid), limit.algorithm, limit.window_size
+                    )
                 )
             except Exception:
                 logger.exception(

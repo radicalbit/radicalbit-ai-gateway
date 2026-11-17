@@ -10,11 +10,12 @@ from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
-from radicalbit_ai_gateway.limiting.credential_limiter import clear_limit_counter
+from radicalbit_ai_gateway.limiting.limits import shared_limits
 from radicalbit_ai_gateway.limiting.route_limit_consistency import (
     LimitMax,
     route_limit_warnings,
 )
+from radicalbit_ai_gateway.limiting.windows import credential_window
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     KeyCreateIn,
@@ -42,6 +43,7 @@ from radicalbit_ai_gateway.models.credential_rotation import (
     get_grace_end,
     previous_value_authenticates,
 )
+from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.group_limiting import (
     GroupLimitOutcome,
@@ -58,6 +60,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     CredentialLimitValueError,
     GroupNotFoundError,
     KeyAlreadyExistsError,
+    KeyExternallyManagedError,
     KeyGroupAlreadyExistsError,
     KeyInternalError,
     KeyNotFoundError,
@@ -203,7 +206,7 @@ class KeyService:
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be deleted because owner is "{key.owner}"'
             )
         deleted_rows = self.key_dao.delete_by_uuid(key_uuid)
@@ -230,7 +233,7 @@ class KeyService:
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be updated because owner is "{key.owner}"'
             )
         _ensure_not_expired(key)
@@ -258,7 +261,7 @@ class KeyService:
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be rotated because owner is "{key.owner}"'
             )
         _ensure_not_expired(key)
@@ -316,7 +319,7 @@ class KeyService:
                 f'Key with UUID {key_uuid} already has a group assigned: {key.group.name}'
             )
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be assigned to a group because owner is "{key.owner}"'
             )
         _ensure_not_expired(key)
@@ -347,7 +350,7 @@ class KeyService:
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be unassigned from group because owner is "{key.owner}"'
             )
         # No expiry check: removing an expired key from its group is cleanup, like delete
@@ -468,11 +471,13 @@ class KeyService:
         """Best-effort: the DB rows are already gone, that's what matters."""
         for limit in limits:
             try:
-                await clear_limit_counter(
-                    credential_uuid=str(limit.key_uuid),
-                    category=limit.category,
-                    algorithm=limit.algorithm,
-                    window_size=limit.window_size,
+                await shared_limits.clear(
+                    credential_window(
+                        str(limit.key_uuid),
+                        limit.category,
+                        limit.algorithm,
+                        limit.window_size,
+                    )
                 )
             except Exception:
                 logger.exception(
@@ -591,6 +596,24 @@ class KeyService:
                 in added
             ],
         )
+
+    async def get_limits_consumption(
+        self, key_uuids: list[UUID]
+    ) -> dict[str, WindowProgressBarDTO]:
+        """Consumption of every limit of *key_uuids*, keyed by limit uuid:
+        the counters requests write, read without consuming them.
+        """
+        windows = {}
+        for row in self.key_limit_dao.get_all_by_key_uuids(key_uuids):
+            limit = CredentialLimitOut.from_key_limit(row)
+            windows[str(limit.uuid)] = credential_window(
+                str(row.key_uuid),
+                limit.category.value,
+                limit.algorithm,
+                limit.window_size,
+                limit.value,
+            )
+        return await shared_limits.consumption(windows)
 
     def get_limits_for_key(self, key_uuid: UUID) -> list[CredentialLimitOut]:
         key = self.key_dao.get_by_uuid(key_uuid)

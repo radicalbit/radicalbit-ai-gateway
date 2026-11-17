@@ -71,6 +71,29 @@ class ProjectBudgetLimitDAOTest(DatabaseIntegration):
         res = self.project_budget_limit_dao.get_by_project_uuid(project.uuid)
         assert len(res) == 2
 
+    def test_get_all_by_project_uuids_returns_only_the_requested_projects(self):
+        projects = [self._insert_project(name=name) for name in ('a', 'b', 'c')]
+        limits = [
+            self.project_budget_limit_dao.insert(
+                db_mock.get_sample_project_budget_limit(
+                    uuid=uuid.uuid4(), project_uuid=project.uuid
+                )
+            )
+            for project in projects
+        ]
+
+        res = self.project_budget_limit_dao.get_all_by_project_uuids(
+            [projects[0].uuid, projects[1].uuid]
+        )
+
+        assert {(r.uuid, r.project_uuid) for r in res} == {
+            (limits[0].uuid, projects[0].uuid),
+            (limits[1].uuid, projects[1].uuid),
+        }
+
+    def test_get_all_by_project_uuids_empty_input(self):
+        assert self.project_budget_limit_dao.get_all_by_project_uuids([]) == []
+
     def test_duplicate_window_raises_integrity_error(self):
         project = self._insert_project()
         limit_one = db_mock.get_sample_project_budget_limit(

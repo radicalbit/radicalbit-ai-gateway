@@ -6,14 +6,16 @@ per-route consumers (e.g. plugins) can read it; ``reset_route_context`` clears i
 when the request finishes. The core never interprets the config.
 
 The client-supplied tags live here too: ``emit_event`` is called from deep
-inside invokers, guardrails and limiters, none of which hold the request.
+inside invokers, guardrails and limits, none of which hold the request.
 """
 
-from collections.abc import Awaitable
+from collections.abc import AsyncIterable, AsyncIterator
 from contextvars import ContextVar
 from functools import wraps
 import logging
-from typing import Any, Protocol
+from typing import Any
+
+from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
@@ -30,19 +32,36 @@ def set_current_route_config(config: Any) -> None:
     current_route_config_ctx.set(config)
 
 
+def _clear_route_context() -> None:
+    current_route_config_ctx.set(None)
+
+
+async def _clear_after(body: AsyncIterable[Any]) -> AsyncIterator[Any]:
+    try:
+        async for chunk in body:
+            yield chunk
+    finally:
+        _clear_route_context()
+
+
 def reset_route_context(func):
-    """Clear the route context when the handler finishes, including on error."""
+    """Clear the route context when the handler finishes, including on error.
+
+    A streaming response's body runs after the handler returns and still logs
+    for the route: its context is cleared when the body finishes instead.
+    """
 
     @wraps(func)
     async def wrapper(*args, **kwargs):
+        response = None
         try:
-            return await func(*args, **kwargs)
+            response = await func(*args, **kwargs)
+            return response
         finally:
-            current_route_config_ctx.set(None)
-            current_credential_limiter_ctx.set(None)
-            current_project_budget_limiter_ctx.set(None)
-            current_request_identity_ctx.set(None)
-            routing_spend_recorder_ctx.set(None)
+            if isinstance(response, StreamingResponse):
+                response.body_iterator = _clear_after(response.body_iterator)
+            else:
+                _clear_route_context()
 
     return wrapper
 
@@ -59,119 +78,3 @@ def set_current_request_tags(tags: tuple[str, ...]) -> None:
 
 def get_current_request_tags() -> tuple[str, ...]:
     return current_request_tags_ctx.get()
-
-
-# The calling credential's own CredentialLimiter, or None when it has no
-# limits configured. Same problem as the tags above: a GatewayRoute instance
-# is a shared singleton, so a per-credential limiter can't live on `self`.
-current_credential_limiter_ctx: ContextVar[Any] = ContextVar(
-    'current_credential_limiter', default=None
-)
-
-
-def set_current_credential_limiter(limiter: Any) -> None:
-    current_credential_limiter_ctx.set(limiter)
-
-
-def get_current_credential_limiter() -> Any:
-    return current_credential_limiter_ctx.get()
-
-
-# The calling project's own ProjectBudgetLimiter, or None when it has no
-# budget limits configured. Same problem as the credential limiter above:
-# a GatewayRoute instance is a shared singleton, so a limiter built from
-# DB rows that can change independently of the route config can't live on
-# `self`.
-current_project_budget_limiter_ctx: ContextVar[Any] = ContextVar(
-    'current_project_budget_limiter', default=None
-)
-
-
-def set_current_project_budget_limiter(limiter: Any) -> None:
-    current_project_budget_limiter_ctx.set(limiter)
-
-
-def get_current_project_budget_limiter() -> Any:
-    return current_project_budget_limiter_ctx.get()
-
-
-# Who sent the current request (a RequestIdentity), or None. Routing needs it
-# to charge its own calls, but the router interface only takes the messages.
-current_request_identity_ctx: ContextVar[Any] = ContextVar(
-    'current_request_identity', default=None
-)
-
-
-def set_current_request_identity(identity: Any) -> None:
-    current_request_identity_ctx.set(identity)
-
-
-def get_current_request_identity() -> Any:
-    return current_request_identity_ctx.get()
-
-
-class RoutingSpendRecorder(Protocol):
-    """Charge one routing call to the current request.
-
-    It emits the cost event (flagged as routing) at the model's input price
-    and counts the input tokens on the route, credential and project limits.
-    ``model_type`` is ``'embeddings'``, ``'decision_model'`` or
-    ``'chat-model'``. Pass ``target_model_id`` when a fallback model answered
-    instead of it, and ``output_tokens`` for a chat model router: its output
-    tokens are then costed and counted too.
-    """
-
-    def __call__(
-        self,
-        model: Any,
-        input_tokens: int,
-        latency_ms: float,
-        *,
-        model_type: str,
-        target_model_id: str | None = None,
-        output_tokens: int | None = None,
-    ) -> Awaitable[None]: ...
-
-
-# Set by the route only while its router picks a model. Routers are shared
-# by every request, so they read the recorder here instead of holding it.
-routing_spend_recorder_ctx: ContextVar[RoutingSpendRecorder | None] = ContextVar(
-    'routing_spend_recorder', default=None
-)
-
-
-def set_routing_spend_recorder(recorder: RoutingSpendRecorder | None) -> None:
-    routing_spend_recorder_ctx.set(recorder)
-
-
-def get_routing_spend_recorder() -> RoutingSpendRecorder | None:
-    return routing_spend_recorder_ctx.get()
-
-
-async def record_routing_spend(
-    model: Any,
-    input_tokens: int,
-    latency_ms: float,
-    *,
-    model_type: str,
-    target_model_id: str | None = None,
-    output_tokens: int | None = None,
-) -> None:
-    """Charge one routing call to the current request, if a recorder is set.
-
-    Routing never fails a request: a failure here is logged, not raised.
-    """
-    record = get_routing_spend_recorder()
-    if record is None:
-        return
-    try:
-        await record(
-            model,
-            input_tokens,
-            latency_ms,
-            model_type=model_type,
-            target_model_id=target_model_id,
-            output_tokens=output_tokens,
-        )
-    except Exception:
-        logger.exception('Routing spend on model %s was not recorded', model.model_id)

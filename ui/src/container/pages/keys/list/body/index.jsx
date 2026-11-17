@@ -1,3 +1,4 @@
+import { VisibleRowsProvider } from '@Components/limits/visible-rows-context';
 import { Popup, usePopup } from '@Components/popup';
 import Lucide from '@Components/lucide';
 import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
@@ -150,7 +151,7 @@ function IsSuccess({ searchValue }) {
   const components = { body: { row: RowWithSpinner } };
 
   return (
-    <>
+    <VisibleRowsProvider>
       <DataTable
         columns={columns}
         components={components}
@@ -175,7 +176,7 @@ function IsSuccess({ searchValue }) {
         {...popup}
       />
 
-    </>
+    </VisibleRowsProvider>
   );
 }
 

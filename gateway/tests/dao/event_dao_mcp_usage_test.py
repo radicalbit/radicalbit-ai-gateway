@@ -79,175 +79,68 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
             tags=tags,
         )
 
-    def test_no_mcp_traffic_returns_an_empty_page(self):
-        self.insert([mcp_event(event_type='MODEL_INVOCATION')])
-
-        res = self.usage()
-
-        assert res.items == []
-        assert res.total == 0
-
-    def test_one_row_per_key_with_count_and_last_call(self):
-        last_call = BASE_TIME + datetime.timedelta(hours=2)
-        self.insert(
-            [
-                mcp_event(timestamp=BASE_TIME),
-                mcp_event(timestamp=BASE_TIME + datetime.timedelta(hours=1)),
-                mcp_event(timestamp=last_call),
-                mcp_event(
-                    api_key_uuid=KEY_2,
-                    api_key_name='key-two',
-                    group_uuid=GROUP_2,
-                    group_name='group-two',
-                    timestamp=BASE_TIME,
-                ),
-            ]
-        )
-
-        res = self.usage()
-
-        assert res.total == 2
-        first, second = res.items
-        assert first.key_uuid == KEY_1
-        assert first.key_name == 'key-one'
-        assert first.group_uuid == GROUP_1
-        assert first.group_name == 'group-one'
-        assert first.counter == 3
-        assert first.last_call == last_call
-        assert second.key_uuid == KEY_2
-        assert second.counter == 1
-        assert second.last_call == BASE_TIME
-
-    def test_two_keys_sharing_a_name_stay_two_rows(self):
-        self.insert(
-            [
-                mcp_event(api_key_uuid=KEY_1, api_key_name='same-name'),
-                mcp_event(api_key_uuid=KEY_2, api_key_name='same-name'),
-            ]
-        )
-
-        res = self.usage()
-
-        assert res.total == 2
-        assert [row.key_uuid for row in res.items] == [KEY_1, KEY_2]
-        assert {row.key_name for row in res.items} == {'same-name'}
-
-    def test_other_event_types_are_not_counted(self):
-        self.insert(
-            [
-                mcp_event(),
-                mcp_event(event_type='MODEL_INVOCATION'),
-                mcp_event(event_type='REQUEST'),
-                mcp_event(event_type='GUARDRAIL'),
-            ]
-        )
-
-        res = self.usage()
-
-        assert res.total == 1
-        assert res.items[0].counter == 1
-
-    def test_another_project_is_not_counted(self):
-        self.insert(
-            [
-                mcp_event(),
-                mcp_event(project_uuid=PROJECT_B, api_key_uuid=KEY_2),
-            ]
-        )
-
-        res = self.usage()
-
-        assert res.total == 1
-        assert res.items[0].key_uuid == KEY_1
-
-    def test_time_window_boundaries_are_inclusive(self):
+    def test_each_filter_narrows_the_table_to_the_matching_keys(self):
+        """One data set, one query per filter. Routes and values of one tag
+        key are ORed, different tag keys are ANDed, the window is inclusive,
+        and other event types and other projects never count.
+        """
+        end = BASE_TIME + datetime.timedelta(hours=1)
+        half = BASE_TIME + datetime.timedelta(minutes=30)
         before = BASE_TIME - datetime.timedelta(minutes=1)
-        after = BASE_TIME + datetime.timedelta(hours=1, minutes=1)
+        after = end + datetime.timedelta(minutes=1)
+        prod_retail = ['env=prod', 'cost_center=retail']
+        key_2 = {
+            'api_key_uuid': KEY_2,
+            'api_key_name': 'key-two',
+            'group_uuid': GROUP_2,
+            'group_name': 'group-two',
+        }
+        key_3 = {'api_key_uuid': KEY_3, 'api_key_name': 'key-three'}
         self.insert(
             [
-                mcp_event(timestamp=before),
-                mcp_event(timestamp=BASE_TIME),
-                mcp_event(timestamp=BASE_TIME + datetime.timedelta(hours=1)),
-                mcp_event(timestamp=after),
+                mcp_event(timestamp=BASE_TIME, tags=prod_retail),
+                mcp_event(timestamp=end, tags=prod_retail),
+                mcp_event(
+                    route_name='route-b', timestamp=half, tags=['env=staging'], **key_2
+                ),
+                mcp_event(
+                    route_name='route-c', timestamp=before, tags=['env=prod'], **key_3
+                ),
+                mcp_event(
+                    route_name='route-c', timestamp=after, tags=['env=dev'], **key_3
+                ),
+                *(
+                    mcp_event(event_type=event_type, **key_2)
+                    for event_type in ('MODEL_INVOCATION', 'REQUEST', 'GUARDRAIL')
+                ),
+                mcp_event(project_uuid=PROJECT_B, **key_2),
             ]
         )
+        k1 = (KEY_1, 'key-one', GROUP_1, 'group-one')
+        k2 = (KEY_2, 'key-two', GROUP_2, 'group-two')
+        k3 = (KEY_3, 'key-three', GROUP_1, 'group-one')
 
-        res = self.usage(_from=BASE_TIME, _to=BASE_TIME + datetime.timedelta(hours=1))
+        for filters, expected in (
+            ({}, [(*k3, 2, after), (*k1, 2, end), (*k2, 1, half)]),
+            ({'_from': BASE_TIME, '_to': end}, [(*k1, 2, end), (*k2, 1, half)]),
+            ({'route_names': ['route-a']}, [(*k1, 2, end)]),
+            (
+                {'route_names': ['route-a', 'route-b']},
+                [(*k1, 2, end), (*k2, 1, half)],
+            ),
+            ({'route_names': ['route-z']}, []),
+            (
+                {'tags': ['env=prod', 'env=staging']},
+                [(*k1, 2, end), (*k2, 1, half), (*k3, 1, before)],
+            ),
+            ({'tags': prod_retail}, [(*k1, 2, end)]),
+            ({'tags': ['env=unknown']}, []),
+        ):
+            with self.subTest(**filters):
+                res = self.usage(**filters)
 
-        assert res.total == 1
-        assert res.items[0].counter == 2
-        assert res.items[0].last_call == BASE_TIME + datetime.timedelta(hours=1)
-
-    def test_a_single_route_narrows_the_table(self):
-        self.insert(
-            [
-                mcp_event(route_name='route-a'),
-                mcp_event(route_name='route-b', api_key_uuid=KEY_2),
-            ]
-        )
-
-        res = self.usage(route_names=['route-a'])
-
-        assert res.total == 1
-        assert res.items[0].key_uuid == KEY_1
-
-    def test_multiple_routes_are_ored(self):
-        self.insert(
-            [
-                mcp_event(route_name='route-a'),
-                mcp_event(route_name='route-b', api_key_uuid=KEY_2),
-                mcp_event(route_name='route-c', api_key_uuid=KEY_3),
-            ]
-        )
-
-        res = self.usage(route_names=['route-a', 'route-b'])
-
-        assert res.total == 2
-        assert {row.key_uuid for row in res.items} == {KEY_1, KEY_2}
-
-    def test_a_route_matching_nothing_returns_an_empty_page(self):
-        self.insert([mcp_event(route_name='route-a')])
-
-        res = self.usage(route_names=['route-z'])
-
-        assert res.items == []
-        assert res.total == 0
-
-    def test_tag_values_of_the_same_key_are_ored(self):
-        self.insert(
-            [
-                mcp_event(tags=['env=prod']),
-                mcp_event(api_key_uuid=KEY_2, tags=['env=staging']),
-                mcp_event(api_key_uuid=KEY_3, tags=['env=dev']),
-            ]
-        )
-
-        res = self.usage(tags=['env=prod', 'env=staging'])
-
-        assert res.total == 2
-        assert {row.key_uuid for row in res.items} == {KEY_1, KEY_2}
-
-    def test_tags_of_different_keys_are_anded(self):
-        self.insert(
-            [
-                mcp_event(tags=['env=prod', 'cost_center=retail']),
-                mcp_event(api_key_uuid=KEY_2, tags=['env=prod']),
-                mcp_event(api_key_uuid=KEY_3, tags=['cost_center=retail']),
-            ]
-        )
-
-        res = self.usage(tags=['env=prod', 'cost_center=retail'])
-
-        assert res.total == 1
-        assert res.items[0].key_uuid == KEY_1
-
-    def test_a_tag_matching_nothing_returns_an_empty_page(self):
-        self.insert([mcp_event(tags=['env=prod'])])
-
-        res = self.usage(tags=['env=unknown'])
-
-        assert res.items == []
-        assert res.total == 0
+                assert [tuple(row) for row in res.items] == expected
+                assert res.total == len(expected)
 
     def test_all_four_filters_compose(self):
         in_window = BASE_TIME + datetime.timedelta(minutes=30)
@@ -298,57 +191,38 @@ class EventDAOMcpKeyUsageTest(DatabaseIntegrationClickhouse):
             tags=['env=prod'],
         )
 
+        assert [tuple(row) for row in res.items] == [
+            (KEY_1, 'key-one', GROUP_1, 'group-one', 1, in_window)
+        ]
         assert res.total == 1
-        assert res.items[0].key_uuid == KEY_1
-        assert res.items[0].counter == 1
-        assert res.items[0].last_call == in_window
 
-    def test_rows_rank_by_count_then_last_call_then_key(self):
+    def test_rows_rank_by_count_then_last_call_then_key_across_pages(self):
+        """Two keys sharing a name stay two rows, and a full tie on count and
+        last call ranks by key, so no key shows up on two pages.
+        """
         later = BASE_TIME + datetime.timedelta(hours=1)
+        key_4 = uuid.UUID(int=4)
         self.insert(
             [
                 # KEY_3 leads on count.
-                mcp_event(api_key_uuid=KEY_3, timestamp=BASE_TIME),
-                mcp_event(api_key_uuid=KEY_3, timestamp=BASE_TIME),
-                mcp_event(api_key_uuid=KEY_3, timestamp=BASE_TIME),
-                # KEY_1 and KEY_2 tie on count; KEY_2 called last.
-                mcp_event(api_key_uuid=KEY_1, timestamp=BASE_TIME),
+                *(mcp_event(api_key_uuid=KEY_3) for _ in range(3)),
+                # The rest tie on count; KEY_2 called last.
                 mcp_event(api_key_uuid=KEY_2, timestamp=later),
+                # KEY_4 and KEY_1 tie on everything, name included.
+                mcp_event(api_key_uuid=key_4, api_key_name='same-name'),
+                mcp_event(api_key_uuid=KEY_1, api_key_name='same-name'),
             ]
         )
-
-        res = self.usage()
-
-        assert [row.key_uuid for row in res.items] == [KEY_3, KEY_2, KEY_1]
-
-    def test_a_pair_tied_on_count_and_last_call_ranks_by_key(self):
-        self.insert(
-            [
-                mcp_event(api_key_uuid=KEY_2, timestamp=BASE_TIME),
-                mcp_event(api_key_uuid=KEY_1, timestamp=BASE_TIME),
-            ]
-        )
-
-        res = self.usage()
-
-        assert [row.key_uuid for row in res.items] == [KEY_1, KEY_2]
-
-    def test_page_two_returns_the_rest_without_repeating_page_one(self):
-        keys = [uuid.UUID(int=10 + i) for i in range(5)]
-        events = []
-        for rank, key in enumerate(keys):
-            # Descending counts: 5, 4, 3, 2, 1.
-            events.extend(
-                mcp_event(api_key_uuid=key, api_key_name=f'key-{rank}')
-                for _ in range(5 - rank)
-            )
-        self.insert(events)
 
         page1 = self.usage(page=1, size=2)
         page2 = self.usage(page=2, size=2)
 
-        assert page1.total == 5
-        assert page2.total == 5
-        assert [row.key_uuid for row in page1.items] == keys[:2]
-        assert [row.key_uuid for row in page2.items] == keys[2:4]
-        assert [row.counter for row in page2.items] == [3, 2]
+        assert [(row.key_uuid, row.counter) for row in page1.items] == [
+            (KEY_3, 3),
+            (KEY_2, 1),
+        ]
+        assert [(row.key_uuid, row.key_name) for row in page2.items] == [
+            (KEY_1, 'same-name'),
+            (key_4, 'same-name'),
+        ]
+        assert (page1.total, page2.total) == (4, 4)

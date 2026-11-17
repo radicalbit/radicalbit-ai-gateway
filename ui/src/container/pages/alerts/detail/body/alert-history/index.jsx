@@ -22,8 +22,6 @@ const HISTORY_HOURS = 48;
 
 const LATEST_HOURS_SHOWN = 5;
 
-const chartStyle = { width: '100%', height: '11rem' };
-
 const SECONDS_PER_HOUR = 3600;
 
 const toHourlyBuckets = (history) => {
@@ -141,7 +139,7 @@ function HistoryChart({ buckets }) {
       onChartReady={handleOnChartReady}
       option={withChartAria(option({ buckets }))}
       ref={chartRef}
-      style={chartStyle}
+      style={{ width: '100%', height: '11rem' }}
     />
   );
 }

@@ -21,8 +21,6 @@ import {
   Wallet,
 } from 'lucide-react';
 
-const UNAVAILABLE_TOOLTIP = 'Unable to load the latest data, please retry later';
-
 export const useGetThreeDotsMenuItems = (uuid) => {
   const { data, isLoading, isError, isSuccess } = useGetProjectQuery(uuid, { skip: !uuid });
 
@@ -41,7 +39,7 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   if (isError) {
     return [
       {
-        label: <Tooltip title={UNAVAILABLE_TOOLTIP}>Unable to load project</Tooltip>,
+        label: <Tooltip title="Unable to load the latest data, please retry later">Unable to load project</Tooltip>,
         disabled: true,
       },
     ];

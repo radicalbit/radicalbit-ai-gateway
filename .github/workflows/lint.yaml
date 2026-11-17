@@ -13,7 +13,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  UV_VERSION: "0.7.13"
+  UV_VERSION: "0.13.8"
 
 jobs:
   ruff:

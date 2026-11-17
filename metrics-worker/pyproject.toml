@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Celery worker for events"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.15"
 dependencies = [
     "celery[redis]>=5.5.3",
     "clickhouse-connect>=0.9.2",

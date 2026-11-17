@@ -1,3 +1,4 @@
+import { VisibleRowsProvider } from '@Components/limits/visible-rows-context';
 import Lucide from '@Components/lucide';
 import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { CreateProjectButton } from '@Container/pages/projects/list/header';
@@ -187,14 +188,16 @@ function IsSuccess({ searchValue }) {
   const components = useMemo(() => ({ body: { row: makeRowWithSpinner(columns.length) } }), [columns.length]);
 
   return (
-    <DataTable
-      columns={columns}
-      components={components}
-      dataSource={sortedData}
-      pagination={{ hideOnSinglePage: true }}
-      rowKey={({ uuid: projectUUID }) => projectUUID}
-      scroll={{ y: 'calc(100vh - 10rem)' }}
-    />
+    <VisibleRowsProvider>
+      <DataTable
+        columns={columns}
+        components={components}
+        dataSource={sortedData}
+        pagination={{ hideOnSinglePage: true }}
+        rowKey={({ uuid: projectUUID }) => projectUUID}
+        scroll={{ y: 'calc(100vh - 10rem)' }}
+      />
+    </VisibleRowsProvider>
   );
 }
 

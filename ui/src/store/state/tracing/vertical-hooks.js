@@ -1,4 +1,3 @@
-import { tracesPageSize } from '@Src/constants';
 import { parseTagsFromTagsKey } from '@State/tags-query-params-factory';
 import {
   useGetSpanByIdQuery,
@@ -6,7 +5,6 @@ import {
   useGetTraceByIdQuery,
   useGetTraceLatenciesQuery,
   useGetTracesChartQuery,
-  useGetTracesQuery,
 } from '@State/tracing/api';
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -56,17 +54,6 @@ const useGetSpanLatenciesWithRange = ({ includeOthers, grouped }, options) => {
   }, { skip: !projectUuid, ...options });
 };
 
-const useGetTracesWithRange = (args, options) => {
-  const {
-    from, to, routes, tags, requestTypes, projectUuid,
-  } = useQueryRangeParams();
-  const page = args?.page;
-
-  return useGetTracesQuery({
-    projectUuid, from, to, routes, tags, requestTypes, page, limit: tracesPageSize,
-  }, { skip: !projectUuid, ...options });
-};
-
 const useGetTraceByIdVertical = (traceId, options) => {
   const { projectUuid } = useQueryRangeParams();
 
@@ -80,10 +67,10 @@ const useGetSpanByIdVertical = ({ traceId, spanId }, options) => {
 };
 
 export {
+  useQueryRangeParams,
   useGetSpanByIdVertical,
   useGetSpanLatenciesWithRange,
   useGetTraceByIdVertical,
   useGetTraceLatenciesWithRange,
   useGetTracesChartWithRange,
-  useGetTracesWithRange,
 };

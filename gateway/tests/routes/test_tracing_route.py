@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi_pagination import Page, Params
+import pytest
 from starlette.testclient import TestClient
 
 from radicalbit_ai_gateway.models.request_event_type import RequestType
@@ -154,19 +155,6 @@ class TestTracingRoute(unittest.TestCase):
         call_kwargs = self.tracing_service.get_latencies.call_args.kwargs
         assert set(call_kwargs['route_names']) == {_r('route-a'), _r('route-b')}
 
-    def test_get_latencies_with_tags_filter(self):
-        mock_latencies = LatenciesDTO(p50=120.0, p90=250.0, p95=310.0, p99=500.0)
-        self.tracing_service.get_latencies = MagicMock(return_value=mock_latencies)
-
-        response = self.client.get(
-            f'{self.project_path}/traces/latencies',
-            params={'tags': ['env=prod']},
-        )
-
-        assert response.status_code == 200
-        call_kwargs = self.tracing_service.get_latencies.call_args.kwargs
-        assert call_kwargs['tags'] == ['env=prod']
-
     def test_get_latencies_no_filters(self):
         mock_latencies = LatenciesDTO(p50=None, p90=None, p95=None, p99=None)
         self.tracing_service.get_latencies = MagicMock(return_value=mock_latencies)
@@ -179,43 +167,6 @@ class TestTracingRoute(unittest.TestCase):
         assert call_kwargs['project_uuid'] == PROJECT_UUID
         assert call_kwargs['_from'] is None
         assert call_kwargs['_to'] is None
-
-    def test_get_traces_chart_data_single_route(self):
-        mock_chart = TracesChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400],
-            data=[
-                TracesChartDataSeriesDTO(name='success', data=[3]),
-                TracesChartDataSeriesDTO(name='warning', data=[0]),
-                TracesChartDataSeriesDTO(name='error', data=[0]),
-            ],
-            total=3,
-        )
-        self.tracing_service.get_traces_chart_data = MagicMock(return_value=mock_chart)
-
-        response = self.client.get(
-            f'{self.project_path}/traces/chart',
-            params={'routes': 'my-route'},
-        )
-
-        assert response.status_code == 200
-        call_kwargs = self.tracing_service.get_traces_chart_data.call_args.kwargs
-        assert call_kwargs['route_names'] == [_r('my-route')]
-
-    def test_get_traces_chart_data_with_tags_filter(self):
-        mock_chart = TracesChartDataDTO(
-            granularity='hours', timestamp=[], data=[], total=0
-        )
-        self.tracing_service.get_traces_chart_data = MagicMock(return_value=mock_chart)
-
-        response = self.client.get(
-            f'{self.project_path}/traces/chart',
-            params={'tags': ['env=prod']},
-        )
-
-        assert response.status_code == 200
-        call_kwargs = self.tracing_service.get_traces_chart_data.call_args.kwargs
-        assert call_kwargs['tags'] == ['env=prod']
 
     def test_get_span_latencies(self):
         base_time = datetime.datetime(
@@ -277,65 +228,6 @@ class TestTracingRoute(unittest.TestCase):
         assert call_kwargs['_from'] is None
         assert call_kwargs['_to'] is None
 
-    def test_get_span_latencies_with_tags_filter(self):
-        mock_span_latencies = SpanLatenciesDTO(data=[])
-        self.tracing_service.get_span_latencies = MagicMock(
-            return_value=mock_span_latencies
-        )
-
-        response = self.client.get(
-            f'{self.project_path}/traces/spans/latencies',
-            params={'tags': ['env=prod']},
-        )
-
-        assert response.status_code == 200
-        call_kwargs = self.tracing_service.get_span_latencies.call_args.kwargs
-        assert call_kwargs['tags'] == ['env=prod']
-
-    def test_get_span_latencies_single_route(self):
-        mock_span_latencies = SpanLatenciesDTO(
-            data=[
-                SpanLatencyDTO(
-                    span_name='invoke', p50=80.0, p90=160.0, p95=200.0, p99=300.0
-                )
-            ]
-        )
-        self.tracing_service.get_span_latencies = MagicMock(
-            return_value=mock_span_latencies
-        )
-
-        response = self.client.get(
-            f'{self.project_path}/traces/spans/latencies',
-            params={'routes': 'my-route'},
-        )
-
-        assert response.status_code == 200
-        call_kwargs = self.tracing_service.get_span_latencies.call_args.kwargs
-        assert call_kwargs['route_names'] == [_r('my-route')]
-
-    def test_get_span_latencies_passes_time_range(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        mock_span_latencies = SpanLatenciesDTO(data=[])
-        self.tracing_service.get_span_latencies = MagicMock(
-            return_value=mock_span_latencies
-        )
-
-        _from_ts = int(base_time.timestamp())
-        _to_ts = int((base_time + datetime.timedelta(hours=2)).timestamp())
-
-        self.client.get(
-            f'{self.project_path}/traces/spans/latencies',
-            params={'_from': _from_ts, '_to': _to_ts},
-        )
-
-        call_kwargs = self.tracing_service.get_span_latencies.call_args.kwargs
-        assert call_kwargs['_from'] is not None
-        assert call_kwargs['_to'] is not None
-        assert int(call_kwargs['_from'].timestamp()) == _from_ts
-        assert int(call_kwargs['_to'].timestamp()) == _to_ts
-
     def test_get_span_latencies_grouped(self):
         mock_grouped = GroupedSpanLatenciesDTO(
             data=[
@@ -389,57 +281,6 @@ class TestTracingRoute(unittest.TestCase):
         assert invocation['p50'] == 100.0
         assert len(invocation['spans']) == 1
         assert invocation['spans'][0]['spanName'] == 'invoke_openai'
-
-    def test_get_span_latencies_grouped_passes_filters(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        mock_grouped = GroupedSpanLatenciesDTO(data=[])
-        self.tracing_service.get_grouped_span_latencies = MagicMock(
-            return_value=mock_grouped
-        )
-
-        _from_ts = int(base_time.timestamp())
-        _to_ts = int((base_time + datetime.timedelta(hours=2)).timestamp())
-
-        self.client.get(
-            f'{self.project_path}/traces/spans/latencies',
-            params={
-                'grouped': True,
-                '_from': _from_ts,
-                '_to': _to_ts,
-                'routes': ['route-a'],
-            },
-        )
-
-        call_kwargs = self.tracing_service.get_grouped_span_latencies.call_args.kwargs
-        assert call_kwargs['route_names'] == [_r('route-a')]
-        assert call_kwargs['_from'] is not None
-        assert call_kwargs['_to'] is not None
-
-    def test_get_span_latencies_grouped_include_others(self):
-        mock_grouped = GroupedSpanLatenciesDTO(data=[])
-        self.tracing_service.get_grouped_span_latencies = MagicMock(
-            return_value=mock_grouped
-        )
-
-        self.client.get(
-            f'{self.project_path}/traces/spans/latencies',
-            params={'grouped': True, 'include_others': True},
-        )
-
-        call_kwargs = self.tracing_service.get_grouped_span_latencies.call_args.kwargs
-        assert call_kwargs['include_others'] is True
-
-    def test_get_span_latencies_default_not_grouped(self):
-        self.tracing_service.get_span_latencies = MagicMock(
-            return_value=SpanLatenciesDTO(data=[])
-        )
-
-        self.client.get(f'{self.project_path}/traces/spans/latencies')
-
-        self.tracing_service.get_span_latencies.assert_called_once()
-        self.tracing_service.get_grouped_span_latencies.assert_not_called()
 
     # --- get_trace_by_id tests (no project_uuid in path) ---
 
@@ -659,6 +500,59 @@ class TestTracingRoute(unittest.TestCase):
         assert grandchild['spanId'] == 'span-grandchild'
         assert grandchild['children'] == []
 
+    def test_get_trace_by_id_tree_nodes_expose_category_and_kind(self):
+        created_at = int(
+            datetime.datetime(
+                2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+            ).timestamp()
+        )
+
+        def node(span_id, children=(), **fields):
+            return TreeNodeDTO(
+                span_id=span_id,
+                span_name=span_id,
+                duration_ms=1.0,
+                status_code='Unset',
+                created_at=created_at,
+                children=list(children),
+                **fields,
+            )
+
+        self.tracing_service.get_trace_by_id = MagicMock(
+            return_value=TraceDTO(
+                trace_id='trace-cat',
+                root_span_id='root',
+                total_spans=3,
+                duration_ms=1.0,
+                created_at=created_at,
+                latest_span_ts=created_at,
+                tree=node(
+                    'root',
+                    operation_category='endpoint',
+                    span_kind='workflow',
+                    children=[
+                        node(
+                            'invoke', operation_category='invocation', span_kind='task'
+                        ),
+                        node('bare'),
+                    ],
+                ),
+            )
+        )
+
+        response = self.client.get(f'{self.project_path}/traces/trace-cat')
+
+        assert response.status_code == 200
+        tree = response.json()['tree']
+        assert tree['operationCategory'] == 'endpoint'
+        assert tree['spanKind'] == 'workflow'
+        invoke, bare = tree['children']
+        assert invoke['operationCategory'] == 'invocation'
+        assert invoke['spanKind'] == 'task'
+        # A span with no category or kind leaves the fields out.
+        assert 'operationCategory' not in bare
+        assert 'spanKind' not in bare
+
     def test_get_trace_by_id_with_attributes(self):
         base_time = datetime.datetime(
             2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
@@ -847,100 +741,6 @@ class TestTracingRoute(unittest.TestCase):
         assert call_kwargs['_from'] is None
         assert call_kwargs['_to'] is None
 
-    def test_get_traces_passes_time_range_and_pagination(self):
-        base_time = datetime.datetime(
-            2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        mock_result = Page.create(items=[], params=Params(page=3, size=10), total=0)
-        self.tracing_service.get_traces = MagicMock(return_value=mock_result)
-
-        _from_ts = int(base_time.timestamp())
-        _to_ts = int((base_time + datetime.timedelta(hours=2)).timestamp())
-
-        self.client.get(
-            f'{self.project_path}/traces',
-            params={'_from': _from_ts, '_to': _to_ts, '_page': 3, '_limit': 10},
-        )
-
-        call_kwargs = self.tracing_service.get_traces.call_args.kwargs
-        assert int(call_kwargs['_from'].timestamp()) == _from_ts
-        assert int(call_kwargs['_to'].timestamp()) == _to_ts
-        assert call_kwargs['group_uuids'] is None
-        assert call_kwargs['key_uuids'] is None
-
-    def test_get_traces_with_groups_filter(self):
-        mock_result = Page.create(items=[], params=Params(page=1, size=50), total=0)
-        self.tracing_service.get_traces = MagicMock(return_value=mock_result)
-
-        group_uuid_1 = '550e8400-e29b-41d4-a716-446655440001'
-        group_uuid_2 = '550e8400-e29b-41d4-a716-446655440002'
-
-        response = self.client.get(
-            f'{self.project_path}/traces',
-            params={
-                'groups': [group_uuid_1, group_uuid_2],
-            },
-        )
-
-        assert response.status_code == 200
-        call_kwargs = self.tracing_service.get_traces.call_args.kwargs
-        assert call_kwargs['group_uuids'] == [UUID(group_uuid_1), UUID(group_uuid_2)]
-        assert call_kwargs['key_uuids'] is None
-
-    def test_get_traces_with_keys_filter(self):
-        mock_result = Page.create(items=[], params=Params(page=1, size=50), total=0)
-        self.tracing_service.get_traces = MagicMock(return_value=mock_result)
-
-        key_uuid_1 = '660e8400-e29b-41d4-a716-446655440001'
-        key_uuid_2 = '660e8400-e29b-41d4-a716-446655440002'
-
-        response = self.client.get(
-            f'{self.project_path}/traces',
-            params={
-                'keys': [key_uuid_1, key_uuid_2],
-            },
-        )
-
-        assert response.status_code == 200
-        call_kwargs = self.tracing_service.get_traces.call_args.kwargs
-        assert call_kwargs['group_uuids'] is None
-        assert call_kwargs['key_uuids'] == [UUID(key_uuid_1), UUID(key_uuid_2)]
-
-    def test_get_traces_with_all_filters(self):
-        mock_result = Page.create(items=[], params=Params(page=1, size=50), total=0)
-        self.tracing_service.get_traces = MagicMock(return_value=mock_result)
-
-        group_uuid = '550e8400-e29b-41d4-a716-446655440001'
-        key_uuid = '660e8400-e29b-41d4-a716-446655440001'
-
-        response = self.client.get(
-            f'{self.project_path}/traces',
-            params={
-                'routes': ['my-route'],
-                'groups': [group_uuid],
-                'keys': [key_uuid],
-            },
-        )
-
-        assert response.status_code == 200
-        call_kwargs = self.tracing_service.get_traces.call_args.kwargs
-        assert call_kwargs['route_names'] == [_r('my-route')]
-        assert call_kwargs['group_uuids'] == [UUID(group_uuid)]
-        assert call_kwargs['key_uuids'] == [UUID(key_uuid)]
-
-    def test_get_traces_with_tags_filter(self):
-        mock_result = Page.create(items=[], params=Params(page=1, size=50), total=0)
-        self.tracing_service.get_traces = MagicMock(return_value=mock_result)
-
-        response = self.client.get(
-            f'{self.project_path}/traces',
-            params={'tags': ['env=prod', 'cost_center=retail']},
-        )
-
-        assert response.status_code == 200
-        call_kwargs = self.tracing_service.get_traces.call_args.kwargs
-        assert call_kwargs['tags'] == ['env=prod', 'cost_center=retail']
-
     def test_get_traces_with_request_types_filter(self):
         base_time = datetime.datetime(
             2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
@@ -1127,3 +927,99 @@ class TestTracingRoute(unittest.TestCase):
         assert 'routeName' not in body
         assert body['traceId'] == 'trace-no-uuid'
         assert body['errorCount'] == 0
+
+
+FROM_TS = 1736330400  # 2025-01-08 10:00 UTC
+TO_TS = FROM_TS + 7200
+FROM_DT = datetime.datetime.fromtimestamp(FROM_TS, datetime.timezone.utc)
+TO_DT = datetime.datetime.fromtimestamp(TO_TS, datetime.timezone.utc)
+GROUP = UUID('550e8400-e29b-41d4-a716-446655440001')
+KEY = UUID('660e8400-e29b-41d4-a716-446655440001')
+COMMON = {'_from': FROM_TS, '_to': TO_TS, 'routes': ['route-a', 'route-b']}
+TAGS = ['env=prod', 'cost_center=retail']
+PASSED = {
+    'project_uuid': PROJECT_UUID,
+    'route_names': ['route-a', 'route-b'],
+    '_from': FROM_DT,
+    '_to': TO_DT,
+    'tags': TAGS,
+}
+
+
+@pytest.mark.parametrize(
+    ('path', 'params', 'method', 'reply', 'expected'),
+    [
+        pytest.param(
+            'traces/chart',
+            COMMON,
+            'get_traces_chart_data',
+            TracesChartDataDTO(granularity='hours', timestamp=[], data=[], total=0),
+            {**PASSED, 'granularity': 'hours'},
+            id='chart',
+        ),
+        pytest.param(
+            'traces/latencies',
+            COMMON,
+            'get_latencies',
+            LatenciesDTO(),
+            PASSED,
+            id='latencies',
+        ),
+        pytest.param(
+            'traces/spans/latencies',
+            COMMON,
+            'get_span_latencies',
+            SpanLatenciesDTO(data=[]),
+            PASSED,
+            id='span_latencies',
+        ),
+        pytest.param(
+            'traces/spans/latencies',
+            {**COMMON, 'grouped': True, 'include_others': True},
+            'get_grouped_span_latencies',
+            GroupedSpanLatenciesDTO(data=[]),
+            {**PASSED, 'include_others': True},
+            id='grouped_span_latencies',
+        ),
+        pytest.param(
+            'traces',
+            {
+                **COMMON,
+                'groups': [str(GROUP)],
+                'keys': [str(KEY)],
+                'requestType': ['mcp', 'embeddings'],
+                '_page': 3,
+                '_limit': 10,
+            },
+            'get_traces',
+            Page.create(items=[], params=Params(page=3, size=10), total=0),
+            {
+                **PASSED,
+                'group_uuids': [GROUP],
+                'key_uuids': [KEY],
+                'request_types': [RequestType.MCP, RequestType.EMBEDDINGS],
+                'params': Params(page=3, size=10),
+            },
+            id='traces',
+        ),
+    ],
+)
+def test_every_filter_reaches_the_service_parsed(path, params, method, reply, expected):
+    tracing_service = MagicMock(spec_set=TracingService)
+    getattr(tracing_service, method).return_value = reply
+    app = FastAPI()
+    app.include_router(
+        TracingRoute.get_tracing_router(
+            tracing_service=tracing_service,
+            project_service=MagicMock(spec_set=ProjectService),
+        ),
+        prefix='/public/api/v1',
+    )
+
+    response = TestClient(app).get(
+        f'/public/api/v1/projects/{PROJECT_UUID}/{path}',
+        params={**params, 'tags': TAGS},
+    )
+
+    assert response.status_code == 200
+    getattr(tracing_service, method).assert_called_once_with(**expected)

@@ -4,6 +4,7 @@ from typing import Any
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.limiter import (
     BaseFixedWindowLimiter,
+    Consumption,
     ScenarioType,
     WindowConfig,
 )
@@ -49,18 +50,19 @@ def crossed_percentages(
     )
 
 
-async def consume_and_emit_thresholds(
+async def emit_thresholds(
     limiter: BaseFixedWindowLimiter,
     window: WindowConfig,
     cost: int,
+    consumption: Consumption,
     scope: LimitScope,
     identity: RequestIdentity,
 ) -> None:
-    """Consume `cost` in `window` and emit an event per threshold it crossed.
+    """Emit an event per threshold the hit of `cost` crossed in `window`.
 
-    The percentages are the global ones from the alert config.
+    `consumption` is the window's counter after the hit. The percentages are
+    the global ones from the alert config.
     """
-    consumption = await limiter.consume(window, cost=cost)
     crossed = crossed_percentages(
         consumption.value,
         cost,

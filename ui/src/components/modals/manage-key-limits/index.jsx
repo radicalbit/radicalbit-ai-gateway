@@ -18,10 +18,6 @@ import useHandleOnEdit from './useHandleOnEdit';
 import useHandleOnReplace from './useHandleOnReplace';
 import useHandleOnSubmit from './useHandleOnSubmit';
 
-const UNAVAILABLE_MESSAGE = 'Unable to load this credential, please close and retry later';
-
-const MODAL_WIDTH = 760;
-
 const SCREENS = {
   [ScreenEnum.LIST]: ListScreen,
   [ScreenEnum.ADD]: AddScreen,
@@ -59,7 +55,7 @@ function ManageKeyLimitsInner() {
       header={<Header />}
       onCancel={hideModal}
       open
-      width={MODAL_WIDTH}
+      width={760}
     >
       <Body />
     </RbitModal>
@@ -102,7 +98,7 @@ function Body() {
   }
 
   if (isError) {
-    return <Alert title={UNAVAILABLE_MESSAGE} type="error" />;
+    return <Alert title="Unable to load this credential, please close and retry later" type="error" />;
   }
 
   if (!isSuccess) {

@@ -8,13 +8,26 @@ from opentelemetry import trace
 
 from radicalbit_ai_gateway.guardrails.judges.judge_engine import JudgeUsageCounter
 from radicalbit_ai_gateway.invocation.decision_model_invoker import (
+    DECISION_MODEL_TYPE,
     DecisionModelInvoker,
     billed_input_tokens,
     is_number,
 )
+from radicalbit_ai_gateway.invocation.fallback_chain import (
+    CallContext,
+    Candidate,
+    FallbackChain,
+    Reply,
+    Skip,
+    Spent,
+    TryNext,
+    candidates,
+)
+from radicalbit_ai_gateway.invocation.recorder import Call, Tokens
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.guardrails import DecisionJudgeParameter
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -150,30 +163,60 @@ class DecisionJudgeEngine:
             identity={k: kwargs.get(k, '') for k in _IDENTITY_KEYS},
             count_usage=count_judge_usage,
         )
-        try:
-            noul = await self._ask_model(params.model_id, body, spend)
-        except _RejectedByModel:
-            raise
-        except JudgeInternalError:
-            if not params.fallback_model_id:
-                raise
-        else:
+        target = self._model(params.model_id)
+        fallback = (
+            [(self._model(params.fallback_model_id), None)]
+            if params.fallback_model_id
+            else []
+        )
+
+        async def ask(candidate: Candidate) -> Reply:
+            if candidate.is_fallback:
+                logger.warning(
+                    'Decision judge falls back from model %s to model %s',
+                    params.model_id,
+                    params.fallback_model_id,
+                )
+            noul = await self._ask_model(candidate.model.model_id, body, spend)
             _set_judge_answer_attributes(
-                params.model_id, fallback_triggered=False, noul=noul
+                candidate.model.model_id,
+                fallback_triggered=candidate.is_fallback,
+                noul=noul,
             )
-            return noul
-        logger.warning(
-            'Decision judge falls back from model %s to model %s',
-            params.model_id,
-            params.fallback_model_id,
-        )
-        noul = await self._ask_model(params.fallback_model_id, body, spend)
-        _set_judge_answer_attributes(
-            params.fallback_model_id, fallback_triggered=True, noul=noul
-        )
-        return noul
+            return Reply(noul)
+
+        return await FallbackChain(
+            candidates((target, None), fallback),
+            CallContext(
+                call=Call(
+                    identity=RequestIdentity(**spend.identity),
+                    model_type=DECISION_MODEL_TYPE,
+                    target_model_id=params.model_id,
+                    is_judge=True,
+                ),
+                recorder=self._invoker.recorder,
+                # A model that rejects the request (a 4xx other than 429)
+                # would reject it on the fallback too.
+                final=lambda error: (
+                    isinstance(error, _RejectedByModel)
+                    or not isinstance(error, JudgeInternalError)
+                ),
+            ),
+        ).call(ask)
+
+    def _model(self, model_id: str) -> Model:
+        """Return the decision model ``model_id``. One the project does not
+        define gives no answer when asked (see ``DecisionModelInvoker.call``).
+        """
+        if model_id in self._invoker.model_map:
+            return self._invoker.model_map[model_id][0]
+        return Model(model_id=model_id, model=f'typesafe/{model_id}')
 
     async def _ask_model(self, model_id: str, body: dict, spend: _JudgeSpend) -> float:
+        if model_id not in self._invoker.model_map:
+            # Never called: the chain records no call, and raises this error
+            # when no other model answers.
+            raise Skip(self._error(model_id, f'Decision model {model_id} not defined'))
         start_time = time.monotonic()
         try:
             response = await self._invoker.call(model_id, body)
@@ -196,8 +239,11 @@ class DecisionJudgeEngine:
         except ValueError:
             payload = None
         # Count before reading the noul. A bad answer still spent tokens.
-        await self._count_spend(model_id, payload, latency_ms, spend)
-        return self._read_noul(payload, model_id)
+        spent = await self._count_spend(model_id, payload, latency_ms, spend)
+        try:
+            return self._read_noul(payload, model_id)
+        except JudgeInternalError as e:
+            raise TryNext(e, spent=spent) from e
 
     async def _count_spend(
         self,
@@ -205,23 +251,34 @@ class DecisionJudgeEngine:
         payload: object,
         latency_ms: float,
         spend: _JudgeSpend,
-    ) -> None:
+    ) -> bool:
         """Emit the call's cost events and consume the request's limits.
+        Return whether there was anything to count.
 
         Typesafe bills input tokens only. No usage, nothing to count.
         """
         input_tokens = billed_input_tokens(payload)
         if input_tokens == 0:
-            return
-        model = self._invoker.record_judge_call(
-            model_id=model_id,
-            target_model_id=spend.target_model_id,
-            input_tokens=input_tokens,
-            latency_ms=latency_ms,
-            identity=spend.identity,
+            return False
+        model = self._invoker.model_map[model_id][0]
+        self._invoker.recorder.invocation(
+            Call(
+                identity=RequestIdentity(**spend.identity),
+                model_type=DECISION_MODEL_TYPE,
+                target_model_id=spend.target_model_id,
+                is_judge=True,
+            ),
+            model,
+            latency_ms,
+            tokens=Tokens(input=input_tokens, output=0),
+            fallback_triggered=model_id != spend.target_model_id,
         )
         if spend.count_usage:
-            await spend.count_usage(model, input_tokens, 0)
+            try:
+                await spend.count_usage(model, input_tokens, 0)
+            except Exception as err:
+                raise Spent from err
+        return True
 
     def _read_noul(self, payload: object, model_id: str) -> float:
         try:

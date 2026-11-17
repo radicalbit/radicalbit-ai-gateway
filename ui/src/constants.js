@@ -1,6 +1,6 @@
 const GATEWAY_OWNER = 'gateway';
 const pageSize = 20;
-const tracesPageSize = 50;
+const requestsPageSize = 50;
 const mcpKeysPageSize = 20;
 const startPage = 1;
 const DEFAULT_POLLING_INTERVAL = 2000;
@@ -17,6 +17,7 @@ const PathsEnum = {
   GROUPS: 'groups',
   CREDENTIALS: 'credentials',
   PROJECTS: 'projects',
+  OBSERVABILITY: 'observability',
   ROUTES: 'routes',
   SECRETS: 'secrets',
   TRACING: 'tracing',
@@ -222,5 +223,5 @@ export {
   SortOrderEnum,
   startPage,
   mcpKeysPageSize,
-  tracesPageSize,
+  requestsPageSize,
 };

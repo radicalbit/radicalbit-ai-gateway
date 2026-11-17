@@ -1,9 +1,10 @@
+import functools
 import logging
 
 from azure.health.deidentification import DeidentificationClient
 from azure.identity import ClientSecretCredential, EnvironmentCredential
 from presidio_analyzer import AnalyzerEngine
-from presidio_analyzer.nlp_engine import NlpEngineProvider
+from presidio_analyzer.nlp_engine import NlpEngine, NlpEngineProvider
 from presidio_analyzer.predefined_recognizers import AzureHealthDeidRecognizer
 from presidio_anonymizer import AnonymizerEngine
 
@@ -13,29 +14,34 @@ from radicalbit_ai_gateway.utils.app_config import get_app_config
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
 
+SPACY_MODELS = {'it': 'it_core_news_md', 'en': 'en_core_web_lg'}
+
+
+@functools.cache
+def _spacy_nlp_engine(languages: tuple[str, ...]) -> NlpEngine:
+    """Load the spaCy models of *languages* once per process.
+
+    Loading them takes about a second, and every engine reads the same
+    models: the engines of a gateway, and of a test run, share them.
+    """
+    nlp_config = {
+        'nlp_engine_name': 'spacy',
+        'models': [
+            {'lang_code': language, 'model_name': SPACY_MODELS.get(language)}
+            for language in languages
+        ],
+    }
+    return NlpEngineProvider(nlp_configuration=nlp_config).create_engine()
+
+
 class PresidioEngine:
     def __init__(self, languages: list[str] = PRESIDIO_LANGUAGES):
         self._analyzer_local = None
         self._anonymizer = None
-        self._nlp_engine = None
         self._languages = languages
-        self._lang_model_mapping = {'it': 'it_core_news_md', 'en': 'en_core_web_lg'}
 
-    def _get_nlp_engine(self):
-        if not self._nlp_engine:
-            nlp_config = {
-                'nlp_engine_name': 'spacy',
-                'models': [
-                    {
-                        'lang_code': language,
-                        'model_name': self._lang_model_mapping.get(language),
-                    }
-                    for language in self._languages
-                ],
-            }
-            provider = NlpEngineProvider(nlp_configuration=nlp_config)
-            self._nlp_engine = provider.create_engine()
-        return self._nlp_engine
+    def _get_nlp_engine(self) -> NlpEngine:
+        return _spacy_nlp_engine(tuple(self._languages))
 
     @property
     def analyzer(self):

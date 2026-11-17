@@ -124,11 +124,13 @@ async def test_configured_params_reach_the_body():
     }
 
 
+@pytest.mark.filterwarnings('ignore:WARNING! .* is not default parameter')
 async def test_unknown_params_are_sent_as_is():
     _, requests = await invoke(model(service_tier='auto'), [canned.anthropic_message()])
     assert requests[0]['body']['service_tier'] == 'auto'
 
 
+@pytest.mark.filterwarnings('ignore:WARNING! .* is not default parameter')
 async def test_unknown_param_the_sdk_rejects_raises_type_error():
     with pytest.raises(TypeError):
         await invoke(model(api_version='2024'), [canned.anthropic_message()])
@@ -407,6 +409,25 @@ async def test_usage_counts_cache_reads_and_writes_as_input():
             'ephemeral_5m_input_tokens': 200,
             'ephemeral_1h_input_tokens': 0,
         },
+    }
+
+
+async def test_usage_counts_a_cache_write_without_a_ttl_breakdown_as_input():
+    reply = canned.anthropic_message()
+    reply.json_body['usage'] = {
+        'input_tokens': 30,
+        'output_tokens': 7,
+        'cache_read_input_tokens': 1000,
+        'cache_creation_input_tokens': 200,
+    }
+
+    result, _ = await invoke(model(), [reply])
+
+    assert result.usage_metadata == {
+        'input_tokens': 1230,
+        'output_tokens': 7,
+        'total_tokens': 1237,
+        'input_token_details': {'cache_read': 1000, 'cache_creation': 200},
     }
 
 
@@ -1311,6 +1332,8 @@ async def test_thinking_and_citation_replies_keep_their_blocks():
     }
 
 
+# The provider sends a float where the SDK types an int.
+@pytest.mark.filterwarnings('ignore:Pydantic serializer warnings')
 async def test_usage_with_non_integer_cache_creation_breakdown():
     usage = {
         'input_tokens': 5,

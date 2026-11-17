@@ -15,7 +15,13 @@ function Filters() {
   const timeRangeId = useId();
 
   const [searchParams] = useSearchParams();
-  const isTracingTab = searchParams.get('tab') === 'tracing';
+  const isRequestsTab = searchParams.get('tab') === 'requests';
+
+  const typeFilter = isRequestsTab ? (
+    <FormField htmlFor={requestTypeId} label="Type">
+      <RequestTypeFilter id={requestTypeId} />
+    </FormField>
+  ) : false;
 
   return (
     <div className="flex flex-row flex-wrap items-end gap-4">
@@ -27,11 +33,7 @@ function Filters() {
         <TagsFilter id={tagsId} />
       </FormField>
 
-      {isTracingTab && (
-        <FormField htmlFor={requestTypeId} label="Type">
-          <RequestTypeFilter id={requestTypeId} />
-        </FormField>
-      )}
+      {typeFilter}
 
       <FormField htmlFor={routesId} label="Routes">
         <RoutesFilter id={routesId} />

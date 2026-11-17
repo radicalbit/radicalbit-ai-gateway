@@ -26,10 +26,10 @@ from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.key_service import KeyService
 from radicalbit_ai_gateway.utils.exceptions import (
     GroupAlreadyExistsError,
+    GroupExternallyManagedError,
     GroupHasNoCredentialsError,
     GroupInternalError,
     GroupNotFoundError,
-    GroupOperationNotAllowedError,
     KeyNotFoundError,
     RouteNotFoundError,
 )
@@ -138,7 +138,7 @@ class GroupService:
         if not group:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if group.owner != 'gateway':
-            raise GroupOperationNotAllowedError(
+            raise GroupExternallyManagedError(
                 f'Group {group_uuid} cannot be deleted because owner is "{group.owner}"'
             )
         group_name = group.name
@@ -165,7 +165,7 @@ class GroupService:
         if not group:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if group.owner != 'gateway':
-            raise GroupOperationNotAllowedError(
+            raise GroupExternallyManagedError(
                 f'Group {group_uuid} cannot be updated because owner is "{group.owner}"'
             )
         try:
@@ -267,7 +267,7 @@ class GroupService:
         if not group:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if group.owner != 'gateway':
-            raise GroupOperationNotAllowedError(
+            raise GroupExternallyManagedError(
                 f'Group {group_uuid} cannot have keys assigned because owner is "{group.owner}"'
             )
         keys_out = [self._get_key(i) for i in keys.keys]
@@ -295,7 +295,7 @@ class GroupService:
         if not group:
             raise GroupNotFoundError(f'Group with UUID {group_uuid} not exists')
         if group.owner != 'gateway':
-            raise GroupOperationNotAllowedError(
+            raise GroupExternallyManagedError(
                 f'Group {group_uuid} cannot have keys removed because owner is "{group.owner}"'
             )
         deleted = await self.key_service.remove_group_from_key(

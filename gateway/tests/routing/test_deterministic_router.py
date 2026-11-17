@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 from freezegun import freeze_time
 import pytest
@@ -10,8 +10,12 @@ from tests.common.mocked_gateway_config_openai import (
     get_gateway_routing_token_length,
 )
 
+from radicalbit_ai_gateway.limiter import ScenarioType, WindowConfig
+from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.limiting.windows import Category, Window
 from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
 from radicalbit_ai_gateway.models.credentials import Credentials
+from radicalbit_ai_gateway.models.event_payload import LimitScope
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import (
     BudgetConditions,
@@ -30,7 +34,7 @@ def keyword_router():
     route = config.routes['support_route']
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=None
+        config=routing_config, models_by_id=models_by_id, budget=None
     )
 
 
@@ -41,7 +45,7 @@ def time_router():
     route = config.routes['time_route']
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=None
+        config=routing_config, models_by_id=models_by_id, budget=None
     )
 
 
@@ -52,7 +56,7 @@ def token_length_router():
     route = config.routes['smart_route']
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=None
+        config=routing_config, models_by_id=models_by_id, budget=None
     )
 
 
@@ -63,7 +67,7 @@ def context_length_router():
     route = config.routes['smart_route']
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=None
+        config=routing_config, models_by_id=models_by_id, budget=None
     )
 
 
@@ -74,9 +78,7 @@ def _count_tokens_patched(token_length_router, token_count):
     )
 
 
-def _make_budget_router(
-    thresholds: dict[str, float], default_model_id: str, budget_limiter
-):
+def _make_budget_router(thresholds: dict[str, float], default_model_id: str, budget):
     """Build a DeterministicRouter with budget rule from a {model_id: threshold} mapping."""
     models_by_id = {
         mid: Model(
@@ -97,223 +99,221 @@ def _make_budget_router(
         output_mapping=output_mapping,
     )
     return DeterministicRouter(
-        config=routing_config, models_by_id=models_by_id, budget_limiter=budget_limiter
+        config=routing_config, models_by_id=models_by_id, budget=budget
     )
 
 
-def _mock_budget_limiter(remaining: float, limit: float = 0):
-    """Create a mock BudgetLimiter with given remaining budget and limit."""
-    limiter = MagicMock()
-    limiter.get_total_current_usage = AsyncMock(return_value=remaining)
-    limiter.item = MagicMock(limit=limit) if limit else None
-    return limiter
+async def _budget_window(remaining: int, limit: int = 0) -> Window:
+    """Return a route budget window of ``limit`` with ``remaining`` left."""
+    window = Window(
+        scope=LimitScope.ROUTE,
+        category=Category.COST,
+        config=WindowConfig.from_parts(
+            limit=limit,
+            window='1 hour',
+            project_uuid='project',
+            route_name='route',
+            scenario_type=ScenarioType.BUDGET,
+        ),
+        aligned=False,
+        shown_value=limit,
+        shown_window='1 hour',
+    )
+    if limit - remaining:
+        limiter = window.limiter(shared_limits.storage)
+        await limiter.consume(window.config, cost=limit - remaining)
+    return window
+
+
+def _make_token_router(conditions: dict[str, TokenLengthConditions]):
+    """Build a token_length DeterministicRouter from a {model_id: conditions} mapping."""
+    models_by_id = {
+        mid: Model(
+            model_id=mid,
+            model='openai/gpt-4o',
+            credentials=Credentials(api_key='sk-dummy'),
+        )
+        for mid in ['default', *conditions]
+    }
+    config = _token_length_config(conditions)
+    return DeterministicRouter(config=config, models_by_id=models_by_id, budget=None)
+
+
+def _token_length_config(conditions: dict[str, TokenLengthConditions]):
+    return DeterministicRoutingConfig(
+        name='test',
+        default_model_id='default',
+        rule=RoutingRuleType.TOKEN_LENGTH,
+        output_mapping=[
+            OutputMappingEntry(model_id=mid, conditions=cond)
+            for mid, cond in conditions.items()
+        ],
+    )
+
+
+_MULTIPART_BILLING = HumanMessage(
+    content=[
+        {
+            'role': 'user',
+            'content': [
+                {'type': 'text', 'text': 'im carlo'},
+                {'type': 'text', 'text': 'I have a billing question'},
+            ],
+        }
+    ]
+)
+
+_MIXED = {
+    'small': TokenLengthConditions(lte=999),
+    'mid': TokenLengthConditions(between=[1000, 4999]),
+    'large': TokenLengthConditions(gte=5000),
+}
 
 
 class TestDeterministicRouting:
-    async def test_matches_first_keyword_entry(self, keyword_router):
-        messages = [HumanMessage(content='I have a billing question')]
-        result = await keyword_router.select_model(messages)
-        assert result.model_id == 'billing_model'
-
-    async def test_matches_second_keyword_entry(self, keyword_router):
-        messages = [HumanMessage(content='I found a bug in the system')]
-        result = await keyword_router.select_model(messages)
-        assert result.model_id == 'tech_support_model'
-
-    async def test_returns_default_when_no_match(self, keyword_router):
-        messages = [HumanMessage(content='Hello, how are you?')]
-        result = await keyword_router.select_model(messages)
-        assert result.model_id == 'general_queue'
-
-    async def test_case_insensitive_matching(self, keyword_router):
-        messages = [HumanMessage(content='BILLING issue')]
-        result = await keyword_router.select_model(messages)
-        assert result.model_id == 'billing_model'
-
-    async def test_only_last_human_message_is_checked(self, keyword_router):
-        messages = [
-            HumanMessage(content='I need help with my invoice'),
-            HumanMessage(content='Hello'),
-        ]
-        result = await keyword_router.select_model(messages)
-        assert result.model_id == 'general_queue'
-
-    async def test_keyword_in_last_message_matches(self, keyword_router):
-        messages = [
-            HumanMessage(content='Hello'),
-            HumanMessage(content='I need help with my invoice'),
-        ]
-        result = await keyword_router.select_model(messages)
-        assert result.model_id == 'billing_model'
-
-    async def test_ignores_non_human_messages(self, keyword_router):
-        messages = [
-            SystemMessage(content='You handle billing questions'),
-            HumanMessage(content='Hello, general question'),
-        ]
-        result = await keyword_router.select_model(messages)
-        assert result.model_id == 'general_queue'
-
-    async def test_first_mapping_entry_wins(self, keyword_router):
-        messages = [HumanMessage(content='billing error')]
-        result = await keyword_router.select_model(messages)
-        assert result.model_id == 'billing_model'
-
-    async def test_multipart_last_message_matches(self, keyword_router):
-        messages = [
-            HumanMessage(content='billing error'),
-            HumanMessage(
-                content=[
-                    {
-                        'role': 'user',
-                        'content': [
-                            {'type': 'text', 'text': 'im carlo'},
-                            {'type': 'text', 'text': 'I have a billing question'},
-                        ],
-                    }
-                ]
+    @pytest.mark.parametrize(
+        ('messages', 'expected'),
+        [
+            pytest.param(
+                [HumanMessage(content='I have a billing question')],
+                'billing_model',
+                id='first-keyword-entry',
             ),
-        ]
+            pytest.param(
+                [HumanMessage(content='I found a bug in the system')],
+                'tech_support_model',
+                id='second-keyword-entry',
+            ),
+            pytest.param(
+                [HumanMessage(content='Hello, how are you?')],
+                'general_queue',
+                id='default-when-no-match',
+            ),
+            pytest.param(
+                [HumanMessage(content='BILLING issue')],
+                'billing_model',
+                id='case-insensitive',
+            ),
+            pytest.param(
+                [
+                    HumanMessage(content='I need help with my invoice'),
+                    HumanMessage(content='Hello'),
+                ],
+                'general_queue',
+                id='only-last-human-message-checked',
+            ),
+            pytest.param(
+                [
+                    HumanMessage(content='Hello'),
+                    HumanMessage(content='I need help with my invoice'),
+                ],
+                'billing_model',
+                id='keyword-in-last-message',
+            ),
+            pytest.param(
+                [
+                    SystemMessage(content='You handle billing questions'),
+                    HumanMessage(content='Hello, general question'),
+                ],
+                'general_queue',
+                id='ignores-non-human-messages',
+            ),
+            pytest.param(
+                [HumanMessage(content='billing error')],
+                'billing_model',
+                id='first-mapping-entry-wins',
+            ),
+            pytest.param(
+                [HumanMessage(content='billing error'), _MULTIPART_BILLING],
+                'billing_model',
+                id='multipart-last-message',
+            ),
+        ],
+    )
+    async def test_keyword_routing_selects_model(
+        self, keyword_router, messages, expected
+    ):
         result = await keyword_router.select_model(messages)
-        assert result.model_id == 'billing_model'
+        assert result.model_id == expected
 
-    # --- token_length routing tests (config: gpt-4o-mini lte:199, gpt-4.1 between:[200,799]) ---
-    # 0-199 → gpt-4o-mini, 200-799 → gpt-4.1, 800+ → default (gpt-4o)
-
-    async def test_lte_matches_low_value(self, token_length_router):
-        with _count_tokens_patched(token_length_router, 100):
-            result = await token_length_router.select_model(
-                [HumanMessage(content='short')]
-            )
-        assert result.model_id == 'gpt-4o-mini'
-
-    async def test_between_matches_mid_value(self, token_length_router):
-        with _count_tokens_patched(token_length_router, 300):
-            result = await token_length_router.select_model(
-                [HumanMessage(content='medium')]
-            )
-        assert result.model_id == 'gpt-4.1'
-
-    async def test_default_when_above_all(self, token_length_router):
-        with _count_tokens_patched(token_length_router, 900):
-            result = await token_length_router.select_model(
-                [HumanMessage(content='long')]
-            )
-        assert result.model_id == 'gpt-4o'
-
-    async def test_lte_exact_upper_bound(self, token_length_router):
-        with _count_tokens_patched(token_length_router, 199):
-            result = await token_length_router.select_model(
-                [HumanMessage(content='prompt')]
-            )
-        assert result.model_id == 'gpt-4o-mini'
-
-    async def test_between_exact_lower_bound(self, token_length_router):
-        with _count_tokens_patched(token_length_router, 200):
-            result = await token_length_router.select_model(
-                [HumanMessage(content='prompt')]
-            )
-        assert result.model_id == 'gpt-4.1'
-
-    async def test_between_exact_upper_bound(self, token_length_router):
-        with _count_tokens_patched(token_length_router, 799):
-            result = await token_length_router.select_model(
-                [HumanMessage(content='prompt')]
-            )
-        assert result.model_id == 'gpt-4.1'
-
-    async def test_default_just_above_between(self, token_length_router):
-        with _count_tokens_patched(token_length_router, 800):
-            result = await token_length_router.select_model(
-                [HumanMessage(content='prompt')]
-            )
-        assert result.model_id == 'gpt-4o'
-
-    async def test_default_on_empty_messages(self, token_length_router):
-        with _count_tokens_patched(token_length_router, 0):
-            result = await token_length_router.select_model([])
-        assert result.model_id == 'gpt-4o'
-
-    async def test_lte_checked_before_between(self, token_length_router):
-        # lte:199 matches before between:[200,799] for low values
-        with _count_tokens_patched(token_length_router, 50):
-            result = await token_length_router.select_model(
-                [HumanMessage(content='prompt')]
-            )
-        assert result.model_id == 'gpt-4o-mini'
-
-    # --- context_length routing tests (config: gpt-4o-mini between:[200,399], gpt-4.1 gte:400) ---
-
-    async def test_context_length_routes_to_default_when_below_all_conditions(
-        self, context_length_router
+    # token_length config: gpt-4o-mini lte:199, gpt-4.1 between:[200,799], default gpt-4o
+    @pytest.mark.parametrize(
+        ('token_count', 'messages', 'expected'),
+        [
+            pytest.param(
+                100, [HumanMessage(content='short')], 'gpt-4o-mini', id='lte-low'
+            ),
+            pytest.param(
+                300, [HumanMessage(content='medium')], 'gpt-4.1', id='between-mid'
+            ),
+            pytest.param(
+                900, [HumanMessage(content='long')], 'gpt-4o', id='default-above-all'
+            ),
+            pytest.param(
+                199,
+                [HumanMessage(content='prompt')],
+                'gpt-4o-mini',
+                id='lte-upper-bound',
+            ),
+            pytest.param(
+                200,
+                [HumanMessage(content='prompt')],
+                'gpt-4.1',
+                id='between-lower-bound',
+            ),
+            pytest.param(
+                799,
+                [HumanMessage(content='prompt')],
+                'gpt-4.1',
+                id='between-upper-bound',
+            ),
+            pytest.param(
+                800,
+                [HumanMessage(content='prompt')],
+                'gpt-4o',
+                id='default-just-above-between',
+            ),
+            pytest.param(0, [], 'gpt-4o', id='default-on-empty-messages'),
+        ],
+    )
+    async def test_token_length_routing_selects_model(
+        self, token_length_router, token_count, messages, expected
     ):
-        with _count_tokens_patched(context_length_router, 100):
-            result = await context_length_router.select_model(
-                [HumanMessage(content='short')]
-            )
-        assert result.model_id == 'gpt-4o'
+        with _count_tokens_patched(token_length_router, token_count):
+            result = await token_length_router.select_model(messages)
+        assert result.model_id == expected
 
-    async def test_context_length_routes_to_mid_model_when_in_between_range(
-        self, context_length_router
+    # context_length config: gpt-4o-mini between:[200,399], gpt-4.1 gte:400, default gpt-4o
+    @pytest.mark.parametrize(
+        ('token_count', 'messages', 'expected'),
+        [
+            pytest.param(
+                100, [HumanMessage(content='short')], 'gpt-4o', id='default-below-all'
+            ),
+            pytest.param(
+                300, [HumanMessage(content='medium')], 'gpt-4o-mini', id='between-range'
+            ),
+            pytest.param(
+                500, [HumanMessage(content='long')], 'gpt-4.1', id='above-gte'
+            ),
+            pytest.param(
+                200,
+                [HumanMessage(content='prompt')],
+                'gpt-4o-mini',
+                id='between-lower-bound',
+            ),
+            pytest.param(
+                400, [HumanMessage(content='prompt')], 'gpt-4.1', id='exact-gte'
+            ),
+            pytest.param(0, [], 'gpt-4o', id='default-on-empty-messages'),
+        ],
+    )
+    async def test_context_length_routing_selects_model(
+        self, context_length_router, token_count, messages, expected
     ):
-        with _count_tokens_patched(context_length_router, 300):
-            result = await context_length_router.select_model(
-                [HumanMessage(content='medium')]
-            )
-        assert result.model_id == 'gpt-4o-mini'
-
-    async def test_context_length_routes_to_top_model_when_above_gte(
-        self, context_length_router
-    ):
-        with _count_tokens_patched(context_length_router, 500):
-            result = await context_length_router.select_model(
-                [HumanMessage(content='long')]
-            )
-        assert result.model_id == 'gpt-4.1'
-
-    async def test_context_length_exact_lower_bound(self, context_length_router):
-        with _count_tokens_patched(context_length_router, 200):
-            result = await context_length_router.select_model(
-                [HumanMessage(content='prompt')]
-            )
-        assert result.model_id == 'gpt-4o-mini'
-
-    async def test_context_length_exact_gte(self, context_length_router):
-        with _count_tokens_patched(context_length_router, 400):
-            result = await context_length_router.select_model(
-                [HumanMessage(content='prompt')]
-            )
-        assert result.model_id == 'gpt-4.1'
-
-    async def test_context_length_default_on_empty_messages(
-        self, context_length_router
-    ):
-        with _count_tokens_patched(context_length_router, 0):
-            result = await context_length_router.select_model([])
-        assert result.model_id == 'gpt-4o'
-
-    async def test_context_length_considers_all_messages(self, context_length_router):
-        """Key difference from token_length: multiple messages are concatenated."""
-        with _count_tokens_patched(context_length_router, 300):
-            result = await context_length_router.select_model(
-                [
-                    SystemMessage(content='You are a helpful assistant.'),
-                    HumanMessage(content='First question'),
-                    HumanMessage(content='Follow-up question'),
-                ]
-            )
-        assert result.model_id == 'gpt-4o-mini'
-
-    async def test_context_length_includes_system_messages(self, context_length_router):
-        """System messages contribute to the total context length."""
-        with _count_tokens_patched(context_length_router, 500):
-            result = await context_length_router.select_model(
-                [
-                    SystemMessage(content='Long system prompt'),
-                    HumanMessage(content='Short user message'),
-                ]
-            )
-        assert result.model_id == 'gpt-4.1'
+        with _count_tokens_patched(context_length_router, token_count):
+            result = await context_length_router.select_model(messages)
+        assert result.model_id == expected
 
     async def test_context_length_calls_build_user_content_with_all_messages(
         self, context_length_router
@@ -334,343 +334,127 @@ class TestDeterministicRouting:
             await context_length_router.select_model(messages)
         mock_build.assert_called_once_with(messages)
 
-    # --- token_length condition validation tests ---
+    @pytest.mark.parametrize(
+        ('conditions', 'match'),
+        [
+            pytest.param(
+                {'m1': TokenLengthConditions()},
+                'exactly one of gte, lte, or between',
+                id='no-condition-set',
+            ),
+            pytest.param(
+                {'m1': TokenLengthConditions(gte=100, lte=200)},
+                'exactly one of gte, lte, or between',
+                id='multiple-conditions-set',
+            ),
+            pytest.param(
+                {'m1': TokenLengthConditions(between=[500, 100])},
+                'between\\[0\\] <= between\\[1\\]',
+                id='between-wrong-order',
+            ),
+            pytest.param(
+                {
+                    'm1': TokenLengthConditions(between=[100, 500]),
+                    'm2': TokenLengthConditions(gte=300),
+                },
+                'overlapping conditions',
+                id='overlapping-between-and-gte',
+            ),
+            pytest.param(
+                {
+                    'm1': TokenLengthConditions(between=[100, 500]),
+                    'm2': TokenLengthConditions(between=[400, 800]),
+                },
+                'overlapping conditions',
+                id='overlapping-between-ranges',
+            ),
+            pytest.param(
+                {
+                    'm1': TokenLengthConditions(lte=500),
+                    'm2': TokenLengthConditions(between=[300, 800]),
+                },
+                'overlapping conditions',
+                id='overlapping-lte-and-between',
+            ),
+        ],
+    )
+    def test_token_length_config_rejects_invalid_conditions(self, conditions, match):
+        with pytest.raises(ValueError, match=match):
+            _token_length_config(conditions)
 
-    def test_rejects_entry_with_no_condition_set(self):
-        with pytest.raises(ValueError, match='exactly one of gte, lte, or between'):
-            DeterministicRoutingConfig(
-                name='test',
-                default_model_id='default',
-                rule=RoutingRuleType.TOKEN_LENGTH,
-                output_mapping=[
-                    OutputMappingEntry(
-                        model_id='m1',
-                        conditions=TokenLengthConditions(),
-                    )
-                ],
-            )
+    def test_token_length_config_accepts_two_gte_entries(self):
+        """Two gte entries are fine: the router sorts them deterministically.
 
-    def test_rejects_entry_with_multiple_conditions_set(self):
-        with pytest.raises(ValueError, match='exactly one of gte, lte, or between'):
-            DeterministicRoutingConfig(
-                name='test',
-                default_model_id='default',
-                rule=RoutingRuleType.TOKEN_LENGTH,
-                output_mapping=[
-                    OutputMappingEntry(
-                        model_id='m1',
-                        conditions=TokenLengthConditions(gte=100, lte=200),
-                    )
-                ],
-            )
-
-    def test_rejects_between_with_wrong_order(self):
-        with pytest.raises(ValueError, match='between\\[0\\] <= between\\[1\\]'):
-            DeterministicRoutingConfig(
-                name='test',
-                default_model_id='default',
-                rule=RoutingRuleType.TOKEN_LENGTH,
-                output_mapping=[
-                    OutputMappingEntry(
-                        model_id='m1',
-                        conditions=TokenLengthConditions(between=[500, 100]),
-                    )
-                ],
-            )
-
-    def test_accepts_overlapping_gte_conditions(self):
-        """Two gte entries are fine — router sorts them deterministically."""
-        DeterministicRoutingConfig(
-            name='test',
-            default_model_id='default',
-            rule=RoutingRuleType.TOKEN_LENGTH,
-            output_mapping=[
-                OutputMappingEntry(
-                    model_id='m1',
-                    conditions=TokenLengthConditions(gte=200),
-                ),
-                OutputMappingEntry(
-                    model_id='m2',
-                    conditions=TokenLengthConditions(gte=400),
-                ),
-            ],
+        Mixed condition types are accepted too: the routing cases build _MIXED.
+        """
+        config = _token_length_config(
+            {'m1': TokenLengthConditions(gte=200), 'm2': TokenLengthConditions(gte=400)}
         )
+        assert [e.model_id for e in config.output_mapping] == ['m1', 'm2']
 
-    def test_rejects_overlapping_between_and_gte(self):
-        with pytest.raises(ValueError, match='overlapping conditions'):
-            DeterministicRoutingConfig(
-                name='test',
-                default_model_id='default',
-                rule=RoutingRuleType.TOKEN_LENGTH,
-                output_mapping=[
-                    OutputMappingEntry(
-                        model_id='m1',
-                        conditions=TokenLengthConditions(between=[100, 500]),
-                    ),
-                    OutputMappingEntry(
-                        model_id='m2',
-                        conditions=TokenLengthConditions(gte=300),
-                    ),
-                ],
-            )
-
-    def test_rejects_overlapping_between_ranges(self):
-        with pytest.raises(ValueError, match='overlapping conditions'):
-            DeterministicRoutingConfig(
-                name='test',
-                default_model_id='default',
-                rule=RoutingRuleType.TOKEN_LENGTH,
-                output_mapping=[
-                    OutputMappingEntry(
-                        model_id='m1',
-                        conditions=TokenLengthConditions(between=[100, 500]),
-                    ),
-                    OutputMappingEntry(
-                        model_id='m2',
-                        conditions=TokenLengthConditions(between=[400, 800]),
-                    ),
-                ],
-            )
-
-    def test_rejects_overlapping_lte_and_between(self):
-        with pytest.raises(ValueError, match='overlapping conditions'):
-            DeterministicRoutingConfig(
-                name='test',
-                default_model_id='default',
-                rule=RoutingRuleType.TOKEN_LENGTH,
-                output_mapping=[
-                    OutputMappingEntry(
-                        model_id='m1',
-                        conditions=TokenLengthConditions(lte=500),
-                    ),
-                    OutputMappingEntry(
-                        model_id='m2',
-                        conditions=TokenLengthConditions(between=[300, 800]),
-                    ),
-                ],
-            )
-
-    def test_accepts_mixed_condition_types(self):
-        DeterministicRoutingConfig(
-            name='test',
-            default_model_id='default',
-            rule=RoutingRuleType.TOKEN_LENGTH,
-            output_mapping=[
-                OutputMappingEntry(
-                    model_id='m1',
-                    conditions=TokenLengthConditions(lte=999),
-                ),
-                OutputMappingEntry(
-                    model_id='m2',
-                    conditions=TokenLengthConditions(between=[1000, 4999]),
-                ),
-                OutputMappingEntry(
-                    model_id='m3',
-                    conditions=TokenLengthConditions(gte=5000),
-                ),
-            ],
-        )
-
-    # --- lte condition routing tests ---
-
-    async def test_lte_condition_matches(self):
-        models_by_id = {
-            mid: Model(
-                model_id=mid,
-                model='openai/gpt-4o',
-                credentials=Credentials(api_key='sk-dummy'),
-            )
-            for mid in ['default', 'small']
-        }
-        config = DeterministicRoutingConfig(
-            name='test',
-            default_model_id='default',
-            rule=RoutingRuleType.TOKEN_LENGTH,
-            output_mapping=[
-                OutputMappingEntry(
-                    model_id='small',
-                    conditions=TokenLengthConditions(lte=500),
-                ),
-            ],
-        )
-        router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
-        )
+    @pytest.mark.parametrize(
+        ('conditions', 'token_count', 'expected'),
+        [
+            pytest.param(
+                {'small': TokenLengthConditions(lte=500)}, 200, 'small', id='lte-match'
+            ),
+            pytest.param(
+                {'small': TokenLengthConditions(lte=500)},
+                600,
+                'default',
+                id='lte-no-match',
+            ),
+            pytest.param(
+                {'mid': TokenLengthConditions(between=[100, 500])},
+                300,
+                'mid',
+                id='between-match',
+            ),
+            pytest.param(
+                {'mid': TokenLengthConditions(between=[100, 500])},
+                600,
+                'default',
+                id='between-no-match',
+            ),
+            pytest.param(_MIXED, 500, 'small', id='mixed-lte'),
+            pytest.param(_MIXED, 2500, 'mid', id='mixed-between'),
+            pytest.param(_MIXED, 6000, 'large', id='mixed-gte'),
+        ],
+    )
+    async def test_token_length_condition_routing(
+        self, conditions, token_count, expected
+    ):
+        router = _make_token_router(conditions)
         with patch(
             'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
-            return_value=200,
+            return_value=token_count,
         ):
             result = await router.select_model([HumanMessage(content='hi')])
-        assert result.model_id == 'small'
+        assert result.model_id == expected
 
-    async def test_lte_condition_no_match(self):
-        models_by_id = {
-            mid: Model(
-                model_id=mid,
-                model='openai/gpt-4o',
-                credentials=Credentials(api_key='sk-dummy'),
-            )
-            for mid in ['default', 'small']
-        }
-        config = DeterministicRoutingConfig(
-            name='test',
-            default_model_id='default',
-            rule=RoutingRuleType.TOKEN_LENGTH,
-            output_mapping=[
-                OutputMappingEntry(
-                    model_id='small',
-                    conditions=TokenLengthConditions(lte=500),
-                ),
-            ],
-        )
-        router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
-        )
-        with patch(
-            'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
-            return_value=600,
-        ):
-            result = await router.select_model([HumanMessage(content='hi')])
-        assert result.model_id == 'default'
-
-    # --- between condition routing tests ---
-
-    async def test_between_condition_matches(self):
-        models_by_id = {
-            mid: Model(
-                model_id=mid,
-                model='openai/gpt-4o',
-                credentials=Credentials(api_key='sk-dummy'),
-            )
-            for mid in ['default', 'mid']
-        }
-        config = DeterministicRoutingConfig(
-            name='test',
-            default_model_id='default',
-            rule=RoutingRuleType.TOKEN_LENGTH,
-            output_mapping=[
-                OutputMappingEntry(
-                    model_id='mid',
-                    conditions=TokenLengthConditions(between=[100, 500]),
-                ),
-            ],
-        )
-        router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
-        )
-        with patch(
-            'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
-            return_value=300,
-        ):
-            result = await router.select_model([HumanMessage(content='hi')])
-        assert result.model_id == 'mid'
-
-    async def test_between_condition_no_match(self):
-        models_by_id = {
-            mid: Model(
-                model_id=mid,
-                model='openai/gpt-4o',
-                credentials=Credentials(api_key='sk-dummy'),
-            )
-            for mid in ['default', 'mid']
-        }
-        config = DeterministicRoutingConfig(
-            name='test',
-            default_model_id='default',
-            rule=RoutingRuleType.TOKEN_LENGTH,
-            output_mapping=[
-                OutputMappingEntry(
-                    model_id='mid',
-                    conditions=TokenLengthConditions(between=[100, 500]),
-                ),
-            ],
-        )
-        router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
-        )
-        with patch(
-            'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
-            return_value=600,
-        ):
-            result = await router.select_model([HumanMessage(content='hi')])
-        assert result.model_id == 'default'
-
-    # --- mixed condition routing tests ---
-
-    async def test_mixed_conditions_routing(self):
-        """Verify correct model selection with lte, between, and gte conditions."""
-        model_ids = ['default', 'small', 'mid', 'large']
-        models_by_id = {
-            mid: Model(
-                model_id=mid,
-                model='openai/gpt-4o',
-                credentials=Credentials(api_key='sk-dummy'),
-            )
-            for mid in model_ids
-        }
-        config = DeterministicRoutingConfig(
-            name='test',
-            default_model_id='default',
-            rule=RoutingRuleType.TOKEN_LENGTH,
-            output_mapping=[
-                OutputMappingEntry(
-                    model_id='small',
-                    conditions=TokenLengthConditions(lte=999),
-                ),
-                OutputMappingEntry(
-                    model_id='mid',
-                    conditions=TokenLengthConditions(between=[1000, 4999]),
-                ),
-                OutputMappingEntry(
-                    model_id='large',
-                    conditions=TokenLengthConditions(gte=5000),
-                ),
-            ],
-        )
-        router = DeterministicRouter(
-            config=config, models_by_id=models_by_id, budget_limiter=None
-        )
-        # token_count=500 → lte:999 matches
-        with patch(
-            'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
-            return_value=500,
-        ):
-            result = await router.select_model([HumanMessage(content='hi')])
-        assert result.model_id == 'small'
-
-        # token_count=2500 → between:[1000,4999] matches
-        with patch(
-            'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
-            return_value=2500,
-        ):
-            result = await router.select_model([HumanMessage(content='hi')])
-        assert result.model_id == 'mid'
-
-        # token_count=6000 → gte:5000 matches
-        with patch(
-            'radicalbit_ai_gateway.routing.deterministic_router.count_tokens',
-            return_value=6000,
-        ):
-            result = await router.select_model([HumanMessage(content='hi')])
-        assert result.model_id == 'large'
+    @pytest.mark.parametrize(
+        ('now', 'expected'),
+        [
+            pytest.param(
+                '2026-02-23 10:00:00', 'weekday_model', id='monday-10am-first-entry'
+            ),
+            pytest.param(
+                '2026-02-23 03:00:00', 'night_model', id='monday-3am-second-entry'
+            ),
+            pytest.param('2026-02-21 10:00:00', 'default_model', id='saturday-default'),
+            # night_model has two cron conditions; the evening one matches.
+            pytest.param(
+                '2026-02-23 20:00:00', 'night_model', id='monday-8pm-any-condition'
+            ),
+        ],
+    )
+    async def test_time_routing_selects_model(self, time_router, now, expected):
+        with freeze_time(now, tz_offset=0):
+            result = await time_router.select_model([HumanMessage(content='hello')])
+        assert result.model_id == expected
 
     @freeze_time('2026-02-23 10:00:00', tz_offset=0)  # Monday 10am UTC
-    async def test_matches_first_time_entry(self, time_router):
-        result = await time_router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'weekday_model'
-
-    @freeze_time('2026-02-23 03:00:00', tz_offset=0)  # Monday 3am UTC
-    async def test_matches_second_time_entry(self, time_router):
-        result = await time_router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'night_model'
-
-    @freeze_time('2026-02-21 10:00:00', tz_offset=0)  # Saturday 10am UTC
-    async def test_returns_default_when_no_time_match(self, time_router):
-        result = await time_router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'default_model'
-
-    @freeze_time('2026-02-23 10:00:00', tz_offset=0)  # Monday 10am UTC
-    async def test_sequential_evaluation_first_wins(self, time_router):
+    async def test_sequential_evaluation_first_wins(self):
         """When multiple entries could match, the first one wins."""
         config = get_gateway_routing_time()
         routing_config = config.routing_by_name['time_routing']
@@ -682,112 +466,64 @@ class TestDeterministicRouting:
         route = config.routes['time_route']
         models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
         router = DeterministicRouter(
-            config=routing_config, models_by_id=models_by_id, budget_limiter=None
+            config=routing_config, models_by_id=models_by_id, budget=None
         )
         result = await router.select_model([HumanMessage(content='hello')])
         assert result.model_id == 'night_model'
 
-    @freeze_time('2026-02-23 20:00:00', tz_offset=0)  # Monday 8pm UTC
-    async def test_multiple_conditions_any_matches(self, time_router):
-        """night_model has two cron conditions; the evening one should match."""
-        result = await time_router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'night_model'
-
-    async def test_returns_default_when_no_budget_limiter(self):
+    # usage_ratio = 1 - remaining / limit; the highest matching threshold wins.
+    @pytest.mark.parametrize(
+        ('window', 'thresholds', 'expected'),
+        [
+            pytest.param(
+                None,
+                {'cheap': 0.6, 'cheaper': 0.8},
+                'default',
+                id='route-has-no-budget',
+            ),
+            pytest.param((0, 0), {'cheap': 0.6}, 'default', id='max-budget-zero'),
+            pytest.param(
+                (90, 100),
+                {'cheap': 0.6, 'cheaper': 0.8},
+                'default',
+                id='usage-0.10-below-all',
+            ),
+            pytest.param(
+                (30, 100),
+                {'cheap': 0.6, 'cheaper': 0.8},
+                'cheap',
+                id='usage-0.70-lower-threshold',
+            ),
+            pytest.param(
+                (10, 100),
+                {'cheap': 0.6, 'cheaper': 0.8},
+                'cheaper',
+                id='usage-0.90-higher-threshold',
+            ),
+            pytest.param(
+                (40, 100), {'cheap': 0.6}, 'cheap', id='usage-0.60-exact-threshold'
+            ),
+            pytest.param(
+                (20, 100),
+                {'cheap': 0.6, 'cheaper': 0.8},
+                'cheaper',
+                id='usage-0.80-combined-limits',
+            ),
+            pytest.param(
+                (0, 100),
+                {'cheap': 0.6, 'cheaper': 0.8},
+                'cheaper',
+                id='fully-exhausted',
+            ),
+        ],
+    )
+    async def test_budget_routing_selects_model(self, window, thresholds, expected):
+        budget = None
+        if window is not None:
+            remaining, limit = window
+            budget = await _budget_window(remaining=remaining, limit=limit)
         router = _make_budget_router(
-            thresholds={'cheap': 0.6, 'cheaper': 0.8},
-            default_model_id='default',
-            budget_limiter=None,
+            thresholds=thresholds, default_model_id='default', budget=budget
         )
         result = await router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'default'
-
-    async def test_returns_default_when_max_budget_is_zero(self):
-        limiter = _mock_budget_limiter(remaining=0, limit=0)
-        router = _make_budget_router(
-            thresholds={'cheap': 0.6},
-            default_model_id='default',
-            budget_limiter=limiter,
-        )
-        result = await router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'default'
-
-    async def test_returns_default_when_usage_below_all_thresholds(self):
-        # remaining=90, max_budget=100 → usage_ratio = 1 - 90/100 = 0.10
-        limiter = _mock_budget_limiter(remaining=90, limit=100)
-        router = _make_budget_router(
-            thresholds={'cheap': 0.6, 'cheaper': 0.8},
-            default_model_id='default',
-            budget_limiter=limiter,
-        )
-        result = await router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'default'
-
-    async def test_matches_lower_threshold(self):
-        # remaining=30, max_budget=100 → usage_ratio = 1 - 30/100 = 0.70
-        # 0.70 >= 0.6 (cheap) but < 0.8 (cheaper)
-        limiter = _mock_budget_limiter(remaining=30, limit=100)
-        router = _make_budget_router(
-            thresholds={'cheap': 0.6, 'cheaper': 0.8},
-            default_model_id='default',
-            budget_limiter=limiter,
-        )
-        result = await router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'cheap'
-
-    async def test_matches_higher_threshold(self):
-        # remaining=10, max_budget=100 → usage_ratio = 1 - 10/100 = 0.90
-        # 0.90 >= 0.8 (cheaper) — highest threshold wins
-        limiter = _mock_budget_limiter(remaining=10, limit=100)
-        router = _make_budget_router(
-            thresholds={'cheap': 0.6, 'cheaper': 0.8},
-            default_model_id='default',
-            budget_limiter=limiter,
-        )
-        result = await router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'cheaper'
-
-    async def test_matches_at_exact_threshold(self):
-        # remaining=40, max_budget=100 → usage_ratio = 1 - 40/100 = 0.60
-        limiter = _mock_budget_limiter(remaining=40, limit=100)
-        router = _make_budget_router(
-            thresholds={'cheap': 0.6},
-            default_model_id='default',
-            budget_limiter=limiter,
-        )
-        result = await router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'cheap'
-
-    async def test_uses_combined_input_and_output_limits(self):
-        # remaining=20, max_budget=50+50=100 → usage_ratio = 1 - 20/100 = 0.80
-        limiter = _mock_budget_limiter(remaining=20, limit=100)
-        router = _make_budget_router(
-            thresholds={'cheap': 0.6, 'cheaper': 0.8},
-            default_model_id='default',
-            budget_limiter=limiter,
-        )
-        result = await router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'cheaper'
-
-    async def test_highest_threshold_checked_first_regardless_of_config_order(self):
-        # remaining=5, max_budget=100 → usage_ratio = 0.95
-        # Both thresholds match, but 0.8 is checked first (sorted desc) → cheaper wins
-        limiter = _mock_budget_limiter(remaining=5, limit=100)
-        router = _make_budget_router(
-            thresholds={'cheap': 0.6, 'cheaper': 0.8},
-            default_model_id='default',
-            budget_limiter=limiter,
-        )
-        result = await router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'cheaper'
-
-    async def test_fully_exhausted_budget(self):
-        # remaining=0, max_budget=100 → usage_ratio = 1.0
-        limiter = _mock_budget_limiter(remaining=0, limit=100)
-        router = _make_budget_router(
-            thresholds={'cheap': 0.6, 'cheaper': 0.8},
-            default_model_id='default',
-            budget_limiter=limiter,
-        )
-        result = await router.select_model([HumanMessage(content='hello')])
-        assert result.model_id == 'cheaper'
+        assert result.model_id == expected

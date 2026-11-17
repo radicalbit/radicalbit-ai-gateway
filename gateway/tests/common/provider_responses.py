@@ -84,6 +84,7 @@ def openai_stream(
     cached_tokens: int = 0,
     include_usage: bool = True,
     extra_first_delta: dict | None = None,
+    finish_reason: str | None = None,
 ) -> CannedResponse:
     events = [
         _openai_chunk(
@@ -127,7 +128,9 @@ def openai_stream(
             )
     events.append(
         _openai_chunk(
-            {}, finish_reason='tool_calls' if tool_calls else 'stop', model=model
+            {},
+            finish_reason=finish_reason or ('tool_calls' if tool_calls else 'stop'),
+            model=model,
         )
     )
     if include_usage:

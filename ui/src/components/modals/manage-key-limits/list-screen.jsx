@@ -1,3 +1,4 @@
+import LimitConsumption from '@Components/limits/limit-consumption';
 import Lucide from '@Components/lucide';
 import { LIMIT_CATEGORIES, LIMIT_CATEGORY_LABELS, WINDOW_TYPE_LABELS } from '@Components/limits/constants';
 import {
@@ -7,7 +8,7 @@ import RouteLimitWarnings from '@Components/limits/route-limit-warnings';
 import useModals from '@Hooks/use-modals';
 import { CredentialStateEnum } from '@Src/constants';
 import { useGetKeyQuery } from '@State/keys/api';
-import { useKeyLimitSaveWarnings } from '@State/keys/hooks';
+import { useKeyLimitSaveWarnings, useKeyLimitsConsumption } from '@State/keys/hooks';
 import { useFormbitContext } from '@radicalbit/formbit';
 import {
   Alert, Board, Button, DataTable, Void,
@@ -18,14 +19,6 @@ import {
 import { useMemo, useState } from 'react';
 import LimitMenu from './limit-menu';
 import { ScreenEnum } from './schema';
-
-const EXPIRED_MESSAGE = 'This credential has expired: its limits can no longer be changed.';
-
-const NO_LIMITS_TITLE = 'This credential has no limits';
-
-const ROUTE_WARNINGS_TITLE = 'Saved. Some routes this credential reaches have a stricter limit';
-
-const NO_LIMITS_DESCRIPTION = 'Only route and project limits apply.';
 
 const getRowClassName = () => DataTable.ROW_NOT_CLICKABLE;
 
@@ -51,7 +44,7 @@ function IsEmpty() {
       <ExpiredAlert />
 
       <Board
-        main={<Void actions={<AddLimits />} description={NO_LIMITS_DESCRIPTION} size="small" title={NO_LIMITS_TITLE} />}
+        main={<Void actions={<AddLimits />} description="Only route and project limits apply." size="small" title="This credential has no limits" />}
         width="100%"
       />
     </div>
@@ -97,7 +90,7 @@ function ExpiredAlert() {
     return false;
   }
 
-  return <Alert title={EXPIRED_MESSAGE} type="info" />;
+  return <Alert title="This credential has expired: its limits can no longer be changed." type="info" />;
 }
 
 function SavedWarnings() {
@@ -108,7 +101,7 @@ function SavedWarnings() {
 
   const lines = warnings.map((warning) => formatRouteLimitWarning(warning));
 
-  return <RouteLimitWarnings lines={lines} onClose={clearWarnings} title={ROUTE_WARNINGS_TITLE} />;
+  return <RouteLimitWarnings lines={lines} onClose={clearWarnings} title="Saved. Some routes this credential reaches have a stricter limit" />;
 }
 
 function AddLimits() {
@@ -173,9 +166,9 @@ function CategoryBlock({ category }) {
     },
     {
       title: '',
-      key: 'value',
-      align: 'right',
-      render: (_, record) => formatLimitValue(record?.category, record?.value),
+      key: 'consumption',
+      width: '200px',
+      render: (_, record) => <Consumption limit={record} />,
     },
     {
       title: '',
@@ -195,6 +188,7 @@ function CategoryBlock({ category }) {
     <DataTable
       columns={columns}
       dataSource={dataSource}
+      noPadding
       pagination={false}
       rowClassName={getRowClassName}
       rowKey={getRowKey}
@@ -219,13 +213,14 @@ function CategoryBlock({ category }) {
 }
 
 function Window({ record }) {
+  const maxText = `${formatLimitValue(record?.category, record?.value)} / ${formatLimitWindow(record?.windowSize)}`;
   const windowTypeText = ` · ${WINDOW_TYPE_LABELS[record?.algorithm]} window`;
   const warnings = record?.warnings ?? [];
 
   return (
     <span className="flex flex-col">
       <span>
-        {formatLimitWindow(record?.windowSize)}
+        {maxText}
 
         <span className="opacity-70">{windowTypeText}</span>
       </span>
@@ -233,6 +228,18 @@ function Window({ record }) {
       {warnings.map((warning) => <small key={warning.routeName} className="text-[var(--coo-warning)]">{formatNeverReached(warning)}</small>)}
     </span>
   );
+}
+
+function Consumption({ limit }) {
+  const { modalPayload } = useModals();
+  const uuid = modalPayload?.data?.uuid;
+
+  const consumption = useKeyLimitsConsumption(uuid ? [uuid] : []);
+
+  const algorithm = limit?.algorithm;
+  const limitUuid = limit?.uuid;
+
+  return <LimitConsumption algorithm={algorithm} bar={consumption?.[limitUuid]} />;
 }
 
 function Actions({ isExpired, record }) {

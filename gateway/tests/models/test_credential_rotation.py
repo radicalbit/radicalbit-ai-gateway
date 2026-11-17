@@ -126,20 +126,26 @@ def test_parse_grace_period_rejects_more_than_one_year(text):
 NOW = _at(2026, 11, 3, 12)
 
 
-def test_grace_end_is_now_plus_the_duration():
-    assert get_grace_end(datetime.timedelta(hours=24), None, NOW) == _at(
-        2026, 11, 4, 12
-    )
-
-
-def test_no_grace_period_has_no_grace_end():
-    assert get_grace_end(None, EXPIRES_ON, NOW) is None
-
-
-def test_grace_end_may_reach_the_last_second_of_the_expiry_date():
-    to_last_second = datetime.timedelta(hours=11, minutes=59, seconds=59)
-    end = get_grace_end(to_last_second, EXPIRES_ON, NOW)
-    assert end == _at(2026, 11, 3, 23, 59, 59)
+@pytest.mark.parametrize(
+    ('duration', 'expires_on', 'expected'),
+    [
+        pytest.param(
+            datetime.timedelta(hours=24),
+            None,
+            _at(2026, 11, 4, 12),
+            id='now-plus-duration',
+        ),
+        pytest.param(None, EXPIRES_ON, None, id='no-grace-period-no-grace-end'),
+        pytest.param(
+            datetime.timedelta(hours=11, minutes=59, seconds=59),
+            EXPIRES_ON,
+            _at(2026, 11, 3, 23, 59, 59),
+            id='may-reach-last-second-of-expiry-date',
+        ),
+    ],
+)
+def test_grace_end(duration, expires_on, expected):
+    assert get_grace_end(duration, expires_on, NOW) == expected
 
 
 def test_grace_end_after_the_expiry_is_refused():

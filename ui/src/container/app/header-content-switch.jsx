@@ -38,7 +38,7 @@ export default function MainHeaderContentSwitch() {
 
       <Route element={<GroupsListHeader />} path={`/${PathsEnum.GROUPS}/:uuid`} />
 
-      <Route element={<TracingListHeader />} path={`/${PathsEnum.TRACING}`} />
+      <Route element={<TracingListHeader />} path={`/${PathsEnum.OBSERVABILITY}`} />
 
       <Route element={<UsageListHeader />} path={`/${PathsEnum.USAGE}`} />
 

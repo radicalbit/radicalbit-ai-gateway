@@ -10,9 +10,12 @@ from radicalbit_ai_gateway.llm.embeddings import Embeddings
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.routing import SemanticRoutingConfig
-from radicalbit_ai_gateway.routing.common import last_human_text
+from radicalbit_ai_gateway.routing.common import (
+    RoutingSpendRecorder,
+    last_human_text,
+    record_routing_spend,
+)
 from radicalbit_ai_gateway.utils.app_config import get_app_config
-from radicalbit_ai_gateway.utils.request_context import record_routing_spend
 from radicalbit_ai_gateway.utils.token_encoding import count_tokens
 
 app_config = get_app_config()
@@ -61,7 +64,11 @@ class SemanticRouter:
             )
         self._initialized = True
 
-    async def select_model(self, messages: list[BaseMessage]) -> Model:
+    async def select_model(
+        self,
+        messages: list[BaseMessage],
+        record_spend: RoutingSpendRecorder | None = None,
+    ) -> Model:
         if not self._initialized:
             logger.warning('SemanticRouter not initialized, using default model')
             return self._models_by_id[self._config.default_model_id]
@@ -72,7 +79,9 @@ class SemanticRouter:
 
         start = time.monotonic()
         query_vector = await self._embeddings_model.aembed_query(last_text)
-        await self._record_spend(last_text, (time.monotonic() - start) * 1000)
+        await self._record_spend(
+            record_spend, last_text, (time.monotonic() - start) * 1000
+        )
         query = _normalize(np.array(query_vector))
 
         best_model_id = self._config.default_model_id
@@ -95,10 +104,13 @@ class SemanticRouter:
 
         return self._models_by_id[best_model_id]
 
-    async def _record_spend(self, text: str, latency_ms: float) -> None:
+    async def _record_spend(
+        self, record_spend: RoutingSpendRecorder | None, text: str, latency_ms: float
+    ) -> None:
         """Charge the query embedding to the request. Centroids are not charged."""
         model = self._embedding_model_config
         await record_routing_spend(
+            record_spend,
             model,
             count_tokens(text, model.model),
             latency_ms,

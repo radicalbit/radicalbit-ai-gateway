@@ -36,10 +36,6 @@ def _errors(raw: dict) -> list[tuple[str, str]]:
     ]
 
 
-def test_a_valid_config_is_accepted():
-    GatewayConfig.model_validate(_with_guardrail(_judge()))
-
-
 # Unknown fields
 
 
@@ -77,133 +73,132 @@ def test_unknown_field_is_rejected(raw, loc):
     assert _errors(raw) == [(loc, 'Extra inputs are not permitted')]
 
 
-def test_free_form_fields_accept_any_key():
-    GatewayConfig.model_validate(
-        {'chat_models': [{**GPT, 'params': {'anything': 1}}], 'routes': {}}
-    )
-
-
-# References
-
-
-def test_route_guardrail_names_are_case_sensitive():
-    raw = _with_guardrail(_judge())
-    raw['routes']['chat']['guardrails'] = ['J']
-
-    [(_, msg)] = _errors(raw)
-
-    assert (
-        'guardrails not declared in top-level config (names are case-sensitive): J'
-        in msg
-    )
-
-
-@pytest.mark.parametrize('field', ['model_id', 'fallback_model_id'])
-def test_judge_model_must_be_a_chat_model(field):
-    [(_, msg)] = _errors(_with_guardrail(_judge(**{field: 'missing'})))
-
-    assert (
-        "Guardrail 'j': judge model 'missing' not declared in top-level chat_models."
-        in msg
-    )
-
-
-def test_judge_model_cannot_be_a_decision_model():
-    [(_, msg)] = _errors(_with_guardrail(_judge(model_id='jev'), decision_models=[JEV]))
-
-    assert "judge model 'jev' not declared in top-level chat_models" in msg
-
-
-def test_decision_judge_model_must_be_a_decision_model():
-    raw = _with_guardrail(
-        {
-            'name': 'dj',
-            'type': 'decision_judge',
-            'parameters': {'model_id': 'gpt', 'instructions': 'Off topic?'},
-        },
-        decision_models=[JEV],
-    )
-
-    [(_, msg)] = _errors(raw)
-
-    assert "decision judge model 'gpt' not declared in top-level decision_models" in msg
-
-
-# Parameter values
-
-
-def test_invalid_regex_is_rejected():
-    raw = _with_guardrail(
-        {'name': 'r', 'type': 'regex', 'parameters': {'values': ['ok', '[unclosed']}}
-    )
-
-    [(_, msg)] = _errors(raw)
-
-    assert "Invalid regex '[unclosed'" in msg
-
-
-def test_unsupported_presidio_language_is_rejected():
-    raw = _with_guardrail(
-        {
-            'name': 'pii',
-            'type': 'presidio_analyzer',
-            'parameters': {'entities': ['EMAIL_ADDRESS'], 'language': 'fr'},
-        }
-    )
-
-    [(_, msg)] = _errors(raw)
-
-    assert "Language 'fr' is not supported, use one of: en, it." in msg
-
-
-def test_ahds_backend_requires_an_endpoint():
-    raw = _with_guardrail(
-        {
-            'name': 'pii',
-            'type': 'presidio_analyzer',
-            'parameters': {'entities': ['EMAIL_ADDRESS'], 'backend': 'ahds'},
-        }
-    )
-
-    [(_, msg)] = _errors(raw)
-
-    assert "ahds.endpoint must be set when backend is 'ahds'." in msg
-
-
-# Route limiting
+# One clear error per invalid value
 
 
 @pytest.mark.parametrize(
-    ('route', 'expected'),
+    ('raw', 'expected'),
     [
-        (
-            {'rate_limiting': {'window_size': '1 minute', 'max_tokens': 10}},
-            'max_requests must be set for rate limiting.',
-        ),
-        (
+        pytest.param(
             {
-                'token_limiting': {
-                    'input': {'window_size': '1 minute', 'max_requests': 1}
-                }
+                **_with_guardrail(_judge()),
+                'routes': {'chat': {'chat_models': ['gpt'], 'guardrails': ['J']}},
             },
-            'input.max_tokens must be set for token limiting.',
+            'guardrails not declared in top-level config (names are case-sensitive): J',
+            id='route-guardrail-names-case-sensitive',
         ),
-        (
-            {'budget_limiting': {'window_size': '1 day'}},
+        pytest.param(
+            _with_guardrail(_judge(model_id='missing')),
+            "Guardrail 'j': judge model 'missing' not declared in top-level chat_models.",
+            id='judge-model-not-a-chat-model',
+        ),
+        pytest.param(
+            _with_guardrail(_judge(fallback_model_id='missing')),
+            "Guardrail 'j': judge model 'missing' not declared in top-level chat_models.",
+            id='judge-fallback-model-not-a-chat-model',
+        ),
+        pytest.param(
+            _with_guardrail(_judge(model_id='jev'), decision_models=[JEV]),
+            "judge model 'jev' not declared in top-level chat_models",
+            id='judge-model-is-a-decision-model',
+        ),
+        pytest.param(
+            _with_guardrail(
+                {
+                    'name': 'dj',
+                    'type': 'decision_judge',
+                    'parameters': {'model_id': 'gpt', 'instructions': 'Off topic?'},
+                },
+                decision_models=[JEV],
+            ),
+            "decision judge model 'gpt' not declared in top-level decision_models",
+            id='decision-judge-model-not-a-decision-model',
+        ),
+        pytest.param(
+            _with_guardrail(
+                {
+                    'name': 'r',
+                    'type': 'regex',
+                    'parameters': {'values': ['ok', '[unclosed']},
+                }
+            ),
+            "Invalid regex '[unclosed'",
+            id='invalid-regex',
+        ),
+        pytest.param(
+            _with_guardrail(
+                {
+                    'name': 'pii',
+                    'type': 'presidio_analyzer',
+                    'parameters': {'entities': ['EMAIL_ADDRESS'], 'language': 'fr'},
+                }
+            ),
+            "Language 'fr' is not supported, use one of: en, it.",
+            id='unsupported-presidio-language',
+        ),
+        pytest.param(
+            _with_guardrail(
+                {
+                    'name': 'pii',
+                    'type': 'presidio_analyzer',
+                    'parameters': {'entities': ['EMAIL_ADDRESS'], 'backend': 'ahds'},
+                }
+            ),
+            "ahds.endpoint must be set when backend is 'ahds'.",
+            id='ahds-backend-without-endpoint',
+        ),
+        pytest.param(
+            _with_route(rate_limiting={'window_size': '1 minute', 'max_tokens': 10}),
+            'max_requests must be set for rate limiting.',
+            id='rate-limiting-without-max-requests',
+        ),
+        pytest.param(
+            _with_route(
+                token_limiting={'input': {'window_size': '1 minute', 'max_requests': 1}}
+            ),
+            'input.max_tokens must be set for token limiting.',
+            id='token-limiting-without-max-tokens',
+        ),
+        pytest.param(
+            _with_route(budget_limiting={'window_size': '1 day'}),
             'max_budget must be set for budget limiting.',
+            id='budget-limiting-without-max-budget',
         ),
     ],
 )
-def test_limiting_without_its_max_field_is_rejected(route, expected):
-    [(_, msg)] = _errors(_with_route(**route))
+def test_invalid_value_is_rejected_with_one_error(raw, expected):
+    [(_, msg)] = _errors(raw)
 
     assert expected in msg
 
 
-def test_zero_budget_is_allowed():
-    GatewayConfig.model_validate(
-        _with_route(budget_limiting={'window_size': '1 day', 'max_budget': 0})
-    )
+@pytest.mark.parametrize(
+    'raw',
+    [
+        pytest.param(_with_guardrail(_judge()), id='valid-config'),
+        pytest.param(
+            {'chat_models': [{**GPT, 'params': {'anything': 1}}], 'routes': {}},
+            id='free-form-fields-accept-any-key',
+        ),
+        pytest.param(
+            _with_route(budget_limiting={'window_size': '1 day', 'max_budget': 0}),
+            id='zero-budget',
+        ),
+        pytest.param(
+            _with_guardrail(
+                {
+                    'name': 'g',
+                    'type': 'contains',
+                    'where': 'output',
+                    'parameters': {'values': ['x']},
+                }
+            ),
+            id='output-guardrail-on-route-with-chat-models',
+        ),
+    ],
+)
+def test_valid_config_is_accepted(raw):
+    GatewayConfig.model_validate(raw)
 
 
 # Guardrail placement
@@ -276,14 +271,3 @@ def test_io_guardrail_on_route_without_chat_models_is_accepted(kind):
     guardrail = {'name': 'g', 'type': 'contains', 'parameters': {'values': ['x']}}
 
     GatewayConfig.model_validate(_on_chatless_route(kind, {**guardrail, 'where': 'io'}))
-
-
-def test_output_guardrail_on_route_with_chat_models_is_accepted():
-    guardrail = {
-        'name': 'g',
-        'type': 'contains',
-        'where': 'output',
-        'parameters': {'values': ['x']},
-    }
-
-    GatewayConfig.model_validate(_with_guardrail(guardrail))

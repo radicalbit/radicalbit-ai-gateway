@@ -11,7 +11,7 @@ from radicalbit_ai_gateway.models.guardrails import Guardrail, GuardrailWhereTyp
 
 
 @dataclass
-class SoftBlockInfo:
+class SoftBlock:
     """Information about a triggered soft block guardrail."""
 
     guardrail: Guardrail

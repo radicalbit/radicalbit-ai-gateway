@@ -60,41 +60,42 @@ class _MyConfig(PluginConfig):
     secret: str | None = None
 
 
-def test_schema_validates_known_keys():
+@pytest.mark.parametrize(
+    'plugins',
+    [
+        pytest.param({'my_plugin': {'threshold': 3}}, id='known-keys'),
+        # ``!secret`` resolves to a string before validation (a placeholder during
+        # the validate pass); a str-typed field must accept it.
+        pytest.param(
+            {'my_plugin': {'secret': '__secret_placeholder__'}},
+            id='secret-placeholder-for-str-field',
+        ),
+    ],
+)
+def test_schema_accepts_valid_plugin_config(plugins):
     register_plugin_config_validator('my_plugin', _MyConfig.model_validate)
 
-    _config({'my_plugin': {'threshold': 3}})
+    _config(plugins)
 
 
-def test_schema_rejects_unknown_key():
+@pytest.mark.parametrize(
+    ('plugins', 'fragment'),
+    [
+        pytest.param({'my_plugin': {'typo': 1}}, 'typo', id='unknown-schema-key'),
+        pytest.param(
+            {'my_plugin': {'threshold': 'not-an-int'}}, 'threshold', id='bad-type'
+        ),
+        pytest.param(
+            {'other_plugin': {'whatever': 1}}, 'other_plugin', id='unknown-plugin-key'
+        ),
+    ],
+)
+def test_schema_rejects_invalid_plugin_config(plugins, fragment):
     register_plugin_config_validator('my_plugin', _MyConfig.model_validate)
 
     with pytest.raises(Exception) as exc_info:
-        _config({'my_plugin': {'typo': 1}})
-    assert 'typo' in str(exc_info.value)
-
-
-def test_schema_rejects_bad_type():
-    register_plugin_config_validator('my_plugin', _MyConfig.model_validate)
-
-    with pytest.raises(Exception):
-        _config({'my_plugin': {'threshold': 'not-an-int'}})
-
-
-def test_unknown_key_is_rejected():
-    register_plugin_config_validator('my_plugin', _MyConfig.model_validate)
-
-    with pytest.raises(Exception) as exc_info:
-        _config({'other_plugin': {'whatever': 1}})
-    assert 'other_plugin' in str(exc_info.value)
-
-
-def test_schema_accepts_secret_placeholder_for_str_field():
-    # ``!secret`` resolves to a string before validation (a placeholder during
-    # the validate pass); a str-typed field must accept it.
-    register_plugin_config_validator('my_plugin', _MyConfig.model_validate)
-
-    _config({'my_plugin': {'secret': '__secret_placeholder__'}})
+        _config(plugins)
+    assert fragment in str(exc_info.value)
 
 
 def test_slice_validator_runs_only_when_key_present():

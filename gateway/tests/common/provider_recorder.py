@@ -44,22 +44,26 @@ class CannedResponse:
     sse_format: str = 'data'  # 'data' or 'anthropic' (event: + data:)
     headers: dict[str, str] = field(default_factory=dict)
 
+    def sse_text(self) -> str:
+        """Return the stream's events as the provider sends them."""
+        lines = []
+        for event in self.sse_events or []:
+            if self.sse_format == 'anthropic':
+                lines.append(f'event: {event["type"]}\n')
+                lines.append(f'data: {json.dumps(event)}\n\n')
+            elif event == '[DONE]':
+                lines.append('data: [DONE]\n\n')
+            else:
+                lines.append(f'data: {json.dumps(event)}\n\n')
+        return ''.join(lines)
+
     def to_response(self, request):
         lib = httpx2 if isinstance(request, httpx2.Request) else httpx
         if self.sse_events is not None:
-            lines = []
-            for event in self.sse_events:
-                if self.sse_format == 'anthropic':
-                    lines.append(f'event: {event["type"]}\n')
-                    lines.append(f'data: {json.dumps(event)}\n\n')
-                elif event == '[DONE]':
-                    lines.append('data: [DONE]\n\n')
-                else:
-                    lines.append(f'data: {json.dumps(event)}\n\n')
             return lib.Response(
                 self.status,
                 headers={'content-type': 'text/event-stream', **self.headers},
-                content=''.join(lines).encode(),
+                content=self.sse_text().encode(),
                 request=request,
             )
         return lib.Response(

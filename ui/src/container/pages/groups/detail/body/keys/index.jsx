@@ -31,8 +31,6 @@ function Keys() {
   );
 }
 
-const DISABLED_GROUP_TOOLTIP = 'This group is managed externally and cannot be modified';
-
 function LabelKey() {
   const { showModal } = useModals();
 
@@ -60,7 +58,7 @@ function LabelKey() {
 
   const associateButton = isExternallyManaged
     ? (
-      <Tooltip title={DISABLED_GROUP_TOOLTIP}>
+      <Tooltip title="This group is managed externally and cannot be modified">
         <span>
           <Button disabled icon={<Lucide icon={Plus} />}>Associate credentials</Button>
         </span>

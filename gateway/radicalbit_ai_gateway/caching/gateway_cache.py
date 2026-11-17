@@ -1,20 +1,17 @@
-import hashlib
-import json
-
-from openai.types.chat import (
-    ChatCompletionToolChoiceOptionParam,
-    ChatCompletionToolParam,
-)
-
 from radicalbit_ai_gateway.caching.abstract_cache import AbstractCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
 from radicalbit_ai_gateway.caching.redis_cache import RedisCache
 from radicalbit_ai_gateway.caching.semantic_caching import SemanticCache
-from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.caching import CacheType
 
 
 class GatewayCache:
+    """A route's cache backend: Redis, the semantic index, or memory.
+
+    The response cache (``route_cache``) keys its entries itself; the MCP
+    list cache keys its own here.
+    """
+
     def __init__(self, cache_client: AbstractCache):
         self.cache_client = cache_client
 
@@ -40,70 +37,6 @@ class GatewayCache:
     ):
         await self.cache_client.set(cache_key, response, ttl, **kwargs)
 
-    def generate_cache_key(
-        self,
-        project_uuid: str,
-        route_name: str,
-        key_uuid: str,
-        messages: list[BaseMessage],
-        tools: list[ChatCompletionToolParam] | None,
-        tool_choice: ChatCompletionToolChoiceOptionParam | None,
-        **kwargs,
-    ) -> str:
-        request_signature = self._build_request_signature(
-            messages, tools, tool_choice, **kwargs
-        )
-        return self.cache_client.generate_cache_key(
-            project_uuid, route_name, request_signature, key_uuid
-        )
-
-    @staticmethod
-    def _build_request_signature(
-        messages: list[BaseMessage],
-        tools: list[ChatCompletionToolParam] | None,
-        tool_choice: ChatCompletionToolChoiceOptionParam | None,
-        **kwargs,
-    ) -> str:
-        return f'messages:{[message.model_dump_json(indent=None) for message in messages]};tools:{json.dumps(tools)};tool_choice:{json.dumps(tool_choice)};extra_args:{json.dumps(kwargs)}'
-
-    def generate_responses_cache_key(
-        self,
-        project_uuid: str,
-        route_name: str,
-        key_uuid: str,
-        signature: dict,
-    ) -> str:
-        """Key a Responses API request by its ``cache_signature``."""
-        request_signature = (
-            f'responses:{json.dumps(signature, ensure_ascii=False, sort_keys=True)}'
-        )
-        return self.cache_client.generate_cache_key(
-            project_uuid, route_name, request_signature, key_uuid
-        )
-
-    def generate_embedding_cache_key(
-        self,
-        project_uuid: str,
-        route_name: str,
-        key_uuid: str,
-        input_texts: list[str],
-        **kwargs,
-    ) -> str:
-        request_signature = self._build_embedding_request_signature(
-            input_texts=input_texts,
-            **kwargs,
-        )
-        return self.cache_client.generate_cache_key(
-            project_uuid, route_name, request_signature, key_uuid
-        )
-
-    @staticmethod
-    def _build_embedding_request_signature(
-        input_texts: list[str],
-        **kwargs,
-    ) -> str:
-        return f'inputs:{json.dumps(input_texts, ensure_ascii=False)};extra_args:{json.dumps(kwargs)}'
-
     def generate_mcp_list_cache_key(
         self,
         project_uuid: str,
@@ -126,55 +59,3 @@ class GatewayCache:
         servers_signature: str,
     ) -> str:
         return f'mcp_method:{method};mcp_servers:{servers_signature}'
-
-    def generate_decision_cache_key(
-        self,
-        project_uuid: str,
-        route_name: str,
-        key_uuid: str,
-        state,
-        questions,
-        model_id: str,
-    ) -> str:
-        request_signature = self._build_decision_request_signature(
-            state=state, questions=questions, model_id=model_id
-        )
-        return self.cache_client.generate_cache_key(
-            project_uuid, route_name, request_signature, key_uuid
-        )
-
-    @staticmethod
-    def _build_decision_request_signature(state, questions, model_id: str) -> str:
-        # Canonical JSON: sorted keys, so key order never changes the key.
-        return json.dumps(
-            {'state': state, 'questions': questions, 'model_id': model_id},
-            sort_keys=True,
-            separators=(',', ':'),
-            ensure_ascii=False,
-        )
-
-    def generate_transcription_cache_key(
-        self,
-        project_uuid: str,
-        route_name: str,
-        key_uuid: str,
-        audio_bytes: bytes,
-        **kwargs,
-    ) -> str:
-        request_signature = self._build_transcription_request_signature(
-            audio_bytes=audio_bytes,
-            **kwargs,
-        )
-        return self.cache_client.generate_cache_key(
-            project_uuid, route_name, request_signature, key_uuid
-        )
-
-    @staticmethod
-    def _build_transcription_request_signature(
-        audio_bytes: bytes,
-        **kwargs,
-    ) -> str:
-        # The audio itself is hashed separately (never embedded raw) — it's
-        # binary, not text, and would otherwise dominate the signature size.
-        audio_hash = hashlib.sha256(audio_bytes).hexdigest()
-        return f'audio_hash:{audio_hash};extra_args:{json.dumps(kwargs)}'

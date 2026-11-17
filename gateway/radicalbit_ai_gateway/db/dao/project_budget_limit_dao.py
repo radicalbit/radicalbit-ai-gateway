@@ -45,6 +45,17 @@ class ProjectBudgetLimitDAO:
             )
             return session.scalars(stmt).all()
 
+    def get_all_by_project_uuids(
+        self, project_uuids: list[UUID]
+    ) -> Sequence[ProjectBudgetLimit]:
+        if not project_uuids:
+            return []
+        with self.db.begin_session() as session:
+            stmt = select(ProjectBudgetLimit).where(
+                ProjectBudgetLimit.project_uuid.in_(project_uuids)
+            )
+            return session.scalars(stmt).all()
+
     def update_max_value(self, limit_uuid: UUID, max_value: float) -> None:
         with self.db.begin_session() as session:
             session.execute(

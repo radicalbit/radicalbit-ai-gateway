@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from itertools import cycle
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -49,2923 +50,778 @@ from radicalbit_ai_gateway.utils.sse_params import compute_sse_time_range
 PROJECT_UUID = UUID('44444444-4444-4444-4444-444444444444')
 PROJECT_NAME = 'sse-project'
 PROJECT_BASE = f'/public/api/v1/projects/{PROJECT_UUID}'
+BASE_URL = 'http://localhost:9000'
+SLEEP = 'radicalbit_ai_gateway.routes.dashboard_route.sleep'
+ASYNC_SLEEP = 'radicalbit_ai_gateway.routes.dashboard_route.asyncio.sleep'
+
+STREAMED_EVENTS = 3
+
+KEY_UUID = '550e8400-e29b-41d4-a716-446655440001'
+GROUP_UUID = '550e8400-e29b-41d4-a716-446655440002'
+MCP_GROUP_UUID = '550e8400-e29b-41d4-a716-446655440003'
+MCP_KEY_UUID = '660e8400-e29b-41d4-a716-446655440003'
+TS = [1700000000, 1700003600]
+COST_TS = [1736330400, 1736334000]
+FROM_TS, TO_TS = 1704067200, 1704153600
+FROM_DT = datetime.fromtimestamp(FROM_TS, tz=timezone.utc)
+TO_DT = datetime.fromtimestamp(TO_TS, tz=timezone.utc)
+ROUTES = ['route-A', 'route-B']
+TAGS = ['env=prod', 'cost_center=retail']
+
+SERVICE_SPECS = {
+    'event': EventService,
+    'request': RequestEventService,
+    'project': ProjectService,
+    'mcp': McpUsageService,
+}
 
 
-def _r(route: str) -> str:
-    return f'{PROJECT_NAME}/{route}'
+class _EndOfStream(Exception):
+    """Ends a dashboard stream: its loop never ends on its own."""
 
 
-@pytest.fixture
-def sse_test_app():
-    """Create a FastAPI app with the dashboard router for SSE testing."""
-    request_event_service = MagicMock(spec_set=RequestEventService)
-    event_service = MagicMock(spec_set=EventService)
-    project_service = MagicMock(spec_set=ProjectService)
-    mcp_usage_service = MagicMock(spec_set=McpUsageService)
+def _end_stream_after(events: int):
+    """Side effect for a stream's patched sleep: the stream sends *events*
+    events, then ends. A test reads them from a transport that keeps the
+    events sent before the app's error (``raise_app_exceptions=False``).
+    """
+    calls = 0
 
-    project_mock = MagicMock()
-    project_mock.name = PROJECT_NAME
-    project_service.get_by_uuid = MagicMock(return_value=project_mock)
+    def sleep(*_):
+        nonlocal calls
+        calls += 1
+        if calls >= events:
+            raise _EndOfStream
 
-    project_entry_mock = MagicMock()
-    project_entry_mock.config.routes = {}
+    return sleep
 
+
+class _Delegate:
+    """Stands in for a service in the module-wide router and forwards every
+    call to the current test's fresh mock.
+    """
+
+    def __init__(self):
+        self.mock = None
+
+    def __getattr__(self, name):
+        return getattr(self.mock, name)
+
+
+DELEGATES = {name: _Delegate() for name in SERVICE_SPECS}
+
+
+@pytest.fixture(scope='module')
+def app():
+    """Build the dashboard router once; services are swapped per test."""
     router = DashboardRoute.get_dashboard_router(
-        event_service=event_service,
-        request_event_service=request_event_service,
-        project_service=project_service,
-        mcp_usage_service=mcp_usage_service,
+        event_service=DELEGATES['event'],
+        request_event_service=DELEGATES['request'],
+        project_service=DELEGATES['project'],
+        mcp_usage_service=DELEGATES['mcp'],
     )
     app = FastAPI(title='AI Gateway', debug=True)
     app.add_exception_handler(GatewayError, gateway_exception_handler)
     app.add_exception_handler(GatewayBadRequest, gateway_exception_handler)
     app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
     app.include_router(router, prefix='/public/api/v1')
-    app.state.project_configs = {PROJECT_NAME: project_entry_mock}
+    project_entry = MagicMock()
+    project_entry.config.routes = {}
+    app.state.project_configs = {PROJECT_NAME: project_entry}
     app.state.routes = {}
-
-    return app, request_event_service, event_service, mcp_usage_service, project_service
-
-
-class TestStreamMostRequestedRoute:
-    """Tests for the SSE /projects/{project_uuid}/routes/most-requested/stream endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_stream_most_requested_route(self, sse_test_app):
-        """Test SSE endpoint returns correct content type and streams data in SSE format."""
-        (
-            app,
-            request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto_1 = MostRequestedRouteDTO(
-            name='route-A',
-            increment_percentage=50.0,
-            chart=RequestChartDataDTO(
-                total=100,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[40, 60],
-            ),
-        )
-        mock_dto_2 = MostRequestedRouteDTO(
-            name='route-B',
-            increment_percentage=25.0,
-            chart=RequestChartDataDTO(
-                total=200,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[80, 120],
-            ),
-        )
-        request_event_service.get_most_requested_route = MagicMock(
-            side_effect=cycle([mock_dto_1, mock_dto_2])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET', f'{PROJECT_BASE}/routes/most-requested/stream'
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 2:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 2
-
-                        event1 = events[0]
-                        assert 'data:' in event1
-                        json_start = event1.find('{')
-                        json_end = event1.rfind('}') + 1
-                        payload1 = json.loads(event1[json_start:json_end])
-                        assert payload1['name'] == 'route-A'
-                        assert payload1['incrementPercentage'] == 50.0
-
-                        event2 = events[1]
-                        assert 'data:' in event2
-                        json_start = event2.find('{')
-                        json_end = event2.rfind('}') + 1
-                        payload2 = json.loads(event2[json_start:json_end])
-                        assert payload2['name'] == 'route-B'
-                        assert payload2['incrementPercentage'] == 25.0
-
-
-class TestStreamMostRequestedErrorRoute:
-    """Tests for the SSE /projects/{project_uuid}/routes/most-requested-error/stream endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_stream_most_requested_error_route(self, sse_test_app):
-        """Test SSE endpoint returns correct content type and streams error route data."""
-        (
-            app,
-            request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto_1 = MostRequestedErrorRouteDTO(
-            name='error-route-A',
-            increment_percentage=75.0,
-            chart=RequestChartDataDTO(
-                total=0.5,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[20, 30],
-            ),
-        )
-        mock_dto_2 = MostRequestedErrorRouteDTO(
-            name='error-route-B',
-            increment_percentage=10.0,
-            chart=RequestChartDataDTO(
-                total=0.8,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[30, 50],
-            ),
-        )
-        request_event_service.get_most_requested_error_route = MagicMock(
-            side_effect=cycle([mock_dto_1, mock_dto_2])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/most-requested-error/stream',
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 2:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 2
-
-                        event1 = events[0]
-                        assert 'data:' in event1
-                        json_start = event1.find('{')
-                        json_end = event1.rfind('}') + 1
-                        payload1 = json.loads(event1[json_start:json_end])
-                        assert payload1['name'] == 'error-route-A'
-                        assert payload1['incrementPercentage'] == 75.0
-
-                        event2 = events[1]
-                        assert 'data:' in event2
-                        json_start = event2.find('{')
-                        json_end = event2.rfind('}') + 1
-                        payload2 = json.loads(event2[json_start:json_end])
-                        assert payload2['name'] == 'error-route-B'
-                        assert payload2['incrementPercentage'] == 10.0
-
-    @pytest.mark.asyncio
-    async def test_stream_yields_empty_json_on_none(self, sse_test_app):
-        """Test SSE endpoint yields empty JSON when service returns None."""
-        (
-            app,
-            request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = MostRequestedErrorRouteDTO(
-            name='error-route-A',
-            increment_percentage=50.0,
-            chart=RequestChartDataDTO(
-                total=1.0,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[40, 60],
-            ),
-        )
-        request_event_service.get_most_requested_error_route = MagicMock(
-            side_effect=cycle([None, mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/most-requested-error/stream',
-                    ) as response:
-                        assert response.status_code == 200
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 2:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 2
-                        payload1 = json.loads(
-                            events[0][events[0].find('{') : events[0].rfind('}') + 1]
-                        )
-                        assert payload1 == {}
-                        payload2 = json.loads(
-                            events[1][events[1].find('{') : events[1].rfind('}') + 1]
-                        )
-                        assert payload2['name'] == 'error-route-A'
-
-
-class TestStreamMostExpensiveRoute:
-    """Tests for the SSE /projects/{project_uuid}/routes/most-expensive/stream endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_stream_most_expensive_route(self, sse_test_app):
-        """Test SSE endpoint returns correct content type and streams data in SSE format."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto_1 = MostExpensiveRouteDTO(
-            name='route-A',
-            increment_percentage=30.0,
-            chart=MostExpensiveRouteChartDataDTO(
-                total=500.0,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[200.0, 300.0],
-            ),
-        )
-        mock_dto_2 = MostExpensiveRouteDTO(
-            name='route-B',
-            increment_percentage=-10.0,
-            chart=MostExpensiveRouteChartDataDTO(
-                total=150.0,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[90.0, 60.0],
-            ),
-        )
-        event_service.get_most_expensive_route = MagicMock(
-            side_effect=cycle([mock_dto_1, mock_dto_2])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/most-expensive/stream',
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 2:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 2
-
-                        event1 = events[0]
-                        assert 'data:' in event1
-                        json_start = event1.find('{')
-                        json_end = event1.rfind('}') + 1
-                        payload1 = json.loads(event1[json_start:json_end])
-                        assert payload1['name'] == 'route-A'
-                        assert payload1['incrementPercentage'] == 30.0
-                        assert payload1['chart']['total'] == 500.0
-
-                        event2 = events[1]
-                        assert 'data:' in event2
-                        json_start = event2.find('{')
-                        json_end = event2.rfind('}') + 1
-                        payload2 = json.loads(event2[json_start:json_end])
-                        assert payload2['name'] == 'route-B'
-                        assert payload2['incrementPercentage'] == -10.0
-                        assert payload2['chart']['total'] == 150.0
-
-    @pytest.mark.asyncio
-    async def test_stream_yields_empty_json_on_none(self, sse_test_app):
-        """Test SSE endpoint yields empty JSON when service returns None."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = MostExpensiveRouteDTO(
-            name='route-A',
-            increment_percentage=20.0,
-            chart=MostExpensiveRouteChartDataDTO(
-                total=300.0,
-                granularity='days',
-                timestamp=[1700000000, 1700086400],
-                data=[100.0, 200.0],
-            ),
-        )
-        event_service.get_most_expensive_route = MagicMock(
-            side_effect=cycle([None, mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/most-expensive/stream',
-                    ) as response:
-                        assert response.status_code == 200
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 2:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 2
-                        payload1 = json.loads(
-                            events[0][events[0].find('{') : events[0].rfind('}') + 1]
-                        )
-                        assert payload1 == {}
-                        payload2 = json.loads(
-                            events[1][events[1].find('{') : events[1].rfind('}') + 1]
-                        )
-                        assert payload2['name'] == 'route-A'
-
-
-class TestStreamCostsChart:
-    """Tests for the SSE /projects/{project_uuid}/routes/costs/stream endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_all_routes(self, sse_test_app):
-        """Test SSE endpoint streams cost chart for all routes when no routes given."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto_1 = CostChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400, 1736334000],
-            data=[CostChartDataSeriesDTO(name='group-1 (route-a)', data=[10.0, 20.0])],
-            total=30.0,
-        )
-        mock_dto_2 = CostChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400, 1736334000],
-            data=[CostChartDataSeriesDTO(name='group-1 (route-a)', data=[15.0, 25.0])],
-            total=40.0,
-        )
-        event_service.get_costs_chart_data = MagicMock(
-            side_effect=cycle([mock_dto_1, mock_dto_2])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/stream',
-                        params={'group_by': 'groups'},
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 2:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 2
-
-                        json_start = events[0].find('{')
-                        json_end = events[0].rfind('}') + 1
-                        payload1 = json.loads(events[0][json_start:json_end])
-                        assert payload1['granularity'] == 'hours'
-                        assert payload1['timestamp'] == [1736330400, 1736334000]
-                        assert payload1['total'] == 30.0
-                        assert payload1['data'][0]['name'] == 'group-1 (route-a)'
-
-                        json_start = events[1].find('{')
-                        json_end = events[1].rfind('}') + 1
-                        payload2 = json.loads(events[1][json_start:json_end])
-                        assert payload2['total'] == 40.0
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_filtered_routes(self, sse_test_app):
-        """Test SSE endpoint passes routes filter to service (prefixed with project name)."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = CostChartDataDTO(
-            granularity='days',
-            timestamp=[1736208000],
-            data=[CostChartDataSeriesDTO(name='api-key-1', data=[50.0])],
-            total=50.0,
-        )
-        event_service.get_costs_chart_data = MagicMock(side_effect=cycle([mock_dto]))
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/stream',
-                        params={
-                            'routes': ['route-A', 'route-B'],
-                            'group_by': 'keys',
-                        },
-                    ) as response:
-                        assert response.status_code == 200
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 1:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 1
-                        call_kwargs = (
-                            event_service.get_costs_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['route_names'] == [
-                            'route-A',
-                            'route-B',
-                        ]
-                        assert call_kwargs['group_by'] == 'keys'
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_filtered_tags(self, sse_test_app):
-        """Test SSE endpoint passes the tags filter to the service on every tick."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = CostChartDataDTO(
-            granularity='days',
-            timestamp=[1736208000],
-            data=[CostChartDataSeriesDTO(name='api-key-1', data=[50.0])],
-            total=50.0,
-        )
-        event_service.get_costs_chart_data = MagicMock(side_effect=cycle([mock_dto]))
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/stream',
-                        params={
-                            'group_by': 'keys',
-                            'tags': ['env=prod', 'cost_center=retail'],
-                        },
-                    ) as response:
-                        assert response.status_code == 200
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 1:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 1
-                        call_kwargs = (
-                            event_service.get_costs_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['tags'] == ['env=prod', 'cost_center=retail']
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_bad_request_gte_and_from(self, sse_test_app):
-        """Test that combining _gte with _from returns 400."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/costs/stream',
-                params={'_gte': 3600, '_from': 1700000000, 'group_by': 'groups'},
-            )
-            assert response.status_code == 400
-            error_data = response.json()
-            assert 'error' in error_data
-            assert '_gte' in error_data['error']['message'].lower()
-
-
-class TestStreamCostsSummary:
-    """Tests for the SSE /projects/{project_uuid}/routes/costs/summary/stream endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_summary_all_routes(self, sse_test_app):
-        """Test SSE endpoint streams cost summary for all routes when no routes given."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto_1 = CostDataDTO(input_cost=10.0, output_cost=20.0, total_cost=30.0)
-        mock_dto_2 = CostDataDTO(input_cost=15.0, output_cost=25.0, total_cost=40.0)
-        event_service.get_summary_costs = MagicMock(
-            side_effect=cycle([mock_dto_1, mock_dto_2])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET', f'{PROJECT_BASE}/routes/costs/summary/stream'
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 2:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 2
-
-                        json_start = events[0].find('{')
-                        json_end = events[0].rfind('}') + 1
-                        payload1 = json.loads(events[0][json_start:json_end])
-                        assert payload1['inputCost'] == 10.0
-                        assert payload1['outputCost'] == 20.0
-                        assert payload1['totalCost'] == 30.0
-
-                        json_start = events[1].find('{')
-                        json_end = events[1].rfind('}') + 1
-                        payload2 = json.loads(events[1][json_start:json_end])
-                        assert payload2['inputCost'] == 15.0
-                        assert payload2['totalCost'] == 40.0
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_summary_filtered_routes(self, sse_test_app):
-        """Test SSE endpoint passes routes filter to service."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = CostDataDTO(input_cost=5.0, output_cost=10.0, total_cost=15.0)
-        event_service.get_summary_costs = MagicMock(side_effect=cycle([mock_dto]))
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/summary/stream',
-                        params={'routes': ['route-A', 'route-B']},
-                    ) as response:
-                        assert response.status_code == 200
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 1:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 1
-                        call_kwargs = event_service.get_summary_costs.call_args.kwargs
-                        assert call_kwargs['route_names'] == [
-                            'route-A',
-                            'route-B',
-                        ]
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_summary_bad_request_gte_and_from(self, sse_test_app):
-        """Test that combining _gte with _from returns 400."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/costs/summary/stream',
-                params={'_gte': 3600, '_from': 1700000000},
-            )
-            assert response.status_code == 400
-            error_data = response.json()
-            assert 'error' in error_data
-            assert '_gte' in error_data['error']['message'].lower()
-
-
-class TestSseParamsValidation:
-    """Tests for SSE parameter validation (_gte, _from, _to mutual exclusivity)."""
-
-    @pytest.mark.asyncio
-    async def test_gte_with_from_returns_400(self, sse_test_app):
-        """Test that _gte + _from returns 400 error."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/most-requested/stream',
-                params={'_gte': 3600, '_from': 1700000000},
-            )
-            assert response.status_code == 400
-            error_data = response.json()
-            assert 'error' in error_data
-            assert '_gte' in error_data['error']['message'].lower()
-
-    @pytest.mark.asyncio
-    async def test_gte_with_from_and_to_returns_400(self, sse_test_app):
-        """Test that _gte + _from + _to returns 400 error."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/most-requested/stream',
-                params={'_gte': 3600, '_from': 1700000000, '_to': 1700003600},
-            )
-            assert response.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_gte_zero_or_negative_returns_400(self, sse_test_app):
-        """Test that _gte <= 0 returns 400 error."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/most-requested/stream',
-                params={'_gte': 0},
-            )
-            assert response.status_code == 400
-            error_data = response.json()
-            assert 'positive' in error_data['error']['message'].lower()
-
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/most-requested/stream',
-                params={'_gte': -100},
-            )
-            assert response.status_code == 400
-
-
-class TestComputeSseTimeRange:
-    """Unit tests for compute_sse_time_range helper function."""
-
-    def test_gte_returns_rolling_window(self):
-        """Test that _gte returns (now - _gte, None)."""
-        gte_seconds = 3600
-        before = datetime.now(timezone.utc) - timedelta(seconds=gte_seconds)
-        from_dt, to_dt = compute_sse_time_range(gte_seconds, None, None)
-        after = datetime.now(timezone.utc) - timedelta(seconds=gte_seconds)
-
-        assert to_dt is None
-        assert before <= from_dt <= after
-
-    def test_from_to_returns_fixed_timestamps(self):
-        """Test that _from/_to returns fixed timestamps."""
-        from_dt, to_dt = compute_sse_time_range(None, 1700000000, 1700003600)
-
-        assert from_dt is not None
-        assert to_dt is not None
-        assert from_dt.timestamp() == 1700000000
-        assert to_dt.timestamp() == 1700003600
-
-    def test_no_params_returns_none_none(self):
-        """Test that no params returns (None, None)."""
-        from_dt, to_dt = compute_sse_time_range(None, None, None)
-
-        assert from_dt is None
-        assert to_dt is None
-
-
-class TestSseGteFunctionality:
-    """Tests for _gte rolling window functionality."""
-
-    @pytest.mark.asyncio
-    async def test_gte_streams_data(self, sse_test_app):
-        """Test that _gte parameter works and streams data."""
-        (
-            app,
-            request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = MostRequestedRouteDTO(
-            name='route-A',
-            increment_percentage=50.0,
-            chart=RequestChartDataDTO(
-                total=100,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[40, 60],
-            ),
-        )
-        request_event_service.get_most_requested_route = MagicMock(
-            side_effect=cycle([mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/most-requested/stream',
-                        params={'_gte': 3600},
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-    @pytest.mark.asyncio
-    async def test_gte_rolling_window_updates_datetime(self, sse_test_app):
-        """Test that from_datetime changes between iterations when using _gte."""
-        (
-            app,
-            request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        captured_times: list = []
-
-        def capture_from_datetime(*args, **kwargs):
-            captured_times.append(kwargs.get('_from'))
-            return MostRequestedRouteDTO(
-                name='route-A',
-                increment_percentage=50.0,
-                chart=RequestChartDataDTO(
-                    total=100,
-                    granularity='hours',
-                    timestamp=[1700000000, 1700003600],
-                    data=[40, 60],
-                ),
-            )
-
-        request_event_service.get_most_requested_route = MagicMock(
-            side_effect=capture_from_datetime
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/most-requested/stream',
-                        params={'_gte': 3600},
-                    ) as response:
-                        assert response.status_code == 200
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 2:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-        assert len(captured_times) >= 2
-        assert captured_times[0] != captured_times[1]
-
-
-class TestSseBackwardCompatibility:
-    """Tests to ensure backward compatibility with _from/_to parameters."""
-
-    @pytest.mark.asyncio
-    async def test_from_to_still_works(self, sse_test_app):
-        """Test that _from/_to parameters still work as before."""
-        (
-            app,
-            request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = MostRequestedRouteDTO(
-            name='route-A',
-            increment_percentage=50.0,
-            chart=RequestChartDataDTO(
-                total=100,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[40, 60],
-            ),
-        )
-        request_event_service.get_most_requested_route = MagicMock(
-            side_effect=cycle([mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/most-requested/stream',
-                        params={'_from': 1700000000, '_to': 1700003600},
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-    @pytest.mark.asyncio
-    async def test_no_params_still_works(self, sse_test_app):
-        """Test that no parameters still works (default behavior)."""
-        (
-            app,
-            request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = MostRequestedRouteDTO(
-            name='route-A',
-            increment_percentage=50.0,
-            chart=RequestChartDataDTO(
-                total=100,
-                granularity='hours',
-                timestamp=[1700000000, 1700003600],
-                data=[40, 60],
-            ),
-        )
-        request_event_service.get_most_requested_route = MagicMock(
-            side_effect=cycle([mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET', f'{PROJECT_BASE}/routes/most-requested/stream'
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-
-class TestStreamLimitsProgress:
-    """Tests for the SSE /projects/{project_uuid}/routes/limits/stream endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_returns_correct_sse_payload(self, sse_test_app):
-        """Endpoint streams the payload returned by event_service.get_route_limits_progress."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = [
-            RouteProgressBarDTO(
-                route_name='my-route',
-                progress_bar=RouteProgressBarsDTO(
-                    budget=WindowProgressBarDTO(
-                        window_length=3600,
-                        window_start_time=1_700_000_000,
-                        window_end_time=1_700_003_600,
-                        window_size=10.0,
-                        window_filled_size=7.0,
-                        window_filled_percentage=70.0,
-                    ),
-                    rate=WindowProgressBarDTO(
-                        window_length=60,
-                        window_start_time=1_700_003_540,
-                        window_end_time=1_700_003_600,
-                        window_size=100.0,
-                        window_filled_size=60.0,
-                        window_filled_percentage=60.0,
-                    ),
-                ),
-            )
-        ]
-        event_service.get_route_limits_progress = AsyncMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.asyncio.sleep',
+    return app
+
+
+@pytest.fixture
+def services():
+    """Fresh service mocks behind the module-wide router."""
+    mocks = SimpleNamespace(
+        **{name: MagicMock(spec_set=spec) for name, spec in SERVICE_SPECS.items()}
+    )
+    project = MagicMock()
+    project.name = PROJECT_NAME
+    mocks.project.get_by_uuid.return_value = project
+    for name, delegate in DELEGATES.items():
+        delegate.mock = getattr(mocks, name)
+    yield mocks
+    for delegate in DELEGATES.values():
+        delegate.mock = None
+
+
+async def _stream(app, path, params=None, wanted=1) -> list:
+    """Open a stream and return the JSON payloads of its first *wanted* events."""
+    end_stream = (
+        patch(
+            ASYNC_SLEEP,
             new_callable=AsyncMock,
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET', f'{PROJECT_BASE}/routes/limits/stream'
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-                        events = []
-                        current_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_lines:
-                                    events.append('\n'.join(current_lines))
-                                    current_lines = []
-                                    if len(events) == 1:
-                                        break
-                            else:
-                                current_lines.append(line)
-
-                        assert len(events) == 1
-                        raw = events[0]
-                        assert 'data:' in raw
-                        payload = json.loads(raw[raw.find('[') : raw.rfind(']') + 1])
-                        assert len(payload) == 1
-                        entry = payload[0]
-                        assert entry['routeName'] == 'my-route'
-                        pb = entry['progressBar']
-                        assert pb['budget']['windowLength'] == 3600
-                        assert pb['budget']['windowSize'] == pytest.approx(10.0)
-                        assert pb['budget']['windowFilledSize'] == pytest.approx(7.0)
-                        assert pb['budget']['windowFilledPercentage'] == pytest.approx(
-                            70.0
-                        )
-                        assert pb['budget']['windowStatus'] == WindowStatus.OK
-                        assert pb['rate']['windowSize'] == pytest.approx(100.0)
-                        assert pb['rate']['windowStatus'] == WindowStatus.OK
-                        assert 'tokenInput' not in pb
-                        assert 'tokenOutput' not in pb
-
-    @pytest.mark.asyncio
-    async def test_filters_by_routes(self, sse_test_app):
-        """Endpoint passes routes query param to the service (prefixed with project name)."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        event_service.get_route_limits_progress = AsyncMock(return_value=[])
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.asyncio.sleep',
-            new_callable=AsyncMock,
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/limits/stream',
-                        params=[('routes', 'route-a'), ('routes', 'route-c')],
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_args = event_service.get_route_limits_progress.call_args
-                        assert call_args[0][1] == [_r('route-a'), _r('route-c')]
-
-    @pytest.mark.asyncio
-    async def test_progress_bar_absent_when_none(self, sse_test_app):
-        """ProgressBar key is absent in SSE payload when progress_bar is None."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        event_service.get_route_limits_progress = AsyncMock(
-            return_value=[RouteProgressBarDTO(route_name='my-route', progress_bar=None)]
+            side_effect=_end_stream_after(STREAMED_EVENTS),
         )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.asyncio.sleep',
-            new_callable=AsyncMock,
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET', f'{PROJECT_BASE}/routes/limits/stream'
-                    ) as response:
-                        events = []
-                        current_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_lines:
-                                    events.append('\n'.join(current_lines))
-                                    current_lines = []
-                                    if len(events) == 1:
-                                        break
-                            else:
-                                current_lines.append(line)
-
-                        raw = events[0]
-                        payload = json.loads(raw[raw.find('[') : raw.rfind(']') + 1])
-                        assert payload[0]['routeName'] == 'my-route'
-                        assert 'progressBar' not in payload[0]
-
-    @pytest.mark.asyncio
-    async def test_forwards_window_statuses_to_service(self, sse_test_app):
-        """window_statuses query params are forwarded to get_route_limits_progress."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        event_service.get_route_limits_progress = AsyncMock(return_value=[])
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.asyncio.sleep',
-            new_callable=AsyncMock,
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/limits/stream',
-                        params=[
-                            ('window_statuses', 'ok'),
-                            ('window_statuses', 'warning'),
-                        ],
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_args = event_service.get_route_limits_progress.call_args
-                        assert call_args[0][2] == [
-                            WindowStatus.OK,
-                            WindowStatus.WARNING,
-                        ]
-
-
-class TestStreamInvocations:
-    """Tests for the SSE /projects/{project_uuid}/routes/invocations/stream endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_returns_correct_sse_payload(self, sse_test_app):
-        """Endpoint streams InvocationChartDataDTO returned by event_service."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = InvocationChartDataDTO(
-            granularity='hours',
-            timestamp=[1700000000, 1700003600],
-            data=[3.0, 7.0],
-            total=10,
-        )
-        event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET', f'{PROJECT_BASE}/routes/invocations/stream'
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-                        events = []
-                        current_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_lines:
-                                    events.append('\n'.join(current_lines))
-                                    current_lines = []
-                                    if len(events) == 1:
-                                        break
-                            else:
-                                current_lines.append(line)
-
-                        assert len(events) == 1
-                        raw = events[0]
-                        assert 'data:' in raw
-                        json_start = raw.find('{')
-                        json_end = raw.rfind('}') + 1
-                        payload = json.loads(raw[json_start:json_end])
-                        assert payload['granularity'] == 'hours'
-                        assert payload['timestamp'] == [1700000000, 1700003600]
-                        assert payload['data'] == [3.0, 7.0]
-                        assert payload['total'] == 10
-
-                        call_kwargs = (
-                            event_service.get_invocation_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['include_models'] is False
-
-    @pytest.mark.asyncio
-    async def test_filters_by_routes(self, sse_test_app):
-        """Endpoint passes routes query param to the service (prefixed with project name)."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = InvocationChartDataDTO(
-            granularity='weeks', timestamp=[], data=[], total=0
-        )
-        event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/invocations/stream',
-                        params=[('routes', 'route-a'), ('routes', 'route-c')],
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_invocation_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['route_names'] == [
-                            'route-a',
-                            'route-c',
-                        ]
-
-    @pytest.mark.asyncio
-    async def test_all_routes_when_no_filter(self, sse_test_app):
-        """Service is called with routes=None when no routes param is provided."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = InvocationChartDataDTO(
-            granularity='weeks', timestamp=[], data=[], total=0
-        )
-        event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET', f'{PROJECT_BASE}/routes/invocations/stream'
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_invocation_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['route_names'] is None
-
-    @pytest.mark.asyncio
-    async def test_respects_from_to_params(self, sse_test_app):
-        """Endpoint forwards _from and _to unix timestamps to the service as datetimes."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = InvocationChartDataDTO(
-            granularity='hours', timestamp=[], data=[], total=0
-        )
-        event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
-
-        _from_ts = 1704067200  # 2024-01-01T00:00:00Z
-        _to_ts = 1704153600  # 2024-01-02T00:00:00Z
-        expected_from = datetime.fromtimestamp(_from_ts, tz=timezone.utc)
-        expected_to = datetime.fromtimestamp(_to_ts, tz=timezone.utc)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/invocations/stream',
-                        params={'_from': _from_ts, '_to': _to_ts},
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_invocation_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['_from'] == expected_from
-                        assert call_kwargs['_to'] == expected_to
-
-    @pytest.mark.asyncio
-    async def test_gte_streams_data(self, sse_test_app):
-        """Endpoint accepts _gte as a rolling window and passes datetimes to the service."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = InvocationChartDataDTO(
-            granularity='hours', timestamp=[], data=[], total=0
-        )
-        event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/invocations/stream',
-                        params={'_gte': 3600},
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_invocation_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['_from'] is not None
-                        assert call_kwargs['_to'] is None
-
-    @pytest.mark.asyncio
-    async def test_gte_and_from_returns_400(self, sse_test_app):
-        """Passing both _gte and _from returns 400 (mutually exclusive)."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as client:
-            response = await client.get(
-                f'{PROJECT_BASE}/routes/invocations/stream',
-                params={'_gte': 3600, '_from': 1704067200},
-            )
-            assert response.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_include_models_false_returns_flat_data(self, sse_test_app):
-        """With include_models=False, payload data is a flat list of numbers."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = InvocationChartDataDTO(
-            granularity='hours',
-            timestamp=[1700000000, 1700003600],
-            data=[5.0, 3.0],
-            total=8,
-        )
-        event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/invocations/stream',
-                        params={'include_models': 'false'},
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_invocation_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['include_models'] is False
-
-    @pytest.mark.asyncio
-    async def test_include_models_true_returns_series_data(self, sse_test_app):
-        """With include_models=True, payload data contains per-model series."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = InvocationChartDataDTO(
-            granularity='hours',
-            timestamp=[1700000000, 1700003600],
-            data=[
-                ChartDataSeriesDTO(name='gpt-4', data=[2.0, 1.0]),
-                ChartDataSeriesDTO(name='gpt-3.5', data=[3.0, 2.0]),
-            ],
-            total=8,
-        )
-        event_service.get_invocation_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/invocations/stream',
-                        params={'include_models': 'true'},
-                    ) as response:
-                        events = []
-                        current_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_lines:
-                                    events.append('\n'.join(current_lines))
-                                    current_lines = []
-                                    if len(events) == 1:
-                                        break
-                            else:
-                                current_lines.append(line)
-
-                        call_kwargs = (
-                            event_service.get_invocation_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['include_models'] is True
-
-                        assert len(events) == 1
-                        raw = events[0]
-                        json_start = raw.find('{')
-                        json_end = raw.rfind('}') + 1
-                        payload = json.loads(raw[json_start:json_end])
-                        assert isinstance(payload['data'], list)
-                        assert payload['data'][0]['name'] == 'gpt-4'
-                        assert payload['data'][0]['data'] == [2.0, 1.0]
-                        assert payload['data'][1]['name'] == 'gpt-3.5'
-
-
-class TestStreamTokens:
-    """Tests for the SSE /projects/{project_uuid}/routes/tokens/stream endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_returns_correct_sse_payload(self, sse_test_app):
-        """Endpoint streams TokenChartDataDTO returned by event_service."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = TokenChartDataDTO(
-            granularity='hours',
-            timestamp=[1700000000, 1700003600],
-            data=[
-                TokenChartDataSeriesDTO(name='INPUT', data=[100, 150]),
-                TokenChartDataSeriesDTO(name='OUTPUT', data=[50, 75]),
-            ],
-            total=375,
-        )
-        event_service.get_token_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET', f'{PROJECT_BASE}/routes/tokens/stream'
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-                        events = []
-                        current_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_lines:
-                                    events.append('\n'.join(current_lines))
-                                    current_lines = []
-                                    if len(events) == 1:
-                                        break
-                            else:
-                                current_lines.append(line)
-
-                        assert len(events) == 1
-                        raw = events[0]
-                        assert 'data:' in raw
-                        json_start = raw.find('{')
-                        json_end = raw.rfind('}') + 1
-                        payload = json.loads(raw[json_start:json_end])
-                        assert payload['granularity'] == 'hours'
-                        assert payload['timestamp'] == [1700000000, 1700003600]
-                        assert payload['total'] == 375
-                        assert len(payload['data']) == 2
-                        assert payload['data'][0]['name'] == 'INPUT'
-                        assert payload['data'][0]['data'] == [100, 150]
-                        assert payload['data'][1]['name'] == 'OUTPUT'
-                        assert payload['data'][1]['data'] == [50, 75]
-
-    @pytest.mark.asyncio
-    async def test_filters_by_routes(self, sse_test_app):
-        """Endpoint passes routes query param to the service (prefixed with project name)."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = TokenChartDataDTO(
-            granularity='weeks', timestamp=[], data=[], total=0
-        )
-        event_service.get_token_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/tokens/stream',
-                        params=[('routes', 'route-a'), ('routes', 'route-c')],
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_token_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['route_names'] == [
-                            'route-a',
-                            'route-c',
-                        ]
-
-    @pytest.mark.asyncio
-    async def test_all_routes_when_no_filter(self, sse_test_app):
-        """Service is called with routes=None when no routes param is provided."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = TokenChartDataDTO(
-            granularity='weeks', timestamp=[], data=[], total=0
-        )
-        event_service.get_token_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET', f'{PROJECT_BASE}/routes/tokens/stream'
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_token_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['route_names'] is None
-
-    @pytest.mark.asyncio
-    async def test_respects_from_to_params(self, sse_test_app):
-        """Endpoint forwards _from and _to unix timestamps to the service as datetimes."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = TokenChartDataDTO(
-            granularity='hours', timestamp=[], data=[], total=0
-        )
-        event_service.get_token_chart_data = MagicMock(return_value=mock_result)
-
-        _from_ts = 1704067200  # 2024-01-01T00:00:00Z
-        _to_ts = 1704153600  # 2024-01-02T00:00:00Z
-        expected_from = datetime.fromtimestamp(_from_ts, tz=timezone.utc)
-        expected_to = datetime.fromtimestamp(_to_ts, tz=timezone.utc)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/tokens/stream',
-                        params={'_from': _from_ts, '_to': _to_ts},
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_token_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['_from'] == expected_from
-                        assert call_kwargs['_to'] == expected_to
-
-    @pytest.mark.asyncio
-    async def test_gte_streams_data(self, sse_test_app):
-        """Endpoint accepts _gte as a rolling window and passes datetimes to the service."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_result = TokenChartDataDTO(
-            granularity='hours', timestamp=[], data=[], total=0
-        )
-        event_service.get_token_chart_data = MagicMock(return_value=mock_result)
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as client:
-                with anyio.move_on_after(2):
-                    async with client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/tokens/stream',
-                        params={'_gte': 3600},
-                    ) as response:
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_token_chart_data.call_args.kwargs
-                        )
-                        assert call_kwargs['_from'] is not None
-                        assert call_kwargs['_to'] is None
-
-    @pytest.mark.asyncio
-    async def test_gte_and_from_returns_400(self, sse_test_app):
-        """Passing both _gte and _from returns 400 (mutually exclusive)."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as client:
-            response = await client.get(
-                f'{PROJECT_BASE}/routes/tokens/stream',
-                params={'_gte': 3600, '_from': 1704067200},
-            )
-            assert response.status_code == 400
-
-
-class TestStreamCostsChartByEntity:
-    """Tests for the entity drill-down SSE endpoints (key/group/model)."""
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_by_key(self, sse_test_app):
-        """Test /projects/{uuid}/routes/costs/key/{key_uuid}/stream streams cost chart."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-        key_uuid = '550e8400-e29b-41d4-a716-446655440001'
-
-        mock_dto = CostChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400, 1736334000],
-            data=[
-                CostChartDataSeriesDTO(name='route-A', data=[10.0, 20.0]),
-                CostChartDataSeriesDTO(name='route-B', data=[5.0, 15.0]),
-            ],
-            total=50.0,
-        )
-        event_service.get_costs_chart_data_by_route = MagicMock(
-            side_effect=cycle([mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/key/{key_uuid}/stream',
-                    ) as response:
-                        assert response.status_code == 200
-                        assert 'text/event-stream' in response.headers['content-type']
-
-                        events = []
-                        current_event_lines = []
-                        async for line in response.aiter_lines():
-                            if line == '':
-                                if current_event_lines:
-                                    events.append('\n'.join(current_event_lines))
-                                    current_event_lines = []
-                                    if len(events) == 1:
-                                        break
-                            else:
-                                current_event_lines.append(line)
-
-                        assert len(events) == 1
-                        json_start = events[0].find('{')
-                        json_end = events[0].rfind('}') + 1
-                        payload = json.loads(events[0][json_start:json_end])
-                        assert payload['granularity'] == 'hours'
-                        assert payload['total'] == 50.0
-                        assert payload['data'][0]['name'] == 'route-A'
-
-                        call_kwargs = (
-                            event_service.get_costs_chart_data_by_route.call_args.kwargs
-                        )
-                        assert call_kwargs['entity_column'] == 'API_KEY_UUID'
-                        assert call_kwargs['entity_value'] == key_uuid
-                        assert call_kwargs['route_names'] is None
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_by_key_with_routes_filter(self, sse_test_app):
-        """Test /projects/{uuid}/routes/costs/key/{key_uuid}/stream filters by routes."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-        key_uuid = '550e8400-e29b-41d4-a716-446655440001'
-
-        mock_dto = CostChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400],
-            data=[CostChartDataSeriesDTO(name='route-A', data=[10.0])],
-            total=10.0,
-        )
-        event_service.get_costs_chart_data_by_route = MagicMock(
-            side_effect=cycle([mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/key/{key_uuid}/stream',
-                        params={'routes': ['route-A', 'route-B']},
-                    ) as response:
-                        assert response.status_code == 200
-
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_costs_chart_data_by_route.call_args.kwargs
-                        )
-                        assert call_kwargs['route_names'] == [
-                            'route-A',
-                            'route-B',
-                        ]
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_by_group(self, sse_test_app):
-        """Test /projects/{uuid}/routes/costs/group/{group_uuid}/stream streams cost chart."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-        group_uuid = '550e8400-e29b-41d4-a716-446655440002'
-
-        mock_dto = CostChartDataDTO(
-            granularity='days',
-            timestamp=[1736208000],
-            data=[CostChartDataSeriesDTO(name='route-A', data=[100.0])],
-            total=100.0,
-        )
-        event_service.get_costs_chart_data_by_route = MagicMock(
-            side_effect=cycle([mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/group/{group_uuid}/stream',
-                    ) as response:
-                        assert response.status_code == 200
-
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_costs_chart_data_by_route.call_args.kwargs
-                        )
-                        assert call_kwargs['entity_column'] == 'GROUP_UUID'
-                        assert call_kwargs['entity_value'] == group_uuid
-                        assert call_kwargs['route_names'] is None
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_by_group_with_routes_filter(self, sse_test_app):
-        """Test /projects/{uuid}/routes/costs/group/{group_uuid}/stream filters by routes."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-        group_uuid = '550e8400-e29b-41d4-a716-446655440002'
-
-        mock_dto = CostChartDataDTO(
-            granularity='days',
-            timestamp=[1736208000],
-            data=[CostChartDataSeriesDTO(name='route-A', data=[100.0])],
-            total=100.0,
-        )
-        event_service.get_costs_chart_data_by_route = MagicMock(
-            side_effect=cycle([mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/group/{group_uuid}/stream',
-                        params={'routes': ['route-A']},
-                    ) as response:
-                        assert response.status_code == 200
-
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_costs_chart_data_by_route.call_args.kwargs
-                        )
-                        assert call_kwargs['route_names'] == ['route-A']
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_by_model(self, sse_test_app):
-        """Test /projects/{uuid}/routes/costs/model/{model_id}/stream streams cost chart."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = CostChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400],
-            data=[CostChartDataSeriesDTO(name='route-A', data=[42.0])],
-            total=42.0,
-        )
-        event_service.get_costs_chart_data_by_route = MagicMock(
-            side_effect=cycle([mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/model/gpt-4o/stream',
-                    ) as response:
-                        assert response.status_code == 200
-
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_costs_chart_data_by_route.call_args.kwargs
-                        )
-                        assert call_kwargs['entity_column'] == 'MODEL_ID'
-                        assert call_kwargs['entity_value'] == 'gpt-4o'
-                        assert call_kwargs['route_names'] is None
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_by_model_with_routes_filter(self, sse_test_app):
-        """Test /projects/{uuid}/routes/costs/model/{model_id}/stream filters by routes."""
-        (
-            app,
-            _request_event_service,
-            event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto = CostChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400],
-            data=[CostChartDataSeriesDTO(name='route-A', data=[42.0])],
-            total=42.0,
-        )
-        event_service.get_costs_chart_data_by_route = MagicMock(
-            side_effect=cycle([mock_dto])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    async with async_client.stream(
-                        'GET',
-                        f'{PROJECT_BASE}/routes/costs/model/gpt-4o/stream',
-                        params={'routes': ['route-A', 'route-B']},
-                    ) as response:
-                        assert response.status_code == 200
-
-                        async for _ in response.aiter_lines():
-                            break
-
-                        call_kwargs = (
-                            event_service.get_costs_chart_data_by_route.call_args.kwargs
-                        )
-                        assert call_kwargs['route_names'] == [
-                            'route-A',
-                            'route-B',
-                        ]
-
-    @pytest.mark.asyncio
-    async def test_stream_costs_chart_by_key_gte_and_from_returns_400(
-        self, sse_test_app
-    ):
-        """Passing both _gte and _from returns 400 (mutually exclusive)."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-        key_uuid = '550e8400-e29b-41d4-a716-446655440001'
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as client:
-            response = await client.get(
-                f'{PROJECT_BASE}/routes/costs/key/{key_uuid}/stream',
-                params={'_gte': 3600, '_from': 1704067200},
-            )
-            assert response.status_code == 400
-            assert 'error' in response.json()
-
-
-class TestStreamMcpServersChart:
-    """Tests for the SSE /projects/{project_uuid}/routes/mcp/servers/stream endpoint."""
-
-    @staticmethod
-    async def _read_events(async_client, params, wanted: int = 1):
-        events = []
-        async with async_client.stream(
-            'GET',
-            f'{PROJECT_BASE}/routes/mcp/servers/stream',
-            params=params,
-        ) as response:
-            assert response.status_code == 200
-            assert 'text/event-stream' in response.headers['content-type']
-            current_event_lines = []
-            async for line in response.aiter_lines():
-                if line == '':
-                    if current_event_lines:
-                        events.append('\n'.join(current_event_lines))
-                        current_event_lines = []
-                        if len(events) == wanted:
-                            break
-                else:
-                    current_event_lines.append(line)
-        return events
-
-    @staticmethod
-    def _payload(event: str) -> dict:
-        return json.loads(event[event.find('{') : event.rfind('}') + 1])
-
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_all_routes(self, sse_test_app):
-        """Every tick carries a fresh chart for the whole project."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mock_dto_1 = McpServerChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400, 1736334000],
-            data=[McpServerChartDataSeriesDTO(name='files', data=[2, 3])],
-            total=5,
-        )
-        mock_dto_2 = McpServerChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400, 1736334000],
-            data=[McpServerChartDataSeriesDTO(name='files', data=[2, 6])],
-            total=8,
-        )
-        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
-            side_effect=cycle([mock_dto_1, mock_dto_2])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(async_client, {}, wanted=2)
-
-                    assert len(events) == 2
-                    payload1 = self._payload(events[0])
-                    assert payload1['granularity'] == 'hours'
-                    assert payload1['timestamp'] == [1736330400, 1736334000]
-                    assert payload1['total'] == 5
-                    assert payload1['data'][0]['name'] == 'files'
-                    assert payload1['data'][0]['data'] == [2, 3]
-                    assert self._payload(events[1])['total'] == 8
-
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_defaults_to_services(self, sse_test_app):
-        """No group_by means one series per MCP service."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
-            side_effect=cycle(
-                [
-                    McpServerChartDataDTO(
-                        granularity='days', timestamp=[1736208000], data=[], total=0
-                    )
-                ]
-            )
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(async_client, {})
-
-                    assert len(events) == 1
-                    call_kwargs = (
-                        mcp_usage_service.get_mcp_server_chart_data.call_args.kwargs
-                    )
-                    assert call_kwargs['group_by'] == 'services'
-
-    @pytest.mark.parametrize('group_by', ['services', 'groups', 'keys'])
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_each_grouping(self, sse_test_app, group_by):
-        """Each grouping reaches the service as asked."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
-            side_effect=cycle(
-                [
-                    McpServerChartDataDTO(
-                        granularity='days',
-                        timestamp=[1736208000],
-                        data=[
-                            McpServerChartDataSeriesDTO(
-                                name='retail',
-                                uuid=UUID('550e8400-e29b-41d4-a716-446655440003'),
-                                data=[4],
-                            )
-                        ],
-                        total=4,
-                    )
-                ]
-            )
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(
-                        async_client, {'group_by': group_by}
-                    )
-
-                    assert len(events) == 1
-                    payload = self._payload(events[0])
-                    assert payload['data'][0]['uuid'] == (
-                        '550e8400-e29b-41d4-a716-446655440003'
-                    )
-                    call_kwargs = (
-                        mcp_usage_service.get_mcp_server_chart_data.call_args.kwargs
-                    )
-                    assert call_kwargs['group_by'] == group_by
-
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_filtered_routes(self, sse_test_app):
-        """The routes filter reaches the service on every tick."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
-            side_effect=cycle(
-                [
-                    McpServerChartDataDTO(
-                        granularity='days',
-                        timestamp=[1736208000],
-                        data=[McpServerChartDataSeriesDTO(name='files', data=[7])],
-                        total=7,
-                    )
-                ]
-            )
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(
-                        async_client, {'routes': ['route-A', 'route-B']}
-                    )
-
-                    assert len(events) == 1
-                    payload = self._payload(events[0])
-                    assert payload['total'] == 7
-                    assert payload['data'][0]['data'] == [7]
-                    call_kwargs = (
-                        mcp_usage_service.get_mcp_server_chart_data.call_args.kwargs
-                    )
-                    assert call_kwargs['route_names'] == ['route-A', 'route-B']
-
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_filtered_tags(self, sse_test_app):
-        """The tags filter reaches the service on every tick."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
-            side_effect=cycle(
-                [
-                    McpServerChartDataDTO(
-                        granularity='days',
-                        timestamp=[1736208000],
-                        data=[McpServerChartDataSeriesDTO(name='files', data=[3])],
-                        total=3,
-                    )
-                ]
-            )
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(
-                        async_client,
-                        {'tags': ['env=prod', 'cost_center=retail']},
-                    )
-
-                    assert len(events) == 1
-                    payload = self._payload(events[0])
-                    assert payload['total'] == 3
-                    assert payload['data'][0]['data'] == [3]
-                    call_kwargs = (
-                        mcp_usage_service.get_mcp_server_chart_data.call_args.kwargs
-                    )
-                    assert call_kwargs['tags'] == ['env=prod', 'cost_center=retail']
-
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_rolling_window_moves(self, sse_test_app):
-        """A look-back window is recomputed on every tick, not frozen."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mcp_usage_service.get_mcp_server_chart_data = MagicMock(
-            side_effect=cycle(
-                [
-                    McpServerChartDataDTO(
-                        granularity='hours', timestamp=[1736208000], data=[], total=0
-                    )
-                ]
-            )
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(
-                        async_client, {'_gte': 3600}, wanted=3
-                    )
-
-                    assert len(events) == 3
-                    froms = [
-                        call.kwargs['_from']
-                        for call in (
-                            mcp_usage_service.get_mcp_server_chart_data.call_args_list
-                        )
-                    ]
-                    assert all(f is not None for f in froms)
-                    assert froms == sorted(froms)
-                    assert len(set(froms)) > 1
-
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_bad_request_gte_and_from(self, sse_test_app):
-        """Combining a look-back with explicit bounds is rejected."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/mcp/servers/stream',
-                params={'_gte': 3600, '_from': 1700000000},
-            )
-            assert response.status_code == 400
-            assert '_gte' in response.json()['error']['message'].lower()
-
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_bad_request_non_positive_gte(self, sse_test_app):
-        """A non-positive look-back is rejected."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/mcp/servers/stream',
-                params={'_gte': 0},
-            )
-            assert response.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_unknown_project(self, sse_test_app):
-        """An unknown project fails loudly."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            project_service,
-        ) = sse_test_app
-        project_service.validate_exists = MagicMock(
-            side_effect=ProjectNotFoundError('Project with UUID ... not found')
-        )
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/mcp/servers/stream',
-            )
-            assert response.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_stream_mcp_servers_invalid_group_by(self, sse_test_app):
-        """A grouping the chart does not offer is rejected."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}/routes/mcp/servers/stream',
-                params={'group_by': 'models'},
-            )
-            assert response.status_code == 422
-
-
-GROUP_UUID = '550e8400-e29b-41d4-a716-446655440003'
-KEY_UUID = '660e8400-e29b-41d4-a716-446655440003'
-
-# (path under the project, the grouping the route stands for, the entity value)
-MCP_ENTITY_ENDPOINTS = [
-    pytest.param(
-        '/routes/mcp/servers/service/files/stream', 'services', 'files', id='service'
-    ),
-    pytest.param(
-        f'/routes/mcp/servers/group/{GROUP_UUID}/stream',
+        if path.endswith('/limits/stream')
+        else patch(SLEEP, side_effect=_end_stream_after(STREAMED_EVENTS))
+    )
+    payloads = []
+    with end_stream:
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url=BASE_URL) as client:
+            with anyio.fail_after(5):
+                async with client.stream(
+                    'GET', f'{PROJECT_BASE}{path}', params=params
+                ) as response:
+                    assert response.status_code == 200
+                    assert 'text/event-stream' in response.headers['content-type']
+                    async for line in response.aiter_lines():
+                        if line.startswith('data:'):
+                            payloads.append(json.loads(line[len('data:') :]))
+                            if len(payloads) == wanted:
+                                break
+    assert len(payloads) == wanted
+    return payloads
+
+
+async def _get(app, path, params=None):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url=BASE_URL
+    ) as client:
+        return await client.get(f'{PROJECT_BASE}{path}', params=params)
+
+
+def _subset(actual: dict, expected: dict) -> dict:
+    return {k: actual[k] for k in expected}
+
+
+def _ranked(cls, name, pct, chart_cls=RequestChartDataDTO, total=100):
+    return cls(
+        name=name,
+        increment_percentage=pct,
+        chart=chart_cls(total=total, granularity='hours', timestamp=TS, data=[40, 60]),
+    )
+
+
+def _cost_chart(total, *series, granularity='hours', timestamp=COST_TS):
+    return CostChartDataDTO(
+        granularity=granularity,
+        timestamp=timestamp,
+        data=[CostChartDataSeriesDTO(name=n, data=d) for n, d in series],
+        total=total,
+    )
+
+
+def _mcp_chart(total, *series, granularity='hours', timestamp=COST_TS):
+    return McpServerChartDataDTO(
+        granularity=granularity, timestamp=timestamp, data=list(series), total=total
+    )
+
+
+def _mcp_entity_chart(group_by: str, entity_value: str, data: list[int]):
+    return _mcp_chart(
+        sum(data),
+        McpServerChartDataSeriesDTO(
+            name='files' if group_by == 'services' else 'retail',
+            uuid=None if group_by == 'services' else UUID(entity_value),
+            data=data,
+        ),
+        timestamp=[1736330400 + 3600 * i for i in range(len(data))],
+    )
+
+
+def _series(name, data, uuid=None):
+    return {'name': name, 'uuid': uuid, 'data': data}
+
+
+# (id, path, grouping the route stands for, entity value)
+MCP_ENTITIES = [
+    ('service', '/routes/mcp/servers/service/files/stream', 'services', 'files'),
+    (
+        'group',
+        f'/routes/mcp/servers/group/{MCP_GROUP_UUID}/stream',
         'groups',
-        GROUP_UUID,
-        id='group',
+        MCP_GROUP_UUID,
+    ),
+    ('key', f'/routes/mcp/servers/key/{MCP_KEY_UUID}/stream', 'keys', MCP_KEY_UUID),
+]
+
+
+def _mcp_entity_cases():
+    for name, path, group_by, value in MCP_ENTITIES:
+        uuid = None if group_by == 'services' else value
+        series_name = 'files' if group_by == 'services' else 'retail'
+        yield pytest.param(
+            path,
+            {},
+            'mcp',
+            'get_mcp_server_chart_data_by_entity',
+            [
+                _mcp_entity_chart(group_by, value, [2, 3]),
+                _mcp_entity_chart(group_by, value, [2, 6]),
+            ],
+            [
+                {
+                    'granularity': 'hours',
+                    'timestamp': COST_TS,
+                    'total': 5,
+                    'data': [_series(series_name, [2, 3], uuid)],
+                },
+                {'total': 8},
+            ],
+            {
+                'project_uuid': PROJECT_UUID,
+                'group_by': group_by,
+                'entity_value': value,
+                'route_names': None,
+                'tags': None,
+            },
+            id=f'mcp-{name}',
+        )
+        yield pytest.param(
+            path,
+            {'routes': ROUTES, 'tags': TAGS},
+            'mcp',
+            'get_mcp_server_chart_data_by_entity',
+            [_mcp_entity_chart(group_by, value, [7])],
+            [{'total': 7, 'data': [_series(series_name, [7], uuid)]}],
+            {'route_names': ROUTES, 'tags': TAGS},
+            id=f'mcp-{name}-filtered',
+        )
+
+
+# (path, query, service, method, results cycled per tick,
+#  expected payload subset per tick, expected subset of the last call's kwargs)
+STREAM_CASES = [
+    pytest.param(
+        '/routes/most-requested/stream',
+        {},
+        'request',
+        'get_most_requested_route',
+        [
+            _ranked(MostRequestedRouteDTO, 'route-A', 50.0),
+            _ranked(MostRequestedRouteDTO, 'route-B', 25.0),
+        ],
+        [
+            {'name': 'route-A', 'incrementPercentage': 50.0},
+            {'name': 'route-B', 'incrementPercentage': 25.0},
+        ],
+        {'_from': None, '_to': None},
+        id='most-requested',
     ),
     pytest.param(
-        f'/routes/mcp/servers/key/{KEY_UUID}/stream', 'keys', KEY_UUID, id='key'
+        '/routes/most-requested-error/stream',
+        {},
+        'request',
+        'get_most_requested_error_route',
+        [
+            _ranked(MostRequestedErrorRouteDTO, 'error-route-A', 75.0),
+            _ranked(MostRequestedErrorRouteDTO, 'error-route-B', 10.0),
+        ],
+        [
+            {'name': 'error-route-A', 'incrementPercentage': 75.0},
+            {'name': 'error-route-B', 'incrementPercentage': 10.0},
+        ],
+        {},
+        id='most-requested-error',
+    ),
+    pytest.param(
+        '/routes/most-expensive/stream',
+        {},
+        'event',
+        'get_most_expensive_route',
+        [
+            _ranked(
+                MostExpensiveRouteDTO, 'route-A', 30.0, MostExpensiveRouteChartDataDTO
+            ),
+            _ranked(
+                MostExpensiveRouteDTO, 'route-B', -10.0, MostExpensiveRouteChartDataDTO
+            ),
+        ],
+        [
+            {'name': 'route-A', 'incrementPercentage': 30.0},
+            {'name': 'route-B', 'incrementPercentage': -10.0},
+        ],
+        {},
+        id='most-expensive',
+    ),
+    pytest.param(
+        '/routes/costs/stream',
+        {'group_by': 'keys', 'routes': ROUTES, 'tags': TAGS},
+        'event',
+        'get_costs_chart_data',
+        [
+            _cost_chart(30.0, ('group-1 (route-a)', [10.0, 20.0])),
+            _cost_chart(40.0, ('group-1 (route-a)', [15.0, 25.0])),
+        ],
+        [
+            {
+                'granularity': 'hours',
+                'timestamp': COST_TS,
+                'total': 30.0,
+                'data': [_series('group-1 (route-a)', [10.0, 20.0])],
+            },
+            {'total': 40.0},
+        ],
+        {'route_names': ROUTES, 'group_by': 'keys', 'tags': TAGS},
+        id='costs',
+    ),
+    pytest.param(
+        '/routes/costs/summary/stream',
+        {'routes': ROUTES},
+        'event',
+        'get_summary_costs',
+        [
+            CostDataDTO(total=30.0),
+            CostDataDTO(total=40.0),
+        ],
+        [{'total': 30.0}, {'total': 40.0}],
+        {'route_names': ROUTES},
+        id='costs-summary',
+    ),
+    pytest.param(
+        '/routes/invocations/stream',
+        {'include_models': 'false'},
+        'event',
+        'get_invocation_chart_data',
+        [
+            InvocationChartDataDTO(
+                granularity='hours', timestamp=TS, data=[3.0, 7.0], total=10
+            )
+        ],
+        [{'granularity': 'hours', 'timestamp': TS, 'data': [3.0, 7.0], 'total': 10}],
+        {'include_models': False, 'route_names': None},
+        id='invocations',
+    ),
+    pytest.param(
+        '/routes/invocations/stream',
+        {
+            'routes': ['route-a', 'route-c'],
+            '_from': FROM_TS,
+            '_to': TO_TS,
+            'include_models': 'true',
+        },
+        'event',
+        'get_invocation_chart_data',
+        [
+            InvocationChartDataDTO(
+                granularity='hours',
+                timestamp=TS,
+                data=[
+                    ChartDataSeriesDTO(name='gpt-4', data=[2.0, 1.0]),
+                    ChartDataSeriesDTO(name='gpt-3.5', data=[3.0, 2.0]),
+                ],
+                total=8,
+            )
+        ],
+        [
+            {
+                'data': [
+                    {'name': 'gpt-4', 'data': [2.0, 1.0]},
+                    {'name': 'gpt-3.5', 'data': [3.0, 2.0]},
+                ]
+            }
+        ],
+        {
+            'include_models': True,
+            'route_names': ['route-a', 'route-c'],
+            '_from': FROM_DT,
+            '_to': TO_DT,
+        },
+        id='invocations-per-model-filtered',
+    ),
+    pytest.param(
+        '/routes/tokens/stream',
+        {},
+        'event',
+        'get_token_chart_data',
+        [
+            TokenChartDataDTO(
+                granularity='hours',
+                timestamp=TS,
+                data=[
+                    TokenChartDataSeriesDTO(name='INPUT', data=[100, 150]),
+                    TokenChartDataSeriesDTO(name='OUTPUT', data=[50, 75]),
+                ],
+                total=375,
+            )
+        ],
+        [
+            {
+                'granularity': 'hours',
+                'timestamp': TS,
+                'total': 375,
+                'data': [
+                    {'name': 'INPUT', 'data': [100, 150]},
+                    {'name': 'OUTPUT', 'data': [50, 75]},
+                ],
+            }
+        ],
+        {'route_names': None},
+        id='tokens',
+    ),
+    pytest.param(
+        '/routes/tokens/stream',
+        {'routes': ['route-a', 'route-c'], '_from': FROM_TS, '_to': TO_TS},
+        'event',
+        'get_token_chart_data',
+        [TokenChartDataDTO(granularity='hours', timestamp=[], data=[], total=0)],
+        [{'total': 0}],
+        {'route_names': ['route-a', 'route-c'], '_from': FROM_DT, '_to': TO_DT},
+        id='tokens-filtered',
+    ),
+    pytest.param(
+        f'/routes/costs/key/{KEY_UUID}/stream',
+        {'routes': ROUTES},
+        'event',
+        'get_costs_chart_data_by_route',
+        [_cost_chart(50.0, ('route-A', [10.0, 20.0]), ('route-B', [5.0, 15.0]))],
+        [
+            {
+                'granularity': 'hours',
+                'total': 50.0,
+                'data': [
+                    _series('route-A', [10.0, 20.0]),
+                    _series('route-B', [5.0, 15.0]),
+                ],
+            }
+        ],
+        {
+            'entity_column': 'API_KEY_UUID',
+            'entity_value': KEY_UUID,
+            'route_names': ROUTES,
+        },
+        id='costs-by-key',
+    ),
+    pytest.param(
+        f'/routes/costs/group/{GROUP_UUID}/stream',
+        {'routes': ['route-A']},
+        'event',
+        'get_costs_chart_data_by_route',
+        [
+            _cost_chart(
+                100.0, ('route-A', [100.0]), granularity='days', timestamp=[1736208000]
+            )
+        ],
+        [{'granularity': 'days', 'total': 100.0}],
+        {
+            'entity_column': 'GROUP_UUID',
+            'entity_value': GROUP_UUID,
+            'route_names': ['route-A'],
+        },
+        id='costs-by-group',
+    ),
+    pytest.param(
+        '/routes/costs/model/gpt-4o/stream',
+        {'routes': ROUTES},
+        'event',
+        'get_costs_chart_data_by_route',
+        [_cost_chart(42.0, ('route-A', [42.0]), timestamp=[1736330400])],
+        [{'total': 42.0}],
+        {'entity_column': 'MODEL_ID', 'entity_value': 'gpt-4o', 'route_names': ROUTES},
+        id='costs-by-model',
+    ),
+    pytest.param(
+        '/routes/mcp/servers/stream',
+        {},
+        'mcp',
+        'get_mcp_server_chart_data',
+        [
+            _mcp_chart(5, McpServerChartDataSeriesDTO(name='files', data=[2, 3])),
+            _mcp_chart(8, McpServerChartDataSeriesDTO(name='files', data=[2, 6])),
+        ],
+        [
+            {
+                'granularity': 'hours',
+                'timestamp': COST_TS,
+                'total': 5,
+                'data': [_series('files', [2, 3])],
+            },
+            {'total': 8},
+        ],
+        {'group_by': 'services'},
+        id='mcp-servers-default-services',
+    ),
+    *(
+        pytest.param(
+            '/routes/mcp/servers/stream',
+            {'group_by': group_by},
+            'mcp',
+            'get_mcp_server_chart_data',
+            [
+                _mcp_chart(
+                    4,
+                    McpServerChartDataSeriesDTO(
+                        name='retail', uuid=UUID(MCP_GROUP_UUID), data=[4]
+                    ),
+                )
+            ],
+            [{'data': [_series('retail', [4], MCP_GROUP_UUID)]}],
+            {'group_by': group_by},
+            id=f'mcp-servers-{group_by}',
+        )
+        for group_by in ('groups', 'keys')
+    ),
+    pytest.param(
+        '/routes/mcp/servers/stream',
+        {'routes': ROUTES, 'tags': TAGS},
+        'mcp',
+        'get_mcp_server_chart_data',
+        [_mcp_chart(7, McpServerChartDataSeriesDTO(name='files', data=[7]))],
+        [{'total': 7, 'data': [_series('files', [7])]}],
+        {'route_names': ROUTES, 'tags': TAGS},
+        id='mcp-servers-filtered',
+    ),
+    *_mcp_entity_cases(),
+    pytest.param(
+        MCP_ENTITIES[0][1],
+        {},
+        'mcp',
+        'get_mcp_server_chart_data_by_entity',
+        [_mcp_chart(0, granularity='days', timestamp=[])],
+        # every field of the chart: an empty entity is an empty chart, not a 404
+        [{'granularity': 'days', 'timestamp': [], 'data': [], 'total': 0}],
+        {},
+        id='mcp-entity-empty',
     ),
 ]
 
 
-class TestStreamMcpServersChartByEntity:
-    """The per-entity drill-down streams: service alias, group uuid, key uuid."""
+@pytest.mark.parametrize(
+    ('path', 'params', 'service', 'method', 'results', 'expected', 'call'),
+    STREAM_CASES,
+)
+async def test_each_tick_streams_the_service_result_and_forwards_the_query(
+    app, services, path, params, service, method, results, expected, call
+):
+    mocked = getattr(getattr(services, service), method)
+    mocked.side_effect = cycle(results)
 
-    @staticmethod
-    async def _read_events(async_client, path, params, wanted: int = 1):
-        events = []
-        async with async_client.stream(
-            'GET', f'{PROJECT_BASE}{path}', params=params
-        ) as response:
-            assert response.status_code == 200
-            assert 'text/event-stream' in response.headers['content-type']
-            current_event_lines = []
-            async for line in response.aiter_lines():
-                if line == '':
-                    if current_event_lines:
-                        events.append('\n'.join(current_event_lines))
-                        current_event_lines = []
-                        if len(events) == wanted:
-                            break
-                else:
-                    current_event_lines.append(line)
-        return events
+    payloads = await _stream(app, path, params, wanted=len(expected))
 
-    @staticmethod
-    def _payload(event: str) -> dict:
-        return json.loads(event[event.find('{') : event.rfind('}') + 1])
+    for payload, want in zip(payloads, expected, strict=True):
+        assert _subset(payload, want) == want
+    assert _subset(mocked.call_args.kwargs, call) == call
 
-    @staticmethod
-    def _single_series(group_by: str, entity_value: str, data: list[int]):
-        return McpServerChartDataDTO(
-            granularity='hours',
-            timestamp=[1736330400 + 3600 * i for i in range(len(data))],
-            data=[
-                McpServerChartDataSeriesDTO(
-                    name='files' if group_by == 'services' else 'retail',
-                    uuid=None if group_by == 'services' else UUID(entity_value),
-                    data=data,
-                )
-            ],
-            total=sum(data),
-        )
 
-    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
-    @pytest.mark.asyncio
-    async def test_stream_all_routes(self, sse_test_app, path, group_by, entity_value):
-        """Every tick carries the one entity's series for the whole project."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
+@pytest.mark.parametrize(
+    ('path', 'service', 'method', 'dto'),
+    [
+        pytest.param(
+            '/routes/most-requested-error/stream',
+            'request',
+            'get_most_requested_error_route',
+            _ranked(MostRequestedErrorRouteDTO, 'error-route-A', 50.0, total=1.0),
+            id='most-requested-error',
+        ),
+        pytest.param(
+            '/routes/most-expensive/stream',
+            'event',
+            'get_most_expensive_route',
+            _ranked(
+                MostExpensiveRouteDTO, 'route-A', 50.0, MostExpensiveRouteChartDataDTO
+            ),
+            id='most-expensive',
+        ),
+    ],
+)
+async def test_a_tick_without_data_streams_an_empty_object(
+    app, services, path, service, method, dto
+):
+    getattr(getattr(services, service), method).side_effect = cycle([None, dto])
 
-        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
-            side_effect=cycle(
-                [
-                    self._single_series(group_by, entity_value, [2, 3]),
-                    self._single_series(group_by, entity_value, [2, 6]),
-                ]
+    first, second = await _stream(app, path, wanted=2)
+
+    assert first == {}
+    assert second['name'] == dto.name
+
+
+async def test_limits_stream_sends_progress_bars_and_forwards_filters(app, services):
+    services.event.get_route_limits_progress.return_value = [
+        RouteProgressBarDTO(
+            route_name='my-route',
+            progress_bar=RouteProgressBarsDTO(
+                budget=WindowProgressBarDTO(
+                    window_length=3600,
+                    window_start_time=1_700_000_000,
+                    window_end_time=1_700_003_600,
+                    window_size=10.0,
+                    window_filled_size=7.0,
+                    window_filled_percentage=70.0,
+                ),
+                rate=WindowProgressBarDTO(
+                    window_length=60,
+                    window_start_time=1_700_003_540,
+                    window_end_time=1_700_003_600,
+                    window_size=100.0,
+                    window_filled_size=60.0,
+                    window_filled_percentage=60.0,
+                ),
+            ),
+        ),
+        RouteProgressBarDTO(route_name='bare-route', progress_bar=None),
+    ]
+
+    [payload] = await _stream(
+        app,
+        '/routes/limits/stream',
+        [
+            ('routes', 'route-a'),
+            ('routes', 'route-c'),
+            ('window_statuses', 'ok'),
+            ('window_statuses', 'warning'),
+        ],
+    )
+
+    assert len(payload) == 2
+    assert payload[0]['routeName'] == 'my-route'
+    pb = payload[0]['progressBar']
+    assert pb['budget']['windowLength'] == 3600
+    assert pb['budget']['windowSize'] == pytest.approx(10.0)
+    assert pb['budget']['windowFilledSize'] == pytest.approx(7.0)
+    assert pb['budget']['windowFilledPercentage'] == pytest.approx(70.0)
+    assert pb['budget']['windowStatus'] == WindowStatus.OK
+    assert pb['rate']['windowSize'] == pytest.approx(100.0)
+    assert pb['rate']['windowStatus'] == WindowStatus.OK
+    assert 'tokenInput' not in pb
+    assert 'tokenOutput' not in pb
+    assert payload[1] == {'routeName': 'bare-route'}
+    assert services.event.get_route_limits_progress.call_args.args[1:4] == (
+        PROJECT_NAME,
+        ['route-a', 'route-c'],
+        [WindowStatus.OK, WindowStatus.WARNING],
+    )
+
+
+@pytest.mark.parametrize(
+    ('path', 'service', 'method', 'result'),
+    [
+        pytest.param(
+            '/routes/most-requested/stream',
+            'request',
+            'get_most_requested_route',
+            _ranked(MostRequestedRouteDTO, 'route-A', 50.0),
+            id='most-requested',
+        ),
+        pytest.param(
+            '/routes/invocations/stream',
+            'event',
+            'get_invocation_chart_data',
+            InvocationChartDataDTO(granularity='hours', timestamp=[], data=[], total=0),
+            id='invocations',
+        ),
+        pytest.param(
+            '/routes/tokens/stream',
+            'event',
+            'get_token_chart_data',
+            TokenChartDataDTO(granularity='hours', timestamp=[], data=[], total=0),
+            id='tokens',
+        ),
+        pytest.param(
+            '/routes/mcp/servers/stream',
+            'mcp',
+            'get_mcp_server_chart_data',
+            _mcp_chart(0, timestamp=[1736208000]),
+            id='mcp-servers',
+        ),
+        *(
+            pytest.param(
+                path,
+                'mcp',
+                'get_mcp_server_chart_data_by_entity',
+                _mcp_entity_chart(group_by, value, [1]),
+                id=f'mcp-{name}',
             )
-        )
+            for name, path, group_by, value in MCP_ENTITIES
+        ),
+    ],
+)
+async def test_a_look_back_window_is_recomputed_on_every_tick(
+    app, services, path, service, method, result
+):
+    mocked = getattr(getattr(services, service), method)
+    mocked.return_value = result
 
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(async_client, path, {}, wanted=2)
+    await _stream(app, path, {'_gte': 3600}, wanted=3)
 
-                    assert len(events) == 2
-                    payload = self._payload(events[0])
-                    assert payload['granularity'] == 'hours'
-                    assert payload['timestamp'] == [1736330400, 1736334000]
-                    assert payload['total'] == 5
-                    assert len(payload['data']) == 1
-                    assert payload['data'][0]['data'] == [2, 3]
-                    assert payload['data'][0]['uuid'] == (
-                        None if group_by == 'services' else entity_value
-                    )
-                    assert self._payload(events[1])['total'] == 8
+    calls = mocked.call_args_list
+    froms = [call.kwargs['_from'] for call in calls]
+    assert len(froms) == 3
+    assert all(f is not None for f in froms)
+    assert all(call.kwargs['_to'] is None for call in calls)
+    assert froms == sorted(froms)
+    assert len(set(froms)) > 1
 
-                    call_kwargs = mcp_usage_service.get_mcp_server_chart_data_by_entity.call_args.kwargs
-                    assert call_kwargs['project_uuid'] == PROJECT_UUID
-                    assert call_kwargs['group_by'] == group_by
-                    assert call_kwargs['entity_value'] == entity_value
-                    assert call_kwargs['route_names'] is None
-                    assert call_kwargs['tags'] is None
 
-    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
-    @pytest.mark.asyncio
-    async def test_stream_filtered_routes(
-        self, sse_test_app, path, group_by, entity_value
+@pytest.mark.parametrize(
+    ('path', 'params'),
+    [
+        pytest.param('/routes/costs/stream', {'group_by': 'groups'}, id='costs'),
+        pytest.param('/routes/costs/summary/stream', {}, id='costs-summary'),
+        pytest.param('/routes/most-requested/stream', {}, id='most-requested'),
+        pytest.param('/routes/invocations/stream', {}, id='invocations'),
+        pytest.param('/routes/tokens/stream', {}, id='tokens'),
+        pytest.param(f'/routes/costs/key/{KEY_UUID}/stream', {}, id='costs-by-key'),
+        pytest.param('/routes/mcp/servers/stream', {}, id='mcp-servers'),
+        *(
+            pytest.param(path, {}, id=f'mcp-{name}')
+            for name, path, _, _ in MCP_ENTITIES
+        ),
+    ],
+)
+async def test_a_stream_rejects_a_look_back_combined_with_bounds(
+    app, services, path, params
+):
+    response = await _get(app, path, {**params, '_gte': 3600, '_from': 1700000000})
+
+    assert response.status_code == 400
+    assert '_gte' in response.json()['error']['message'].lower()
+
+
+@pytest.mark.parametrize(
+    ('params', 'message'),
+    [
+        pytest.param({'_gte': 0}, 'positive', id='zero-gte'),
+        pytest.param({'_gte': -100}, 'positive', id='negative-gte'),
+    ],
+)
+async def test_invalid_time_params_are_rejected(app, services, params, message):
+    response = await _get(app, '/routes/most-requested/stream', params)
+
+    assert response.status_code == 400
+    assert message in response.json()['error']['message'].lower()
+
+
+def test_compute_sse_time_range_rolls_a_look_back_and_keeps_fixed_bounds():
+    before = datetime.now(timezone.utc) - timedelta(seconds=3600)
+    from_dt, to_dt = compute_sse_time_range(3600, None, None)
+    after = datetime.now(timezone.utc) - timedelta(seconds=3600)
+    assert to_dt is None
+    assert before <= from_dt <= after
+
+    from_dt, to_dt = compute_sse_time_range(None, 1700000000, 1700003600)
+    assert from_dt.timestamp() == 1700000000
+    assert to_dt.timestamp() == 1700003600
+
+    assert compute_sse_time_range(None, None, None) == (None, None)
+
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        pytest.param('/routes/mcp/servers/stream', id='mcp-servers'),
+        *(pytest.param(path, id=f'mcp-{name}') for name, path, _, _ in MCP_ENTITIES),
+    ],
+)
+async def test_an_unknown_project_fails_before_the_stream_opens(app, services, path):
+    services.project.validate_exists.side_effect = ProjectNotFoundError(
+        'Project with UUID ... not found'
+    )
+
+    response = await _get(app, path)
+
+    assert response.status_code == 404
+
+
+async def test_a_malformed_grouping_or_entity_uuid_is_rejected(app, services):
+    for path, params in (
+        ('/routes/mcp/servers/stream', {'group_by': 'models'}),
+        ('/routes/mcp/servers/group/not-a-uuid/stream', None),
+        ('/routes/mcp/servers/key/not-a-uuid/stream', None),
     ):
-        """The routes filter reaches the service on every tick."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
-            side_effect=cycle([self._single_series(group_by, entity_value, [7])])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(
-                        async_client, path, {'routes': ['route-A', 'route-B']}
-                    )
-
-                    assert len(events) == 1
-                    payload = self._payload(events[0])
-                    assert payload['total'] == 7
-                    assert payload['data'][0]['data'] == [7]
-                    call_kwargs = mcp_usage_service.get_mcp_server_chart_data_by_entity.call_args.kwargs
-                    assert call_kwargs['route_names'] == ['route-A', 'route-B']
-
-    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
-    @pytest.mark.asyncio
-    async def test_stream_filtered_tags(
-        self, sse_test_app, path, group_by, entity_value
-    ):
-        """The tags filter reaches the service on every tick."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
-            side_effect=cycle([self._single_series(group_by, entity_value, [3])])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(
-                        async_client,
-                        path,
-                        {'tags': ['env=prod', 'cost_center=retail']},
-                    )
-
-                    assert len(events) == 1
-                    payload = self._payload(events[0])
-                    assert payload['total'] == 3
-                    call_kwargs = mcp_usage_service.get_mcp_server_chart_data_by_entity.call_args.kwargs
-                    assert call_kwargs['tags'] == ['env=prod', 'cost_center=retail']
-
-    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
-    @pytest.mark.asyncio
-    async def test_stream_empty_entity_is_an_empty_chart(
-        self, sse_test_app, path, group_by, entity_value
-    ):
-        """An unknown or quiet entity streams an empty chart, not a 404."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
-            side_effect=cycle(
-                [
-                    McpServerChartDataDTO(
-                        granularity='days', timestamp=[], data=[], total=0
-                    )
-                ]
-            )
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(async_client, path, {})
-
-                    assert len(events) == 1
-                    assert self._payload(events[0]) == {
-                        'granularity': 'days',
-                        'timestamp': [],
-                        'data': [],
-                        'total': 0,
-                    }
-
-    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
-    @pytest.mark.asyncio
-    async def test_stream_rolling_window_moves(
-        self, sse_test_app, path, group_by, entity_value
-    ):
-        """A look-back window is recomputed on every tick, not frozen."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        mcp_usage_service.get_mcp_server_chart_data_by_entity = MagicMock(
-            side_effect=cycle([self._single_series(group_by, entity_value, [1])])
-        )
-
-        with patch(
-            'radicalbit_ai_gateway.routes.dashboard_route.sleep', return_value=None
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url='http://localhost:9000'
-            ) as async_client:
-                with anyio.move_on_after(2):
-                    events = await self._read_events(
-                        async_client, path, {'_gte': 3600}, wanted=3
-                    )
-
-                    assert len(events) == 3
-                    calls = mcp_usage_service.get_mcp_server_chart_data_by_entity.call_args_list
-                    froms = [call.kwargs['_from'] for call in calls]
-                    assert all(f is not None for f in froms)
-                    assert all(call.kwargs['_to'] is None for call in calls)
-                    assert froms == sorted(froms)
-                    assert len(set(froms)) > 1
-
-    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
-    @pytest.mark.asyncio
-    async def test_stream_bad_request_gte_and_from(
-        self, sse_test_app, path, group_by, entity_value
-    ):
-        """Combining a look-back with explicit bounds is rejected."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}{path}', params={'_gte': 3600, '_from': 1700000000}
-            )
-            assert response.status_code == 400
-            assert '_gte' in response.json()['error']['message'].lower()
-
-    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
-    @pytest.mark.asyncio
-    async def test_stream_bad_request_non_positive_gte(
-        self, sse_test_app, path, group_by, entity_value
-    ):
-        """A non-positive look-back is rejected."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(
-                f'{PROJECT_BASE}{path}', params={'_gte': 0}
-            )
-            assert response.status_code == 400
-
-    @pytest.mark.parametrize(('path', 'group_by', 'entity_value'), MCP_ENTITY_ENDPOINTS)
-    @pytest.mark.asyncio
-    async def test_stream_unknown_project(
-        self, sse_test_app, path, group_by, entity_value
-    ):
-        """An unknown project fails loudly before the stream opens."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            project_service,
-        ) = sse_test_app
-        project_service.validate_exists = MagicMock(
-            side_effect=ProjectNotFoundError('Project with UUID ... not found')
-        )
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            response = await async_client.get(f'{PROJECT_BASE}{path}')
-            assert response.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_a_malformed_group_or_key_uuid_is_rejected(self, sse_test_app):
-        """The group and key routes take a uuid, and say so."""
-        (
-            app,
-            _request_event_service,
-            _event_service,
-            _mcp_usage_service,
-            _project_service,
-        ) = sse_test_app
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url='http://localhost:9000'
-        ) as async_client:
-            for kind in ('group', 'key'):
-                response = await async_client.get(
-                    f'{PROJECT_BASE}/routes/mcp/servers/{kind}/not-a-uuid/stream'
-                )
-                assert response.status_code == 422, kind
+        response = await _get(app, path, params)
+        assert response.status_code == 422, path

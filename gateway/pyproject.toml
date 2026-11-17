@@ -5,14 +5,14 @@ description = "Extensible LLM gateway with guardrails, rate limiting, routing, c
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "en-core-web-lg",
     "it-core-news-md",
     "rich>=14.1.0",
     "openai>=2.15.0",
     "anthropic>=1.4.0",
-    "google-genai>=2.22.0",
+    "google-genai>=2.34.0",
     "httpx>=0.28.1",
     "certifi>=2026.10.19",
     "filetype>=1.2.0",
@@ -45,7 +45,7 @@ dependencies = [
     "fastapi>=0.135.1",
     "fastapi-pagination>=0.15.11",
     "azure-health-deidentification>=1.0.0b3",
-    "azure-identity>=1.26.0",
+    "azure-identity>=1.27.0",
     "python-multipart>=0.0.20",
     "mcp>=2.0,<3",
 ]
@@ -99,6 +99,14 @@ asyncio_mode = "auto"
 env = []
 addopts = "--cov=radicalbit_ai_gateway --cov-report=term-missing --cov-report=xml --cov-report=html"
 testpaths = ["tests"]
+filterwarnings = [
+    # Deprecations in our own code, or in our use of a library, fail the run.
+    "error::DeprecationWarning",
+    "error::PendingDeprecationWarning",
+    # Third-party code we cannot change.
+    "ignore:Support for class-based `config` is deprecated:pydantic.warnings.PydanticDeprecatedSince20:traceloop",
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette",
+]
 
 [tool.coverage.run]
 source = ["radicalbit_ai_gateway"]

@@ -114,13 +114,13 @@ class TestUsageRoute(unittest.TestCase):
         assert response.status_code == 200
         response_json = response.json()
 
-        assert response_json['routes'][0]['summary']['inputCost'] == 10.5
-        assert response_json['routes'][0]['summary']['outputCost'] == 20.3
-        assert response_json['routes'][0]['summary']['totalCost'] == 30.8
-        assert 'total' in response_json['routes'][0]['summary']
-        assert 'totals' in response_json['routes'][0]['summary']
-        assert 'chatModels' in response_json['routes'][0]['summary']
-        assert response_json['routes'][0]['summary']['total'] == 30.8
+        assert response_json == jsonable_encoder(
+            expected, by_alias=True, exclude_none=True
+        )
+        summary = response_json['routes'][0]['summary']
+        # The breakdown only: the pre-breakdown totals are no longer served.
+        assert set(summary) == {'total', 'totals', 'chatModels'}
+        assert summary['total'] == 30.8
 
         call_kwargs = self.event_service.get_all_routes_costs.call_args.kwargs
         assert call_kwargs['project_uuid'] == PROJECT_UUID

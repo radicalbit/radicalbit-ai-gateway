@@ -27,6 +27,13 @@ class TreeNodeDTO(BaseModel):
     total_tokens: int = 0
     error_count: int = 0
     created_at: int
+    # Span start minus root span start, so a waterfall can place parallel spans
+    start_offset_ms: float = 0.0
+    # auth, invocation, guardrail...: lets the detail pick the invocation span
+    # without loading every span. None when the span carries no category.
+    operation_category: str | None = None
+    # workflow or task (traceloop.span.kind)
+    span_kind: str | None = None
     children: list['TreeNodeDTO'] = Field(default_factory=list)
 
     model_config = ConfigDict(

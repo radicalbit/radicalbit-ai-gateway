@@ -4,13 +4,14 @@ import usePersistProjectUuid from '@Hooks/use-persist-project-uuid';
 import usePersistQueryParams from '@Hooks/use-persistence-query-params';
 import { Tabs, Void } from '@radicalbit/radicalbit-design-system';
 import { FolderOpen } from 'lucide-react';
-import { useEffect, useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSearchParams } from 'react-router-dom';
 import Dashboard from './dashboard';
 import Filters from './filters';
 import ProjectFilter from './project-filter';
-import Tracing from './tracing';
+import Requests from './requests';
+import './_styles.less';
 
 const PERSISTED_KEYS = ['routes', 'requestType', 'preset', 'from', 'to'];
 const STORAGE_KEY = 'rbit-gw-tracing';
@@ -20,11 +21,13 @@ const TRACING_LIST_TABS = {
     key: 'dashboard',
     label: 'Dashboard',
   },
-  tracing: {
-    key: 'tracing',
-    label: 'Tracing',
+  requests: {
+    key: 'requests',
+    label: 'Requests',
   },
 };
+
+const TAB_KEYS = Object.keys(TRACING_LIST_TABS);
 
 const items = [
   {
@@ -32,8 +35,8 @@ const items = [
     label: TRACING_LIST_TABS.dashboard.label,
   },
   {
-    key: TRACING_LIST_TABS.tracing.key,
-    label: TRACING_LIST_TABS.tracing.label,
+    key: TRACING_LIST_TABS.requests.key,
+    label: TRACING_LIST_TABS.requests.label,
   },
 ];
 
@@ -61,7 +64,7 @@ function NoProjectSelected() {
     <div className="flex justify-center items-center h-full">
       <Void
         actions={<ProjectFilter id={projectId} />}
-        description="Select a project to view tracing data"
+        description="Select a project to view its requests"
         image={<Lucide icon={FolderOpen} />}
         title="No project selected"
       />
@@ -70,30 +73,68 @@ function NoProjectSelected() {
 }
 
 function ProjectSelected() {
+  const containerRef = useRef(null);
+  const filtersRef = useRef(null);
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeKey = searchParams.get('tab') ?? 'dashboard';
+  const tab = searchParams.get('tab');
+  const activeKey = TAB_KEYS.includes(tab) ? tab : TRACING_LIST_TABS.dashboard.key;
 
   const handleOnChange = (key) => {
     searchParams.set('tab', key);
     setSearchParams(searchParams);
   };
 
+  useStickyFiltersSize(containerRef, filtersRef);
+
+  if (activeKey === TRACING_LIST_TABS.requests.key) {
+    return (
+      <div className="flex flex-col" ref={containerRef}>
+        <div className="c-observability__filters flex flex-col gap-5" ref={filtersRef}>
+          <Tabs activeKey={activeKey} items={items} onChange={handleOnChange} />
+
+          <Filters />
+        </div>
+
+        <Requests />
+      </div>
+    );
+  }
+
   return (
-    <>
-      <Tabs
-        activeKey={activeKey}
-        items={items}
-        onChange={handleOnChange}
-        sticky
-      />
+    <div className="flex flex-col" ref={containerRef}>
+      <div className="c-observability__filters flex flex-col gap-5" ref={filtersRef}>
+        <Tabs activeKey={activeKey} items={items} onChange={handleOnChange} />
 
-      <Filters />
+        <Filters />
+      </div>
 
-      {activeKey === 'dashboard' && <Dashboard />}
-
-      {activeKey === 'tracing' && <Tracing />}
-    </>
+      <Dashboard />
+    </div>
   );
+}
+
+function useStickyFiltersSize(containerRef, filtersRef) {
+  useEffect(() => {
+    const container = containerRef.current;
+    const filters = filtersRef.current;
+    const scroller = container?.closest('.ant-layout-content');
+
+    if (!container || !filters || !scroller) {
+      return undefined;
+    }
+
+    const handleOnResize = () => {
+      container.style.setProperty('--observability-filters-height', `${filters.offsetHeight}px`);
+      container.style.setProperty('--observability-viewport-height', `${scroller.clientHeight}px`);
+    };
+
+    const observer = new ResizeObserver(handleOnResize);
+
+    observer.observe(filters);
+    observer.observe(scroller);
+
+    return () => observer.disconnect();
+  }, [containerRef, filtersRef]);
 }
 
 const useInitLayoutConfigurations = () => {

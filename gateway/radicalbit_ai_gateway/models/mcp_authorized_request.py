@@ -5,13 +5,13 @@ from radicalbit_ai_gateway.models.mcp_server import AnyMcpServer
 
 
 class McpAuthorizedRequest(BaseModel):
-    """What ``McpService.authorize`` established, for its caller to act on.
+    """What the MCP endpoint's admission established, for the dispatch to act
+    on (see ``McpService.authorized``).
 
-    Frozen: authorization is settled by the time this exists, so the endpoint
-    applying route-level features to it cannot rewrite what was authorized.
+    Frozen: authorization is settled by the time this exists, so nothing
+    applying route-level features to it can rewrite what was authorized.
 
-    ``route_key`` is carried so the caller looks the route up under the key the
-    binding check already used, rather than rebuilding that format itself.
+    ``route_key`` is the key the binding check used.
     """
 
     model_config = ConfigDict(frozen=True)

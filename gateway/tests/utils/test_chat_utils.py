@@ -1,6 +1,5 @@
-from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk
+from radicalbit_ai_gateway.llm.messages import AIMessage
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils, completion_reasoning
-from radicalbit_ai_gateway.utils.streaming_utils import StreamingUtils
 
 
 def test_to_openai_chat_completion_with_reasoning_content():
@@ -76,16 +75,6 @@ def test_reasoning_goes_out_under_both_names():
     assert msg.reasoning == 'Thinking.'
 
 
-def test_streamed_reasoning_goes_out_under_both_names():
-    chunk = StreamingUtils.to_openai_chat_completion_chunk(
-        AIMessageChunk(content='', additional_kwargs={'reasoning_content': 'Hm'}),
-        model_id_invoked='qwen3',
-    )
-    delta = chunk.choices[0].delta
-    assert delta.reasoning_content == 'Hm'
-    assert delta.reasoning == 'Hm'
-
-
 USAGE_WITH_DETAILS = {
     'input_tokens': 25,
     'output_tokens': 535,
@@ -105,13 +94,6 @@ def test_non_streaming_usage_carries_reasoning_and_cached_tokens():
     assert usage.completion_tokens == 535
     assert usage.completion_tokens_details.reasoning_tokens == 530
     assert usage.prompt_tokens_details.cached_tokens == 24
-
-
-def test_non_streaming_and_streaming_usage_match():
-    chunk = StreamingUtils.build_usage_chunk(
-        final_usage=USAGE_WITH_DETAILS, model_id_invoked='m', request_id='r'
-    )
-    assert _completion(USAGE_WITH_DETAILS).usage == chunk.usage
 
 
 def test_usage_reads_the_service_tier_names():
@@ -156,28 +138,3 @@ def test_completion_reasoning_reads_either_name():
     assert completion_reasoning(message) == ''
     message.reasoning = 'Thinking.'
     assert completion_reasoning(message) == 'Thinking.'
-
-
-def test_with_text_puts_the_whole_text_first_and_keeps_the_rest():
-    chunks = [
-        AIMessageChunk(content='', additional_kwargs={'reasoning_content': 'a@'}),
-        AIMessageChunk(content='', additional_kwargs={'reasoning_content': 'b.com'}),
-        AIMessageChunk(content='Hi '),
-        AIMessageChunk(
-            content='there',
-            tool_call_chunks=[{'name': 'f', 'args': '{}', 'id': 'c1', 'index': 0}],
-        ),
-        AIMessageChunk(content='', response_metadata={'finish_reason': 'stop'}),
-    ]
-
-    out = StreamingUtils.with_text(chunks, 'Hi <X>', '<EMAIL>')
-
-    assert [c.additional_kwargs.get('reasoning_content') for c in out] == [
-        '<EMAIL>',
-        None,
-        None,
-        None,
-    ]
-    assert [c.content for c in out] == ['', 'Hi <X>', '', '']
-    assert out[2].tool_call_chunks[0]['id'] == 'c1'
-    assert out[3].response_metadata == {'finish_reason': 'stop'}

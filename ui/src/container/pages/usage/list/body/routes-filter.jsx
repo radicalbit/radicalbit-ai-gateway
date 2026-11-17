@@ -35,13 +35,14 @@ function RoutesFilter({ id }) {
       allowClear
       disabled={isError}
       id={id}
-      maxTagCount="responsive"
+      maxTagCount={2}
+      maxTagTextLength={8}
       mode="multiple"
       onChange={handleOnChange}
       options={options}
       placeholder={placeholder}
       showSearch
-      style={{ width: 400 }}
+      style={{ minWidth: 240, maxWidth: 300 }}
       value={selectedRoutes}
     />
   );

@@ -15,7 +15,7 @@ inputs:
   uv-version:
     description: uv version to install.
     required: false
-    default: "0.7.13"
+    default: "0.13.8"
   cyclonedx-bom-version:
     description: cyclonedx-bom (cyclonedx-py) version to run via uvx.
     required: false

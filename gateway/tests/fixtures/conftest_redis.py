@@ -1,7 +1,7 @@
 import pytest
 from redis import Redis
 from redis.exceptions import ConnectionError
-from testcontainers.redis import RedisContainer
+from testcontainers.community.redis import RedisContainer
 
 
 def get_redis_url(container: RedisContainer) -> str:
