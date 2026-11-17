@@ -17,12 +17,6 @@ function Filters() {
   const [searchParams] = useSearchParams();
   const isRequestsTab = searchParams.get('tab') === 'requests';
 
-  const typeFilter = isRequestsTab ? (
-    <FormField htmlFor={requestTypeId} label="Type">
-      <RequestTypeFilter id={requestTypeId} />
-    </FormField>
-  ) : false;
-
   return (
     <div className="flex flex-row flex-wrap items-end gap-4">
       <FormField htmlFor={projectId} label="Project">
@@ -33,7 +27,11 @@ function Filters() {
         <TagsFilter id={tagsId} />
       </FormField>
 
-      {typeFilter}
+      {isRequestsTab && (
+        <FormField htmlFor={requestTypeId} label="Type">
+          <RequestTypeFilter id={requestTypeId} />
+        </FormField>
+      )}
 
       <FormField htmlFor={routesId} label="Routes">
         <RoutesFilter id={routesId} />

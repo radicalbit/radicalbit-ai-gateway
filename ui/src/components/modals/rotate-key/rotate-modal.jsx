@@ -20,8 +20,6 @@ import {
 import useHandleOnSubmit from './useHandleOnSubmit';
 
 // The design system forces its own widths on these inputs: they fill flex-1 wrappers instead
-const FULL_WIDTH = { width: '100%' };
-
 function RotateModal() {
   const { hideModal, modalPayload } = useModals();
   const uuid = modalPayload?.data?.uuid;
@@ -32,7 +30,6 @@ function RotateModal() {
   const name = data?.name;
 
   const backendError = error('silent.backend');
-  const backendErrorField = backendError ? <FormField message={backendError} /> : false;
 
   return (
     <RbitModal
@@ -55,7 +52,7 @@ function RotateModal() {
 
           <GracePeriod />
 
-          {backendErrorField}
+          {backendError && <FormField message={backendError} />}
         </div>
       </Spinner>
     </RbitModal>
@@ -135,46 +132,36 @@ function GracePeriod() {
     write('unit', value);
   };
 
-  const graceRadio = isNoGraceOnly
-    ? (
-      <Tooltip title="The credential expires in less than 1 hour: only no grace period is possible">
-        <span><Radio disabled value={GraceModeEnum.GRACE}>Grace period</Radio></span>
-      </Tooltip>
-    )
-    : <Radio value={GraceModeEnum.GRACE}>Grace period</Radio>;
-
-  // w-0 min-w-full: the row never widens the group, it only fills the presets bar's width
-  const customFields = isCustom ? (
-    <div className="flex gap-2 w-0 min-w-full">
-      <div className="flex-1 min-w-0">
-        <InputNumber aria-label="Grace period amount" disabled={isLoading} min={1} onChange={handleOnChangeAmount} precision={0} style={FULL_WIDTH} value={amount} />
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <Select aria-label="Grace period unit" disabled={isLoading} onChange={handleOnChangeUnit} options={UNIT_OPTIONS} popupMatchSelectWidth={false} style={FULL_WIDTH} value={unit} />
-      </div>
-    </div>
-  ) : false;
-
-  // inline-flex: the group takes the presets bar's width, and the Custom row stretches to it
-  const graceDetails = isGrace ? (
-    <div className="inline-flex flex-col gap-2 self-start">
-      <Segmented aria-label="Grace period duration" disabled={isLoading} onChange={handleOnChangePreset} options={presetOptions} value={preset} />
-
-      {customFields}
-    </div>
-  ) : false;
-
   return (
     <FormField message={fieldError}>
       <div className="flex flex-col gap-2">
         <Radio.Group aria-label="Grace period" disabled={isLoading} onChange={handleOnChangeMode} value={mode}>
-          {graceRadio}
+          {isNoGraceOnly ? (
+            <Tooltip title="The credential expires in less than 1 hour: only no grace period is possible">
+              <span><Radio disabled value={GraceModeEnum.GRACE}>Grace period</Radio></span>
+            </Tooltip>
+          ) : <Radio value={GraceModeEnum.GRACE}>Grace period</Radio>}
 
           <Radio value={GraceModeEnum.NONE}>No grace period</Radio>
         </Radio.Group>
 
-        {graceDetails}
+        {isGrace && (
+          <div className="inline-flex flex-col gap-2 self-start">
+            <Segmented aria-label="Grace period duration" disabled={isLoading} onChange={handleOnChangePreset} options={presetOptions} value={preset} />
+
+            {isCustom && (
+              <div className="flex gap-2 w-0 min-w-full">
+                <div className="flex-1 min-w-0">
+                  <InputNumber aria-label="Grace period amount" disabled={isLoading} min={1} onChange={handleOnChangeAmount} precision={0} style={{ width: '100%' }} value={amount} />
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <Select aria-label="Grace period unit" disabled={isLoading} onChange={handleOnChangeUnit} options={UNIT_OPTIONS} popupMatchSelectWidth={false} style={{ width: '100%' }} value={unit} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <span className="text-xs opacity-70">{help}</span>
       </div>

@@ -10,13 +10,16 @@ function EditScreen() {
   const { form, write } = useFormbitContext();
   const row = form?.limits?.[0];
 
-  const { duplicateError, errorMessage, handleOnCancel, isWindowChanged } = useHandleOnEdit();
+  const { duplicateError, errorMessage, handleOnCancel, handleOnSave, isWindowChanged } = useHandleOnEdit();
 
   const message = duplicateError ?? errorMessage;
-  const errorField = message ? <FormField message={message} /> : false;
 
   const handleOnChange = (next) => {
     write('limits[0]', next);
+  };
+
+  const handleOnPressEnter = () => {
+    handleOnSave();
   };
 
   if (!row) {
@@ -31,9 +34,9 @@ function EditScreen() {
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <LimitFields limit={row} onChange={handleOnChange} withCategory={false} />
+          <LimitFields limit={row} onChange={handleOnChange} onPressEnter={handleOnPressEnter} path="limits[0]" withCategory={false} />
 
-          {errorField}
+          {message && <FormField message={message} />}
         </div>
 
         <LimitNotes isEditing isWindowChanged={isWindowChanged} />

@@ -20,28 +20,29 @@ function Models({ configuration }) {
     return '--';
   }
 
-  const content = (
-    <div className="flex flex-col gap-2">
-      {groups.map(({ key, title, models }, index) => (
-        <Fragment key={key}>
-          {index > 0 && <Divider style={{ margin: 0 }} />}
-
-          <div className="flex flex-col justify-center w-full gap-1">
-            <strong>{title}</strong>
-
-            <div className="flex flex-col">
-              {models.map(({ model, modelId }) => (
-                <div key={modelId}>{model}</div>
-              ))}
-            </div>
-          </div>
-        </Fragment>
-      ))}
-    </div>
-  );
-
   return (
-    <InfoPopover content={content} minWidth="250">
+    <InfoPopover
+      content={(
+        <div className="flex flex-col gap-2">
+          {groups.map(({ key, title, models }, index) => (
+            <Fragment key={key}>
+              {index > 0 && <Divider style={{ margin: 0 }} />}
+
+              <div className="flex flex-col justify-center w-full gap-1">
+                <strong>{title}</strong>
+
+                <div className="flex flex-col">
+                  {models.map(({ model, modelId }) => (
+                    <div key={modelId}>{model}</div>
+                  ))}
+                </div>
+              </div>
+            </Fragment>
+          ))}
+        </div>
+      )}
+      minWidth="250"
+    >
       {count}
     </InfoPopover>
   );

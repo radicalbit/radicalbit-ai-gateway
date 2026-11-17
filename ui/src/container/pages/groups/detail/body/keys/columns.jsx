@@ -1,6 +1,6 @@
+import HtmlAnchor from '@Components/html-anchor';
 import Lucide from '@Components/lucide';
 import SuccessMessage from '@Components/success-message';
-import TableRowLink from '@Components/table-row-link';
 import {
   CredentialStateEnum, DATE_FORMAT, DATE_FORMAT_SHORT, GATEWAY_OWNER, PathsEnum, ROTATION_FORMAT, RotationStateEnum, SEARCH_PARAMS,
 } from '@Src/constants';
@@ -15,7 +15,7 @@ import {
 import classNames from 'classnames';
 import dayjs from 'dayjs';
 import { Trash } from 'lucide-react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 
 const columns = [
   {
@@ -66,12 +66,25 @@ function Name({ record }) {
       )}
       title={(
         <Truncate tooltip={{ title: name, placement: 'topLeft' }}>
-          <TableRowLink to={`/${PathsEnum.CREDENTIALS}?${SEARCH_PARAMS.credentials}=${encodeURIComponent(name)}`}>
-            <span className={className}>{name}</span>
-          </TableRowLink>
+          <CredentialLink className={className} name={name} />
         </Truncate>
       )}
     />
+  );
+}
+
+function CredentialLink({ className, name }) {
+  const navigate = useNavigate();
+
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+    navigate(`/${PathsEnum.CREDENTIALS}?${SEARCH_PARAMS.credentials}=${encodeURIComponent(name)}`);
+  };
+
+  return (
+    <HtmlAnchor onClick={handleOnClick}>
+      <span className={className}>{name}</span>
+    </HtmlAnchor>
   );
 }
 

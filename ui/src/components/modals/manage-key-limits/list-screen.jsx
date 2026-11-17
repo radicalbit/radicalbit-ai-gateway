@@ -182,31 +182,26 @@ function CategoryBlock({ category }) {
     setIsExpanded((previous) => !previous);
   };
 
-  const chevron = isExpanded ? ChevronDown : ChevronRight;
-  const title = `${LIMIT_CATEGORY_LABELS[category]} · ${dataSource.length}`;
-  const table = isExpanded ? (
-    <DataTable
-      columns={columns}
-      dataSource={dataSource}
-      noPadding
-      pagination={false}
-      rowClassName={getRowClassName}
-      rowKey={getRowKey}
-      showHeader={false}
-      size="small"
-    />
-  ) : false;
-
   return (
     <Board
       header={(
         <button aria-expanded={isExpanded} className="flex gap-2 items-center p-0 border-0 bg-transparent text-inherit text-left font-[inherit] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--coo-fg-black)] font-[var(--coo-font-weight-bold)]" onClick={handleOnToggle} type="button">
-          <Lucide icon={chevron} />
+          <Lucide icon={isExpanded ? ChevronDown : ChevronRight} />
 
-          {title}
+          {`${LIMIT_CATEGORY_LABELS[category]} · ${dataSource.length}`}
         </button>
       )}
-      main={table}
+      main={isExpanded && (
+        <DataTable
+          columns={columns}
+          dataSource={dataSource}
+          pagination={false}
+          rowClassName={getRowClassName}
+          rowKey={getRowKey}
+          showHeader={false}
+          size="small"
+        />
+      )}
       width="100%"
     />
   );

@@ -4,7 +4,9 @@ import {
 } from '@Components/limits/helpers';
 import useNowSeconds from '@Components/limits/use-now-seconds';
 import Lucide from '@Components/lucide';
+import { ScreenEnum } from '@Components/modals/manage-project-budget/schema';
 import formatUsd from '@Helpers/format-usd';
+import useModals, { modals } from '@Hooks/use-modals';
 import { numberFormatterInt } from '@Src/constants';
 import { useProjectBudgetLimitsConsumption } from '@State/projects/hooks';
 import { useGetProjectBudgetWithRange } from '@State/usage/vertical-hooks';
@@ -15,8 +17,6 @@ import { TriangleAlert } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { filterBudgetsByStatus, formatNoBudgetMatches, parseWindowStatuses } from './helpers';
 import LivePin from './live-pin';
-
-const EMPTY_VALUE = '--';
 
 const STATUS_TO_TYPE = {
   ok: 'success',
@@ -57,6 +57,7 @@ function ProjectBudget() {
     <Board
       header={(
         <NewHeader
+          details={{ one: <ManageBudgets /> }}
           padding="none"
           title={<SectionTitle subtitle="Shared by every route in this project" title="Project budget" titleSuffix={<LivePin />} />}
         />
@@ -115,8 +116,44 @@ function IsError() {
   );
 }
 
+function ManageBudgets() {
+  const { showModal } = useModals();
+
+  const [searchParams] = useSearchParams();
+  const projectUuid = searchParams.get('projectUuid');
+
+  const { data } = useGetProjectBudgetWithRange();
+  const limits = data?.limits ?? [];
+
+  const handleOnManage = () => {
+    showModal(modals.MANAGE_PROJECT_BUDGET, { uuid: projectUuid });
+  };
+
+  if (!limits.length) {
+    return false;
+  }
+
+  return <Button onClick={handleOnManage}>Manage budgets</Button>;
+}
+
 function IsEmpty() {
-  return <Void description="Spending in this project has no cap of its own. Route and credential limits still apply." size="small" title="This project has no budget" />;
+  const { showModal } = useModals();
+
+  const [searchParams] = useSearchParams();
+  const projectUuid = searchParams.get('projectUuid');
+
+  const handleOnConfigure = () => {
+    showModal(modals.MANAGE_PROJECT_BUDGET, { uuid: projectUuid, screen: ScreenEnum.ADD });
+  };
+
+  return (
+    <Void
+      actions={<Button onClick={handleOnConfigure}>Configure budget</Button>}
+      description="Spending in this project has no cap of its own. Route and credential limits still apply."
+      size="small"
+      title="This project has no budget"
+    />
+  );
 }
 
 function IsSuccess() {
@@ -191,7 +228,7 @@ function Consumption({ limit }) {
   const percentage = numberFormatterInt(windowFilledPercentage);
 
   if (!bar) {
-    return EMPTY_VALUE;
+    return '--';
   }
 
   return (
@@ -214,7 +251,7 @@ function Spent({ limit }) {
   const windowFilledSize = bar?.windowFilledSize;
 
   if (!bar) {
-    return EMPTY_VALUE;
+    return '--';
   }
 
   return formatUsd(windowFilledSize);
@@ -235,7 +272,7 @@ function Resets({ limit }) {
   const resetsIn = formatResetsIn({ algorithm, bar, now });
 
   if (!resetsIn) {
-    return EMPTY_VALUE;
+    return '--';
   }
 
   return `${resetsIn.charAt(0).toUpperCase()}${resetsIn.slice(1)}`;

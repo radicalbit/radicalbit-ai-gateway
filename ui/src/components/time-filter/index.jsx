@@ -13,17 +13,11 @@ export default function TimeFilter({ id, keys = defaultKeys, reverse = false, st
 
   usePersistQueryParams(keys, storageKey);
 
-  const css = classNames('c-time-filter', { 'c-time-filter--reverse': reverse });
-
-  const customOrPresets = isCustom
-    ? <CustomRange id={id} />
-    : <Presets id={id} />;
-
   return (
-    <div className={css}>
+    <div className={classNames('c-time-filter', { 'c-time-filter--reverse': reverse })}>
       <TimeFilterTag />
 
-      {customOrPresets}
+      {isCustom ? <CustomRange id={id} /> : <Presets id={id} />}
     </div>
   );
 }

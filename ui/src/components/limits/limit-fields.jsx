@@ -1,4 +1,5 @@
-import { InputNumber, Select } from '@radicalbit/radicalbit-design-system';
+import { useFormbitContext } from '@radicalbit/formbit';
+import { FormField, InputNumber, Select } from '@radicalbit/radicalbit-design-system';
 import { useId } from 'react';
 import {
   LIMIT_CATEGORIES, LIMIT_CATEGORY_LABELS, MAX_LABEL, MAX_LABELS, LimitCategoryEnum, WINDOW_TYPE_LABELS, WindowTypeEnum,
@@ -10,21 +11,24 @@ const CATEGORY_OPTIONS = LIMIT_CATEGORIES.map((value) => ({ label: LIMIT_CATEGOR
 const WINDOW_TYPE_OPTIONS = [WindowTypeEnum.FIXED, WindowTypeEnum.ALIGNED]
   .map((value) => ({ label: WINDOW_TYPE_LABELS[value], value }));
 
-const SELECT_PLACEHOLDER = 'Select';
+const parseMax = (text) => text;
 
-const BUDGET_MIN = 0.000000001;
-
-// The design system forces its own widths on these inputs: they fill flex-1 wrappers instead
-const FULL_WIDTH = { width: '100%' };
-
-function LimitFields({ isCategoryLocked = false, limit, onChange, rowLabel, withCategory = true }) {
+function LimitFields({
+  isCategoryLocked = false, limit, onChange, onPressEnter, path, rowLabel, withCategory = true,
+}) {
   const id = useId();
+
+  const { error } = useFormbitContext();
 
   const category = limit?.category;
   const algorithm = limit?.algorithm;
   const windowSize = limit?.windowSize;
   const max = limit?.value;
+
   const isBudget = category === LimitCategoryEnum.BUDGET;
+  const allowedMaxKeys = isBudget ? /[\d.]/ : /\d/;
+  const maxLabel = MAX_LABELS[category] ?? MAX_LABEL;
+  const getAriaLabel = (label) => (rowLabel ? `${label}, ${rowLabel}` : undefined);
 
   const handleOnChangeCategory = (next) => {
     onChange({ ...limit, category: next });
@@ -43,84 +47,85 @@ function LimitFields({ isCategoryLocked = false, limit, onChange, rowLabel, with
     onChange({ ...limit, value: next });
   };
 
-  const minMax = isBudget ? BUDGET_MIN : 1;
-  const precision = isBudget ? undefined : 0;
-  const prefix = isBudget ? '$' : undefined;
-  const windowOptions = getWindowOptions(algorithm);
-  const getAriaLabel = (label) => (rowLabel ? `${label}, ${rowLabel}` : undefined);
-  const categoryField = withCategory ? (
-    <Field htmlFor={`${id}-category`} label="Category">
-      <Select
-        aria-label={getAriaLabel('Category')}
-        disabled={isCategoryLocked}
-        id={`${id}-category`}
-        onChange={handleOnChangeCategory}
-        options={CATEGORY_OPTIONS}
-        placeholder={SELECT_PLACEHOLDER}
-        popupMatchSelectWidth={false}
-        style={FULL_WIDTH}
-        value={category}
-      />
-    </Field>
-  ) : false;
-  const maxLabel = MAX_LABELS[category] ?? MAX_LABEL;
+  const handleOnInputMax = (text) => {
+    if (text && Number.isNaN(Number(text))) {
+      onChange({ ...limit, value: text });
+    }
+  };
+
+  const handleOnKeyDownMax = (event) => {
+    const { ctrlKey, key, metaKey } = event;
+
+    if (key.length > 1 || ctrlKey || metaKey) {
+      return;
+    }
+
+    if (!allowedMaxKeys.test(key)) {
+      event.preventDefault();
+    }
+  };
 
   return (
-    <div className="flex gap-2 items-end w-0 min-w-full" data-limit-row>
-      {categoryField}
+    <div className="flex gap-4 items-start w-0 min-w-full" data-limit-row>
+      {withCategory && (
+        <FormField className="flex-1 min-w-0" htmlFor={`${id}-category`} label="Category" message={error(`${path}.category`)}>
+          <Select
+            aria-label={getAriaLabel('Category')}
+            disabled={isCategoryLocked}
+            id={`${id}-category`}
+            onChange={handleOnChangeCategory}
+            options={CATEGORY_OPTIONS}
+            placeholder="Select"
+            popupMatchSelectWidth={false}
+            style={{ width: '100%' }}
+            value={category}
+          />
+        </FormField>
+      )}
 
-      <Field htmlFor={`${id}-window-type`} label="Window type">
+      <FormField className="flex-1 min-w-0" htmlFor={`${id}-window-type`} label="Window type" message={error(`${path}.algorithm`)}>
         <Select
           aria-label={getAriaLabel('Window type')}
           id={`${id}-window-type`}
           onChange={handleOnChangeAlgorithm}
           options={WINDOW_TYPE_OPTIONS}
-          placeholder={SELECT_PLACEHOLDER}
+          placeholder="Select"
           popupMatchSelectWidth={false}
-          style={FULL_WIDTH}
+          style={{ width: '100%' }}
           value={algorithm}
         />
-      </Field>
+      </FormField>
 
-      <Field htmlFor={`${id}-window`} label="Window">
+      <FormField className="flex-1 min-w-0" htmlFor={`${id}-window`} label="Window" message={error(`${path}.windowSize`)}>
         <Select
           aria-label={getAriaLabel('Window')}
           id={`${id}-window`}
           onChange={handleOnChangeWindow}
           optionFilterProp="label"
-          options={windowOptions}
-          placeholder={SELECT_PLACEHOLDER}
+          options={getWindowOptions(algorithm)}
+          placeholder="Select"
           popupMatchSelectWidth={false}
           showSearch
-          style={FULL_WIDTH}
+          style={{ width: '100%' }}
           value={windowSize}
         />
-      </Field>
+      </FormField>
 
-      <Field htmlFor={`${id}-max`} label={maxLabel}>
+      <FormField className="flex-1 min-w-0" htmlFor={`${id}-max`} label={maxLabel} message={error(`${path}.value`)}>
         <InputNumber
           aria-label={getAriaLabel(maxLabel)}
           id={`${id}-max`}
-          min={minMax}
           onChange={handleOnChangeMax}
-          precision={precision}
-          prefix={prefix}
-          style={FULL_WIDTH}
+          onInput={handleOnInputMax}
+          onKeyDown={handleOnKeyDownMax}
+          onPressEnter={onPressEnter}
+          parser={parseMax}
+          precision={isBudget ? undefined : 0}
+          prefix={isBudget ? '$' : undefined}
+          style={{ width: '100%' }}
           value={max}
         />
-      </Field>
-    </div>
-  );
-}
-
-function Field({ children, htmlFor, label }) {
-  return (
-    <div className="flex flex-col flex-1 gap-1 min-w-0">
-      <label htmlFor={htmlFor}>
-        <small className="opacity-70">{label}</small>
-      </label>
-
-      {children}
+      </FormField>
     </div>
   );
 }

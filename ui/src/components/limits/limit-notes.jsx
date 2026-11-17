@@ -1,5 +1,3 @@
-const NOTE = 'text-xs opacity-70';
-
 /**
  * The notes under the limit fields, in field order: category, window type, max.
  * Key words are in bold so the user can spot the concept without reading the whole sentence.
@@ -31,7 +29,7 @@ function CategoryNote({ isEditing, withCategory }) {
   }
 
   return (
-    <span className={NOTE}>
+    <span className="text-xs opacity-70">
       {'The '}
 
       <strong>category</strong>
@@ -51,7 +49,7 @@ function CategoryNote({ isEditing, withCategory }) {
 
 function WindowTypeNote() {
   return (
-    <span className={NOTE}>
+    <span className="text-xs opacity-70">
       <strong>Fixed</strong>
 
       {': the window starts at the first request and lasts its full length. '}
@@ -89,7 +87,7 @@ function EditNote({ isEditing, isWindowChanged }) {
   }
 
   return (
-    <span aria-live="polite" className={NOTE}>
+    <span aria-live="polite" className="text-xs opacity-70">
       {'Changing only the '}
 
       <strong>max</strong>

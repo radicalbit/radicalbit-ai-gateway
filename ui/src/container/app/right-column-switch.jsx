@@ -5,13 +5,6 @@ import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
 import { Route, Routes } from 'react-router-dom';
 
 export default function RightColumnContentSwitch() {
-  const alertsRoute = FEATURE_FLAGS.ALERTS ? (
-    <Route
-      element={<AlertDetail />}
-      path={`/${PathsEnum.ALERTS}/:uuid`}
-    />
-  ) : false;
-
   return (
     <Routes>
       <Route
@@ -24,7 +17,12 @@ export default function RightColumnContentSwitch() {
         path={`/${PathsEnum.GROUPS}/:uuid`}
       />
 
-      {alertsRoute}
+      {FEATURE_FLAGS.ALERTS && (
+        <Route
+          element={<AlertDetail />}
+          path={`/${PathsEnum.ALERTS}/:uuid`}
+        />
+      )}
     </Routes>
   );
 }

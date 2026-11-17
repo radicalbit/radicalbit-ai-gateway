@@ -1,5 +1,6 @@
 import Lucide from '@Components/lucide';
-import { useGetLimitsStreamWithRange } from '@State/usage/vertical-hooks';
+import useModals, { modals } from '@Hooks/use-modals';
+import { useGetLimitsStreamWithRange, useGetProjectBudgetWithRange } from '@State/usage/vertical-hooks';
 import {
   Board, Button, DataTable, NewHeader, SectionTitle, Skeleton, Void,
 } from '@radicalbit/radicalbit-design-system';
@@ -16,7 +17,7 @@ const getRowClassName = () => DataTable.ROW_NOT_CLICKABLE;
 function Routes() {
   return (
     <Board
-      header={<NewHeader padding="none" title={<SectionTitle title="Routes" titleSuffix={<LivePin />} />} />}
+      header={<NewHeader details={{ one: <EditConfiguration /> }} padding="none" title={<SectionTitle title="Routes" titleSuffix={<LivePin />} />} />}
       headerProps={{ divider: true, padding: 'compact' }}
       main={<Content />}
       width="100%"
@@ -92,8 +93,54 @@ function IsError() {
   );
 }
 
+function EditConfiguration() {
+  const { showModal } = useModals();
+
+  const [searchParams] = useSearchParams();
+  const projectUuid = searchParams.get('projectUuid');
+  const routes = searchParams.get('routes')
+    ? searchParams.get('routes').split(',')
+    : [];
+  const windowStatuses = parseWindowStatuses(searchParams.get('windowStatuses'));
+
+  const { data } = useGetLimitsStreamWithRange({ routes, windowStatuses });
+  const limits = data?.limits ?? [];
+
+  const { data: budgetData } = useGetProjectBudgetWithRange();
+  const servedConfigUuid = budgetData?.servedConfigUuid;
+
+  const handleOnEdit = () => {
+    showModal(modals.EDIT_PROJECT_CONFIG, { uuid: projectUuid, activeConfigUuid: servedConfigUuid });
+  };
+
+  if (!limits.length && !windowStatuses.length) {
+    return false;
+  }
+
+  return <Button onClick={handleOnEdit}>Edit configuration</Button>;
+}
+
 function IsEmpty() {
-  return <Void description="Publish a configuration with routes to see their limits." size="small" title="This project has no routes" />;
+  const { showModal } = useModals();
+
+  const [searchParams] = useSearchParams();
+  const projectUuid = searchParams.get('projectUuid');
+
+  const { data } = useGetProjectBudgetWithRange();
+  const servedConfigUuid = data?.servedConfigUuid;
+
+  const handleOnEdit = () => {
+    showModal(modals.EDIT_PROJECT_CONFIG, { uuid: projectUuid, activeConfigUuid: servedConfigUuid });
+  };
+
+  return (
+    <Void
+      actions={<Button onClick={handleOnEdit}>Edit configuration</Button>}
+      description="Publish a configuration with routes to see their limits."
+      size="small"
+      title="This project has no routes"
+    />
+  );
 }
 
 function NoMatch() {

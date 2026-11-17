@@ -1,7 +1,12 @@
+import { Link } from 'react-router-dom';
 import './_styles.less';
 
-function HtmlAnchor({ children, className = '', role, ...rest }) {
+function HtmlAnchor({ children, className = '', role, to, ...rest }) {
   const css = `c-anchor ${className}`;
+
+  if (to) {
+    return <Link className={css} role={role} to={to} {...rest}>{children}</Link>;
+  }
 
   // Without href an <a> is neither focusable nor exposed as a link: restore both when it acts on click
   const { href, onClick, onKeyDown } = rest;

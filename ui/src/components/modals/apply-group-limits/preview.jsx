@@ -118,7 +118,6 @@ function MemberBlock({ items, member }) {
             <DataTable
               columns={columns}
               dataSource={dataSource}
-              noPadding
               pagination={false}
               rowClassName={getRowClassName}
               rowKey={getRowKey}

@@ -81,7 +81,7 @@ function IsSuccess() {
     <div className="flex flex-col gap-6">
       <Conflicts />
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <strong>{count}</strong>
 
@@ -91,7 +91,6 @@ function IsSuccess() {
         <DataTable
           columns={columns}
           dataSource={sortedLimits}
-          noPadding
           pagination={false}
           rowClassName={getRowClassName}
           rowKey={getRowKey}

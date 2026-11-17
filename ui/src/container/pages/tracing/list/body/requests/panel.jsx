@@ -24,8 +24,6 @@ import { formatOffset, requestSteps, selectedRequestUuid } from './helpers';
 import PanelSkeleton from './panel-skeleton';
 import RequestTags from './request-tags';
 
-const LABEL_PROPS = { type: 'secondary' };
-
 const STATUS_PROPS = {
   handled_error: { type: 'error' },
   unhandled_error: { type: 'error' },
@@ -99,19 +97,19 @@ function Summary({ request }) {
 
   return (
     <div className="flex flex-wrap items-center gap-x-7 gap-y-2">
-      <TextWithBold bold={statusLine} boldProps={statusProps} size="small" text="Status" textProps={LABEL_PROPS} />
+      <TextWithBold bold={statusLine} boldProps={statusProps} size="small" text="Status" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={<GroupLink groupName={groupName} groupUuid={groupUuid} />} size="small" text="Group" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<GroupLink groupName={groupName} groupUuid={groupUuid} />} size="small" text="Group" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={<RequestTags tags={tags} />} size="small" text="Tags" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<RequestTags tags={tags} />} size="small" text="Tags" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={formatMs(durationMs)} size="small" text="Duration" textProps={LABEL_PROPS} />
+      <TextWithBold bold={formatMs(durationMs)} size="small" text="Duration" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={tokens} size="small" text="Tokens" textProps={LABEL_PROPS} />
+      <TextWithBold bold={tokens} size="small" text="Tokens" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={formatCost(cost)} size="small" text="Cost" textProps={LABEL_PROPS} />
+      <TextWithBold bold={formatCost(cost)} size="small" text="Cost" textProps={{ type: 'secondary' }} />
     </div>
   );
 }
@@ -139,7 +137,7 @@ function StepByStep({ request }) {
         <NewHeader
           details={{ one: <span className="text-xs"><RelativeDateTime format={DATE_FORMAT} formatTooltip={DATE_FORMAT} refreshInterval={RELATIVE_DATE_REFRESH_SECONDS} threshold={RELATIVE_DATE_THRESHOLD} timestamp={createdAt * 1000} withTooltip /></span> }}
           padding="none"
-          title={<TextWithBold bold={eventLabel} boldProps={LABEL_PROPS} text={<strong>Step by step</strong>} />}
+          title={<TextWithBold bold={eventLabel} boldProps={{ type: 'secondary' }} text={<strong>Step by step</strong>} />}
         />
       )}
       main={<Timeline items={items} mode="start" titleSpan={3} />}

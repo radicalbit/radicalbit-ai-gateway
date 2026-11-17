@@ -4,7 +4,7 @@ import { Button } from '@radicalbit/radicalbit-design-system';
 import {
   FolderOpen, Gauge, Key, Lock, Route, Settings2, Signpost, Users,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
@@ -154,8 +154,14 @@ export function CollapsedTitle({ children, keys: keyboardKeys = {}, buttonProps 
   );
 }
 
-const getLink = (pathname, label) => (
-  <Link aria-label={label} to={{ pathname }}>
-    <div className="hidden">{pathname}</div>
-  </Link>
-);
+const getLink = (pathname, label) => <MenuLink label={label} pathname={pathname} />;
+
+function MenuLink({ label, pathname }) {
+  const { pathname: currentPathname, search } = useLocation();
+
+  return (
+    <Link aria-label={label} to={currentPathname.split('/')[1] === pathname ? { pathname, search } : { pathname }}>
+      <div className="hidden">{pathname}</div>
+    </Link>
+  );
+}

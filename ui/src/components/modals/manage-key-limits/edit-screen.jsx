@@ -13,7 +13,6 @@ function EditScreen() {
   const { duplicateError, errorMessage, handleOnCancel, isWindowChanged } = useHandleOnEdit();
 
   const message = duplicateError ?? errorMessage;
-  const errorField = message ? <FormField message={message} /> : false;
 
   const handleOnChange = (next) => {
     write('limits[0]', next);
@@ -31,9 +30,9 @@ function EditScreen() {
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <LimitFields isCategoryLocked limit={row} onChange={handleOnChange} />
+          <LimitFields isCategoryLocked limit={row} onChange={handleOnChange} path="limits[0]" />
 
-          {errorField}
+          {message && <FormField message={message} />}
         </div>
 
         <LimitNotes isEditing isWindowChanged={isWindowChanged} withCategory />

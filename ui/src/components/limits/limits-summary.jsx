@@ -97,7 +97,6 @@ function Content({ consumption, limits, onManage, warnings, withCategory }) {
 
   const lines = sortLimits(limits).map((limit) => <LimitLine key={limit.uuid} bar={consumption?.[limit.uuid]} limit={limit} warnings={getLimitWarnings(warnings, limit)} withCategory={withCategory} />);
   const manageLabel = withCategory ? 'Manage limits' : 'Manage budgets';
-  const manageLink = onManage ? <HtmlAnchor onClick={handleOnManage}>{manageLabel}</HtmlAnchor> : false;
 
   return (
     <div className="flex flex-col gap-4">
@@ -105,7 +104,7 @@ function Content({ consumption, limits, onManage, warnings, withCategory }) {
         {lines}
       </div>
 
-      {manageLink}
+      {onManage && <HtmlAnchor onClick={handleOnManage}>{manageLabel}</HtmlAnchor>}
     </div>
   );
 }
@@ -115,15 +114,13 @@ function LimitLine({ bar, limit, warnings, withCategory }) {
   const category = limit?.category ?? LimitCategoryEnum.BUDGET;
   const value = limit?.value;
   const windowSize = limit?.windowSize;
-
-  const categoryText = withCategory ? <strong>{`${LIMIT_CATEGORY_LABELS[category]} · `}</strong> : false;
   const maxText = `${formatLimitValue(category, value)} / ${formatLimitWindow(windowSize)}`;
   const windowTypeText = ` · ${WINDOW_TYPE_LABELS[algorithm]}`;
 
   return (
     <span className="flex flex-col gap-1">
       <span>
-        {categoryText}
+        {withCategory && <strong>{`${LIMIT_CATEGORY_LABELS[category]} · `}</strong>}
 
         {maxText}
 

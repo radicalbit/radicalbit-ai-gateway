@@ -155,10 +155,6 @@ function Stat({ label, value, className = '' }) {
 }
 
 function LatestHour({ bucket: { bucketStart, sent, failed } }) {
-  const failedLabel = failed > 0
-    ? <span className="text-[var(--coo-error)] font-[var(--coo-font-weight-bold)]">{`, ${failed} failed`}</span>
-    : false;
-
   return (
     <div className="flex justify-between py-1 border-b border-[var(--coo-secondary-04)]">
       <span>{dayjs.unix(bucketStart).format('ddd DD MMM, HH:mm')}</span>
@@ -166,7 +162,8 @@ function LatestHour({ bucket: { bucketStart, sent, failed } }) {
       <span>
         {`${sent} sent`}
 
-        {failedLabel}
+        {failed > 0
+    && <span className="text-[var(--coo-error)] font-[var(--coo-font-weight-bold)]">{`, ${failed} failed`}</span>}
       </span>
     </div>
   );

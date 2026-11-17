@@ -47,7 +47,8 @@ export default () => {
   const [trigger, args] = useApplyGroupLimitsMutation({ fixedCacheKey: `${FCK_APPLY_GROUP_LIMITS}-${uuid}` });
 
   const isFetching = isFetchingGroup || isFetchingKeys;
-  const isSubmitDisabled = isFormInvalid() || !areRowsValid(rows) || !touchedCount || isFetching || args.isLoading;
+  const isRowsValid = areRowsValid(rows);
+  const isSubmitDisabled = isFormInvalid() || (isRowsValid && !touchedCount) || isFetching || args.isLoading;
 
   const handleOnSubmit = () => {
     if (isSubmitDisabled) {
@@ -55,6 +56,10 @@ export default () => {
     }
 
     submitForm(async ({ form: formData }, setError) => {
+      if (!isRowsValid) {
+        return;
+      }
+
       const overwritten = new Set(formData.overwrite);
       const limits = formData.limits.map(({ algorithm, category, value, windowSize }) => ({
         algorithm, category, value, windowSize,

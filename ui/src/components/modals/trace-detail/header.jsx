@@ -13,8 +13,6 @@ import {
 import { ArrowLeft } from 'lucide-react';
 import useCloseRequestDetail from './use-close-request-detail';
 
-const LABEL_PROPS = { type: 'secondary' };
-
 const STATUS_TAGS = {
   success: 'success',
   handled_error: 'error',
@@ -129,17 +127,17 @@ function Meta() {
 
   return (
     <div className="flex flex-wrap gap-x-5 gap-y-1">
-      <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<CredentialLink apiKeyName={apiKeyName} />} size="small" text="Credential" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={<GroupLink groupName={groupName} groupUuid={groupUuid} />} size="small" text="Group" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<GroupLink groupName={groupName} groupUuid={groupUuid} />} size="small" text="Group" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={formatTimestamp(createdAt).trim()} size="small" text="Created" textProps={LABEL_PROPS} />
+      <TextWithBold bold={formatTimestamp(createdAt).trim()} size="small" text="Created" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={<RequestTags tags={tags} />} size="small" text="Tags" textProps={LABEL_PROPS} />
+      <TextWithBold bold={<RequestTags tags={tags} />} size="small" text="Tags" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={traceId ?? '--'} size="small" text="Trace" textProps={LABEL_PROPS} />
+      <TextWithBold bold={traceId ?? '--'} size="small" text="Trace" textProps={{ type: 'secondary' }} />
 
-      <TextWithBold bold={requestUuid} size="small" text="Request" textProps={LABEL_PROPS} />
+      <TextWithBold bold={requestUuid} size="small" text="Request" textProps={{ type: 'secondary' }} />
     </div>
   );
 }
