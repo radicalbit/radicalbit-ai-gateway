@@ -1,0 +1,2811 @@
+{
+  "components": {
+    "schemas": {
+      "Body_configs_upload": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_configs_upload",
+        "type": "object"
+      },
+      "ConfigErrorDetail": {
+        "description": "One problem found in a gateway configuration.",
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Loc",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Msg",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ConfigErrorDetail",
+        "type": "object"
+      },
+      "ConfigSlotOut": {
+        "properties": {
+          "configFile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configfile"
+          },
+          "configStatus": {
+            "$ref": "#/components/schemas/ConfigStatus"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "slot": {
+            "title": "Slot",
+            "type": "string"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          },
+          "uuid": {
+            "format": "uuid",
+            "title": "Uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "slot",
+          "configFile",
+          "configStatus",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "ConfigSlotOut",
+        "type": "object"
+      },
+      "ConfigStatus": {
+        "enum": [
+          "DRAFT",
+          "READY_TO_SERVE",
+          "SERVED"
+        ],
+        "title": "ConfigStatus",
+        "type": "string"
+      },
+      "ConfigValidationOut": {
+        "properties": {
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid"
+        ],
+        "title": "ConfigValidationOut",
+        "type": "object"
+      },
+      "CredentialLimitCategory": {
+        "enum": [
+          "request_rate",
+          "token_input",
+          "token_output",
+          "budget"
+        ],
+        "title": "CredentialLimitCategory",
+        "type": "string"
+      },
+      "CredentialLimitOut": {
+        "properties": {
+          "algorithm": {
+            "$ref": "#/components/schemas/LimitingAlgorithmType"
+          },
+          "category": {
+            "$ref": "#/components/schemas/CredentialLimitCategory"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "uuid": {
+            "format": "uuid",
+            "title": "Uuid",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "windowSize": {
+            "title": "Windowsize",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "category",
+          "algorithm",
+          "windowSize",
+          "value",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "CredentialLimitOut",
+        "type": "object"
+      },
+      "CredentialState": {
+        "enum": [
+          "active",
+          "expiring",
+          "expired"
+        ],
+        "title": "CredentialState",
+        "type": "string"
+      },
+      "ErrorBody": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConfigErrorDetail"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "param": {
+            "title": "Param"
+          },
+          "routes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Routes"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "type"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ErrorOut": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorOut",
+        "type": "object"
+      },
+      "GroupFullOut": {
+        "properties": {
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/KeyOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keys"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "routes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/GroupRouteOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Routes"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "uuid": {
+            "format": "uuid",
+            "title": "Uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "name",
+          "owner",
+          "metadata",
+          "createdAt",
+          "updatedAt",
+          "routes",
+          "keys"
+        ],
+        "title": "GroupFullOut",
+        "type": "object"
+      },
+      "GroupIn": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "GroupIn",
+        "type": "object"
+      },
+      "GroupOut": {
+        "properties": {
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "uuid": {
+            "format": "uuid",
+            "title": "Uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "name",
+          "owner",
+          "metadata",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "GroupOut",
+        "type": "object"
+      },
+      "GroupRouteOut": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "projectName": {
+            "title": "Projectname",
+            "type": "string"
+          },
+          "projectUuid": {
+            "format": "uuid",
+            "title": "Projectuuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "projectUuid",
+          "projectName"
+        ],
+        "title": "GroupRouteOut",
+        "type": "object"
+      },
+      "GroupRoutesIn": {
+        "properties": {
+          "routes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Routes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "routes"
+        ],
+        "title": "GroupRoutesIn",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "KeyCreateIn": {
+        "description": "Create contract: the expiry date is accepted only here, never on\nupdate, so it stays fixed for the credential's whole life.",
+        "properties": {
+          "expiresOn": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expireson"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "KeyCreateIn",
+        "type": "object"
+      },
+      "KeyFullOut": {
+        "properties": {
+          "apiKey": {
+            "title": "Apikey",
+            "type": "string"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "expiresOn": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expireson"
+          },
+          "graceEndsAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graceendsat"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GroupOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hashedKey": {
+            "title": "Hashedkey",
+            "type": "string"
+          },
+          "lastRotatedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastrotatedat"
+          },
+          "limitWarnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RouteLimitConsistencyWarning"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limitwarnings"
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CredentialLimitOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limits"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "rotationState": {
+            "$ref": "#/components/schemas/RotationState",
+            "default": "none"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CredentialState",
+            "default": "active"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "uuid": {
+            "format": "uuid",
+            "title": "Uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "name",
+          "owner",
+          "metadata",
+          "hashedKey",
+          "apiKey",
+          "createdAt",
+          "updatedAt",
+          "group"
+        ],
+        "title": "KeyFullOut",
+        "type": "object"
+      },
+      "KeyOut": {
+        "properties": {
+          "apiKey": {
+            "title": "Apikey",
+            "type": "string"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "expiresOn": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expireson"
+          },
+          "graceEndsAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graceendsat"
+          },
+          "hashedKey": {
+            "title": "Hashedkey",
+            "type": "string"
+          },
+          "lastRotatedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastrotatedat"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "rotationState": {
+            "$ref": "#/components/schemas/RotationState",
+            "default": "none"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CredentialState",
+            "default": "active"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "uuid": {
+            "format": "uuid",
+            "title": "Uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "name",
+          "owner",
+          "metadata",
+          "hashedKey",
+          "apiKey",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "KeyOut",
+        "type": "object"
+      },
+      "KeyRotationIn": {
+        "description": "Rotation contract: gracePeriod is required, and null means no grace period,\nso cutting callers off is always an explicit choice.",
+        "properties": {
+          "gracePeriod": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graceperiod"
+          }
+        },
+        "required": [
+          "gracePeriod"
+        ],
+        "title": "KeyRotationIn",
+        "type": "object"
+      },
+      "KeysUuidIn": {
+        "properties": {
+          "keys": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "keys"
+        ],
+        "title": "KeysUuidIn",
+        "type": "object"
+      },
+      "LimitingAlgorithmType": {
+        "enum": [
+          "FIXED_WINDOW",
+          "ALIGNED_FIXED_WINDOW"
+        ],
+        "title": "LimitingAlgorithmType",
+        "type": "string"
+      },
+      "ProjectBudgetLimitConflictsOut": {
+        "description": "The routes that have a budget of their own, which a project budget excludes.",
+        "properties": {
+          "budgetRouting": {
+            "description": "Routes of either list that route by budget.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Budgetrouting",
+            "type": "array"
+          },
+          "draft": {
+            "description": "Routes of the other configurations: they cannot be published once the project has a budget.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Draft",
+            "type": "array"
+          },
+          "draftConfigs": {
+            "description": "The routes of `draft`, per non-published configuration.",
+            "items": {
+              "$ref": "#/components/schemas/ProjectBudgetLimitDraftConflictOut"
+            },
+            "title": "Draftconfigs",
+            "type": "array"
+          },
+          "published": {
+            "description": "Routes of the published configuration: a project budget is refused.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Published",
+            "type": "array"
+          }
+        },
+        "required": [
+          "published",
+          "draft",
+          "budgetRouting"
+        ],
+        "title": "ProjectBudgetLimitConflictsOut",
+        "type": "object"
+      },
+      "ProjectBudgetLimitDraftConflictOut": {
+        "properties": {
+          "configUuid": {
+            "format": "uuid",
+            "title": "Configuuid",
+            "type": "string"
+          },
+          "routes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "slot": {
+            "title": "Slot",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configUuid",
+          "slot",
+          "routes"
+        ],
+        "title": "ProjectBudgetLimitDraftConflictOut",
+        "type": "object"
+      },
+      "ProjectBudgetLimitOut": {
+        "properties": {
+          "algorithm": {
+            "$ref": "#/components/schemas/LimitingAlgorithmType"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "uuid": {
+            "format": "uuid",
+            "title": "Uuid",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "windowSize": {
+            "title": "Windowsize",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "algorithm",
+          "windowSize",
+          "value",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "ProjectBudgetLimitOut",
+        "type": "object"
+      },
+      "ProjectConfigFileIn": {
+        "properties": {
+          "configFile": {
+            "title": "Configfile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configFile"
+        ],
+        "title": "ProjectConfigFileIn",
+        "type": "object"
+      },
+      "ProjectFilter": {
+        "enum": [
+          "active",
+          "with_usage",
+          "dev",
+          "prod"
+        ],
+        "title": "ProjectFilter",
+        "type": "string"
+      },
+      "ProjectIn": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProjectIn",
+        "type": "object"
+      },
+      "ProjectOut": {
+        "properties": {
+          "configs": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigSlotOut"
+            },
+            "title": "Configs",
+            "type": "array"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ProjectBudgetLimitOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limits"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "projectStatus": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "routeBudgets": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectBudgetLimitConflictsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "servedConfigUuid": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Servedconfiguuid"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "uuid": {
+            "format": "uuid",
+            "title": "Uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "name",
+          "description",
+          "projectStatus",
+          "servedConfigUuid",
+          "configs",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "ProjectOut",
+        "type": "object"
+      },
+      "ProjectStatus": {
+        "enum": [
+          "DEV",
+          "PROD"
+        ],
+        "title": "ProjectStatus",
+        "type": "string"
+      },
+      "RotationState": {
+        "enum": [
+          "none",
+          "in_grace",
+          "grace_ending",
+          "rotated"
+        ],
+        "title": "RotationState",
+        "type": "string"
+      },
+      "RouteLimitConsistencyWarning": {
+        "description": "A credential limit looser than a route its group reaches: advisory only,\nthe limit is saved anyway, and the route limit is the one reached first.",
+        "properties": {
+          "algorithm": {
+            "$ref": "#/components/schemas/LimitingAlgorithmType"
+          },
+          "category": {
+            "$ref": "#/components/schemas/CredentialLimitCategory"
+          },
+          "credentialValue": {
+            "title": "Credentialvalue",
+            "type": "number"
+          },
+          "credentialWindowSize": {
+            "title": "Credentialwindowsize",
+            "type": "string"
+          },
+          "routeName": {
+            "title": "Routename",
+            "type": "string"
+          },
+          "routeValue": {
+            "title": "Routevalue",
+            "type": "number"
+          },
+          "routeWindowSize": {
+            "title": "Routewindowsize",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "algorithm",
+          "routeName",
+          "credentialValue",
+          "credentialWindowSize",
+          "routeValue",
+          "routeWindowSize"
+        ],
+        "title": "RouteLimitConsistencyWarning",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "The management API of the Radicalbit AI Gateway.",
+    "title": "Radicalbit AI Gateway Management API",
+    "version": "v1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/public/api/v1/configs/validate": {
+      "post": {
+        "description": "Validate a YAML configuration against the config schema, saving nothing.\n\nSecrets are not checked: saving a valid config can still fail on them.",
+        "operationId": "configs_validate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectConfigFileIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigValidationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Config",
+        "tags": [
+          "configs"
+        ]
+      }
+    },
+    "/public/api/v1/groups": {
+      "get": {
+        "description": "List the groups.",
+        "operationId": "groups_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_routes",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Routes",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_keys",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Keys",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GroupFullOut"
+                  },
+                  "title": "Response Groups List",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get All",
+        "tags": [
+          "groups"
+        ]
+      },
+      "post": {
+        "description": "Create a group of credentials.",
+        "operationId": "groups_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/public/api/v1/groups/{group_uuid}": {
+      "get": {
+        "description": "Get a group.",
+        "operationId": "groups_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_routes",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Routes",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_keys",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Keys",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Group By Uuid",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/public/api/v1/groups/{group_uuid}/keys": {
+      "patch": {
+        "description": "Add credentials to the group. A credential belongs to one group at most.",
+        "operationId": "groups_add_credentials",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_routes",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Routes",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_keys",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Keys",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeysUuidIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Method Not Allowed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Key",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/public/api/v1/groups/{group_uuid}/keys/{key_uuid}": {
+      "delete": {
+        "description": "Remove a credential from the group.",
+        "operationId": "groups_remove_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Key Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Key",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/public/api/v1/groups/{group_uuid}/projects/{project_uuid}/routes": {
+      "patch": {
+        "description": "Let the group's credentials call routes of a project's served config.",
+        "operationId": "groups_add_routes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_routes",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Routes",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_keys",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Keys",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupRoutesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Project Route",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/public/api/v1/groups/{group_uuid}/projects/{project_uuid}/routes/{route_name}": {
+      "delete": {
+        "description": "Stop the group's credentials from calling a route.",
+        "operationId": "groups_remove_route",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "route_name",
+            "required": true,
+            "schema": {
+              "title": "Route Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Project Route",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/public/api/v1/keys": {
+      "get": {
+        "description": "List the credentials.",
+        "operationId": "credentials_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_groups",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Groups",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "only_unassigned",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Only Unassigned",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_limits",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Limits",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/KeyFullOut"
+                  },
+                  "title": "Response Credentials List",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get All",
+        "tags": [
+          "credentials"
+        ]
+      },
+      "post": {
+        "description": "Create a credential. The response is the only one carrying its value.",
+        "operationId": "credentials_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyCreateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Key",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/public/api/v1/keys/{key_uuid}": {
+      "delete": {
+        "description": "Delete a credential: it stops authenticating at once.",
+        "operationId": "credentials_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Key Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_groups",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Groups",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Key",
+        "tags": [
+          "credentials"
+        ]
+      },
+      "get": {
+        "description": "Get a credential.",
+        "operationId": "credentials_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Key Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_groups",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Groups",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_limits",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Limits",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Key By Uuid",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/public/api/v1/keys/{key_uuid}/rotation": {
+      "delete": {
+        "description": "End a rotation's grace period: the previous value stops authenticating.",
+        "operationId": "credentials_end_grace_period",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Key Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "End Grace Period",
+        "tags": [
+          "credentials"
+        ]
+      },
+      "post": {
+        "description": "Give a credential a new value. The previous value keeps\nauthenticating for the grace period; null ends it at once.",
+        "operationId": "credentials_rotate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Key Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyRotationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Method Not Allowed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Key",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/public/api/v1/projects": {
+      "get": {
+        "description": "List the projects, optionally filtered.",
+        "operationId": "projects_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ProjectFilter"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_limits",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Limits",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectOut"
+                  },
+                  "title": "Response Projects List",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get All",
+        "tags": [
+          "projects"
+        ]
+      },
+      "post": {
+        "description": "Create a project, with two draft config slots (A and B).",
+        "operationId": "projects_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/public/api/v1/projects/{project_uuid}": {
+      "get": {
+        "description": "Get a project with its two config slots.",
+        "operationId": "projects_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_limits",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Limits",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project By Uuid",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/public/api/v1/projects/{project_uuid}/configs/{config_uuid}": {
+      "patch": {
+        "description": "Save a YAML configuration into a config slot that is not served.",
+        "operationId": "configs_save",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "config_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Config Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectConfigFileIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Config",
+        "tags": [
+          "configs"
+        ]
+      }
+    },
+    "/public/api/v1/projects/{project_uuid}/configs/{config_uuid}/approve": {
+      "patch": {
+        "description": "Request to publish a draft config: it becomes ready to serve.",
+        "operationId": "configs_approve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "config_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Config Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Config",
+        "tags": [
+          "configs"
+        ]
+      }
+    },
+    "/public/api/v1/projects/{project_uuid}/configs/{config_uuid}/cancel-approval": {
+      "patch": {
+        "description": "Cancel a request to publish: the config goes back to draft.",
+        "operationId": "configs_cancel_approval",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "config_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Config Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Approval",
+        "tags": [
+          "configs"
+        ]
+      }
+    },
+    "/public/api/v1/projects/{project_uuid}/configs/{config_uuid}/import": {
+      "patch": {
+        "description": "Upload a .yaml or .yml file (2 MB at most) into a config slot that is not served.",
+        "operationId": "configs_upload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "config_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Config Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_configs_upload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Config",
+        "tags": [
+          "configs"
+        ]
+      }
+    },
+    "/public/api/v1/projects/{project_uuid}/configs/{config_uuid}/serve": {
+      "patch": {
+        "description": "Publish an approved config: it replaces the one served, if any.",
+        "operationId": "configs_serve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "config_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Config Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Serve Config",
+        "tags": [
+          "configs"
+        ]
+      }
+    },
+    "/public/api/v1/projects/{project_uuid}/configs/{config_uuid}/unserve": {
+      "patch": {
+        "description": "Stop serving the served config: the project serves no routes.",
+        "operationId": "configs_unserve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "config_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Config Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unserve Config",
+        "tags": [
+          "configs"
+        ]
+      }
+    }
+  }
+}

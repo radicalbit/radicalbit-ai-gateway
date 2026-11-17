@@ -158,3 +158,15 @@ Stop and remove all compose containers and volumes:
 ```bash
 docker compose down -v
 ```
+
+---
+
+## Python SDK
+
+`sdk/` is the Python SDK for the management API, generated from the gateway's routes. If you change a management route, regenerate it and commit the result with your change:
+
+```bash
+sdk/scripts/generate.sh
+```
+
+CI fails when the generated SDK is out of date. The step-by-step guide (changing a route, adding an operation, tests, release) is in [sdk/README.md](sdk/README.md#working-on-the-sdk).

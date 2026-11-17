@@ -60,6 +60,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     CredentialLimitValueError,
     GroupNotFoundError,
     KeyAlreadyExistsError,
+    KeyExternallyManagedError,
     KeyGroupAlreadyExistsError,
     KeyInternalError,
     KeyNotFoundError,
@@ -205,7 +206,7 @@ class KeyService:
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be deleted because owner is "{key.owner}"'
             )
         deleted_rows = self.key_dao.delete_by_uuid(key_uuid)
@@ -232,7 +233,7 @@ class KeyService:
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be updated because owner is "{key.owner}"'
             )
         _ensure_not_expired(key)
@@ -260,7 +261,7 @@ class KeyService:
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be rotated because owner is "{key.owner}"'
             )
         _ensure_not_expired(key)
@@ -318,7 +319,7 @@ class KeyService:
                 f'Key with UUID {key_uuid} already has a group assigned: {key.group.name}'
             )
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be assigned to a group because owner is "{key.owner}"'
             )
         _ensure_not_expired(key)
@@ -349,7 +350,7 @@ class KeyService:
         if not key:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         if key.owner != 'gateway':
-            raise KeyOperationNotAllowedError(
+            raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be unassigned from group because owner is "{key.owner}"'
             )
         # No expiry check: removing an expired key from its group is cleanup, like delete

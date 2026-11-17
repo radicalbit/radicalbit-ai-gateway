@@ -41,6 +41,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ProjectBudgetLimitAlreadyExistsError,
     ProjectBudgetLimitConflictError,
     ProjectBudgetLimitNotFoundError,
+    ProjectConfigStateError,
     ProjectConfigValidationError,
     ProjectInternalError,
     ProjectNotFoundError,
@@ -194,8 +195,9 @@ class ProjectService:
 
         config = self._get_config_or_raise(project_uuid, config_uuid)
         if config.config_status == ConfigStatus.SERVED.value:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} is served and cannot be edited'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} is served and cannot be edited',
+                'config_served_not_editable',
             )
 
         rows_updated = self.project_config_dao.update_config_file(
@@ -210,8 +212,9 @@ class ProjectService:
         config = self._get_config_or_raise(project_uuid, config_uuid)
 
         if config.config_status != ConfigStatus.DRAFT.value or not config.config_file:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} has no draft configuration to approve'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} has no draft configuration to approve',
+                'config_no_draft_to_approve',
             )
 
         validate_gateway_config(config.config_file, check_secrets=True)
@@ -224,8 +227,9 @@ class ProjectService:
         config = self._get_config_or_raise(project_uuid, config_uuid)
 
         if config.config_status != ConfigStatus.READY_TO_SERVE.value:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} is not in READY_TO_SERVE state'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} is not in READY_TO_SERVE state',
+                'config_not_ready_to_serve',
             )
 
         self.project_config_dao.set_status(config_uuid, ConfigStatus.DRAFT)
@@ -239,8 +243,9 @@ class ProjectService:
                 f'Config {config_uuid} has no configuration to serve'
             )
         if config.config_status != ConfigStatus.READY_TO_SERVE.value:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} must be approved before serving'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} must be approved before serving',
+                'config_not_approved',
             )
 
         validate_gateway_config(config.config_file, check_secrets=True)
@@ -257,7 +262,9 @@ class ProjectService:
         config = self._get_config_or_raise(project_uuid, config_uuid)
 
         if config.config_status != ConfigStatus.SERVED.value:
-            raise ProjectConfigValidationError(f'Config {config_uuid} is not served')
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} is not served', 'config_not_served'
+            )
 
         rows_updated = self.project_config_dao.unserve(config_uuid)
         if rows_updated == 0:
@@ -346,8 +353,9 @@ class ProjectService:
         self._get_project_or_raise(project_uuid)
         config = self._get_config_or_raise(project_uuid, config_uuid)
         if config.config_status == ConfigStatus.SERVED.value:
-            raise ProjectConfigValidationError(
-                f'Config {config_uuid} is served and cannot be overwritten by import'
+            raise ProjectConfigStateError(
+                f'Config {config_uuid} is served and cannot be overwritten by import',
+                'config_served_not_importable',
             )
         try:
             config_file = content.decode('utf-8')

@@ -871,8 +871,8 @@ class TestKeyRouteRotation(unittest.TestCase):
     def test_rotate_is_refused_on_an_externally_managed_credential(self):
         self.key.owner = 'keycloak'
         res = self._rotate(None)
-        assert res.status_code == 405
-        assert res.json()['error']['code'] == 'key_operation_method_not_allowed'
+        assert res.status_code == 409
+        assert res.json()['error']['code'] == 'key_externally_managed'
         self.key_dao.rotate.assert_not_called()
 
     def test_rotate_a_missing_credential(self):

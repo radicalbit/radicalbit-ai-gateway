@@ -15,6 +15,7 @@ from radicalbit_ai_gateway.models.auth_dto import (
     RouteGroupsIn,
 )
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
+from radicalbit_ai_gateway.models.error_dto import error_responses
 from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitConflictsOut,
     ProjectBudgetLimitOut,
@@ -80,46 +81,69 @@ class ProjectRoute:
         filter_project_uuids_fn = config.filter_project_uuids_fn or (
             lambda _, uuids: uuids
         )
-        router = APIRouter(tags=['project_api'])
+        router = APIRouter()
+        projects = ['projects']
+        configs = ['configs']
 
-        @router.post('/projects', status_code=201, response_model=ProjectOut)
+        @router.post(
+            '/projects',
+            status_code=201,
+            response_model=ProjectOut,
+            tags=projects,
+            operation_id='projects_create',
+            responses=error_responses(409),
+        )
         @route_meta(entity_type='PROJECT', response_uuid_field='uuid')
         def create_project(project_in: ProjectIn):
+            """Create a project, with two draft config slots (A and B)."""
             project = project_service.create_project(project_in)
             logger.info('Created project %s', project.uuid)
             return project
 
         @router.get(
-            '/projects', status_code=200, response_model=config.list_response_model
+            '/projects',
+            status_code=200,
+            response_model=config.list_response_model,
+            tags=projects,
+            operation_id='projects_list',
         )
         def get_all(
             request: Request,
             filter: ProjectFilter | None = Query(None),
             include_limits: bool = Query(False),
         ):
+            """List the projects, optionally filtered."""
             return get_projects_fn(request, filter, include_limits)
 
         @router.get(
             '/projects/{project_uuid}',
             status_code=200,
             response_model=config.item_response_model,
+            tags=projects,
+            operation_id='projects_get',
+            responses=error_responses(404),
         )
         def get_project_by_uuid(
             project_uuid: UUID,
             request: Request,
             include_limits: bool = Query(False),
         ):
+            """Get a project with its two config slots."""
             return get_project_fn(request, project_uuid, include_limits)
 
         @router.patch(
             '/projects/{project_uuid}/configs/{config_uuid}',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_save',
+            responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         def update_config(
             project_uuid: UUID, config_uuid: UUID, config_in: ProjectConfigFileIn
         ):
+            """Save a YAML configuration into a config slot that is not served."""
             project = project_service.update_config(
                 project_uuid, config_uuid, config_in
             )
@@ -130,9 +154,13 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/approve',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_approve',
+            responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         def approve_config(project_uuid: UUID, config_uuid: UUID):
+            """Request to publish a draft config: it becomes ready to serve."""
             project = project_service.approve_config(project_uuid, config_uuid)
             logger.info('Approved config %s for project %s', config_uuid, project_uuid)
             return project
@@ -141,9 +169,13 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/cancel-approval',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_cancel_approval',
+            responses=error_responses(404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         def cancel_approval(project_uuid: UUID, config_uuid: UUID):
+            """Cancel a request to publish: the config goes back to draft."""
             project = project_service.cancel_approval(project_uuid, config_uuid)
             logger.info(
                 'Cancelled approval for config %s of project %s',
@@ -156,9 +188,13 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/serve',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_serve',
+            responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def serve_config(project_uuid: UUID, config_uuid: UUID):
+            """Publish an approved config: it replaces the one served, if any."""
             project = project_service.serve_config(project_uuid, config_uuid)
             # Swap: drop any routes from the previously served config, then
             # register the newly served one.
@@ -189,6 +225,7 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/generate-config',
             status_code=200,
             response_model=GenerateConfigOut,
+            tags=configs,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def generate_config(
@@ -211,6 +248,7 @@ class ProjectRoute:
         @router.get(
             '/projects/{project_uuid}/configs/{config_uuid}/export',
             status_code=200,
+            tags=configs,
         )
         def export_config(project_uuid: UUID, config_uuid: UUID):
             content, filename = project_service.export_config(project_uuid, config_uuid)
@@ -224,6 +262,7 @@ class ProjectRoute:
         @router.get(
             '/projects/{project_uuid}/configs/export',
             status_code=200,
+            tags=configs,
         )
         def export_all_configs(project_uuid: UUID):
             content, filename = project_service.export_all_configs(project_uuid)
@@ -238,11 +277,18 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/import',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_upload',
+            responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def import_config(
-            project_uuid: UUID, config_uuid: UUID, file: UploadFile = File(...)
+            project_uuid: UUID,
+            config_uuid: UUID,
+            # format: binary, so that generated clients send it as a file
+            file: UploadFile = File(..., json_schema_extra={'format': 'binary'}),
         ):
+            """Upload a .yaml or .yml file (2 MB at most) into a config slot that is not served."""
             filename = file.filename or ''
             if not filename.lower().endswith(_ALLOWED_IMPORT_SUFFIXES):
                 raise ProjectConfigValidationError(
@@ -261,9 +307,13 @@ class ProjectRoute:
             '/projects/{project_uuid}/configs/{config_uuid}/unserve',
             status_code=200,
             response_model=ProjectOut,
+            tags=configs,
+            operation_id='configs_unserve',
+            responses=error_responses(404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def unserve_config(project_uuid: UUID, config_uuid: UUID):
+            """Stop serving the served config: the project serves no routes."""
             project = project_service.unserve_config(project_uuid, config_uuid)
             if deregister_project_routes:
                 await deregister_project_routes(project_uuid)
@@ -274,6 +324,7 @@ class ProjectRoute:
             '/projects/{project_uuid}',
             status_code=200,
             response_model=ProjectOut,
+            tags=projects,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def delete_project(project_uuid: UUID):
@@ -287,6 +338,7 @@ class ProjectRoute:
             '/projects/{project_uuid}/routes/{route_name}/groups',
             status_code=200,
             response_model=GroupsRouteOut,
+            tags=projects,
         )
         @route_meta(
             entity_type='PROJECT', entity_uuid_param='project_uuid', action='ASSIGN'
@@ -306,6 +358,7 @@ class ProjectRoute:
             '/projects/{project_uuid}/routes/{route_name}/associable-groups',
             status_code=200,
             response_model=list[GroupFullOut],
+            tags=projects,
         )
         def get_associable_groups_for_project_route(
             project_uuid: UUID,
@@ -322,6 +375,7 @@ class ProjectRoute:
             '/projects/budget-limits/stream',
             status_code=200,
             response_class=EventSourceResponse,
+            tags=projects,
         )
         async def stream_budget_limits_consumption(
             request: Request,
@@ -342,6 +396,7 @@ class ProjectRoute:
             '/projects/{project_uuid}/budget-limits',
             status_code=201,
             response_model=list[ProjectBudgetLimitOut],
+            tags=projects,
         )
         @route_meta(
             entity_type='PROJECT',
@@ -365,6 +420,7 @@ class ProjectRoute:
             '/projects/{project_uuid}/budget-limits',
             status_code=200,
             response_model=list[ProjectBudgetLimitOut],
+            tags=projects,
         )
         def get_budget_limits_for_project(project_uuid: UUID):
             return project_service.get_budget_limits_for_project(project_uuid)
@@ -373,6 +429,7 @@ class ProjectRoute:
             '/projects/{project_uuid}/budget-limits/conflicts',
             status_code=200,
             response_model=ProjectBudgetLimitConflictsOut,
+            tags=projects,
         )
         def get_budget_limit_conflicts(project_uuid: UUID):
             return project_service.get_budget_limit_conflicts(project_uuid)
@@ -381,6 +438,7 @@ class ProjectRoute:
             '/projects/{project_uuid}/budget-limits/{limit_uuid}',
             status_code=200,
             response_model=ProjectBudgetLimitUpdatedOut,
+            tags=projects,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         def update_budget_limit_value(
@@ -394,6 +452,7 @@ class ProjectRoute:
             '/projects/{project_uuid}/budget-limits/{limit_uuid}',
             status_code=200,
             response_model=ProjectBudgetLimitOut,
+            tags=projects,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def delete_budget_limit_from_project(
