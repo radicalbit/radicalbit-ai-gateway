@@ -5,11 +5,6 @@ const mcpKeysPageSize = 20;
 const startPage = 1;
 const DEFAULT_POLLING_INTERVAL = 2000;
 
-// Hardcoded feature flags. Toggle to enable/disable a feature app-wide.
-const FEATURE_FLAGS = {
-  ALERTS: true,
-};
-
 const PathsEnum = {
   ALERTS: 'alerts',
   CONFIG: 'config',
@@ -207,7 +202,6 @@ export {
   DEFAULT_POLLING_INTERVAL,
   EXPIRES_ON_FORMAT,
   GATEWAY_OWNER,
-  FEATURE_FLAGS,
   SEARCH_PARAMS,
   NamespaceEnum,
   numberFormatterInt,

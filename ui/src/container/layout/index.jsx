@@ -1,5 +1,5 @@
 import Lucide from '@Components/lucide';
-import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
+import { PathsEnum } from '@Src/constants';
 import { Button } from '@radicalbit/radicalbit-design-system';
 import {
   FolderOpen, Gauge, Key, Lock, Route, Settings2, Signpost, Users,
@@ -121,7 +121,7 @@ const allRoutes = (hasLeftColumnCollapsed) => [
   group('manage-header', 'Manage', 11, hasLeftColumnCollapsed, [
     groups(hasLeftColumnCollapsed),
     keys(hasLeftColumnCollapsed),
-    FEATURE_FLAGS.ALERTS ? alerts(hasLeftColumnCollapsed) : false,
+    alerts(hasLeftColumnCollapsed),
   ].filter(Boolean)),
 ];
 
