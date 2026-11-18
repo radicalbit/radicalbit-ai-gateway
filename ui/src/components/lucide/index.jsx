@@ -21,6 +21,7 @@ const Lucide = forwardRef(({
     {
       [`c-lucide--type-${type}`]: type,
       'c-lucide--disabled': disabled,
+      'c-lucide--clickable': onClick,
     },
     'c-lucide',
   );
