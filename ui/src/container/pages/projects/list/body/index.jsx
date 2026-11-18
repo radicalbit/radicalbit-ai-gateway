@@ -195,7 +195,7 @@ function IsSuccess({ searchValue }) {
         dataSource={sortedData}
         pagination={{ hideOnSinglePage: true }}
         rowKey={({ uuid: projectUUID }) => projectUUID}
-        scroll={{ y: 'calc(100vh - 10rem)' }}
+        scroll={{ y: 'calc(100vh - 10rem)', x: '100vh' }}
       />
     </VisibleRowsProvider>
   );

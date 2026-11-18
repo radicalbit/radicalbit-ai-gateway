@@ -6,13 +6,9 @@ const { setNotificationMessage } = notificationActions;
 
 const errorWhiteList = {
   applyGroupLimits: true,
-  approveConfig: true,
-  cancelApproval: true,
   createKeyLimits: true,
   createProjectBudgetLimits: true,
   generateConfig: true,
-  serveConfig: true,
-  unserveConfig: true,
   updateConfig: true,
 };
 
@@ -30,8 +26,13 @@ export const rtkQueryErrorLogger = ({ dispatch }) => (next) => (action) => {
   const endpointName = action?.meta?.arg?.endpointName;
   const status = action?.payload?.status;
   const isQuery = action?.meta?.arg?.type === 'query';
+  const isSilentError = action?.meta?.arg?.originalArgs?.silentError === true;
 
   // WHITELIST
+  if (isSilentError) {
+    return next(action);
+  }
+
   if (isQuery && status === 404) {
     return next(action);
   }

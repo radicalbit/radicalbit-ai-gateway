@@ -22,6 +22,7 @@ function Unpublish({ config, projectUuid }) {
     const { error: requestError } = await triggerUnserve({
       projectUuid,
       configUuid,
+      silentError: true,
       successMessage: <SuccessMessage prefix="Configuration for" strong={projectName} suffix="unserved" />,
     });
 
