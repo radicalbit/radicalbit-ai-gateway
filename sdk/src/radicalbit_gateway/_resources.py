@@ -477,6 +477,37 @@ class GroupsResource:
             response=models.GroupFullOut,
         )
 
+    def delete(
+        self,
+        group_uuid: UUID | str,
+        *,
+        include_routes: bool | NotGiven = NOT_GIVEN,
+        include_keys: bool | NotGiven = NOT_GIVEN,
+    ) -> models.GroupFullOut:
+        """Delete a group: its credentials lose the route access it gave them.
+
+        Args:
+            group_uuid: Path parameter.
+            include_routes: Query parameter. Optional: not sent unless given.
+            include_keys: Query parameter. Optional: not sent unless given.
+
+        Returns:
+            models.GroupFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return self._client._request(
+            'DELETE',
+            '/public/api/v1/groups/{group_uuid}',
+            path_params={'group_uuid': group_uuid},
+            query={'include_routes': include_routes, 'include_keys': include_keys},
+            response=models.GroupFullOut,
+        )
+
     def get(
         self,
         group_uuid: UUID | str,
@@ -615,6 +646,27 @@ class ProjectsResource:
             'POST',
             '/public/api/v1/projects',
             json={'description': description, 'name': name},
+            response=models.ProjectOut,
+        )
+
+    def delete(self, project_uuid: UUID | str) -> models.ProjectOut:
+        """Delete a project: its served configuration stops serving with it.
+
+        Args:
+            project_uuid: Path parameter.
+
+        Returns:
+            models.ProjectOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return self._client._request(
+            'DELETE',
+            '/public/api/v1/projects/{project_uuid}',
+            path_params={'project_uuid': project_uuid},
             response=models.ProjectOut,
         )
 
@@ -1136,6 +1188,37 @@ class AsyncGroupsResource:
             response=models.GroupFullOut,
         )
 
+    async def delete(
+        self,
+        group_uuid: UUID | str,
+        *,
+        include_routes: bool | NotGiven = NOT_GIVEN,
+        include_keys: bool | NotGiven = NOT_GIVEN,
+    ) -> models.GroupFullOut:
+        """Delete a group: its credentials lose the route access it gave them.
+
+        Args:
+            group_uuid: Path parameter.
+            include_routes: Query parameter. Optional: not sent unless given.
+            include_keys: Query parameter. Optional: not sent unless given.
+
+        Returns:
+            models.GroupFullOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ConflictError: 409 Conflict.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return await self._client._request(
+            'DELETE',
+            '/public/api/v1/groups/{group_uuid}',
+            path_params={'group_uuid': group_uuid},
+            query={'include_routes': include_routes, 'include_keys': include_keys},
+            response=models.GroupFullOut,
+        )
+
     async def get(
         self,
         group_uuid: UUID | str,
@@ -1274,6 +1357,27 @@ class AsyncProjectsResource:
             'POST',
             '/public/api/v1/projects',
             json={'description': description, 'name': name},
+            response=models.ProjectOut,
+        )
+
+    async def delete(self, project_uuid: UUID | str) -> models.ProjectOut:
+        """Delete a project: its served configuration stops serving with it.
+
+        Args:
+            project_uuid: Path parameter.
+
+        Returns:
+            models.ProjectOut
+
+        Raises:
+            NotFoundError: 404 Not Found.
+            ValidationError: 422 Validation Error.
+            APIConnectionError: no answer from the gateway (APITimeoutError when the time ran out).
+        """
+        return await self._client._request(
+            'DELETE',
+            '/public/api/v1/projects/{project_uuid}',
+            path_params={'project_uuid': project_uuid},
             response=models.ProjectOut,
         )
 

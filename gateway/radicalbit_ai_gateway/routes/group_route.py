@@ -89,7 +89,11 @@ class GroupRoute:
             return group_service.update_group_name(group_uuid, group_in)
 
         @router.delete(
-            '/groups/{group_uuid}', status_code=200, response_model=GroupFullOut
+            '/groups/{group_uuid}',
+            status_code=200,
+            response_model=GroupFullOut,
+            operation_id='groups_delete',
+            responses=error_responses(404, 409),
         )
         @route_meta(entity_type='GROUP', entity_uuid_param='group_uuid')
         def delete_group(
@@ -97,6 +101,7 @@ class GroupRoute:
             include_routes: bool = Query(False),
             include_keys: bool = Query(False),
         ):
+            """Delete a group: its credentials lose the route access it gave them."""
             return group_service.delete_group(group_uuid, include_routes, include_keys)
 
         @router.patch(

@@ -325,9 +325,12 @@ class ProjectRoute:
             status_code=200,
             response_model=ProjectOut,
             tags=projects,
+            operation_id='projects_delete',
+            responses=error_responses(404),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def delete_project(project_uuid: UUID):
+            """Delete a project: its served configuration stops serving with it."""
             project = await project_service.delete_project(project_uuid)
             if deregister_project_routes and project.served_config_uuid:
                 await deregister_project_routes(project_uuid)
