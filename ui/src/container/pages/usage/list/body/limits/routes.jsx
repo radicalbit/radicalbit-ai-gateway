@@ -17,7 +17,7 @@ const getRowClassName = () => DataTable.ROW_NOT_CLICKABLE;
 function Routes() {
   return (
     <Board
-      header={<NewHeader details={{ one: <EditConfiguration /> }} padding="none" title={<SectionTitle title="Routes" titleSuffix={<LivePin />} />} />}
+      header={<NewHeader details={{ one: <OpenConfiguration /> }} padding="none" title={<SectionTitle title="Routes" titleSuffix={<LivePin />} />} />}
       headerProps={{ divider: true, padding: 'compact' }}
       main={<Content />}
       width="100%"
@@ -93,7 +93,7 @@ function IsError() {
   );
 }
 
-function EditConfiguration() {
+function OpenConfiguration() {
   const { showModal } = useModals();
 
   const [searchParams] = useSearchParams();
@@ -109,7 +109,7 @@ function EditConfiguration() {
   const { data: budgetData } = useGetProjectBudgetWithRange();
   const servedConfigUuid = budgetData?.servedConfigUuid;
 
-  const handleOnEdit = () => {
+  const handleOnOpen = () => {
     showModal(modals.EDIT_PROJECT_CONFIG, { uuid: projectUuid, activeConfigUuid: servedConfigUuid });
   };
 
@@ -117,7 +117,7 @@ function EditConfiguration() {
     return false;
   }
 
-  return <Button onClick={handleOnEdit}>Edit configuration</Button>;
+  return <Button onClick={handleOnOpen}>Open configuration</Button>;
 }
 
 function IsEmpty() {
@@ -129,13 +129,13 @@ function IsEmpty() {
   const { data } = useGetProjectBudgetWithRange();
   const servedConfigUuid = data?.servedConfigUuid;
 
-  const handleOnEdit = () => {
+  const handleOnOpen = () => {
     showModal(modals.EDIT_PROJECT_CONFIG, { uuid: projectUuid, activeConfigUuid: servedConfigUuid });
   };
 
   return (
     <Void
-      actions={<Button onClick={handleOnEdit}>Edit configuration</Button>}
+      actions={<Button onClick={handleOnOpen}>Open configuration</Button>}
       description="Publish a configuration with routes to see their limits."
       size="small"
       title="This project has no routes"
