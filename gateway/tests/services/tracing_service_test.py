@@ -674,6 +674,31 @@ class TracingServiceTest(unittest.TestCase):
             'stream_with_output_guardrails.workflow': 'Stream with output guardrails',
             'mcp_tools_call.task': 'MCP tool call',
             'mcp_upstream_call_tool.task': 'Upstream tool call',
+            'responses.workflow': 'Responses request',
+            'messages.workflow': 'Messages request',
+            'embeddings.workflow': 'Embeddings request',
+            'audio_transcriptions.workflow': 'Transcription request',
+            'mcp_request.workflow': 'MCP request',
+            'check_limiters.task': 'Check limits',
+            'check_embedding_limiters.task': 'Check limits',
+            'get_in_memory_cache.task': 'Cache lookup',
+            'set_in_memory_cache.task': 'Cache store',
+            'llm_stream_responses.task': 'Stream from model (Responses API)',
+            'llm_stream_messages.task': 'Stream from model (Messages API)',
+            'llm_transcribe_stream.task': 'Stream transcription from model',
+            'apply_responses_output_guardrails.workflow': 'Output guardrails (Responses API)',
+            'apply_messages_output_guardrails.workflow': 'Output guardrails (Messages API)',
+            'mcp_initialize.task': 'MCP initialize',
+            'mcp_tools_list.task': 'MCP list tools',
+            'mcp_prompts_list.task': 'MCP list prompts',
+            'mcp_prompts_get.task': 'MCP get prompt',
+            'mcp_resources_list.task': 'MCP list resources',
+            'mcp_resources_read.task': 'MCP read resource',
+            'mcp_upstream_list_tools.task': 'Upstream list tools',
+            'mcp_upstream_list_prompts.task': 'Upstream list prompts',
+            'mcp_upstream_get_prompt.task': 'Upstream get prompt',
+            'mcp_upstream_list_resources.task': 'Upstream list resources',
+            'mcp_upstream_read_resource.task': 'Upstream read resource',
         }
         span = self._named_span
 
@@ -683,6 +708,32 @@ class TracingServiceTest(unittest.TestCase):
         )
 
         assert {c.span_name: c.label for c in tree.children} == expected
+
+    def test_provider_call_spans_are_labelled_by_their_provider(self):
+        expected = {
+            'ChatOpenAI.chat': ('openai', 'OpenAI request'),
+            'AzureChatOpenAI.chat': ('azure.ai.openai', 'Azure OpenAI request'),
+            'GatewayDeepSeekChatModel.chat': ('deepseek', 'DeepSeek request'),
+            'ChatAnthropic.chat': ('anthropic', 'Anthropic request'),
+            'ChatGoogleGenerativeAI.chat': ('gcp.gen_ai', 'Google Gemini request'),
+            'ChatMistralAI.chat': ('mistral_ai', 'Mistral AI request'),
+            'MockGatewayChatModel.chat': ('mock', 'Mock model request'),
+            'SomeNewChatModel.chat': ('unknown', None),
+            'NoProvider.chat': ('', None),
+        }
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'root'),
+            *(
+                span(name, 'root', name, gen_ai_provider=provider)
+                for name, (provider, _) in expected.items()
+            ),
+        )
+
+        assert {c.span_name: c.label for c in tree.children} == {
+            name: label for name, (_, label) in expected.items()
+        }
 
     def test_tree_nodes_carry_their_status(self):
         span = self._named_span

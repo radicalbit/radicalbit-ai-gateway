@@ -38,6 +38,7 @@ _OPERATION_CATEGORY_ATTR = (
     "SpanAttributes['traceloop.association.properties.rb.gateway.operation_category']"
 )
 _SPAN_KIND_ATTR = "SpanAttributes['traceloop.span.kind']"
+_GEN_AI_PROVIDER_ATTR = "SpanAttributes['gen_ai.provider.name']"
 # Stamped on the decide span. Span attributes are strings, so the boolean is
 # stored as 'true' or 'false'. A span without it reads as false.
 _FALLBACK_TRIGGERED_EXPR = (
@@ -102,6 +103,7 @@ _SPAN_FIELD_NAMES = [
     'operation_category',
     'span_kind',
     'fallback_triggered',
+    'gen_ai_provider',
 ]
 _SPAN_DETAIL_FIELD_NAMES = [
     'timestamp',
@@ -326,6 +328,7 @@ class OtelTracesDAO:
                 literal_column(_OPERATION_CATEGORY_ATTR).label('operation_category'),
                 literal_column(_SPAN_KIND_ATTR).label('span_kind'),
                 literal_column(_FALLBACK_TRIGGERED_EXPR).label('fallback_triggered'),
+                literal_column(_GEN_AI_PROVIDER_ATTR).label('gen_ai_provider'),
             )
             .select_from(OtelTraces)
             .where(

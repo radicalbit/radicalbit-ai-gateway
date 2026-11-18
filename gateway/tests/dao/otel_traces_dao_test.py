@@ -212,6 +212,29 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         assert spans['span-primary'].fallback_triggered is False
         assert spans['span-bare'].fallback_triggered is False
 
+    def test_get_spans_by_trace_id_reads_the_gen_ai_provider(self):
+        self.insert(
+            [
+                _span(
+                    T0,
+                    trace_id='trace-gp',
+                    span_id='span-call',
+                    span_attributes={'gen_ai.provider.name': 'anthropic'},
+                ),
+                _span(T0 + SEC, trace_id='trace-gp', span_id='span-bare'),
+            ]
+        )
+
+        spans = {
+            s.span_id: s
+            for s in self.otel_traces_dao.get_spans_by_trace_id(
+                TEST_PROJECT_UUID, 'trace-gp'
+            )
+        }
+
+        assert spans['span-call'].gen_ai_provider == 'anthropic'
+        assert spans['span-bare'].gen_ai_provider == ''
+
     def test_get_spans_by_trace_id(self):
         meta = _meta('test-route', KEY_1, 'test-key', GROUP_1, 'test-group')
         self.insert(

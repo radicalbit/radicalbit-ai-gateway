@@ -289,7 +289,7 @@ class TracingService:
             return TreeNodeDTO(
                 span_id=span.span_id,
                 span_name=span.span_name,
-                label=span_label(span.span_name),
+                label=span_label(span.span_name, span.gen_ai_provider),
                 duration_ms=span.duration / NS_TO_MS,
                 status_code=span.status_code,
                 status=_compute_span_status(
