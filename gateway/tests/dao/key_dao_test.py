@@ -83,6 +83,23 @@ class KeyDAOTest(DatabaseIntegration):
         assigned_key = self.key_dao.assign_group(key.uuid, inserted_group.uuid)
         assert assigned_key.group_uuid == inserted_group.uuid
 
+    def test_remove_group_clears_only_the_given_group(self):
+        key = db_mock.get_sample_key()
+        self.key_dao.insert(key)
+        its_group = self.group_dao.insert(
+            db_mock.get_sample_group(uuid=uuid.uuid4(), name='its-group')
+        )
+        other_group = self.group_dao.insert(
+            db_mock.get_sample_group(uuid=uuid.uuid4(), name='other-group')
+        )
+        self.key_dao.assign_group(key.uuid, its_group.uuid)
+
+        assert self.key_dao.remove_group(key.uuid, other_group.uuid) == 0
+        assert self.key_dao.get_by_uuid(key.uuid).group_uuid == its_group.uuid
+
+        assert self.key_dao.remove_group(key.uuid, its_group.uuid) == 1
+        assert self.key_dao.get_by_uuid(key.uuid).group_uuid is None
+
     def test_assign_group_not_exists_error(self):
         key = db_mock.get_sample_key()
         inserted = self.key_dao.insert(key)

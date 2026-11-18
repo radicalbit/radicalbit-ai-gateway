@@ -916,9 +916,32 @@ class TestGroupMembershipLeavesLimitsAlone:
         ) as mock_clear:
             await service.remove_group_from_key(key.uuid, group_uuid)
 
-        key_dao.remove_group.assert_called_once_with(key_uuid=key.uuid)
+        key_dao.remove_group.assert_called_once_with(
+            key_uuid=key.uuid, group_uuid=group_uuid
+        )
         assert key_limit_dao.method_calls == []
         mock_clear.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_key_not_in_the_group_is_not_found(self):
+        service, key_dao, _ = _make_limits_service()
+        its_group, other_group = uuid.uuid4(), uuid.uuid4()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4(), group_uuid=its_group)
+        key_dao.get_by_uuid = MagicMock(return_value=key)
+        key_dao.remove_group = MagicMock()
+        with pytest.raises(KeyNotFoundError, match='is not in group'):
+            await service.remove_group_from_key(key.uuid, other_group)
+        key_dao.remove_group.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_key_in_no_group_is_not_found(self):
+        service, key_dao, _ = _make_limits_service()
+        key = db_mock.get_sample_key(uuid=uuid.uuid4(), group_uuid=None)
+        key_dao.get_by_uuid = MagicMock(return_value=key)
+        key_dao.remove_group = MagicMock()
+        with pytest.raises(KeyNotFoundError, match='is not in group'):
+            await service.remove_group_from_key(key.uuid, uuid.uuid4())
+        key_dao.remove_group.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_keycloak_key_cannot_leave_its_group(self):
