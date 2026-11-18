@@ -28,9 +28,9 @@ from collections.abc import Awaitable, Callable
 import logging
 
 from fastapi import status
-from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.llm.messages import BaseMessage
+from radicalbit_ai_gateway.telemetry.tracing import task, workflow
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.config_hooks import (
     PluginConfig,
@@ -167,7 +167,7 @@ def register_preprocessing_plugin(
     Call from a plugin module at import time. Plugins run in the order their
     keys appear in the route's ``plugins`` config (route config order), not in
     registration order; see :func:`_enabled_chain`. Its ``preprocess``
-    method is wrapped with a traceloop ``task`` span named ``preprocess.<key>``
+    method is wrapped with a ``task`` span named ``preprocess.<key>``
     once, here, rather than per request.
 
     The plugin's ``plugins`` config key defaults to its package name (see

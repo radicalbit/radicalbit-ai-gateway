@@ -19,8 +19,8 @@ quirks: a streamed reply is reported as LangChain merged it (role
 read first from the call and then from the model's constructor params, the
 latter winning.
 
-Traceloop itself must instrument nothing (``TRACELOOP_INSTRUMENTS``): model
-calls are traced here, and the SDKs the providers use must not be traced twice.
+Model calls are traced here and nowhere else: no instrumentation of the SDKs
+the providers use may be switched on, or each call would be traced twice.
 """
 
 from collections.abc import Callable, Sequence
@@ -45,10 +45,8 @@ from opentelemetry.semconv.attributes.server_attributes import (
     SERVER_ADDRESS,
     SERVER_PORT,
 )
-from opentelemetry.semconv_ai import Meters, SpanAttributes
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 from pydantic import BaseModel
-from traceloop.sdk.instruments import Instruments
 
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
@@ -60,24 +58,29 @@ from radicalbit_ai_gateway.llm.messages_stream import MessageBuilder
 from radicalbit_ai_gateway.llm.providers._openai_common import _image_block
 from radicalbit_ai_gateway.llm.providers._schema import is_data_content_block
 from radicalbit_ai_gateway.llm.usage import MessagesCost, messages_usage
+from radicalbit_ai_gateway.telemetry.attributes import (
+    ENTITY_PATH,
+    OPERATION_DURATION_METRIC,
+    TASK_STATUS,
+    TOKEN_USAGE_METRIC,
+    USAGE_TOTAL_TOKENS,
+    WORKFLOW_NAME,
+)
 
 if TYPE_CHECKING:
     from radicalbit_ai_gateway.llm.chat_model import ChatModel
 
 logger = logging.getLogger(__name__)
 
-# Passed to ``Traceloop.init``: no instrumentation (``None`` would mean all).
-TRACELOOP_INSTRUMENTS: frozenset[Instruments] = frozenset()
-
 _tracer = trace.get_tracer(__name__)
 _meter = metrics.get_meter(__name__)
 _duration_histogram = _meter.create_histogram(
-    name=Meters.LLM_OPERATION_DURATION,
+    name=OPERATION_DURATION_METRIC,
     unit='s',
     description='GenAI operation duration',
 )
 _token_histogram = _meter.create_histogram(
-    name=Meters.LLM_TOKEN_USAGE,
+    name=TOKEN_USAGE_METRIC,
     unit='token',
     description='Measures number of input and output tokens used',
 )
@@ -125,7 +128,7 @@ def _dont_throw(func: Callable) -> Callable:
 
 
 def _should_send_prompts() -> bool:
-    """Traceloop's content-tracing switch (``TRACELOOP_TRACE_CONTENT``)."""
+    """Return whether content tracing is on (``TRACELOOP_TRACE_CONTENT``)."""
     return (os.getenv('TRACELOOP_TRACE_CONTENT') or 'true').lower() == 'true' or bool(
         context_api.get_value('override_enable_content_tracing')
     )
@@ -634,7 +637,7 @@ class ChatTrace:
             )
             _set(span, GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS, prompt_tokens)
             _set(span, GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS, completion_tokens)
-            _set(span, SpanAttributes.GEN_AI_USAGE_TOTAL_TOKENS, total_tokens)
+            _set(span, USAGE_TOTAL_TOKENS, total_tokens)
             self._record_tokens(prompt_tokens, completion_tokens, model_name)
         self._set_usage(message, token_usage is None, model_name)
         self._set_output(message, generation_info)
@@ -676,7 +679,7 @@ class ChatTrace:
         span = self.span
         span.set_attribute(GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
         span.set_attribute(GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
-        span.set_attribute(SpanAttributes.GEN_AI_USAGE_TOTAL_TOKENS, total_tokens)
+        span.set_attribute(USAGE_TOTAL_TOKENS, total_tokens)
         _set(span, GenAIAttributes.GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, cache_read)
         _set(
             span,
@@ -735,8 +738,8 @@ def _start_span(model: 'ChatModel', stream: bool) -> Span:
     if not span.is_recording():
         return span
     # The gateway's own task context does not describe this span.
-    span.set_attribute(SpanAttributes.TRACELOOP_WORKFLOW_NAME, '')
-    span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_PATH, '')
+    span.set_attribute(WORKFLOW_NAME, '')
+    span.set_attribute(ENTITY_PATH, '')
     span.set_attribute(GenAIAttributes.GEN_AI_PROVIDER_NAME, model._gen_ai_provider)
     span.set_attribute(GenAIAttributes.GEN_AI_OPERATION_NAME, 'chat')
     if stream:
@@ -774,7 +777,7 @@ def _record_tokens(
 def _fail(
     span: Span, error_type: str, message: str, error: BaseException | None = None
 ) -> None:
-    span.set_attribute(SpanAttributes.GEN_AI_TASK_STATUS, 'failure')
+    span.set_attribute(TASK_STATUS, 'failure')
     span.set_attribute(ERROR_TYPE, error_type)
     span.set_status(Status(StatusCode.ERROR, message))
     if error is not None:
@@ -1035,7 +1038,7 @@ class ResponsesTrace:
         span.set_attribute(GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
         span.set_attribute(GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
         span.set_attribute(
-            SpanAttributes.GEN_AI_USAGE_TOTAL_TOKENS,
+            USAGE_TOTAL_TOKENS,
             usage.get('total_tokens') or input_tokens + output_tokens,
         )
         # Each set when non-zero, as the semantic conventions recommend.
@@ -1262,9 +1265,7 @@ class MessagesTrace:
         counts = messages_usage(usage)
         span.set_attribute(GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS, counts.input)
         span.set_attribute(GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS, counts.output)
-        span.set_attribute(
-            SpanAttributes.GEN_AI_USAGE_TOTAL_TOKENS, counts.input + counts.output
-        )
+        span.set_attribute(USAGE_TOTAL_TOKENS, counts.input + counts.output)
         # Each set when non-zero, as the semantic conventions recommend.
         for attribute, count in (
             (GenAIAttributes.GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, counts.cache_read),

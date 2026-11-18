@@ -2,7 +2,6 @@ import logging
 
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.invocation.errors import Surface, raising
 from radicalbit_ai_gateway.invocation.fallback_chain import (
@@ -21,6 +20,7 @@ from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import build_user_content_from_texts
 from radicalbit_ai_gateway.utils.exceptions import ModelInvokerBadRequest
