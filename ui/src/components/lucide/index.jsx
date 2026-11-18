@@ -27,7 +27,6 @@ const Lucide = forwardRef(({
   );
   const sizeClassName = SIZE_CLASSNAMES[size] ?? SIZE_CLASSNAMES.md;
 
-  // A clickable icon behaves as a button: focusable and activable with Enter / Space
   const handleOnKeyDown = (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();

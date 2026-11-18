@@ -31,7 +31,6 @@ const group = (key, label, position, hasLeftColumnCollapsed, children) => {
 
 const divider = (key, position) => ({ key, position, type: 'divider' });
 
-// GROUPS ITEMS
 const projects = (hasLeftColumnCollapsed) => ({
   position: 2,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '1', shape: 'circle' }] }}>Projects</CollapsedTitle> : 'Projects',
@@ -104,7 +103,6 @@ const alerts = (hasLeftColumnCollapsed) => ({
   link: getLink(PathsEnum.ALERTS, 'Alert'),
 });
 
-// ALL ROUTES
 const allRoutes = (hasLeftColumnCollapsed) => [
   group('setup-header', 'Setup', 1, hasLeftColumnCollapsed, [
     projects(hasLeftColumnCollapsed),

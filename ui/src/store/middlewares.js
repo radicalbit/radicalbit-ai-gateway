@@ -28,7 +28,6 @@ export const rtkQueryErrorLogger = ({ dispatch }) => (next) => (action) => {
   const isQuery = action?.meta?.arg?.type === 'query';
   const isSilentError = action?.meta?.arg?.originalArgs?.silentError === true;
 
-  // WHITELIST
   if (isSilentError) {
     return next(action);
   }
@@ -43,13 +42,12 @@ export const rtkQueryErrorLogger = ({ dispatch }) => (next) => (action) => {
   if (endpointName && status && isWhiteListed) {
     return next(action);
   }
-  // END WHITELIST
 
   const showNotification = action?.payload && status;
 
   if (showNotification) {
     const error1 = action.payload?.data?.message;
-    const error2 = action.payload?.data?.error?.message; // likes models-repo errors
+    const error2 = action.payload?.data?.error?.message;
     const error3 = action.payload?.data;
     const message = error1 || error2 || error3 || 'generic error';
     const notificationMessage = notificationErrorJson({ status, message });
