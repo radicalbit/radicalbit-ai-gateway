@@ -353,8 +353,14 @@ class KeyService:
             raise KeyExternallyManagedError(
                 f'Key {key_uuid} cannot be unassigned from group because owner is "{key.owner}"'
             )
+        if key.group_uuid != group_uuid:
+            raise KeyNotFoundError(
+                f'Key with UUID {key_uuid} is not in group {group_uuid}'
+            )
         # No expiry check: removing an expired key from its group is cleanup, like delete
-        removed_rows = self.key_dao.remove_group(key_uuid=key_uuid)
+        removed_rows = self.key_dao.remove_group(
+            key_uuid=key_uuid, group_uuid=group_uuid
+        )
         if removed_rows == 0:
             raise KeyInternalError(
                 f'Group with UUID {group_uuid} not removed from key {key.name}'

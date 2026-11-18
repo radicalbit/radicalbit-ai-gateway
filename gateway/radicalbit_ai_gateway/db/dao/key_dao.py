@@ -123,14 +123,15 @@ class KeyDAO:
             )
             return session.scalars(query).one_or_none()
 
-    def remove_group(self, key_uuid: UUID) -> int:
+    def remove_group(self, key_uuid: UUID, group_uuid: UUID) -> int:
+        """Take the key out of ``group_uuid``; nothing changes if it is not in it."""
         UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
         now = datetime.datetime.now(tz=UTC)
 
         with self.db.begin_session() as session:
             query = (
                 update(Key)
-                .where(Key.uuid == key_uuid)
+                .where(Key.uuid == key_uuid, Key.group_uuid == group_uuid)
                 .values(group_uuid=None, updated_at=now)
             )
             return session.execute(query).rowcount
