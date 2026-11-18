@@ -1287,6 +1287,88 @@
       }
     },
     "/public/api/v1/groups/{group_uuid}": {
+      "delete": {
+        "description": "Delete a group: its credentials lose the route access it gave them.",
+        "operationId": "groups_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_routes",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Routes",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_keys",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Keys",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupFullOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Group",
+        "tags": [
+          "groups"
+        ]
+      },
       "get": {
         "description": "Get a group.",
         "operationId": "groups_get",
@@ -2240,6 +2322,58 @@
       }
     },
     "/public/api/v1/projects/{project_uuid}": {
+      "delete": {
+        "description": "Delete a project: its served configuration stops serving with it.",
+        "operationId": "projects_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Project",
+        "tags": [
+          "projects"
+        ]
+      },
       "get": {
         "description": "Get a project with its two config slots.",
         "operationId": "projects_get",
