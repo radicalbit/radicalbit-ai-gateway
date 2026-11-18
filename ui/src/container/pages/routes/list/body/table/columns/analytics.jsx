@@ -1,7 +1,6 @@
 import Lucide from '@Components/lucide';
 import useModals, { modals } from '@Hooks/use-modals';
 import {
-  Button,
   DataTableAction,
   Tooltip,
 } from '@radicalbit/radicalbit-design-system';
@@ -18,9 +17,7 @@ function Analytics({ record }) {
   return (
     <DataTableAction noHide>
       <Tooltip title="Open route analytics">
-        <Button aria-label="Open route analytics" onClick={handleOnClick} type="text">
-          <Lucide icon={ChartLine} />
-        </Button>
+        <Lucide aria-label="Open route analytics" className="!box-content p-2 cursor-pointer" icon={ChartLine} onClick={handleOnClick} />
       </Tooltip>
     </DataTableAction>
   );
