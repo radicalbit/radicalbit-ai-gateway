@@ -14,8 +14,8 @@ import {
   EllipsisVertical,
   GitPullRequest,
   Play,
+  Settings2,
   Square,
-  SquarePen,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 
@@ -78,7 +78,7 @@ const useSlotMenuItems = ({ projectUuid, projectName, config }) => {
   const [triggerServe, serveArgs] = useServeConfigMutation({ fixedCacheKey: `serve-config-${configUuid}` });
   const [triggerUnserve, unserveArgs] = useUnserveConfigMutation({ fixedCacheKey: `unserve-config-${configUuid}` });
 
-  const handleOnEdit = () => {
+  const handleOnOpen = () => {
     showModal(modals.EDIT_PROJECT_CONFIG, { uuid: projectUuid, activeConfigUuid: configUuid });
   };
 
@@ -136,10 +136,10 @@ const useSlotMenuItems = ({ projectUuid, projectName, config }) => {
 
   const items = [
     {
-      key: `edit-config-${configUuid}`,
-      icon: <Lucide icon={SquarePen} />,
-      label: 'Edit Configuration',
-      onClick: handleOnEdit,
+      key: `open-config-${configUuid}`,
+      icon: <Lucide icon={Settings2} />,
+      label: 'Open Configuration',
+      onClick: handleOnOpen,
     },
   ];
 
