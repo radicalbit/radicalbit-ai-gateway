@@ -78,6 +78,7 @@ const getColumns = () => [
     title: 'Configurations',
     dataIndex: 'configs',
     key: 'configs',
+    width: 220,
     render: (configs) => <ConfigurationCell configs={configs} />,
   },
 
