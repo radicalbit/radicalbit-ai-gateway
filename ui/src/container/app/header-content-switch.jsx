@@ -7,7 +7,7 @@ import RoutesListHeader from '@Container/pages/routes/list/header';
 import SecretsListHeader from '@Container/pages/secrets/list/header';
 import TracingListHeader from '@Container/pages/tracing/list/header';
 import UsageListHeader from '@Container/pages/usage/list/header';
-import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
+import { PathsEnum } from '@Src/constants';
 import { Route, Routes } from 'react-router-dom';
 import useAuthBootstrapReady from './use-auth-bootstrap-ready';
 
@@ -40,13 +40,9 @@ export default function MainHeaderContentSwitch() {
 
       <Route element={<SecretsListHeader />} path={`/${PathsEnum.SECRETS}`} />
 
-      {FEATURE_FLAGS.ALERTS && (
-        <>
-          <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}`} />
+      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}`} />
 
-          <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}/:uuid`} />
-        </>
-      )}
+      <Route element={<AlertsListHeader />} path={`/${PathsEnum.ALERTS}/:uuid`} />
     </Routes>
   );
 }

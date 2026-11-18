@@ -31,6 +31,7 @@ function Publish({ config, projectUuid }) {
     const { error: requestError } = await triggerServe({
       projectUuid,
       configUuid,
+      silentError: true,
       successMessage: <SuccessMessage prefix="Configuration for" strong={projectName} suffix="served" />,
     });
 

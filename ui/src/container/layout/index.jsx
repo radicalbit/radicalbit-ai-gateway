@@ -1,5 +1,5 @@
 import Lucide from '@Components/lucide';
-import { FEATURE_FLAGS, PathsEnum } from '@Src/constants';
+import { PathsEnum } from '@Src/constants';
 import { Button } from '@radicalbit/radicalbit-design-system';
 import {
   FolderOpen, Gauge, Key, Lock, Route, Settings2, Signpost, Users,
@@ -31,7 +31,6 @@ const group = (key, label, position, hasLeftColumnCollapsed, children) => {
 
 const divider = (key, position) => ({ key, position, type: 'divider' });
 
-// GROUPS ITEMS
 const projects = (hasLeftColumnCollapsed) => ({
   position: 2,
   title: hasLeftColumnCollapsed ? <CollapsedTitle keys={{ mac: [{ label: 'Ctrl' }, { label: '1', shape: 'circle' }] }}>Projects</CollapsedTitle> : 'Projects',
@@ -104,7 +103,6 @@ const alerts = (hasLeftColumnCollapsed) => ({
   link: getLink(PathsEnum.ALERTS, 'Alert'),
 });
 
-// ALL ROUTES
 const allRoutes = (hasLeftColumnCollapsed) => [
   group('setup-header', 'Setup', 1, hasLeftColumnCollapsed, [
     projects(hasLeftColumnCollapsed),
@@ -121,7 +119,7 @@ const allRoutes = (hasLeftColumnCollapsed) => [
   group('manage-header', 'Manage', 11, hasLeftColumnCollapsed, [
     groups(hasLeftColumnCollapsed),
     keys(hasLeftColumnCollapsed),
-    FEATURE_FLAGS.ALERTS ? alerts(hasLeftColumnCollapsed) : false,
+    alerts(hasLeftColumnCollapsed),
   ].filter(Boolean)),
 ];
 

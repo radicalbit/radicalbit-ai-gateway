@@ -31,6 +31,7 @@ function RequestToPublish({ config, projectUuid }) {
     const { error: requestError } = await triggerApprove({
       projectUuid,
       configUuid,
+      silentError: true,
       successMessage: <SuccessMessage prefix="Configuration for" strong={projectName} suffix="sent for publish" />,
     });
 
