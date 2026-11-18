@@ -251,8 +251,8 @@ class GroupService:
             group_uuid, project_uuid, route_name
         )
         if delete_rows == 0:
-            raise GroupInternalError(
-                f'Route {route_name} not removed from group {group_uuid}'
+            raise RouteNotFoundError(
+                f'Route {project_name}/{route_name} is not in group {group_uuid}'
             )
         return self._get_group(group_uuid)
 
@@ -298,11 +298,9 @@ class GroupService:
             raise GroupExternallyManagedError(
                 f'Group {group_uuid} cannot have keys removed because owner is "{group.owner}"'
             )
-        deleted = await self.key_service.remove_group_from_key(
+        await self.key_service.remove_group_from_key(
             key_uuid=key_uuid, group_uuid=group_uuid
         )
-        if deleted == 0:
-            raise GroupInternalError(f'Key {key_uuid} not removed')
         return self._get_group(group_uuid, True, True)
 
     def get_associable_keys(self, group_uuid: UUID) -> list[KeyFullOut]:

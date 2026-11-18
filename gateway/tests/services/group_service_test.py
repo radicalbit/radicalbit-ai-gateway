@@ -487,7 +487,7 @@ class GroupServiceTest(unittest.TestCase):
             'nonexistent-route',
         )
 
-    def test_remove_project_route_ko(self):
+    def test_remove_project_route_not_in_the_group(self):
         project_uuid = uuid.uuid4()
         project_config = get_plain_gateway('my-route')
         service = GroupService(
@@ -502,7 +502,7 @@ class GroupServiceTest(unittest.TestCase):
         self.group_dao.get_by_uuid = MagicMock(return_value=group)
         self.group_dao.remove_project_route = MagicMock(return_value=0)
         pytest.raises(
-            GroupInternalError,
+            RouteNotFoundError,
             service.remove_project_route,
             group.uuid,
             project_uuid,

@@ -651,7 +651,9 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         asyncio.run(
             self.key_service.remove_group_from_key(self.key_uuid, self.group.uuid)
         )
-        self.key_dao.remove_group.assert_called_once_with(key_uuid=self.key_uuid)
+        self.key_dao.remove_group.assert_called_once_with(
+            key_uuid=self.key_uuid, group_uuid=self.group.uuid
+        )
 
     @freeze_time(EXPIRED_AT)
     def test_delete_on_an_expired_key_succeeds(self):
@@ -672,7 +674,9 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         asyncio.run(
             self.key_service.remove_group_from_key(self.key_uuid, self.group.uuid)
         )
-        self.key_dao.remove_group.assert_called_once_with(key_uuid=self.key_uuid)
+        self.key_dao.remove_group.assert_called_once_with(
+            key_uuid=self.key_uuid, group_uuid=self.group.uuid
+        )
 
 
 NOW = datetime.datetime(2026, 11, 3, 12, tzinfo=datetime.timezone.utc)
