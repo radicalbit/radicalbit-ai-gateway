@@ -1,4 +1,6 @@
-import { ATTRIBUTE_PREFIXES, DEFAULT_SPAN_TAB, IO_ATTRIBUTES, SPAN_TABS } from './constants';
+import {
+  ATTRIBUTE_PREFIXES, DEFAULT_SPAN_TAB, IO_ATTRIBUTES, SPAN_STATUS, SPAN_TABS, SpanStatusEnum,
+} from './constants';
 
 const INVOCATION = 'invocation';
 
@@ -15,6 +17,10 @@ export function flattenSpans(tree) {
   ];
 
   return walk(tree, 0);
+}
+
+export function findSpan(tree, spanId) {
+  return flattenSpans(tree).find(({ span }) => span.spanId === spanId)?.span;
 }
 
 export function selectedSpanId(tree, spanIdParam) {
@@ -43,6 +49,35 @@ export function selectedSpanTab(spanTabParam) {
 
 export function isSpanError(span) {
   return span?.statusCode === 'Error' || (span?.errorCount ?? 0) > 0;
+}
+
+export function spanStatus(span) {
+  const status = span?.status;
+
+  if (Object.hasOwn(SPAN_STATUS, status ?? '')) {
+    return status;
+  }
+
+  if (isSpanError(span)) {
+    return SpanStatusEnum.ERROR;
+  }
+
+  return SpanStatusEnum.SUCCESS;
+}
+
+export function spanLabel(span) {
+  return span?.label || span?.spanName;
+}
+
+export function spanHeading(tree, span) {
+  const spanName = span?.spanName;
+  const label = findSpan(tree, span?.spanId)?.label;
+
+  if (!label) {
+    return { rawName: undefined, title: spanName };
+  }
+
+  return { rawName: spanName, title: label };
 }
 
 export function waterfallBar(span, traceDurationMs) {

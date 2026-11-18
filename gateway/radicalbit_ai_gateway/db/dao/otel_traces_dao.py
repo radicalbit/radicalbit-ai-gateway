@@ -38,6 +38,11 @@ _OPERATION_CATEGORY_ATTR = (
     "SpanAttributes['traceloop.association.properties.rb.gateway.operation_category']"
 )
 _SPAN_KIND_ATTR = "SpanAttributes['traceloop.span.kind']"
+# Stamped on the decide span. Span attributes are strings, so the boolean is
+# stored as 'true' or 'false'. A span without it reads as false.
+_FALLBACK_TRIGGERED_EXPR = (
+    "lower(SpanAttributes['decision.response.fallback_triggered']) = 'true'"
+)
 _TAGS_ATTR = "SpanAttributes['traceloop.association.properties.tags']"
 # Tags are stamped as one comma-joined "key=value,..." string (see
 # set_trace_attributes) since SpanAttributes values are scalar - splitByChar
@@ -96,6 +101,7 @@ _SPAN_FIELD_NAMES = [
     'tags',
     'operation_category',
     'span_kind',
+    'fallback_triggered',
 ]
 _SPAN_DETAIL_FIELD_NAMES = [
     'timestamp',
@@ -319,6 +325,7 @@ class OtelTracesDAO:
                 literal_column(_TAGS_EXPR).label('tags'),
                 literal_column(_OPERATION_CATEGORY_ATTR).label('operation_category'),
                 literal_column(_SPAN_KIND_ATTR).label('span_kind'),
+                literal_column(_FALLBACK_TRIGGERED_EXPR).label('fallback_triggered'),
             )
             .select_from(OtelTraces)
             .where(

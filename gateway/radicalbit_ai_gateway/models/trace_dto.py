@@ -17,11 +17,25 @@ class TraceStatus(str, Enum):
     ERROR = 'error'
 
 
+class SpanStatus(str, Enum):
+    """How one span ended. It is the span's own: a failed child does not
+    change its parent.
+    """
+
+    SUCCESS = 'success'
+    # A fallback answered. Not the same as TraceStatus.WARNING.
+    WARNING = 'warning'
+    ERROR = 'error'
+
+
 class TreeNodeDTO(BaseModel):
     span_id: str
     span_name: str
+    # Readable name for the span. None when the span name is not known.
+    label: str | None = None
     duration_ms: float
     status_code: str
+    status: SpanStatus = SpanStatus.SUCCESS
     output_tokens: int = 0
     input_tokens: int = 0
     total_tokens: int = 0

@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest';
+import { SpanStatusEnum } from './constants';
 import {
   attributeCount,
   attributeTags,
   attributeGroups,
+  findSpan,
   flattenSpans,
   isSpanError,
   selectedSpanId,
   selectedSpanTab,
   spanIo,
   spanErrorLines,
+  spanHeading,
+  spanLabel,
   spanShare,
+  spanStatus,
   spanTreeRows,
   waterfallBar,
 } from './helpers';
@@ -275,5 +280,80 @@ describe('attributeTags', () => {
 
   it('keeps tags that are already a list', () => {
     expect(attributeTags(['a=1', 'b=2'])).toEqual(['a=1', 'b=2']);
+  });
+});
+
+describe('spanLabel', () => {
+  it('shows the readable label of the span', () => {
+    expect(spanLabel({ label: 'Authenticate credential', spanName: 'auth_api_key.task' })).toBe('Authenticate credential');
+  });
+
+  it('falls back to the raw span name when the span name is unknown to the backend', () => {
+    expect(spanLabel({ label: null, spanName: 'my_custom.task' })).toBe('my_custom.task');
+  });
+
+  it('falls back to the raw span name when an older backend sends no label', () => {
+    expect(spanLabel({ spanName: 'auth_api_key.task' })).toBe('auth_api_key.task');
+  });
+});
+
+describe('spanStatus', () => {
+  it('uses the status the backend sets on the span', () => {
+    expect(spanStatus({ status: 'success' })).toBe(SpanStatusEnum.SUCCESS);
+    expect(spanStatus({ status: 'warning' })).toBe(SpanStatusEnum.WARNING);
+    expect(spanStatus({ status: 'error' })).toBe(SpanStatusEnum.ERROR);
+  });
+
+  it('is an error for a failed span when an older backend sends no status', () => {
+    expect(spanStatus({ statusCode: 'Error', errorCount: 1 })).toBe(SpanStatusEnum.ERROR);
+  });
+
+  it('is a success for a clean span when an older backend sends no status', () => {
+    expect(spanStatus({ statusCode: 'Unset', errorCount: 0 })).toBe(SpanStatusEnum.SUCCESS);
+  });
+
+  it('does not trust a status it does not know', () => {
+    expect(spanStatus({ status: 'skipped', errorCount: 0 })).toBe(SpanStatusEnum.SUCCESS);
+  });
+});
+
+describe('findSpan', () => {
+  it('finds a span anywhere in the tree by its id', () => {
+    expect(findSpan(TREE, 'judge').spanName).toBe('judge.task');
+  });
+
+  it('finds nothing for an id that is not in the tree', () => {
+    expect(findSpan(TREE, 'missing')).toBeUndefined();
+    expect(findSpan(null, 'judge')).toBeUndefined();
+  });
+});
+
+describe('spanHeading', () => {
+  const tree = {
+    spanId: 'root',
+    spanName: 'chat_completions.workflow',
+    label: 'Chat request',
+    children: [{ spanId: 'custom', spanName: 'my_custom.task', label: null, children: [] }],
+  };
+
+  it('uses the readable label as title and keeps the raw span name under it', () => {
+    expect(spanHeading(tree, { spanId: 'root', spanName: 'chat_completions.workflow' })).toEqual({
+      rawName: 'chat_completions.workflow',
+      title: 'Chat request',
+    });
+  });
+
+  it('uses the raw span name as title, and does not repeat it, when the span has no label', () => {
+    expect(spanHeading(tree, { spanId: 'custom', spanName: 'my_custom.task' })).toEqual({
+      rawName: undefined,
+      title: 'my_custom.task',
+    });
+  });
+
+  it('uses the raw span name as title when the span is not in the tree', () => {
+    expect(spanHeading(null, { spanId: 'gone', spanName: 'decide.task' })).toEqual({
+      rawName: undefined,
+      title: 'decide.task',
+    });
   });
 });

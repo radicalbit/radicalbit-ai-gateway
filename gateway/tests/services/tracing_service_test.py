@@ -22,6 +22,7 @@ from radicalbit_ai_gateway.models.trace_dto import (
     LatenciesDTO,
     SpanDTO,
     SpanLatenciesDTO,
+    SpanStatus,
     TraceDTO,
     TracesChartDataDTO,
     TraceStatus,
@@ -570,6 +571,150 @@ class TracingServiceTest(unittest.TestCase):
         # Both fields come with the spans already read: no query per span.
         self.otel_traces_dao.get_spans_by_trace_id.assert_called_once()
         self.otel_traces_dao.get_span_by_trace_and_span_id.assert_not_called()
+
+    def _tree_of(self, *spans: SpanRecord):
+        self.otel_traces_dao.get_spans_by_trace_id = MagicMock(return_value=list(spans))
+        return self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
+
+    @staticmethod
+    def _named_span(span_id, parent, span_name, **kwargs):
+        return SpanRecord(
+            timestamp=datetime.datetime(
+                2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
+            ),
+            trace_id='trace-123',
+            request_uuid='12345678-1234-5678-1234-567812345678',
+            span_id=span_id,
+            span_name=span_name,
+            service_name='ai-gateway',
+            duration=1_000_000,
+            parent_span_id=parent,
+            route_name='test-route',
+            api_key_uuid='',
+            api_key_name='',
+            group_uuid='',
+            group_name='',
+            **{'status_code': 'Unset', **kwargs},
+        )
+
+    def test_tree_nodes_carry_a_readable_label(self):
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'decision_model.workflow'),
+            span('auth', 'root', 'auth_api_key.task'),
+            span('decide', 'root', 'decide.task'),
+        )
+
+        assert tree.label == 'Decision request'
+        children = {c.span_id: c for c in tree.children}
+        assert children['auth'].label == 'Authenticate credential'
+        assert children['decide'].label == 'Decide'
+        # The raw span name stays on the node, next to the label.
+        assert children['auth'].span_name == 'auth_api_key.task'
+        assert tree.model_dump(by_alias=True)['label'] == 'Decision request'
+
+    def test_a_span_with_an_unknown_name_has_no_label(self):
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'chat_completions.workflow'),
+            span('new', 'root', 'brand_new_step.task'),
+            # The whole name must match, with or without one .workflow / .task
+            # suffix. So a bare `decide` gets a label, a doubled or other
+            # suffix does not.
+            span('bare', 'root', 'decide'),
+            span('odd', 'root', 'decide.task.task'),
+            span('other-suffix', 'root', 'decide.agent'),
+        )
+
+        assert tree.label == 'Chat request'
+        children = {c.span_id: c for c in tree.children}
+        assert children['new'].label is None
+        assert children['bare'].label == 'Decide'
+        assert children['odd'].label is None
+        assert children['other-suffix'].label is None
+        assert children['new'].model_dump(by_alias=True)['label'] is None
+
+    def test_span_labels_follow_the_agreed_table(self):
+        # From the AG-1166 starting table, then the Span naming board for the
+        # names the ticket does not list.
+        expected = {
+            'decision_model.workflow': 'Decision request',
+            'chat_completions.workflow': 'Chat request',
+            'auth_api_key.task': 'Authenticate credential',
+            'check_route_access.task': 'Check route access',
+            'select_model.task': 'Select model',
+            'run_preprocessing.workflow': 'Preprocess request',
+            'apply_check_guardrails.workflow': 'Input guardrails',
+            'apply_output_guardrails.workflow': 'Output guardrails',
+            'check_regex.task': 'Regex guardrail',
+            'check_contains.task': 'Contains guardrail',
+            'check_starts_with.task': 'Starts-with guardrail',
+            'check_ends_with.task': 'Ends-with guardrail',
+            'presidio_analyzer.task': 'PII detection',
+            'redact_presidio.task': 'PII redaction',
+            'check_judge.task': 'LLM judge guardrail',
+            'check_decision_judge.task': 'Decision judge guardrail',
+            'check_guardrails_ai.task': 'Guardrails AI check',
+            'get_semantic_cache.task': 'Cache lookup',
+            'get_exact_cache.task': 'Cache lookup',
+            'set_semantic_cache.task': 'Cache store',
+            'set_exact_cache.task': 'Cache store',
+            'llm_complete.task': 'Call model',
+            'llm_stream.task': 'Stream from model',
+            'llm_embed.task': 'Embed with model',
+            'llm_transcribe.task': 'Transcribe with model',
+            'decide.task': 'Decide',
+            'select_embedding_model.task': 'Select embedding model',
+            'select_transcription_model.task': 'Select transcription model',
+            'apply_redact_guardrails.workflow': 'Redaction',
+            'llm_complete_responses.task': 'Call model (Responses API)',
+            'llm_complete_messages.task': 'Call model (Messages API)',
+            'stream_with_output_guardrails.workflow': 'Stream with output guardrails',
+            'mcp_tools_call.task': 'MCP tool call',
+            'mcp_upstream_call_tool.task': 'Upstream tool call',
+        }
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'root'),
+            *(span(name, 'root', name) for name in expected),
+        )
+
+        assert {c.span_name: c.label for c in tree.children} == expected
+
+    def test_tree_nodes_carry_their_status(self):
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'decision_model.workflow'),
+            span('ok', 'root', 'auth_api_key.task', status_code='Ok'),
+            span('unset', 'root', 'check_route_access.task'),
+            span('failed', 'root', 'llm_complete.task', status_code='Error'),
+            span('fallback', 'root', 'decide.task', fallback_triggered=True),
+            span(
+                'failed-fallback',
+                'root',
+                'decide.task',
+                status_code='Error',
+                fallback_triggered=True,
+            ),
+        )
+
+        children = {c.span_id: c for c in tree.children}
+        assert children['ok'].status == SpanStatus.SUCCESS
+        assert children['unset'].status == SpanStatus.SUCCESS
+        assert children['failed'].status == SpanStatus.ERROR
+        # A fallback answered: the span did its job, but not as planned.
+        assert children['fallback'].status == SpanStatus.WARNING
+        # A failed span is in error, fallback or not.
+        assert children['failed-fallback'].status == SpanStatus.ERROR
+        # The status is the span's own: a failed child does not change its parent.
+        assert tree.status == SpanStatus.SUCCESS
+        assert children['fallback'].model_dump(by_alias=True, mode='json')[
+            'status'
+        ] == ('warning')
 
     def test_tree_nodes_carry_their_start_offset_from_the_root(self):
         base_time = datetime.datetime(
