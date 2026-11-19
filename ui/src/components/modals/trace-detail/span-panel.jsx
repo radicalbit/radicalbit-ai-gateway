@@ -20,7 +20,7 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import { SPAN_PARAM, SPAN_TAB_PARAM, TAGS_ATTRIBUTE } from './constants';
 import {
-  attributeCount, attributeGroups, attributeTags, flattenSpans, selectedSpanId, selectedSpanTab, spanErrorLines, spanIo, spanShare,
+  attributeCount, attributeGroups, attributeTags, findSpan, selectedSpanId, selectedSpanTab, spanErrorLines, spanHeading, spanIo, spanShare,
 } from './helpers';
 
 function SpanPanel() {
@@ -67,8 +67,18 @@ function SpanPanel() {
 }
 
 function SpanDetail({ span }) {
+  const { modalPayload } = useModals();
+  const requestUuid = modalPayload?.data?.requestUuid;
+
+  const { data: request } = useGetRequestByIdVertical(requestUuid);
+  const traceId = request?.traceId;
+
+  const { data: trace } = useGetTraceByIdVertical(traceId);
+  const tree = trace?.tree;
+
   const spanId = span?.spanId;
-  const spanName = span?.spanName;
+
+  const { rawName, title } = spanHeading(tree, span);
 
   return (
     <Board
@@ -77,8 +87,8 @@ function SpanDetail({ span }) {
           padding="none"
           title={(
             <SectionTitle
-              subtitle={<TextWithBold bold={spanId} size="small" text="Span" textProps={{ type: 'secondary' }} />}
-              title={spanName}
+              subtitle={<SpanSubtitle rawName={rawName} spanId={spanId} />}
+              title={title}
               titleSuffix={<SpanTags spanId={spanId} />}
               wrapTitle
             />
@@ -99,6 +109,22 @@ function SpanDetail({ span }) {
   );
 }
 
+function SpanSubtitle({ rawName, spanId }) {
+  const spanIdLine = <TextWithBold bold={spanId} size="small" text="Span" textProps={{ type: 'secondary' }} />;
+
+  if (!rawName) {
+    return spanIdLine;
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="break-all font-mono text-xs text-[var(--coo-fg-secondary)]">{rawName}</span>
+
+      {spanIdLine}
+    </div>
+  );
+}
+
 function SpanTags({ spanId }) {
   const { modalPayload } = useModals();
   const requestUuid = modalPayload?.data?.requestUuid;
@@ -109,7 +135,7 @@ function SpanTags({ spanId }) {
   const { data: trace } = useGetTraceByIdVertical(traceId);
   const tree = trace?.tree;
 
-  const node = flattenSpans(tree).find(({ span }) => span.spanId === spanId)?.span;
+  const node = findSpan(tree, spanId);
   const operationCategory = node?.operationCategory;
   const spanKind = node?.spanKind;
 

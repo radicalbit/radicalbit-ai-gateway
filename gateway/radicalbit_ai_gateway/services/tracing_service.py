@@ -17,6 +17,7 @@ from radicalbit_ai_gateway.models.trace_dto import (
     SpanDTO,
     SpanLatenciesDTO,
     SpanLatencyDTO,
+    SpanStatus,
     TraceDTO,
     TracesChartDataDTO,
     TracesChartDataSeriesDTO,
@@ -25,6 +26,7 @@ from radicalbit_ai_gateway.models.trace_dto import (
 )
 from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.key_service import KeyService
+from radicalbit_ai_gateway.services.span_labels import span_label
 from radicalbit_ai_gateway.utils import NS_TO_MS
 from radicalbit_ai_gateway.utils.chart_utils import (
     generate_chart_timestamps,
@@ -71,6 +73,20 @@ def _compute_trace_status(root_has_error: bool, total_error_count: int) -> Trace
     if total_error_count > 0:
         return TraceStatus.WARNING
     return TraceStatus.SUCCESS
+
+
+def _compute_span_status(has_error: bool, fallback_triggered: bool) -> SpanStatus:
+    """Status of one span, from the span alone.
+
+    - Span in error: ERROR
+    - A fallback answered: WARNING
+    - Everything else: SUCCESS
+    """
+    if has_error:
+        return SpanStatus.ERROR
+    if fallback_triggered:
+        return SpanStatus.WARNING
+    return SpanStatus.SUCCESS
 
 
 class TracingService:
@@ -273,8 +289,12 @@ class TracingService:
             return TreeNodeDTO(
                 span_id=span.span_id,
                 span_name=span.span_name,
+                label=span_label(span.span_name, span.gen_ai_provider),
                 duration_ms=span.duration / NS_TO_MS,
                 status_code=span.status_code,
+                status=_compute_span_status(
+                    number_of_errors > 0, span.fallback_triggered
+                ),
                 output_tokens=output,
                 input_tokens=input_tokens,
                 total_tokens=total,

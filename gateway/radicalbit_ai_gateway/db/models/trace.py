@@ -97,6 +97,9 @@ class SpanRecord(BaseModel):
     # Empty when the span carries no such attribute
     operation_category: str = ''
     span_kind: str = ''
+    # True when a fallback answered (decision.response.fallback_triggered)
+    fallback_triggered: bool = False
+    gen_ai_provider: str = ''
     # Additional fields for span detail
     span_attributes: dict = Field(default_factory=dict)
     status_message: str | None = None

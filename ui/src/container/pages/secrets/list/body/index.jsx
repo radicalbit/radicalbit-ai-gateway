@@ -1,7 +1,7 @@
 import Lucide from '@Components/lucide';
 import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { SEARCH_PARAMS } from '@Src/constants';
-import { useGetSecretsQuery } from '@State/secrets/api';
+import { secretsApiSlice, useGetSecretsQuery } from '@State/secrets/api';
 import {
   Board,
   Button,
@@ -147,11 +147,12 @@ function IsEmpty() {
 function IsError() {
   const [searchParams] = useSearchParams();
   const queryParams = readQueryParams(searchParams);
+  const dispatch = useDispatch();
 
-  const { isFetching, refetch } = useGetSecretsQuery(queryParams);
+  const { isFetching } = secretsApiSlice.endpoints.getSecrets.useQueryState(queryParams);
 
   const handleOnRetry = () => {
-    refetch();
+    dispatch(secretsApiSlice.endpoints.getSecrets.initiate(queryParams, { subscribe: false, forceRefetch: true }));
   };
 
   return (

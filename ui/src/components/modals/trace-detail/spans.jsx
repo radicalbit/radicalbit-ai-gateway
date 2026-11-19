@@ -4,33 +4,25 @@ import { formatInt, formatMs } from '@Src/helpers/column-formatters';
 import { useGetRequestByIdVertical } from '@State/requests/vertical-hooks';
 import { useGetTraceByIdVertical } from '@State/tracing/vertical-hooks';
 import {
-  BarChart, Board, DataTable, NewHeader, SectionTitle,
+  BarChart, Board, DataTable, NewHeader, SectionTitle, Tooltip,
 } from '@radicalbit/radicalbit-design-system';
+import classNames from 'classnames';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import { SPAN_PARAM } from './constants';
+import { SPAN_PARAM, SPAN_STATUS, SpanStatusEnum } from './constants';
 import {
-  isSpanError, selectedSpanId, spanTreeRows, waterfallBar,
+  selectedSpanId, spanLabel, spanStatus, spanTreeRows, waterfallBar,
 } from './helpers';
 
 const COLUMNS = [
   {
-    key: 'name',
-    render: (_, span) => <SpanName span={span} />,
-    width: '45%',
-  },
-  {
-    key: 'bar',
-    render: (_, span) => <SpanBar span={span} />,
-    width: '40%',
-  },
-  {
-    align: 'right',
-    key: 'duration',
-    render: (_, span) => <SpanDuration span={span} />,
-    width: '15%',
+    key: 'span',
+    render: (_, span) => <SpanRow span={span} />,
   },
 ];
+
+// The design system default bar gradient needs a colour token this theme does not have.
+const BAR_CLASS_NAME = '[--background:var(--coo-primary-03)]';
 
 const EXPANDABLE = {
   defaultExpandAllRows: true,
@@ -105,27 +97,61 @@ function Spans() {
   );
 }
 
-function SpanName({ span }) {
-  const operationCategory = span?.operationCategory;
-  const spanKind = span?.spanKind;
-  const spanName = span?.spanName;
-  const totalTokens = span?.totalTokens;
-
-  const category = operationCategory ?? spanKind ?? 'span';
-  const subtitle = `${category} · ${formatInt(totalTokens)} tokens`;
-
-  if (isSpanError(span)) {
-    return (
-      <div className="flow-root">
-        <SectionTitle size="small" subtitle={subtitle} title={spanName} titleColor="error" />
-      </div>
-    );
-  }
-
+function SpanRow({ span }) {
   return (
     <div className="flow-root">
-      <SectionTitle size="small" subtitle={subtitle} title={spanName} />
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <SpanStatusDot span={span} />
+
+          <SpanName span={span} />
+
+          <SpanDuration span={span} />
+        </div>
+
+        <SpanBar span={span} />
+      </div>
     </div>
+  );
+}
+
+function SpanStatusDot({ span }) {
+  const { className, tooltip } = SPAN_STATUS[spanStatus(span)];
+
+  const dotClassName = classNames('h-2 w-2 shrink-0 rounded-full', className);
+
+  return (
+    <Tooltip title={tooltip}>
+      <span aria-label={tooltip} className={dotClassName} role="img" />
+    </Tooltip>
+  );
+}
+
+function SpanName({ span }) {
+  const { modalPayload } = useModals();
+  const requestUuid = modalPayload?.data?.requestUuid;
+
+  const { data: request } = useGetRequestByIdVertical(requestUuid);
+  const traceId = request?.traceId;
+
+  const { data: trace } = useGetTraceByIdVertical(traceId);
+  const rootSpanId = trace?.tree?.spanId;
+
+  const spanId = span?.spanId;
+  const spanName = span?.spanName;
+
+  const isRoot = spanId === rootSpanId;
+  const label = spanLabel(span);
+  const className = classNames('min-w-0 truncate text-base', {
+    'font-medium': !isRoot,
+    'font-semibold': isRoot,
+    'text-[var(--coo-error)]': spanStatus(span) === SpanStatusEnum.ERROR,
+  });
+
+  return (
+    <Tooltip title={spanName}>
+      <span className={className}>{label}</span>
+    </Tooltip>
   );
 }
 
@@ -166,17 +192,17 @@ function SpanBar({ span }) {
 
   const { offset, value } = waterfallBar(span, traceDurationMs);
 
-  if (isSpanError(span)) {
+  if (spanStatus(span) === SpanStatusEnum.ERROR) {
     return <BarChart offset={offset} type="error" value={value} />;
   }
 
-  return <BarChart offset={offset} value={value} />;
+  return <BarChart className={BAR_CLASS_NAME} offset={offset} value={value} />;
 }
 
 function SpanDuration({ span }) {
   const durationMs = span?.durationMs;
 
-  return <span className="text-xs">{formatMs(durationMs)}</span>;
+  return <span className="ml-auto shrink-0 whitespace-nowrap text-sm">{formatMs(durationMs)}</span>;
 }
 
 export default Spans;
