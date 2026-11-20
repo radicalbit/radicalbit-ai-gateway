@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy import Row, func as F, literal_column, select, text
+from sqlalchemy import ColumnElement, Row, func as F, literal_column, select, text
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
@@ -130,10 +130,14 @@ _SPAN_DETAIL_FIELD_NAMES = [
 ]
 
 
+def _duration_quantile(level: float) -> ColumnElement:
+    """Span duration in ms at `level`: ClickHouse's parametric quantile(level)(x)."""
+    return literal_column(f'quantile({level})(Duration / 1000000)')
+
+
 def _quantile_columns() -> list:
-    dur = literal_column('Duration / 1000000')
     return [
-        F.quantile(p, dur).label(label)
+        _duration_quantile(p).label(label)
         for p, label in [(0.50, 'p50'), (0.90, 'p90'), (0.95, 'p95'), (0.99, 'p99')]
     ]
 
@@ -190,10 +194,10 @@ class OtelTracesDAO:
         stmt = (
             select(
                 T.c['SpanName'].label('span_name'),
-                F.quantile(0.50, literal_column('Duration / 1000000')).label('p50'),
-                F.quantile(0.90, literal_column('Duration / 1000000')).label('p90'),
-                F.quantile(0.95, literal_column('Duration / 1000000')).label('p95'),
-                F.quantile(0.99, literal_column('Duration / 1000000')).label('p99'),
+                _duration_quantile(0.50).label('p50'),
+                _duration_quantile(0.90).label('p90'),
+                _duration_quantile(0.95).label('p95'),
+                _duration_quantile(0.99).label('p99'),
             )
             .select_from(OtelTraces)
             .where(*conditions)
@@ -644,10 +648,10 @@ class OtelTracesDAO:
         self._add_tags_filter(conditions, tags=tags)
 
         stmt = select(
-            F.quantile(0.50, literal_column('Duration / 1000000')).label('p50'),
-            F.quantile(0.90, literal_column('Duration / 1000000')).label('p90'),
-            F.quantile(0.95, literal_column('Duration / 1000000')).label('p95'),
-            F.quantile(0.99, literal_column('Duration / 1000000')).label('p99'),
+            _duration_quantile(0.50).label('p50'),
+            _duration_quantile(0.90).label('p90'),
+            _duration_quantile(0.95).label('p95'),
+            _duration_quantile(0.99).label('p99'),
         ).select_from(OtelTraces)
 
         if conditions:

@@ -26,7 +26,9 @@ postgresql:
 
 clickhouse:
   host: clickhouse
+  # Native protocol port: the otel collector and the ClickHouse migrations.
   port: 9000
+  # HTTP port, despite the name: the gateway and the metrics worker.
   nativeProtocolPort: 8123
   database: default
   auth:

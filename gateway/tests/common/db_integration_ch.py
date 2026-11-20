@@ -4,6 +4,7 @@ import logging
 from typing import TypeVar
 import unittest
 
+from clickhouse_connect import common as clickhouse_common
 from sqlalchemy import text
 from testcontainers.community.clickhouse import ClickHouseContainer
 
@@ -18,6 +19,9 @@ from radicalbit_ai_gateway.db.tables.request_event_table import RequestEvent
 from radicalbit_ai_gateway.utils.app_config import ClickHouseConfig, get_app_config
 
 T = TypeVar('T')
+
+# The tests insert dicts into Map columns: bind them as ClickHouse maps, not JSON.
+clickhouse_common.set_setting('dict_parameter_format', 'map')
 
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
@@ -51,7 +55,7 @@ class DatabaseIntegrationClickhouse(unittest.TestCase):
         cls.container = _clickhouse()
         cls.db_conf = ClickHouseConfig(
             clickhouse_db_host='localhost',
-            clickhouse_db_port=cls.container.get_exposed_port(9000),
+            clickhouse_db_http_port=cls.container.get_exposed_port(8123),
             clickhouse_db_user='default',
             clickhouse_db_pwd='default',
             clickhouse_db_name='default',
@@ -77,8 +81,8 @@ class DatabaseIntegrationClickhouse(unittest.TestCase):
     def insert(self, table: list[T]):
         """Insert objects into the database.
 
-        Note: OtelTraces objects use raw SQL because clickhouse-driver doesn't
-        handle dot-notation column names correctly with ORM inserts.
+        Note: OtelTraces objects use raw SQL because of their dot-notation
+        column names (e.g. 'Events.Timestamp').
         """
         if not table:
             return
@@ -93,11 +97,7 @@ class DatabaseIntegrationClickhouse(unittest.TestCase):
                 session.commit()
 
     def _insert_otel_traces(self, traces: list[OtelTraces]):
-        """Insert OtelTraces using raw SQL.
-
-        clickhouse-sqlalchemy doesn't support column names with dots (e.g., 'Events.Timestamp')
-        in ORM or Core insert() statements. Raw SQL with text() is required.
-        """
+        """Insert OtelTraces using raw SQL with text()."""
         with self.db.begin_session() as session:
             for trace in traces:
                 session.execute(
