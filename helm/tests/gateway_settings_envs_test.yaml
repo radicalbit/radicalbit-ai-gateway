@@ -24,6 +24,21 @@ tests:
           content:
             name: CLICKHOUSE_DB_PASSWORD
           any: true
+  - it: should pass the ClickHouse HTTP port to the gateway
+    set:
+      clickhouse:
+        nativeProtocolPort: 18123
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CLICKHOUSE_DB_HTTP_PORT
+            value: "18123"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CLICKHOUSE_DB_PORT
+          any: true
   - it: should pass the ClickHouse database to the gateway
     set:
       clickhouse:
