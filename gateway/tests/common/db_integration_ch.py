@@ -79,64 +79,12 @@ class DatabaseIntegrationClickhouse(unittest.TestCase):
         cls.db = None
 
     def insert(self, table: list[T]):
-        """Insert objects into the database.
-
-        Note: OtelTraces objects use raw SQL because of their dot-notation
-        column names (e.g. 'Events.Timestamp').
-        """
+        """Insert objects into the database."""
         if not table:
             return
-
-        # Check if any objects are OtelTraces
-        if isinstance(table[0], OtelTraces):
-            self._insert_otel_traces(table)
-        else:
-            with self.db.begin_session() as session:
-                for obj in table:
-                    session.add(obj)
-                session.commit()
-
-    def _insert_otel_traces(self, traces: list[OtelTraces]):
-        """Insert OtelTraces using raw SQL with text()."""
         with self.db.begin_session() as session:
-            for trace in traces:
-                session.execute(
-                    text("""
-                        INSERT INTO otel_traces (
-                            Timestamp, TraceId, SpanId, ParentSpanId, TraceState,
-                            SpanName, SpanKind, ServiceName, ResourceAttributes,
-                            ScopeName, ScopeVersion, SpanAttributes, Duration,
-                            StatusCode, StatusMessage,
-                            `Events.Timestamp`, `Events.Name`, `Events.Attributes`
-                        ) VALUES (
-                            :timestamp, :trace_id, :span_id, :parent_span_id, :trace_state,
-                            :span_name, :span_kind, :service_name, :resource_attributes,
-                            :scope_name, :scope_version, :span_attributes, :duration,
-                            :status_code, :status_message,
-                            :events_timestamp, :events_name, :events_attributes
-                        )
-                    """),
-                    {
-                        'timestamp': trace.timestamp,
-                        'trace_id': trace.trace_id,
-                        'span_id': trace.span_id,
-                        'parent_span_id': trace.parent_span_id,
-                        'trace_state': trace.trace_state,
-                        'span_name': trace.span_name,
-                        'span_kind': trace.span_kind,
-                        'service_name': trace.service_name,
-                        'resource_attributes': trace.resource_attributes,
-                        'scope_name': trace.scope_name,
-                        'scope_version': trace.scope_version,
-                        'span_attributes': trace.span_attributes,
-                        'duration': trace.duration,
-                        'status_code': trace.status_code,
-                        'status_message': trace.status_message,
-                        'events_timestamp': trace.events_timestamp,
-                        'events_name': trace.events_name,
-                        'events_attributes': trace.events_attributes,
-                    },
-                )
+            for obj in table:
+                session.add(obj)
             session.commit()
 
     def clean(self):

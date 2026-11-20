@@ -791,7 +791,9 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
                 span_attributes={f'{PROP}route_name': route, TAGS: tag},
             )
 
-        kept = root_span('kept', 'invoke', 100, base_time, 'route-a', 'env=prod')
+        def kept():
+            return root_span('kept', 'invoke', 100, base_time, 'route-a', 'env=prod')
+
         # Each decoy differs from the kept span in one filtered dimension only.
         cases = {
             'route': (
@@ -803,7 +805,7 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         }
         for dimension, ((route, at, tag), filters) in cases.items():
             with self.subTest(dimension=dimension):
-                self.insert([kept, root_span('decoy', 'other', 999, at, route, tag)])
+                self.insert([kept(), root_span('decoy', 'other', 999, at, route, tag)])
 
                 res = self._query_all(**filters)
 
