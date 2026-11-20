@@ -21,6 +21,13 @@ _SPAN_LABELS: dict[str, str] = {
     'check_route_access': 'Check route access',
     'check_limiters': 'Check limits',
     'check_embedding_limiters': 'Check limits',
+    'load_project_limits': 'Load project limits',
+    'check_request_rate': 'Request rate limit',
+    'check_token_input_limit': 'Input token limit',
+    'check_token_input_room': 'Input token limit',
+    'check_token_output_limit': 'Output token limit',
+    'check_budget_limit': 'Budget limit',
+    'check_audio_duration_limit': 'Audio duration limit',
     # Input
     'run_preprocessing': 'Preprocess request',
     'apply_check_guardrails': 'Input guardrails',
@@ -36,6 +43,13 @@ _SPAN_LABELS: dict[str, str] = {
     'check_decision_judge': 'Decision judge guardrail',
     'check_guardrails_ai': 'Guardrails AI check',
     # Cache
+    'lookup_cache': 'Check cache',
+    'lookup_responses_cache': 'Check cache',
+    'lookup_messages_cache': 'Check cache',
+    'get_cached_response': 'Read cached response',
+    'generate_semantic_cache_embedding': 'Embed for semantic cache',
+    'set_cached_response': 'Store response in cache',
+    'set_cached_stream_response': 'Store streamed response in cache',
     'get_semantic_cache': 'Cache lookup',
     'get_exact_cache': 'Cache lookup',
     'set_semantic_cache': 'Cache store',
@@ -89,6 +103,8 @@ _PROVIDER_LABELS: dict[str, str] = {
 
 _SPAN_KIND_SUFFIXES = ('.workflow', '.task')
 _PROVIDER_CALL_SUFFIX = '.chat'
+# One span per preprocessing plugin, named after the plugin's config key.
+_PLUGIN_PREFIX = 'preprocess.'
 
 
 def span_label(span_name: str, gen_ai_provider: str = '') -> str | None:
@@ -99,4 +115,6 @@ def span_label(span_name: str, gen_ai_provider: str = '') -> str | None:
         if span_name.endswith(suffix):
             span_name = span_name.removesuffix(suffix)
             break
+    if span_name.startswith(_PLUGIN_PREFIX):
+        return f'Preprocessing plugin: {span_name.removeprefix(_PLUGIN_PREFIX)}'
     return _SPAN_LABELS.get(span_name)

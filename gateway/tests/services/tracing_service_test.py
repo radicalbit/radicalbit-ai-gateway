@@ -709,6 +709,42 @@ class TracingServiceTest(unittest.TestCase):
 
         assert {c.span_name: c.label for c in tree.children} == expected
 
+    def test_cache_limit_and_project_limit_spans_are_labelled(self):
+        expected = {
+            'lookup_cache.task': 'Check cache',
+            'lookup_responses_cache.task': 'Check cache',
+            'lookup_messages_cache.task': 'Check cache',
+            'get_cached_response.task': 'Read cached response',
+            'generate_semantic_cache_embedding.task': 'Embed for semantic cache',
+            'set_cached_response.task': 'Store response in cache',
+            'set_cached_stream_response.task': 'Store streamed response in cache',
+            'load_project_limits.task': 'Load project limits',
+            'check_request_rate.task': 'Request rate limit',
+            'check_token_input_limit.task': 'Input token limit',
+            'check_token_input_room.task': 'Input token limit',
+            'check_token_output_limit.task': 'Output token limit',
+            'check_budget_limit.task': 'Budget limit',
+            'check_audio_duration_limit.task': 'Audio duration limit',
+        }
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'root'),
+            *(span(name, 'root', name) for name in expected),
+        )
+
+        assert {c.span_name: c.label for c in tree.children} == expected
+
+    def test_a_preprocessing_plugin_span_is_labelled_with_its_key(self):
+        span = self._named_span
+
+        tree = self._tree_of(
+            span('root', '', 'root'),
+            span('plugin', 'root', 'preprocess.pii_mask.task'),
+        )
+
+        assert tree.children[0].label == 'Preprocessing plugin: pii_mask'
+
     def test_provider_call_spans_are_labelled_by_their_provider(self):
         expected = {
             'ChatOpenAI.chat': ('openai', 'OpenAI request'),
