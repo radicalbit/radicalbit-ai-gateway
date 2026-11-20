@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy import Float, Row, String, and_, desc, func as F, literal, select, text
+from sqlalchemy import Float, Row, String, and_, desc, func as F, literal, select
 from sqlalchemy.sql import ColumnElement
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
@@ -805,8 +805,8 @@ class EventDAO:
             )
             .select_from(Event)
             .where(*conditions)
-            .group_by(text('bucket'), group_by_column)
-            .order_by(text('bucket'), text('group_by_value'))
+            .group_by('bucket', group_by_column)
+            .order_by('bucket', 'group_by_value')
         )
 
         with self.db.begin_session() as session:
@@ -857,8 +857,8 @@ class EventDAO:
             )
             .select_from(Event)
             .where(*conditions)
-            .group_by(text('bucket'), route_col)
-            .order_by(text('bucket'), text('group_by_value'))
+            .group_by('bucket', route_col)
+            .order_by('bucket', 'group_by_value')
         )
         with self.db.begin_session() as session:
             res = session.execute(stmt).all()
@@ -950,8 +950,8 @@ class EventDAO:
                 )
                 .select_from(Event)
                 .where(*conditions)
-                .group_by(text('bucket'), group_by_column)
-                .order_by(text('bucket'), text('group_by_value'))
+                .group_by('bucket', group_by_column)
+                .order_by('bucket', 'group_by_value')
             )
         else:
             stmt = (
@@ -962,8 +962,8 @@ class EventDAO:
                 )
                 .select_from(Event)
                 .where(*conditions)
-                .group_by(text('bucket'))
-                .order_by(text('bucket'))
+                .group_by('bucket')
+                .order_by('bucket')
             )
 
         with self.db.begin_session() as session:
@@ -1178,8 +1178,8 @@ class EventDAO:
             )
             .select_from(Event)
             .where(*conditions)
-            .group_by(text('bucket'), T.c['EVENT_TYPE'])
-            .order_by(text('bucket'), T.c['EVENT_TYPE'])
+            .group_by('bucket', T.c['EVENT_TYPE'])
+            .order_by('bucket', T.c['EVENT_TYPE'])
         )
 
         with self.db.begin_session() as session:
@@ -1535,7 +1535,7 @@ class EventDAO:
             .select_from(Event)
             .where(*conditions)
             .group_by(self.T.c['ROUTE_NAME'])
-            .order_by(text('total_cost DESC'))
+            .order_by(desc('total_cost'))
             .limit(1)
         )
 
@@ -1582,8 +1582,8 @@ class EventDAO:
             )
             .select_from(Event)
             .where(*conditions)
-            .group_by(text('bucket'))
-            .order_by(text('bucket'))
+            .group_by('bucket')
+            .order_by('bucket')
         )
 
         with self.db.begin_session() as session:
@@ -1639,8 +1639,8 @@ class EventDAO:
             # The key identifier breaks a full tie, read as text so the order
             # is the one an operator sees on screen.
             .order_by(
-                text('counter DESC'),
-                text('last_call DESC'),
+                desc('counter'),
+                desc('last_call'),
                 F.toString(T.c['API_KEY_UUID']),
             )
         )
@@ -1689,8 +1689,8 @@ class EventDAO:
             )
             .select_from(Event)
             .where(*conditions)
-            .group_by(text('bucket'), series_expr)
-            .order_by(text('bucket'), text('group_by_value'))
+            .group_by('bucket', series_expr)
+            .order_by('bucket', 'group_by_value')
         )
 
         with self.db.begin_session() as session:
