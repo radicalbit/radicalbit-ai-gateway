@@ -44,14 +44,20 @@ class MessagesReply:
         return self.output.message
 
 
-@workflow(name='apply_messages_output_guardrails')
 async def screen_output(scope: RequestScope, message: dict) -> dict:
     """Apply the output guardrails to the text of an answer and return the
     answer to send. A soft block replaces the reply. The flags go on the
     scope.
+
+    A route with no output guardrails opens no span.
     """
     if not scope.route.guardrails.has_output:
         return message
+    return await _screen_output(scope, message)
+
+
+@workflow(name='apply_messages_output_guardrails')
+async def _screen_output(scope: RequestScope, message: dict) -> dict:
     screened = await scope.guardrails.screen_output(MessagesReply.of(message))
     if screened.soft_block:
         scope.flags |= GuardrailFlags(output_warned=True, output_blocked=True)

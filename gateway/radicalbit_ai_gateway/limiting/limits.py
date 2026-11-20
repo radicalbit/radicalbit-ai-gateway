@@ -500,6 +500,7 @@ class Limits:
 shared_limits = Limits()
 
 
+@task(name='load_project_limits')
 async def load_project_limits(
     project_uuid: str, dao: ProjectBudgetLimitDAO
 ) -> list[ProjectBudgetLimitOut]:
