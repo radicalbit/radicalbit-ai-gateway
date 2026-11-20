@@ -1,5 +1,5 @@
 from radicalbit_ai_gateway.llm.messages import AIMessage
-from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
+from radicalbit_ai_gateway.utils.chat_utils import ChatUtils, completion_reasoning
 
 
 def test_to_openai_chat_completion_with_reasoning_content():
@@ -55,3 +55,86 @@ def test_to_openai_chat_completion_reasoning_content_set_on_tool_calls():
     msg = result.choices[0].message
     assert msg.tool_calls is not None
     assert msg.reasoning_content == 'some reasoning'
+
+
+def test_reasoning_goes_out_under_both_names():
+    """DeepSeek's reasoning_content, and vLLM's, Ollama's and OpenRouter's reasoning."""
+    ai_message = AIMessage(
+        content='OK',
+        additional_kwargs={'reasoning_content': 'Thinking.'},
+        response_metadata={'finish_reason': 'stop'},
+    )
+    msg = (
+        ChatUtils.to_openai_chat_completion(
+            ai_message, model_id_invoked='qwen3', request_id='req-1'
+        )
+        .choices[0]
+        .message
+    )
+    assert msg.reasoning_content == 'Thinking.'
+    assert msg.reasoning == 'Thinking.'
+
+
+USAGE_WITH_DETAILS = {
+    'input_tokens': 25,
+    'output_tokens': 535,
+    'total_tokens': 560,
+    'input_token_details': {'cache_read': 24},
+    'output_token_details': {'reasoning': 530},
+}
+
+
+def _completion(usage_metadata):
+    message = AIMessage(content='391', usage_metadata=usage_metadata)
+    return ChatUtils.to_openai_chat_completion(message, model_id_invoked='m')
+
+
+def test_non_streaming_usage_carries_reasoning_and_cached_tokens():
+    usage = _completion(USAGE_WITH_DETAILS).usage
+    assert usage.completion_tokens == 535
+    assert usage.completion_tokens_details.reasoning_tokens == 530
+    assert usage.prompt_tokens_details.cached_tokens == 24
+
+
+def test_usage_reads_the_service_tier_names():
+    usage = _completion(
+        {
+            'input_tokens': 100,
+            'output_tokens': 50,
+            'total_tokens': 150,
+            'input_token_details': {'priority_cache_read': 40, 'priority': 60},
+            'output_token_details': {'priority_reasoning': 30, 'priority': 20},
+        }
+    ).usage
+    assert usage.completion_tokens_details.reasoning_tokens == 30
+    assert usage.prompt_tokens_details.cached_tokens == 40
+
+
+def test_usage_has_no_details_when_the_provider_sent_none():
+    usage = _completion(
+        {'input_tokens': 10, 'output_tokens': 8, 'total_tokens': 18}
+    ).usage
+    assert usage.total_tokens == 18
+    assert usage.prompt_tokens_details is None
+    assert usage.completion_tokens_details is None
+
+
+def test_usage_reads_the_flex_tier_names():
+    usage = _completion(
+        {
+            'input_tokens': 10,
+            'output_tokens': 5,
+            'total_tokens': 15,
+            'input_token_details': {'flex_cache_read': 4, 'flex': 6},
+            'output_token_details': {'flex_reasoning': 3, 'flex': 2},
+        }
+    ).usage
+    assert usage.completion_tokens_details.reasoning_tokens == 3
+    assert usage.prompt_tokens_details.cached_tokens == 4
+
+
+def test_completion_reasoning_reads_either_name():
+    message = _completion(None).choices[0].message
+    assert completion_reasoning(message) == ''
+    message.reasoning = 'Thinking.'
+    assert completion_reasoning(message) == 'Thinking.'

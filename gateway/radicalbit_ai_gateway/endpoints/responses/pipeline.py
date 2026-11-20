@@ -31,6 +31,7 @@ from radicalbit_ai_gateway.endpoints.responses.request import (
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation, GuardrailFlags
 from radicalbit_ai_gateway.limiting.limits import Usage
+from radicalbit_ai_gateway.llm.messages import without_reasoning_only
 from radicalbit_ai_gateway.llm.usage import responses_token_counts
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
@@ -88,14 +89,17 @@ async def _prepare(scope: RequestScope, body: dict) -> _Prepared:
     allow_fallback = not references_stored_state(request.body)
 
     # Limits come first, before anything that spends (routing, judges, the
-    # semantic cache, the model), as on chat.
-    await check_chat_limits(scope, request.messages())
+    # semantic cache, the model), as on chat. Only the guardrails read a
+    # message that holds only reasoning.
+    await check_chat_limits(scope, without_reasoning_only(request.messages()))
 
     set_operation_category(OperationCategory.PREPROCESSING)
     messages = await run_preprocessing(request.messages(), config.plugins)
     redaction = await scope.guardrails.redact_input(Conversation(messages))
     # Route on the redacted messages, as the chat path does.
-    model = await route_chat(scope, redaction.payload.messages())
+    model = await route_chat(
+        scope, without_reasoning_only(redaction.payload.messages())
+    )
     if not route.chat_invoker.supports_responses(model.model_id):
         raise GatewayBadRequest(
             f'Model {model.model_id} of route {route_name} '

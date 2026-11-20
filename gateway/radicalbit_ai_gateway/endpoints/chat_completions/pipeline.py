@@ -29,11 +29,20 @@ from radicalbit_ai_gateway.endpoints.common.streams import stream_of
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation
 from radicalbit_ai_gateway.limiting.limits import Usage
-from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    message_reasoning,
+)
 from radicalbit_ai_gateway.llm.tracing import merge_chunks
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
 from radicalbit_ai_gateway.utils.app_config import get_app_config
+from radicalbit_ai_gateway.utils.chat_utils import (
+    completion_reasoning,
+    reasoning_fields,
+)
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
 from radicalbit_ai_gateway.utils.exceptions import (
     GatewayBadRequest,
@@ -208,10 +217,12 @@ async def _invoke(
 async def _screen_output(
     scope: RequestScope, response: ChatCompletion
 ) -> ChatCompletion:
-    """Apply the output guardrails to a chat completion."""
-    screened = await scope.guardrails.screen_output(
-        Reply(response.choices[0].message.content)
-    )
+    """Apply the output guardrails to a chat completion: its text, and its
+    reasoning for the guardrails that read it.
+    """
+    message = response.choices[0].message
+    reasoning = completion_reasoning(message) or None
+    screened = await scope.guardrails.screen_output(Reply(message.content, reasoning))
     scope.flags |= screened.flags
     if screened.soft_block:
         blocked = screened.soft_block.build_soft_block_response(
@@ -225,7 +236,9 @@ async def _screen_output(
             }
         )
     return _with_content(
-        response, ContentUtils.normalize_openai_message_content(screened.payload.text)
+        response,
+        ContentUtils.normalize_openai_message_content(screened.payload.text),
+        screened.payload.reasoning,
     )
 
 
@@ -301,6 +314,7 @@ class _Received:
     def __init__(self) -> None:
         self.chunks: list[AIMessageChunk] = []
         self.text = ''
+        self.reasoning = ''
         self.usage: dict | None = None
 
     async def take(
@@ -314,6 +328,7 @@ class _Received:
                 self.chunks.append(chunk)
                 result = streaming.accumulate_chunk_content(chunk, self.text)
                 self.text = result.text
+                self.reasoning += message_reasoning(chunk)
                 if result.usage_metadata:
                     self.usage = result.usage_metadata
                 yield chunk
@@ -344,7 +359,7 @@ async def _buffered(
     if scope.cached.hit:
         # A hit is screened as a model's reply is, then sent as one chunk.
         cached = scope.cached.value
-        text = await _screen_streamed(scope, cached.choices[0].message.content)
+        text, _ = await _screen_streamed(scope, cached.choices[0].message.content)
         cached = _with_content(cached, text)
         chunks = [streaming.cached_response_to_chunk(cached, route_name)]
         if _wants_usage(chat.params.get('stream_options')) and cached.usage:
@@ -390,10 +405,14 @@ async def _stream_whole(
     # may refuse the reply (ADR 0006).
     await received.count(scope, prepared.model)
 
-    # Output guardrails read the whole reply: redact, then check.
-    text = await _screen_streamed(scope, full_content_text, usage=final_usage)
-    if text != full_content_text:
-        buffered_chunks = _with_text(buffered_chunks, text)
+    # Output guardrails read the whole reply, its reasoning included: redact,
+    # then check.
+    reasoning = received.reasoning or None
+    text, screened_reasoning = await _screen_streamed(
+        scope, full_content_text, reasoning, usage=final_usage
+    )
+    if (text, screened_reasoning) != (full_content_text, reasoning):
+        buffered_chunks = streaming.with_text(buffered_chunks, text, screened_reasoning)
 
     # Cache the screened reply.
     if reply := _streamed_reply(
@@ -417,15 +436,19 @@ async def _stream_whole(
 
 
 async def _screen_streamed(
-    scope: RequestScope, text: str | None, usage: dict | None = None
-) -> str | None:
-    """Apply the output guardrails to a streamed reply's text, or to a cache
-    hit sent as a stream. Return the text to send.
+    scope: RequestScope,
+    text: str | None,
+    reasoning: str | None = None,
+    usage: dict | None = None,
+) -> tuple[str | None, str | None]:
+    """Apply the output guardrails to a streamed reply's text and reasoning,
+    or to a cache hit sent as a stream. Return the text and the reasoning to
+    send.
 
     A streamed reply cannot be replaced: a soft block answers with a 400
     that carries the request's headers.
     """
-    screened = await scope.guardrails.screen_output(Reply(text, usage=usage))
+    screened = await scope.guardrails.screen_output(Reply(text, reasoning, usage))
     scope.flags |= screened.flags
     if screened.soft_block:
         raise GuardrailBadRequest(
@@ -434,7 +457,7 @@ async def _screen_streamed(
             reason={'action': 'soft_block'},
             headers=scope.headers(),
         )
-    return screened.payload.text
+    return screened.payload.text, screened.payload.reasoning
 
 
 def _wants_usage(stream_options) -> bool:
@@ -478,25 +501,21 @@ def _streamed_reply(
     return StreamedReply(message, model_id, request_id)
 
 
-def _with_text(chunks: list[AIMessageChunk], text: str) -> list[AIMessageChunk]:
-    """Rebuild the chunks of a streamed reply around a new text: the first
-    chunk with text carries all of it, the later ones none.
+def _with_content(
+    completion: ChatCompletion, text: str | None, reasoning: str | None = None
+) -> ChatCompletion:
+    """Return a completion with its first choice's text replaced, and its
+    reasoning when ``reasoning`` differs from the one it carries.
     """
-    rebuilt = []
-    for chunk in chunks:
-        if chunk.content:
-            chunk = chunk.model_copy(update={'content': text})
-            text = ''
-        rebuilt.append(chunk)
-    return rebuilt
-
-
-def _with_content(completion: ChatCompletion, text: str | None) -> ChatCompletion:
-    """Return a completion with its first choice's text replaced."""
-    if text == completion.choices[0].message.content:
-        return completion
     choice = completion.choices[0]
-    message = choice.message.model_copy(update={'content': text})
+    update: dict = {}
+    if text != choice.message.content:
+        update['content'] = text
+    if reasoning is not None and reasoning != completion_reasoning(choice.message):
+        update |= reasoning_fields(reasoning)
+    if not update:
+        return completion
+    message = choice.message.model_copy(update=update)
     return completion.model_copy(
         update={'choices': [choice.model_copy(update={'message': message})]}
     )

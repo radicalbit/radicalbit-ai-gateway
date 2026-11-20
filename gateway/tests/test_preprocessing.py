@@ -1,6 +1,11 @@
 import pytest
 
-from radicalbit_ai_gateway.llm.messages import HumanMessage
+from radicalbit_ai_gateway.llm.messages import (
+    REASONING_KEY,
+    AIMessage,
+    HumanMessage,
+    ReasoningOnlyMessage,
+)
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 import radicalbit_ai_gateway.preprocessing as preprocessing_module
 from radicalbit_ai_gateway.preprocessing import (
@@ -251,3 +256,19 @@ def test_schema_rejects_unknown_key():
 def test_schema_accepts_declared_keys():
     register_preprocessing_plugin(SchemaPlugin(), name='schema_plugin')
     _config({'schema_plugin': {'enabled': True, 'threshold': 9}})
+
+
+class DropEmpty(PreprocessingPlugin):
+    async def preprocess(self, messages, config):
+        return [m for m in messages if m.content]
+
+
+async def test_plugins_never_see_a_reasoning_only_message():
+    """A Responses reasoning item with no message after it keeps its place."""
+    register_preprocessing_plugin(DropEmpty(), name='drop')
+    only = ReasoningOnlyMessage(content='', additional_kwargs={REASONING_KEY: 'x'})
+    messages = [HumanMessage(content='hi'), only, AIMessage(content='ok')]
+
+    out = await run_preprocessing(messages, _on('drop'))
+
+    assert out == messages

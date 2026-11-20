@@ -13,9 +13,13 @@ from openai.types.chat.chat_completion_chunk import (
     ChoiceDeltaToolCall,
     ChoiceDeltaToolCallFunction,
 )
-from openai.types.completion_usage import CompletionUsage
 
-from radicalbit_ai_gateway.llm.messages import AIMessageChunk
+from radicalbit_ai_gateway.llm.messages import (
+    REASONING_KEY,
+    AIMessageChunk,
+    message_reasoning,
+)
+from radicalbit_ai_gateway.utils.chat_utils import completion_usage, reasoning_fields
 
 
 @dataclass
@@ -24,6 +28,36 @@ class ChunkAccumulationResult:
 
     text: str
     usage_metadata: dict | None
+
+
+def with_text(
+    chunks: list[AIMessageChunk], text: str | None, reasoning: str | None
+) -> list[AIMessageChunk]:
+    """Rebuild the chunks of a streamed reply around a new text and reasoning.
+
+    A guardrail rewrites the reply as a whole, and a masked span can cross
+    chunks: the first chunk with text carries all of it, the first chunk
+    with reasoning all of the reasoning, the later ones none. The chunks keep
+    their place and the rest they carry (tool calls, finish reason, usage).
+    """
+    text = text or ''
+    reasoning = reasoning or ''
+    rebuilt = []
+    for chunk in chunks:
+        update: dict = {}
+        if chunk.content:
+            update['content'] = text
+            text = ''
+        if message_reasoning(chunk):
+            kwargs = {
+                k: v for k, v in chunk.additional_kwargs.items() if k != REASONING_KEY
+            }
+            if reasoning:
+                kwargs[REASONING_KEY] = reasoning
+            update['additional_kwargs'] = kwargs
+            reasoning = ''
+        rebuilt.append(chunk.model_copy(update=update) if update else chunk)
+    return rebuilt
 
 
 def cached_response_to_chunk(
@@ -154,37 +188,7 @@ def build_usage_chunk(
         created=int(datetime.datetime.now().timestamp()),
         model=model_id_invoked,
         choices=[],
-        usage=CompletionUsage(
-            prompt_tokens=final_usage.get('input_tokens', 0),
-            completion_tokens=final_usage.get('output_tokens', 0),
-            total_tokens=final_usage.get('total_tokens', 0),
-            prompt_tokens_details={
-                'cached_tokens': final_usage.get('input_token_details', {}).get(
-                    'cache_read', 0
-                ),
-                'audio_tokens': final_usage.get('input_token_details', {}).get(
-                    'audio', 0
-                ),
-            }
-            if final_usage.get('input_token_details')
-            else None,
-            completion_tokens_details={
-                'reasoning_tokens': final_usage.get('output_token_details', {}).get(
-                    'reasoning', 0
-                ),
-                'audio_tokens': final_usage.get('output_token_details', {}).get(
-                    'audio', 0
-                ),
-                'accepted_prediction_tokens': final_usage.get(
-                    'output_token_details', {}
-                ).get('accepted_prediction', 0),
-                'rejected_prediction_tokens': final_usage.get(
-                    'output_token_details', {}
-                ).get('rejected_prediction', 0),
-            }
-            if final_usage.get('output_token_details')
-            else None,
-        ),
+        usage=completion_usage(final_usage),
     )
 
 
@@ -217,10 +221,9 @@ def to_openai_chat_completion_chunk(
             if tc_chunk.get('index') is not None:
                 tool_call.index = tc_chunk['index']
 
-    # DeepSeek (and OpenRouter) stream the model's reasoning beside its content.
-    delta_extra = {}
-    if reasoning_content := chunk.additional_kwargs.get('reasoning_content'):
-        delta_extra['reasoning_content'] = reasoning_content
+    # The model's reasoning streams beside its content, under each name.
+    reasoning = message_reasoning(chunk)
+    delta_extra = reasoning_fields(reasoning) if reasoning else {}
 
     finish_reason = None
     if chunk.response_metadata:
@@ -246,39 +249,7 @@ def to_openai_chat_completion_chunk(
         )
     )
 
-    usage = None
-    if chunk.usage_metadata:
-        usage = CompletionUsage(
-            prompt_tokens=chunk.usage_metadata.get('input_tokens', 0),
-            completion_tokens=chunk.usage_metadata.get('output_tokens', 0),
-            total_tokens=chunk.usage_metadata.get('total_tokens', 0),
-            prompt_tokens_details={
-                'cached_tokens': chunk.usage_metadata.get(
-                    'input_token_details', {}
-                ).get('cache_read', 0),
-                'audio_tokens': chunk.usage_metadata.get('input_token_details', {}).get(
-                    'audio', 0
-                ),
-            }
-            if chunk.usage_metadata.get('input_token_details')
-            else None,
-            completion_tokens_details={
-                'reasoning_tokens': chunk.usage_metadata.get(
-                    'output_token_details', {}
-                ).get('reasoning', 0),
-                'audio_tokens': chunk.usage_metadata.get(
-                    'output_token_details', {}
-                ).get('audio', 0),
-                'accepted_prediction_tokens': chunk.usage_metadata.get(
-                    'output_token_details', {}
-                ).get('accepted_prediction', 0),
-                'rejected_prediction_tokens': chunk.usage_metadata.get(
-                    'output_token_details', {}
-                ).get('rejected_prediction', 0),
-            }
-            if chunk.usage_metadata.get('output_token_details')
-            else None,
-        )
+    usage = completion_usage(chunk.usage_metadata)
 
     return ChatCompletionChunk(
         id=request_id or f'chatcmpl-{uuid.uuid4()}',

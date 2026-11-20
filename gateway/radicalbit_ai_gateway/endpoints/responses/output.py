@@ -8,50 +8,87 @@ response of a reply no model gave (a soft block).
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass, field
 import time
 import uuid
 
+from radicalbit_ai_gateway.endpoints.responses.reasoning import (
+    Reasoning,
+    assistant_message,
+    text_parts,
+)
 from radicalbit_ai_gateway.llm.messages import AIMessage
 
 # ── Output text ──────────────────────────────────────────────────────────
 
 
-def _output_text_parts(response: dict) -> list[list[dict]]:
-    """Return the ``output_text`` parts of each message item of the output."""
-    return [
-        [
-            part
-            for part in item.get('content') or []
-            if isinstance(part, dict)
-            and part.get('type') == 'output_text'
-            and isinstance(part.get('text'), str)
-        ]
-        for item in response.get('output') or []
-        if isinstance(item, dict) and item.get('type') == 'message'
-    ]
+@dataclass
+class _Slot:
+    """One assistant message of the output, and the reasoning before it.
+
+    Reasoning with no message after it (a turn that ends in a tool call) is a
+    slot of its own, with no text parts.
+    """
+
+    parts: list[dict] = field(default_factory=list)
+    reasoning: Reasoning = field(default_factory=Reasoning)
+
+    def message(self) -> AIMessage:
+        return assistant_message(
+            ''.join(part['text'] for part in self.parts),
+            self.reasoning,
+            has_text=bool(self.parts),
+        )
+
+
+def _slots(response: dict) -> list[_Slot]:
+    slots: list[_Slot] = []
+    reasoning = Reasoning()
+    for item in response.get('output') or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get('type') == 'reasoning':
+            reasoning.add(item)
+        elif item.get('type') == 'message':
+            parts = text_parts(item.get('content'), 'output_text')
+            if parts:
+                slots.append(_Slot(parts, reasoning))
+                reasoning = Reasoning()
+        elif reasoning:
+            slots.append(_Slot([], reasoning))
+            reasoning = Reasoning()
+    if reasoning:
+        slots.append(_Slot([], reasoning))
+    return [slot for slot in slots if slot.parts or slot.reasoning]
 
 
 class ResponsesOutput:
-    """A copy of a response, with the text of each output message read as a message."""
+    """A copy of a response, with the text of each output message read as a message.
+
+    The reasoning before a message rides on it, for the guardrails that read
+    reasoning.
+    """
 
     def __init__(self, response: dict):
         self.response = copy.deepcopy(response)
-        self._parts = [parts for parts in _output_text_parts(self.response) if parts]
+        self._slots = _slots(self.response)
 
     def messages(self) -> list[AIMessage]:
-        return [
-            AIMessage(content=''.join(part['text'] for part in parts))
-            for parts in self._parts
-        ]
+        return [slot.message() for slot in self._slots]
 
     def write_back(self, messages: list[AIMessage]) -> None:
         """Put the texts of ``messages``, as ``messages()`` returned them, in the response.
 
         A message's text goes in its first part; a guardrail changes a text as
         a whole. A changed part loses its annotations, whose offsets point in
-        the old text, and its logprobs, which spell the old text out.
+        the old text, and its logprobs, which spell the old text out. Changed
+        reasoning goes in the first reasoning part the same way.
         """
-        for parts, message in zip(self._parts, messages, strict=True):
+        for slot, message in zip(self._slots, messages, strict=True):
+            slot.reasoning.write_from(message)
+            parts = slot.parts
+            if not parts:
+                continue
             text = message.content if isinstance(message.content, str) else ''
             if text == ''.join(part['text'] for part in parts):
                 continue

@@ -121,6 +121,15 @@ def test_only_an_assistant_keeps_its_reasoning_content(message, expected):
     ) == expected
 
 
+@pytest.mark.parametrize('field', ['reasoning_content', 'reasoning'])
+def test_an_assistant_reasoning_is_read_under_either_name(field):
+    [result] = convert_openai_messages(
+        [{'role': 'assistant', 'content': 'OK', field: 'Thinking.'}]
+    )
+
+    assert result.additional_kwargs == {'reasoning_content': 'Thinking.'}
+
+
 def _image(mime, data):
     return {'type': 'image', 'source_type': 'base64', 'data': data, 'mime_type': mime}
 

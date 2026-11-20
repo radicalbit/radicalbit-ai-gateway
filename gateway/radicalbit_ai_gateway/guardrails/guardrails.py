@@ -34,7 +34,11 @@ from radicalbit_ai_gateway.guardrails.judges.judge_engine import (
     JudgeUsageCounter,
 )
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
-from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
+from radicalbit_ai_gateway.llm.messages import (
+    BaseMessage,
+    HumanMessage,
+    message_reasoning,
+)
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
     Guardrail,
@@ -171,8 +175,10 @@ class Screened(Generic[P]):
 
 
 def _changed(before: list[BaseMessage], after: list[BaseMessage]) -> bool:
+    """Whether a redaction changed a message's text or its reasoning."""
     return len(before) != len(after) or any(
-        b.content != a.content for b, a in zip(before, after)
+        b.content != a.content or message_reasoning(b) != message_reasoning(a)
+        for b, a in zip(before, after)
     )
 
 

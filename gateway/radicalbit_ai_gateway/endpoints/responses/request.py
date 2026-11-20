@@ -4,16 +4,22 @@ The request goes upstream as the client sent it. The gateway's policies
 (preprocessing plugins, routing, guardrails, limits, cache) read chat messages,
 so ``ResponsesRequest`` shows the request's texts as messages and writes the
 texts they change back into the body. Items without text (function calls,
-reasoning, images...) are never touched.
+images...) are never touched. Readable reasoning rides on the assistant
+message after it, for the guardrails that read reasoning; encrypted reasoning
+is never touched.
 """
 
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 from typing import Any
 
+from radicalbit_ai_gateway.endpoints.responses.reasoning import (
+    Reasoning,
+    assistant_message,
+)
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     BaseMessage,
@@ -86,16 +92,23 @@ class _Slot:
     message_type: type[BaseMessage]
     texts: list[_Text]
     tool_call_id: str = ''
+    # The reasoning parts before an assistant message. With no texts, the slot
+    # holds only reasoning (a turn that ended in a tool call).
+    reasoning: Reasoning = field(default_factory=Reasoning)
 
     def message(self) -> BaseMessage:
         values = [text.get() for text in self.texts]
         content: str | list = (
-            values[0]
+            ''
+            if not values
+            else values[0]
             if len(values) == 1
             else [{'type': 'text', 'text': value} for value in values]
         )
         if self.message_type is ToolMessage:
             return ToolMessage(content=content, tool_call_id=self.tool_call_id)
+        if self.message_type is AIMessage:
+            return assistant_message(content, self.reasoning, has_text=bool(values))
         return self.message_type(content=content)
 
 
@@ -175,13 +188,25 @@ def _slots(body: dict) -> list[_Slot]:
         slots.append(_Slot(HumanMessage, variable_texts))
     if isinstance(body.get('input'), str):
         slots.append(_Slot(HumanMessage, [_Text(body, 'input')]))
+    reasoning = Reasoning()
     for item in _input_items(body):
         if not isinstance(item, dict):
             continue
         item_type = item.get('type', 'message')
+        if item_type == 'reasoning':
+            reasoning.add(item)
+            continue
+        message_type = _MESSAGE_TYPES.get(item.get('role'))
+        texts = _content_texts(item, 'content') if item_type == 'message' else []
+        if message_type is AIMessage and texts:
+            # The reasoning before an assistant message is its own.
+            slots.append(_Slot(AIMessage, texts, reasoning=reasoning))
+            reasoning = Reasoning()
+            continue
+        if reasoning:
+            slots.append(_Slot(AIMessage, [], reasoning=reasoning))
+        reasoning = Reasoning()
         if item_type == 'message':
-            message_type = _MESSAGE_TYPES.get(item.get('role'))
-            texts = _content_texts(item, 'content')
             if message_type and texts:
                 slots.append(_Slot(message_type, texts))
         elif item_type in _TOOL_OUTPUT_TYPES:
@@ -190,6 +215,8 @@ def _slots(body: dict) -> list[_Slot]:
                 # A local shell call's output names its call by ``id``.
                 call_id = item.get('call_id') or item.get('id') or ''
                 slots.append(_Slot(ToolMessage, texts, call_id))
+    if reasoning:
+        slots.append(_Slot(AIMessage, [], reasoning=reasoning))
     return slots
 
 
@@ -222,6 +249,9 @@ class ResponsesRequest:
                 'The messages of a Responses request changed in number'
             )
         for slot, message in zip(self._slots, messages, strict=True):
+            slot.reasoning.write_from(message)
+            if not slot.texts:
+                continue
             texts = _message_texts(message.content)
             if len(texts) != len(slot.texts):
                 raise GatewayInternalError(

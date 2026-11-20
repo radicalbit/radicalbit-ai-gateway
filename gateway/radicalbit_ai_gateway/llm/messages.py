@@ -36,6 +36,18 @@ class UsageMetadata(TypedDict):
     output_token_details: NotRequired[OutputTokenDetails]
 
 
+# OpenAI's service tiers priced apart. Under one of them, the gateway names the
+# cache and reasoning details after the tier (``priority_cache_read``), so cost
+# prices them apart: see ``_openai_common.usage_metadata``.
+PRICED_SERVICE_TIERS = ('priority', 'flex')
+
+
+def usage_detail(details: dict, key: str) -> int:
+    """Return a token detail of ``UsageMetadata``, whatever tier named it."""
+    names = [key, *(f'{tier}_{key}' for tier in PRICED_SERVICE_TIERS)]
+    return sum(details.get(name) or 0 for name in names)
+
+
 class ToolCall(TypedDict):
     name: str
     args: dict[str, Any]
@@ -240,6 +252,44 @@ class AIMessageChunk(AIMessage):
         self.tool_calls = tool_calls
         self.invalid_tool_calls = invalid
         return self
+
+
+class ReasoningOnlyMessage(AIMessage):
+    """An assistant message that holds only reasoning.
+
+    A Responses reasoning item with no message after it (a turn that ends in a
+    tool call). Only the guardrails that read reasoning see it.
+    """
+
+
+# The model's reasoning rides on its assistant message, in additional_kwargs.
+REASONING_KEY = 'reasoning_content'
+
+
+def message_reasoning(message: BaseMessage) -> str:
+    """Return the reasoning of an assistant message, or '' if it has none."""
+    if not isinstance(message, AIMessage):
+        return ''
+    reasoning = message.additional_kwargs.get(REASONING_KEY)
+    return reasoning if isinstance(reasoning, str) else ''
+
+
+def with_reasoning(message: BaseMessage, reasoning: str) -> BaseMessage:
+    """Return a copy of ``message`` with its reasoning replaced."""
+    return message.model_copy(
+        update={
+            'additional_kwargs': {**message.additional_kwargs, REASONING_KEY: reasoning}
+        }
+    )
+
+
+def is_reasoning_only(message: BaseMessage) -> bool:
+    return isinstance(message, ReasoningOnlyMessage)
+
+
+def without_reasoning_only(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Return ``messages`` without the ones that hold only reasoning."""
+    return [m for m in messages if not is_reasoning_only(m)]
 
 
 def parse_partial_json(s: str) -> Any:

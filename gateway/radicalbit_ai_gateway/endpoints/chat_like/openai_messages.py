@@ -8,6 +8,7 @@ import logging.config
 from typing import Any
 
 from radicalbit_ai_gateway.llm.messages import (
+    REASONING_KEY,
     AIMessage,
     BaseMessage,
     FunctionMessage,
@@ -205,9 +206,13 @@ def convert_openai_messages(messages: list) -> list[BaseMessage]:
             tool_calls=parse_tool_calls(list(m.get('tool_calls', []) or [])),
             tool_call_id=m.get('tool_call_id'),
         )
-        reasoning_content = m.get('reasoning_content')
-        if reasoning_content and isinstance(message, AIMessage):
-            message.additional_kwargs['reasoning_content'] = reasoning_content
+        reasoning_content = m.get('reasoning_content') or m.get('reasoning')
+        if (
+            isinstance(reasoning_content, str)
+            and reasoning_content
+            and isinstance(message, AIMessage)
+        ):
+            message.additional_kwargs[REASONING_KEY] = reasoning_content
         openai_messages.append(message)
 
     return openai_messages

@@ -24,6 +24,8 @@ from radicalbit_ai_gateway.llm.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    is_reasoning_only,
+    message_reasoning,
 )
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
 from radicalbit_ai_gateway.models.event_payload import GuardrailEventPayload
@@ -142,22 +144,32 @@ class _Text(NamedTuple):
 
 
 def _indexed_texts(
-    messages: list[BaseMessage], indices: list[int] | None = None
+    messages: list[BaseMessage],
+    indices: list[int] | None = None,
+    read_reasoning: bool = False,
 ) -> list[_Text]:
     """One item per message that has text. Blank text does not count.
 
     ``indices`` gives the position of each message in the full list. Without
-    it, the position in ``messages`` is used.
+    it, the position in ``messages`` is used. With ``read_reasoning``, an
+    assistant message's reasoning comes first, as one more text at the same
+    index.
     """
     if indices is None:
         indices = list(range(len(messages)))
     items: list[_Text] = []
     for i, m in zip(indices, messages):
-        text = ContentUtils.extract_text_content(getattr(m, 'content', ''))
+        msg_type = getattr(m, 'type', '')
+        role = _TYPE_TO_ROLE.get(msg_type, msg_type)
+        texts = [ContentUtils.extract_text_content(getattr(m, 'content', ''))]
+        if read_reasoning:
+            texts.insert(0, message_reasoning(m))
         # A judge drops blank text too, so the reported indexes stay true.
-        if isinstance(text, str) and text.strip():
-            msg_type = getattr(m, 'type', '')
-            items.append(_Text(i, _TYPE_TO_ROLE.get(msg_type, msg_type), text))
+        items.extend(
+            _Text(i, role, text)
+            for text in texts
+            if isinstance(text, str) and text.strip()
+        )
     return items
 
 
@@ -185,6 +197,13 @@ def _text_at_offset(
     return None
 
 
+def _guardrail_texts(messages: list[BaseMessage], kwargs: dict) -> list[_Text]:
+    """Return the texts of ``messages`` a guardrail reads, from its call kwargs."""
+    return _indexed_texts(
+        messages, kwargs.get('message_indices'), kwargs.get('read_reasoning', False)
+    )
+
+
 def _window_payload(items: list[_Text]) -> dict:
     """Index fields for a check that reads all texts as one (a judge).
 
@@ -201,9 +220,13 @@ def _window_payload(items: list[_Text]) -> dict:
 
 def _judge_texts(messages: list[BaseMessage], kwargs: dict) -> list[_Text]:
     """Return the texts a judge reads. Mirrors utils.judge.content_extractor."""
-    items = _indexed_texts(messages, kwargs.get('message_indices'))
+    items = _guardrail_texts(messages, kwargs)
     if kwargs.get('where') == GuardrailWhereType.OUTPUT:
-        return [it for it in items if it.role == 'assistant'][-1:]
+        # The last assistant message: its reasoning, if read, and its text.
+        assistant = [it for it in items if it.role == 'assistant']
+        if not assistant:
+            return []
+        return [it for it in assistant if it.index == assistant[-1].index]
     if kwargs.get('message_roles') is None:
         return [it for it in items if it.role == 'user']
     return items
@@ -265,7 +288,7 @@ def _run_check(
     kwargs: dict,
 ) -> bool:
     logger.debug('Applying Guardrail %s on route %s', kind, route)
-    items = _indexed_texts(messages, kwargs.get('message_indices'))
+    items = _guardrail_texts(messages, kwargs)
     reason = _match_check(kind, params, items)
     if reason is None:
         return False
@@ -343,9 +366,14 @@ def _select_messages(
     when ``windowed`` (a call with no conversation turns it off).
 
     Each item keeps its index in ``messages``, so a redacted copy can go back
-    in its place.
+    in its place. A message that holds only reasoning exists only for a
+    guardrail that reads reasoning.
     """
-    indexed = list(enumerate(messages))[skip:]
+    indexed = [
+        (i, m)
+        for i, m in list(enumerate(messages))[skip:]
+        if guardrail.read_reasoning or not is_reasoning_only(m)
+    ]
     kept = _filter_messages_by_roles(
         [m for _, m in indexed], _window_roles(guardrail, where)
     )
@@ -449,7 +477,7 @@ class GuardrailCheck:
         entities = params.entities
 
         # One safe string for spaCy (prevents E1041). Spans map it back.
-        items = _indexed_texts(messages, kwargs.get('message_indices'))
+        items = _guardrail_texts(messages, kwargs)
         blob, spans = _blob_with_spans(items)
 
         if not blob:
@@ -662,7 +690,7 @@ class GuardrailCheck:
             GuardrailType.GUARDRAILS_AI,
             route,
         )
-        items = _indexed_texts(messages, kwargs.get('message_indices'))
+        items = _guardrail_texts(messages, kwargs)
         blob, _ = _blob_with_spans(items)
         if not blob:
             return False
@@ -798,6 +826,7 @@ class GuardrailCheck:
                     guardrail.parameters,
                     identity.route_name,
                     message_roles=guardrail.message_roles,
+                    read_reasoning=guardrail.read_reasoning,
                     # Indexes in the client's own list.
                     message_indices=[i - skip for i, _ in selected],
                     **kwargs,
