@@ -646,7 +646,7 @@ class TracingServiceTest(unittest.TestCase):
             'check_route_access.task': 'Check route access',
             'select_model.task': 'Select model',
             'run_preprocessing.workflow': 'Preprocess request',
-            'apply_check_guardrails.workflow': 'Input guardrails',
+            'apply_check_guardrails.workflow': 'Guardrail checks',
             'apply_output_guardrails.workflow': 'Output guardrails',
             'check_regex.task': 'Regex guardrail',
             'check_contains.task': 'Contains guardrail',

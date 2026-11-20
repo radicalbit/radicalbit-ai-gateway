@@ -30,7 +30,7 @@ _SPAN_LABELS: dict[str, str] = {
     'check_audio_duration_limit': 'Audio duration limit',
     # Input
     'run_preprocessing': 'Preprocess request',
-    'apply_check_guardrails': 'Input guardrails',
+    'apply_check_guardrails': 'Guardrail checks',
     'apply_redact_guardrails': 'Redaction',
     # Guardrail checks
     'check_regex': 'Regex guardrail',
