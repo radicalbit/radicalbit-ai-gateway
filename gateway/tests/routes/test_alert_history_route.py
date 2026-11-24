@@ -42,7 +42,7 @@ class FakeAlertDAO:
 
 
 class FakeAlertRuleDAO:
-    def get_by_uuid(self, rule_uuid):
+    async def get_by_uuid(self, rule_uuid):
         return object() if rule_uuid == KNOWN_RULE else None
 
 

@@ -1,14 +1,14 @@
 """Turn gateway events into alerts.
 
-Every event from `emit_event` reaches `AlertDispatcher.dispatch` off the
-request path. The dispatcher names the alertable event, finds the enabled rules
+Every event from `emit_event` reaches `AlertDispatcher.dispatch` in a task
+on the event loop, off the request path. The dispatcher names the alertable event, finds the enabled rules
 watching its target, and lets each rule's time aggregation decide what to send.
 
 Window rules only count at dispatch. `AlertDispatcher.close_windows`, ticked by
 the scheduler, sends one alert per closed window that saw at least one event.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import json
@@ -207,19 +207,19 @@ class AlertDispatcher:
         self._store = store
         self._handlers: dict[
             AlertRuleTimeAggregation,
-            Callable[[AlertRule, AlertEvent, EventPayload], None],
+            Callable[[AlertRule, AlertEvent, EventPayload], Awaitable[None]],
         ] = {
             AlertRuleTimeAggregation.INSTANT: self._send_instant,
             AlertRuleTimeAggregation.LIMIT_WINDOW: self._send_once_per_limit_window,
             AlertRuleTimeAggregation.WINDOW: self._count_in_window,
         }
 
-    def dispatch(self, event: EventPayload) -> None:
+    async def dispatch(self, event: EventPayload) -> None:
         """Hand `event` to every enabled rule watching its target and event."""
         matched = alert_event(event)
         if matched is None:
             return
-        for rule in self._candidate_rules(matched.scope, event):
+        for rule in await self._candidate_rules(matched.scope, event):
             if rule.event.strip().lower() != matched.key:
                 continue
             try:
@@ -234,29 +234,31 @@ class AlertDispatcher:
                     rule.time_aggregation,
                 )
                 continue
-            handler(rule, matched, event)
+            await handler(rule, matched, event)
 
-    def _candidate_rules(
+    async def _candidate_rules(
         self, scope: AlertRuleScope, event: EventPayload
     ) -> Sequence[AlertRule]:
         if scope is AlertRuleScope.ROUTE:
             if not event.project_uuid:
                 return []
-            return self._alert_rule_dao.get_enabled_route_rules(
+            return await self._alert_rule_dao.get_enabled_route_rules(
                 event.project_uuid, event.route_name
             )
         if scope is AlertRuleScope.PROJECT:
             if not event.project_uuid:
                 return []
-            return self._alert_rule_dao.get_enabled_project_rules(event.project_uuid)
+            return await self._alert_rule_dao.get_enabled_project_rules(
+                event.project_uuid
+            )
         # Credential limits name no route ('*'): the credential is the target.
         try:
             credential_uuid = UUID(event.api_key_uuid)
         except ValueError:
             return []
-        return self._alert_rule_dao.get_enabled_credential_rules(credential_uuid)
+        return await self._alert_rule_dao.get_enabled_credential_rules(credential_uuid)
 
-    def close_windows(self) -> None:
+    async def close_windows(self) -> None:
         """Send the alert of every window that has closed by now.
 
         Each window is claimed once, by one replica. An event counted after its
@@ -264,21 +266,21 @@ class AlertDispatcher:
         it: the window has had its alert. A window whose rule is gone, disabled
         or no longer on that window is dropped.
         """
-        for member in self._store.windows_due(self._store.now()):
-            self._store.close_window(member)
+        for member in await self._store.windows_due(self._store.now()):
+            await self._store.close_window(member)
             try:
-                self._close_window(_Window.decode(member))
+                await self._close_window(_Window.decode(member))
             except Exception:
                 logger.exception('Failed to close alert window %s', member)
 
-    def _close_window(self, window: _Window) -> None:
+    async def _close_window(self, window: _Window) -> None:
         ttl_seconds = window.seconds + _WINDOW_GRACE_SECONDS
-        if not self._store.claim(window.closed_key, ttl_seconds=ttl_seconds):
+        if not await self._store.claim(window.closed_key, ttl_seconds=ttl_seconds):
             return
-        count = self._store.take(window.counter_key)
+        count = await self._store.take(window.counter_key)
         if count == 0:
             return
-        rule = self._alert_rule_dao.get_by_uuid(UUID(window.rule_uuid))
+        rule = await self._alert_rule_dao.get_by_uuid(UUID(window.rule_uuid))
         if (
             rule is None
             or not rule.enabled
@@ -290,7 +292,7 @@ class AlertDispatcher:
             f'{window.start.strftime(_TIME_FORMAT)} → '
             f'{window.end.strftime(_TIME_FORMAT)}'
         )
-        self._send(
+        await self._send(
             rule,
             AlertEvent(key=rule.event, scope=AlertRuleScope(rule.scope)),
             target=window.target,
@@ -301,7 +303,7 @@ class AlertDispatcher:
             window_end=window.end,
         )
 
-    def _count_in_window(
+    async def _count_in_window(
         self, rule: AlertRule, matched: AlertEvent, event: EventPayload
     ) -> None:
         try:
@@ -316,15 +318,15 @@ class AlertDispatcher:
         window = _Window.containing(
             str(rule.uuid), size, self._store.now(), _target(matched.scope, event)
         )
-        self._store.increment(
+        await self._store.increment(
             window.counter_key, ttl_seconds=window.seconds + _WINDOW_GRACE_SECONDS
         )
-        self._store.open_window(window.encode(), closes_at=window.end)
+        await self._store.open_window(window.encode(), closes_at=window.end)
 
-    def _send_instant(
+    async def _send_instant(
         self, rule: AlertRule, matched: AlertEvent, event: EventPayload
     ) -> None:
-        self._send(
+        await self._send(
             rule,
             matched,
             target=_target(matched.scope, event),
@@ -332,7 +334,7 @@ class AlertDispatcher:
             details=_instant_details(event),
         )
 
-    def _send_once_per_limit_window(
+    async def _send_once_per_limit_window(
         self, rule: AlertRule, matched: AlertEvent, event: EventPayload
     ) -> None:
         """Send the first time the rule fires in the limit's current window.
@@ -345,10 +347,10 @@ class AlertDispatcher:
         window = event.window_id or str(event.reset_time)
         now = int(self._store.now().timestamp())
         ttl = max(event.reset_time - now, 0) + _LIMIT_WINDOW_MARGIN_SECONDS
-        if not self._store.claim(f'alert:limit:{rule.uuid}:{window}', ttl):
+        if not await self._store.claim(f'alert:limit:{rule.uuid}:{window}', ttl):
             return
         reset = datetime.fromtimestamp(event.reset_time, tz=UTC)
-        self._send(
+        await self._send(
             rule,
             matched,
             target=_target(matched.scope, event),
@@ -358,7 +360,7 @@ class AlertDispatcher:
             window_end=reset,
         )
 
-    def _send(
+    async def _send(
         self,
         rule: AlertRule,
         matched: AlertEvent,
@@ -382,7 +384,7 @@ class AlertDispatcher:
         )
         recipients = AlertRuleOut.from_alert_rule(rule).recipients
         try:
-            sent = self._email_service.send_email(
+            sent = await self._email_service.send_email(
                 recipients=recipients, subject=subject, body=body
             )
         except Exception:

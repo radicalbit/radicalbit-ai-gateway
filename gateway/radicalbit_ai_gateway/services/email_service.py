@@ -1,7 +1,8 @@
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import logging
-import smtplib
+
+import aiosmtplib
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
@@ -25,7 +26,7 @@ class EmailService:
         self.smtp_password = smtp_password or cfg.smtp_password
         self.from_email = from_email or cfg.smtp_from_email
 
-    def send_email(self, recipients: list[str], subject: str, body: str) -> bool:
+    async def send_email(self, recipients: list[str], subject: str, body: str) -> bool:
         if not recipients:
             logger.info('No email recipients specified for notification.')
             return False
@@ -38,14 +39,20 @@ class EmailService:
         part = MIMEText(body, 'html' if ('<' in body and '>' in body) else 'plain')
         msg.attach(part)
 
+        # Log in, over STARTTLS, only when both credentials are set.
+        login = bool(self.smtp_user and self.smtp_password)
         try:
-            with smtplib.SMTP(
-                self.smtp_host, int(self.smtp_port), timeout=10
-            ) as server:
-                if self.smtp_user and self.smtp_password:
-                    server.starttls()
-                    server.login(self.smtp_user, self.smtp_password)
-                server.sendmail(self.from_email, recipients, msg.as_string())
+            await aiosmtplib.send(
+                msg,
+                sender=self.from_email,
+                recipients=recipients,
+                hostname=self.smtp_host,
+                port=int(self.smtp_port),
+                username=self.smtp_user if login else None,
+                password=self.smtp_password if login else None,
+                start_tls=login,
+                timeout=10,
+            )
         except Exception as e:
             logger.warning(
                 'Failed to send alert email notification to %s via SMTP (%s:%s): %s',

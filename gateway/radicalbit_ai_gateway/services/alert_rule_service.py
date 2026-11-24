@@ -14,7 +14,6 @@ from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
-from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.limiter.window_config import parse_window
 from radicalbit_ai_gateway.models.alert_rule_dto import (
@@ -154,15 +153,14 @@ class AlertRuleService:
             credential_limits=self._credential_limits,
         )
 
-    def _project_budget_windows(self, project_uuid: str) -> list[int]:
+    async def _project_budget_windows(self, project_uuid: str) -> list[int]:
         if self.project_budget_limit_dao is None:
             return []
         try:
-            limits = run_from_worker(
-                self.project_budget_limit_dao.get_by_project_uuid, UUID(project_uuid)
-            )
+            uuid = UUID(project_uuid)
         except ValueError:  # a rule still holding a project name
             return []
+        limits = await self.project_budget_limit_dao.get_by_project_uuid(uuid)
         windows = []
         for limit in limits:
             try:
@@ -175,7 +173,9 @@ class AlertRuleService:
                 )
         return windows
 
-    def _credential_limits(self, credential_uuid: str) -> list[tuple[str, int]] | None:
+    async def _credential_limits(
+        self, credential_uuid: str
+    ) -> list[tuple[str, int]] | None:
         """Return the credential's limits, direct or from its group, or None if
         the credential is gone.
         """
@@ -185,10 +185,10 @@ class AlertRuleService:
             key_uuid = UUID(credential_uuid)
         except ValueError:
             return None
-        if run_from_worker(self.key_dao.get_by_uuid, key_uuid) is None:
+        if await self.key_dao.get_by_uuid(key_uuid) is None:
             return None
         limits = []
-        for limit in run_from_worker(self.key_limit_dao.get_by_key_uuid, key_uuid):
+        for limit in await self.key_limit_dao.get_by_key_uuid(key_uuid):
             category = CATEGORY_BY_SCENARIO.get(limit.category)
             try:
                 seconds = _window_seconds(limit.window_size)
@@ -205,18 +205,16 @@ class AlertRuleService:
             limits.append((category, seconds))
         return limits
 
-    def _project_exists(self, project_uuid: str) -> bool:
+    async def _project_exists(self, project_uuid: str) -> bool:
         if self.project_dao is None:
             return False
         try:
-            return (
-                run_from_worker(self.project_dao.get_by_uuid, UUID(project_uuid))
-                is not None
-            )
+            uuid = UUID(project_uuid)
         except ValueError:  # a rule still holding a project name
             return False
+        return await self.project_dao.get_by_uuid(uuid) is not None
 
-    def _resolve_project_name(self, project_uuid: str | None) -> str | None:
+    async def _resolve_project_name(self, project_uuid: str | None) -> str | None:
         if not project_uuid:
             return None
         for p_name, entry in self._project_configs.items():
@@ -224,93 +222,97 @@ class AlertRuleService:
                 return p_name
         if self.project_dao is not None:
             try:
-                proj = run_from_worker(self.project_dao.get_by_uuid, UUID(project_uuid))
+                proj = await self.project_dao.get_by_uuid(UUID(project_uuid))
                 if proj and proj.name:
                     return proj.name
             except Exception:
                 pass
         return None
 
-    def _credential_names(self, rules: list[AlertRule]) -> dict[UUID, str]:
+    async def _credential_names(self, rules: list[AlertRule]) -> dict[UUID, str]:
         uuids = [r.credential_uuid for r in rules if r.credential_uuid]
         if not uuids or self.key_dao is None:
             return {}
-        return run_from_worker(self.key_dao.get_names_by_uuids, uuids)
+        return await self.key_dao.get_names_by_uuids(uuids)
 
-    def _stale_reason(self, rule: AlertRule) -> str | None:
+    async def _stale_reason(self, rule: AlertRule) -> str | None:
         scope = AlertRuleScope(rule.scope)
         if scope is AlertRuleScope.ROUTE:
-            return self.alertable_events.stale_reason(
+            return await self.alertable_events.stale_reason(
                 rule.project, rule.route, rule.event
             )
         if scope is AlertRuleScope.PROJECT:
-            return self.alertable_events.project_stale_reason(rule.project, rule.event)
-        return self.alertable_events.credential_stale_reason(
+            return await self.alertable_events.project_stale_reason(
+                rule.project, rule.event
+            )
+        return await self.alertable_events.credential_stale_reason(
             rule.credential_uuid, rule.event
         )
 
-    def _to_out(
+    async def _to_out(
         self, rule: AlertRule, credential_names: Mapping[UUID, str] | None = None
     ) -> AlertRuleOut:
         if credential_names is None:
-            credential_names = self._credential_names([rule])
+            credential_names = await self._credential_names([rule])
         return AlertRuleOut.from_alert_rule(
             rule,
-            project_name=self._resolve_project_name(rule.project),
+            project_name=await self._resolve_project_name(rule.project),
             credential_name=credential_names.get(rule.credential_uuid),
-            stale_reason=self._stale_reason(rule),
+            stale_reason=await self._stale_reason(rule),
         )
 
-    def _check_event(self, fields: Mapping[str, Any]) -> None:
+    async def _check_event(self, fields: Mapping[str, Any]) -> None:
         event = fields['event']
         scope = AlertRuleScope(fields['scope'])
         if scope is AlertRuleScope.CREDENTIAL:
             credential = fields['credential_uuid']
-            if not self.alertable_events.offers_credential(credential, event):
+            if not await self.alertable_events.offers_credential(credential, event):
                 raise AlertRuleInvalidEventError(
                     f'Event "{event}" is not valid for credential "{credential}"'
                 )
             return
         if scope is AlertRuleScope.PROJECT:
-            if not self.alertable_events.offers_project(fields['project'], event):
+            if not await self.alertable_events.offers_project(fields['project'], event):
                 raise AlertRuleInvalidEventError(
                     f'Event "{event}" is not valid for project "{fields["project"]}"'
                 )
             return
-        if not self.alertable_events.offers(fields['project'], fields['route'], event):
+        if not await self.alertable_events.offers(
+            fields['project'], fields['route'], event
+        ):
             raise AlertRuleInvalidEventError(
                 f'Event "{event}" is not valid for route "{fields["route"]}"'
             )
 
-    def get_all_rules(self) -> list[AlertRuleOut]:
+    async def get_all_rules(self) -> list[AlertRuleOut]:
         try:
-            rules = list(self.alert_rule_dao.get_all())
-            credential_names = self._credential_names(rules)
-            return [self._to_out(rule, credential_names) for rule in rules]
+            rules = list(await self.alert_rule_dao.get_all())
+            credential_names = await self._credential_names(rules)
+            return [await self._to_out(rule, credential_names) for rule in rules]
         except Exception as e:
             logger.exception('Failed to fetch alert rules')
             raise AlertRuleInternalError(f'Failed to fetch alert rules: {e}') from e
 
-    def get_rule_by_uuid(self, alert_rule_uuid: UUID) -> AlertRuleOut:
-        rule = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
+    async def get_rule_by_uuid(self, alert_rule_uuid: UUID) -> AlertRuleOut:
+        rule = await self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
         if not rule:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
-        return self._to_out(rule)
+        return await self._to_out(rule)
 
     def get_history(
         self, _from: datetime | None = None, _to: datetime | None = None
     ) -> list[AlertHistoryBucketOut]:
         return self._history(_from, _to)
 
-    def get_rule_history(
+    async def get_rule_history(
         self,
         rule_uuid: UUID,
         _from: datetime | None = None,
         _to: datetime | None = None,
     ) -> list[AlertHistoryBucketOut]:
-        if not self.alert_rule_dao.get_by_uuid(rule_uuid):
+        if not await self.alert_rule_dao.get_by_uuid(rule_uuid):
             raise AlertRuleNotFoundError(f'Alert rule with UUID {rule_uuid} not found')
         return self._history(_from, _to, rule_uuid)
 
@@ -333,40 +335,40 @@ class AlertRuleService:
         buckets = self.alert_dao.get_history(_from=_from, _to=_to, rule_uuid=rule_uuid)
         return [AlertHistoryBucketOut.model_validate(b) for b in buckets]
 
-    def get_alertable_events_for_credential(
+    async def get_alertable_events_for_credential(
         self, credential_uuid: UUID | str
     ) -> AlertableEventsOut:
-        return self.alertable_events.for_credential(credential_uuid)
+        return await self.alertable_events.for_credential(credential_uuid)
 
-    def get_alertable_events_for_project(
+    async def get_alertable_events_for_project(
         self, project_uuid: UUID | str
     ) -> AlertableEventsOut:
-        return self.alertable_events.for_project(project_uuid)
+        return await self.alertable_events.for_project(project_uuid)
 
-    def get_alertable_events_for_route(
+    async def get_alertable_events_for_route(
         self, project_uuid: UUID | str, route_name: str
     ) -> AlertableEventsOut:
-        return self.alertable_events.for_route(project_uuid, route_name)
+        return await self.alertable_events.for_route(project_uuid, route_name)
 
-    def create_rule(self, alert_rule_in: AlertRuleIn) -> AlertRuleOut:
+    async def create_rule(self, alert_rule_in: AlertRuleIn) -> AlertRuleOut:
         entity = alert_rule_in.to_alert_rule()
         fields = _rule_fields(entity)
         _check_target(fields)
         _check_aggregation(fields)
-        self._check_event(fields)
+        await self._check_event(fields)
 
         try:
-            inserted = self.alert_rule_dao.insert(entity)
+            inserted = await self.alert_rule_dao.insert(entity)
             logger.info('Created alert rule %s (%s)', inserted.name, inserted.uuid)
-            return self._to_out(inserted)
+            return await self._to_out(inserted)
         except Exception as e:
             logger.exception('Failed to create alert rule')
             raise AlertRuleInternalError(f'Failed to create alert rule: {e}') from e
 
-    def update_rule(
+    async def update_rule(
         self, alert_rule_uuid: UUID, alert_rule_in: AlertRuleUpdateIn
     ) -> AlertRuleOut:
-        existing = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
+        existing = await self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
         if not existing:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
@@ -374,7 +376,7 @@ class AlertRuleService:
 
         update_fields = alert_rule_in.to_update_fields()
         if not update_fields:
-            return self._to_out(existing)
+            return await self._to_out(existing)
 
         merged = {**_rule_fields(existing), **update_fields}
         _check_target(merged)
@@ -382,39 +384,41 @@ class AlertRuleService:
         # A stale rule can still be renamed: the event is checked only when the
         # client changes what it identifies.
         if _EVENT_IDENTITY_FIELDS & update_fields.keys():
-            self._check_event(merged)
+            await self._check_event(merged)
 
-        updated = self.alert_rule_dao.update_rule(alert_rule_uuid, update_fields)
+        updated = await self.alert_rule_dao.update_rule(alert_rule_uuid, update_fields)
         if not updated:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
 
         logger.info('Updated alert rule %s (%s)', updated.name, updated.uuid)
-        return self._to_out(updated)
+        return await self._to_out(updated)
 
-    def toggle_rule_enabled(self, alert_rule_uuid: UUID, enabled: bool) -> AlertRuleOut:
-        existing = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
+    async def toggle_rule_enabled(
+        self, alert_rule_uuid: UUID, enabled: bool
+    ) -> AlertRuleOut:
+        existing = await self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
         if not existing:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
 
-        updated = self.alert_rule_dao.toggle_enabled(alert_rule_uuid, enabled)
+        updated = await self.alert_rule_dao.toggle_enabled(alert_rule_uuid, enabled)
         if not updated:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
 
         logger.info('Toggled alert rule %s enabled to %s', alert_rule_uuid, enabled)
-        return self._to_out(updated)
+        return await self._to_out(updated)
 
-    def delete_rule(self, alert_rule_uuid: UUID) -> AlertRuleOut:
-        deleted = self.alert_rule_dao.soft_delete_by_uuid(alert_rule_uuid)
+    async def delete_rule(self, alert_rule_uuid: UUID) -> AlertRuleOut:
+        deleted = await self.alert_rule_dao.soft_delete_by_uuid(alert_rule_uuid)
         if not deleted:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
 
         logger.info('Soft deleted alert rule %s', alert_rule_uuid)
-        return self._to_out(deleted)
+        return await self._to_out(deleted)

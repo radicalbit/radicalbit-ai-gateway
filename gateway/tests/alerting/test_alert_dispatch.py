@@ -4,8 +4,10 @@ Rules are stored in Postgres. The alert state lives in process: what the stores
 themselves do, on Redis and in process alike, is tested in `test_alert_store`.
 Only the dispatchers that share one Redis run on the Valkey testcontainer.
 Windows are closed by calling the scheduler's tick, `close_windows`, directly.
+`emit_event` schedules the dispatch as a task: `emit` waits for it to finish.
 """
 
+import asyncio
 from datetime import UTC, datetime
 import json
 from unittest.mock import patch
@@ -13,6 +15,7 @@ import uuid
 
 import pytest
 from redis import Redis
+from sqlalchemy import delete
 
 from tests.common.db_integration import DatabaseIntegration
 
@@ -20,7 +23,9 @@ from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
 from radicalbit_ai_gateway.alerting.alert_store import (
     InProcessAlertStore,
     RedisAlertStore,
+    build_alert_store,
 )
+from radicalbit_ai_gateway.alerting.alert_tasks import AlertTasks
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.events import events_processor
@@ -44,7 +49,7 @@ class FakeEmailService:
         self.sent: list[dict] = []
         self.outcomes: list[bool | Exception] = []
 
-    def send_email(self, recipients: list[str], subject: str, body: str) -> bool:
+    async def send_email(self, recipients: list[str], subject: str, body: str) -> bool:
         self.sent.append({'recipients': recipients, 'subject': subject, 'body': body})
         outcome = self.outcomes.pop(0) if self.outcomes else True
         if isinstance(outcome, Exception):
@@ -69,13 +74,6 @@ class FakeClock:
 
     def set(self, hour: int, minute: int, second: int = 0) -> None:
         self.now = self.now.replace(hour=hour, minute=minute, second=second)
-
-
-class InlineExecutor:
-    """Runs the alert dispatch on the caller's thread, so a test can see it."""
-
-    def submit(self, fn, *args):
-        fn(*args)
 
 
 def guardrail_event(where: str = 'INPUT'):
@@ -225,11 +223,13 @@ def db():
 
 class DispatcherHarness:
     @pytest.fixture(autouse=True)
-    def _wire(self, request, db):
+    async def _wire(self, request, db):
         self.db = db
         self.email = FakeEmailService()
         self.buffer = FakeBuffer()
         self.clock = FakeClock()
+        self.alert_tasks = AlertTasks(max_concurrency=4)
+        self.stores = []
         self.dispatcher = AlertDispatcher(
             alert_rule_dao=AlertRuleDAO(db),
             email_service=self.email,
@@ -237,7 +237,7 @@ class DispatcherHarness:
         )
         with (
             patch.object(events_processor, '_alert_dispatcher', self.dispatcher),
-            patch.object(events_processor, '_alert_executor', InlineExecutor()),
+            patch.object(events_processor, '_alert_tasks', self.alert_tasks),
             patch.object(events_processor, '_events_buffer'),
             patch(
                 'radicalbit_ai_gateway.events.alerts_processor._alerts_buffer',
@@ -245,13 +245,22 @@ class DispatcherHarness:
             ),
         ):
             yield
-        with db.begin_session() as session:
-            session.query(AlertRule).delete()
+        async with db.begin_session() as session:
+            await session.execute(delete(AlertRule))
+        for store in self.stores:
+            await store.close()
+        # Each test runs on its own event loop: drop the pooled connections.
+        await db.dispose()
 
     def make_store(self, request):
         return InProcessAlertStore(clock=self.clock)
 
-    def rule(self, event: str = 'guardrail-input-pii', **columns) -> AlertRule:
+    async def emit(self, event) -> None:
+        """Emit `event` as the gateway does, and wait for its alert dispatch."""
+        events_processor.emit_event(event)
+        await self.alert_tasks.join()
+
+    async def rule(self, event: str = 'guardrail-input-pii', **columns) -> AlertRule:
         rule = AlertRule(
             **{
                 'name': 'PII watch',
@@ -270,14 +279,14 @@ class DispatcherHarness:
                 **columns,
             }
         )
-        with self.db.begin_session() as session:
+        async with self.db.begin_session() as session:
             session.add(rule)
-            session.flush()
+            await session.flush()
             return rule
 
-    def close_at(self, hour: int, minute: int, second: int = 0) -> None:
+    async def close_at(self, hour: int, minute: int, second: int = 0) -> None:
         self.clock.set(hour, minute, second)
-        self.dispatcher.close_windows()
+        await self.dispatcher.close_windows()
 
 
 def repeat(event, *variants):
@@ -483,26 +492,35 @@ class TestDispatch(DispatcherHarness):
             ),
         ],
     )
-    def test_a_rule_sends_on_each_event_it_matches(
+    async def test_a_rule_sends_on_each_event_it_matches(
         self, rules, events, sent_after_each
     ):
         for columns in rules:
-            self.rule(**columns)
+            await self.rule(**columns)
 
         sent = []
         for event in events:
-            events_processor.emit_event(event())
+            await self.emit(event())
             sent.append(len(self.email.sent))
 
         assert sent == sent_after_each
         assert len(self.buffer.records) == sent_after_each[-1]
         assert all(e['recipients'] == ['ops@example.com'] for e in self.email.sent)
 
-    def test_every_matching_rule_sends(self):
-        self.rule(name='first')
-        self.rule(name='second')
+    async def test_emit_event_returns_before_the_alert_is_sent(self):
+        await self.rule()
 
         events_processor.emit_event(guardrail_event())
+
+        assert self.email.sent == []
+        await self.alert_tasks.join()
+        assert len(self.email.sent) == 1
+
+    async def test_every_matching_rule_sends(self):
+        await self.rule(name='first')
+        await self.rule(name='second')
+
+        await self.emit(guardrail_event())
 
         subjects = [e['subject'] for e in self.email.sent]
         assert len(subjects) == 2
@@ -565,12 +583,12 @@ class TestDispatch(DispatcherHarness):
             ),
         ],
     )
-    def test_an_alert_is_recorded_as_sent_with_its_rule_and_target(
+    async def test_an_alert_is_recorded_as_sent_with_its_rule_and_target(
         self, columns, event, subject, expected
     ):
-        rule = self.rule(**columns)
+        rule = await self.rule(**columns)
 
-        events_processor.emit_event(event())
+        await self.emit(event())
 
         [email] = self.email.sent
         if subject is not None:
@@ -580,40 +598,40 @@ class TestDispatch(DispatcherHarness):
         assert record['STATUS'] == 'sent'
         assert {k: record[k] for k in expected} == expected
 
-    def test_each_alert_is_recorded_with_its_own_uuid(self):
-        self.rule()
+    async def test_each_alert_is_recorded_with_its_own_uuid(self):
+        await self.rule()
 
-        events_processor.emit_event(guardrail_event())
-        events_processor.emit_event(guardrail_event())
+        await self.emit(guardrail_event())
+        await self.emit(guardrail_event())
 
         first, second = self.buffer.records
         assert first['ALERT_UUID'] != second['ALERT_UUID']
 
-    def test_a_failed_send_is_recorded_as_failed(self):
-        self.rule()
+    async def test_a_failed_send_is_recorded_as_failed(self):
+        await self.rule()
         self.email.outcomes = [False]
 
-        events_processor.emit_event(guardrail_event())
+        await self.emit(guardrail_event())
 
         assert [r['STATUS'] for r in self.buffer.records] == ['failed']
 
-    def test_a_send_that_raises_is_recorded_as_failed_and_the_next_rule_still_runs(
+    async def test_a_send_that_raises_is_recorded_as_failed_and_the_next_rule_still_runs(
         self,
     ):
-        self.rule(name='first', created_at=NOW)
-        self.rule(name='second', created_at=NOW)
+        await self.rule(name='first', created_at=NOW)
+        await self.rule(name='second', created_at=NOW)
         self.email.outcomes = [RuntimeError('smtp down'), True]
 
-        events_processor.emit_event(guardrail_event())
+        await self.emit(guardrail_event())
 
         assert sorted(r['STATUS'] for r in self.buffer.records) == ['failed', 'sent']
 
     # --- email content ---
 
-    def test_a_limit_email_shows_consumption_maximum_and_reset_time(self):
-        self.rule(**limit_rule())
+    async def test_a_limit_email_shows_consumption_maximum_and_reset_time(self):
+        await self.rule(**limit_rule())
 
-        events_processor.emit_event(limit_event(consumption=11, maximum=10))
+        await self.emit(limit_event(consumption=11, maximum=10))
 
         body = self.email.sent[0]['body']
         for expected in ('Consumption', '>11<', 'Maximum', '>10<'):
@@ -631,19 +649,19 @@ class TestDispatch(DispatcherHarness):
             ),
         ],
     )
-    def test_a_threshold_email_also_shows_the_percentage(self, columns, event):
-        self.rule(**columns)
+    async def test_a_threshold_email_also_shows_the_percentage(self, columns, event):
+        await self.rule(**columns)
 
-        events_processor.emit_event(event(threshold_percentage=75, consumption=7.5))
+        await self.emit(event(threshold_percentage=75, consumption=7.5))
 
         [email] = self.email.sent
         assert '>75%<' in email['body']
         assert '>7.5<' in email['body']
 
-    def test_the_email_names_rule_scope_target_event_and_time(self):
-        self.rule()
+    async def test_the_email_names_rule_scope_target_event_and_time(self):
+        await self.rule()
 
-        events_processor.emit_event(guardrail_event())
+        await self.emit(guardrail_event())
 
         [email] = self.email.sent
         assert 'PII watch' in email['subject']
@@ -659,22 +677,22 @@ class TestDispatch(DispatcherHarness):
         ):
             assert expected in body
 
-    def test_an_instant_email_carries_the_event_details(self):
-        self.rule('fallback-triggered')
+    async def test_an_instant_email_carries_the_event_details(self):
+        await self.rule('fallback-triggered')
 
-        events_processor.emit_event(fallback_event())
+        await self.emit(fallback_event())
 
         body = self.email.sent[0]['body']
         assert 'billing-service' in body
         assert 'finance' in body
         assert 'gpt-4 → gpt-3.5' in body
 
-    def test_an_instant_guardrail_email_carries_type_and_behaviour_but_no_parameters(
+    async def test_an_instant_guardrail_email_carries_type_and_behaviour_but_no_parameters(
         self,
     ):
-        self.rule()
+        await self.rule()
 
-        events_processor.emit_event(guardrail_event())
+        await self.emit(guardrail_event())
 
         body = self.email.sent[0]['body']
         assert 'CONTAINS' in body
@@ -683,13 +701,13 @@ class TestDispatch(DispatcherHarness):
 
     # --- window ---
 
-    def test_a_closed_window_sends_one_alert_with_the_count_once(self):
-        self.rule(**window_rule('5m'))
+    async def test_a_closed_window_sends_one_alert_with_the_count_once(self):
+        await self.rule(**window_rule('5m'))
 
         for _ in range(3):
-            events_processor.emit_event(guardrail_event())
-        self.close_at(9, 35)
-        self.close_at(9, 36)
+            await self.emit(guardrail_event())
+        await self.close_at(9, 35)
+        await self.close_at(9, 36)
 
         [email] = self.email.sent
         assert email['recipients'] == ['ops@example.com']
@@ -728,16 +746,16 @@ class TestDispatch(DispatcherHarness):
             ),
         ],
     )
-    def test_a_window_alert_is_recorded_with_its_count_and_utc_aligned_interval(
+    async def test_a_window_alert_is_recorded_with_its_count_and_utc_aligned_interval(
         self, size, event_at, closed_at, start, end
     ):
-        rule = self.rule(**window_rule(size, event='fallback-triggered'))
+        rule = await self.rule(**window_rule(size, event='fallback-triggered'))
 
         self.clock.now = event_at
-        events_processor.emit_event(fallback_event())
-        events_processor.emit_event(fallback_event())
+        await self.emit(fallback_event())
+        await self.emit(fallback_event())
         self.clock.now = closed_at
-        self.dispatcher.close_windows()
+        await self.dispatcher.close_windows()
 
         [record] = self.buffer.records
         assert record['RULE_UUID'] == str(rule.uuid)
@@ -748,36 +766,36 @@ class TestDispatch(DispatcherHarness):
         assert record['WINDOW_END'] == end
         assert record['STATUS'] == 'sent'
 
-    def test_an_event_counted_after_its_window_closed_sends_no_second_alert(self):
-        self.rule(**window_rule('5m'))
+    async def test_an_event_counted_after_its_window_closed_sends_no_second_alert(self):
+        await self.rule(**window_rule('5m'))
 
-        events_processor.emit_event(guardrail_event())
-        self.close_at(9, 35)
+        await self.emit(guardrail_event())
+        await self.close_at(9, 35)
         # A replica whose clock lags still counts into the closed window.
         self.clock.set(9, 34, 59)
-        events_processor.emit_event(guardrail_event())
-        self.close_at(9, 35, 30)
+        await self.emit(guardrail_event())
+        await self.close_at(9, 35, 30)
 
         assert len(self.email.sent) == 1
 
-    def test_events_in_consecutive_windows_send_one_alert_each(self):
-        self.rule(**window_rule('5m'))
+    async def test_events_in_consecutive_windows_send_one_alert_each(self):
+        await self.rule(**window_rule('5m'))
 
-        events_processor.emit_event(guardrail_event())
+        await self.emit(guardrail_event())
         self.clock.set(9, 36)
-        events_processor.emit_event(guardrail_event())
-        events_processor.emit_event(guardrail_event())
-        self.close_at(9, 40)
+        await self.emit(guardrail_event())
+        await self.emit(guardrail_event())
+        await self.close_at(9, 40)
 
         counts = sorted(r['COUNT'] for r in self.buffer.records)
         assert counts == [1, 2]
 
-    def test_each_window_rule_counts_on_its_own(self):
-        self.rule(**window_rule('5m', name='first'))
-        self.rule(**window_rule('5m', name='second'))
+    async def test_each_window_rule_counts_on_its_own(self):
+        await self.rule(**window_rule('5m', name='first'))
+        await self.rule(**window_rule('5m', name='second'))
 
-        events_processor.emit_event(guardrail_event())
-        self.close_at(9, 35)
+        await self.emit(guardrail_event())
+        await self.close_at(9, 35)
 
         assert sorted(r['RULE_NAME'] for r in self.buffer.records) == [
             'first',
@@ -817,38 +835,38 @@ class TestDispatch(DispatcherHarness):
             ),
         ],
     )
-    def test_a_window_sends_nothing_while_open_empty_or_after_its_rule_changed(
+    async def test_a_window_sends_nothing_while_open_empty_or_after_its_rule_changed(
         self, emitted, change, closed_at
     ):
-        rule = self.rule(**window_rule('5m'))
+        rule = await self.rule(**window_rule('5m'))
 
         for _ in range(emitted):
-            events_processor.emit_event(guardrail_event())
+            await self.emit(guardrail_event())
         if change:
-            change(AlertRuleDAO(self.db), rule)
-        self.close_at(*closed_at)
+            await change(AlertRuleDAO(self.db), rule)
+        await self.close_at(*closed_at)
 
         assert self.email.sent == []
         assert self.buffer.records == []
 
-    def test_a_dropped_window_is_not_sent_later(self):
-        rule = self.rule(**window_rule('5m'))
+    async def test_a_dropped_window_is_not_sent_later(self):
+        rule = await self.rule(**window_rule('5m'))
 
-        events_processor.emit_event(guardrail_event())
+        await self.emit(guardrail_event())
         dao = AlertRuleDAO(self.db)
-        dao.toggle_enabled(rule.uuid, False)
-        self.close_at(9, 35)
-        dao.toggle_enabled(rule.uuid, True)
-        self.close_at(9, 36)
+        await dao.toggle_enabled(rule.uuid, False)
+        await self.close_at(9, 35)
+        await dao.toggle_enabled(rule.uuid, True)
+        await self.close_at(9, 36)
 
         assert self.email.sent == []
 
-    def test_a_failed_window_send_is_recorded_as_failed(self):
-        self.rule(**window_rule('5m'))
+    async def test_a_failed_window_send_is_recorded_as_failed(self):
+        await self.rule(**window_rule('5m'))
         self.email.outcomes = [RuntimeError('smtp down')]
 
-        events_processor.emit_event(guardrail_event())
-        self.close_at(9, 35)
+        await self.emit(guardrail_event())
+        await self.close_at(9, 35)
 
         assert [r['STATUS'] for r in self.buffer.records] == ['failed']
 
@@ -859,8 +877,10 @@ class TestDispatchersSharingOneRedis(DispatcherHarness):
         Redis.from_url(self.redis_url).flushdb()
         return self.redis_store()
 
-    def redis_store(self):
-        return RedisAlertStore(Redis.from_url(self.redis_url), clock=self.clock)
+    def redis_store(self) -> RedisAlertStore:
+        store = build_alert_store(self.redis_url, clock=self.clock)
+        self.stores.append(store)
+        return store
 
     def replica(self):
         return AlertDispatcher(
@@ -869,26 +889,38 @@ class TestDispatchersSharingOneRedis(DispatcherHarness):
             store=self.redis_store(),
         )
 
-    def test_two_dispatchers_on_the_same_redis_send_one_alert_per_window(self):
-        self.rule(**window_rule('5m'))
+    async def test_two_dispatchers_on_the_same_redis_send_one_alert_per_window(self):
+        await self.rule(**window_rule('5m'))
         replica = self.replica()
 
-        self.dispatcher.dispatch(guardrail_event())
-        replica.dispatch(guardrail_event())
-        replica.dispatch(guardrail_event())
+        await self.dispatcher.dispatch(guardrail_event())
+        await replica.dispatch(guardrail_event())
+        await replica.dispatch(guardrail_event())
         self.clock.set(9, 35)
-        replica.close_windows()
-        self.dispatcher.close_windows()
+        await replica.close_windows()
+        await self.dispatcher.close_windows()
 
         assert len(self.email.sent) == 1
         [record] = self.buffer.records
         assert record['COUNT'] == 3
 
-    def test_two_dispatchers_on_the_same_redis_send_one_limit_alert(self):
-        self.rule(**limit_rule())
+    async def test_two_dispatchers_on_the_same_redis_send_one_limit_alert(self):
+        await self.rule(**limit_rule())
         replica = self.replica()
 
-        self.dispatcher.dispatch(limit_event())
-        replica.dispatch(limit_event())
+        await self.dispatcher.dispatch(limit_event())
+        await replica.dispatch(limit_event())
+
+        assert len(self.email.sent) == 1
+
+    async def test_concurrent_dispatches_on_the_same_redis_send_one_limit_alert(
+        self,
+    ):
+        await self.rule(**limit_rule())
+        replica = self.replica()
+
+        await asyncio.gather(
+            self.dispatcher.dispatch(limit_event()), replica.dispatch(limit_event())
+        )
 
         assert len(self.email.sent) == 1
