@@ -20,7 +20,7 @@ import {
 } from '@radicalbit/radicalbit-design-system';
 import classNames from 'classnames';
 import dayjs from 'dayjs';
-import { EllipsisVertical } from 'lucide-react';
+import { EllipsisVertical, Gauge } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useRef, useState } from 'react';
 
@@ -39,11 +39,6 @@ const columns = [
     dataIndex: 'name',
     key: 'id',
     render: (_, record) => <Name record={record} />,
-  },
-  {
-    title: 'Owner',
-    dataIndex: 'owner',
-    key: 'owner',
   },
   {
     title: 'Associated Group',
@@ -77,7 +72,7 @@ const columns = [
     dataIndex: 'uuid',
     key: 'actions',
     width: '50px',
-    render: (uuid, { name }) => <DataTableAction noHide><Actions name={name} uuid={uuid} /></DataTableAction>,
+    render: (uuid, { name, owner }) => <DataTableAction noHide><Actions name={name} owner={owner} uuid={uuid} /></DataTableAction>,
   },
   {
     title: '',
@@ -195,7 +190,32 @@ function Limits({ limits, uuid, warnings }) {
   return <LimitsSummary consumption={consumption} limits={limits} onManage={handleOnManage} warnings={warnings} />;
 }
 
-function Actions({ name, uuid }) {
+function Actions({ name, owner, uuid }) {
+  if (owner !== GATEWAY_OWNER) {
+    return <ManageLimitsAction name={name} uuid={uuid} />;
+  }
+
+  return <MoreActions name={name} uuid={uuid} />;
+}
+
+function ManageLimitsAction({ name, uuid }) {
+  const { showModal } = useModals();
+
+  const handleOnClick = (e) => {
+    e.stopPropagation();
+    showModal(modals.MANAGE_KEY_LIMITS, { uuid });
+  };
+
+  return (
+    <Tooltip title="Manage limits">
+      <Button aria-label={`Manage limits for ${name}`} onClick={handleOnClick} type="text">
+        <Lucide icon={Gauge} />
+      </Button>
+    </Tooltip>
+  );
+}
+
+function MoreActions({ name, uuid }) {
   const buttonRef = useRef(null);
 
   const [isOpenedByKeyboard, setIsOpenedByKeyboard] = useState(false);

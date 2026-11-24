@@ -2,9 +2,10 @@ import Lucide from '@Components/lucide';
 import { Popup, usePopup } from '@Components/popup';
 import { DETAIL_LAYOUT_CONFIGURATION, MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/groups/detail/header/three-dots-menu';
+import { filterByName } from '@Container/pages/groups/list/helpers';
 import {
-  GroupsTabEnum, TAB_QP, filterByName, filterByTab, parseTab,
-} from '@Container/pages/groups/list/helpers';
+  OwnershipTabEnum, TAB_QP, filterByTab, parseTab,
+} from '@Helpers/ownership-tabs';
 import useModals, { modals } from '@Hooks/use-modals';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import {
@@ -120,7 +121,7 @@ function GroupsTable({ searchValue }) {
     return false;
   }
 
-  if (tabData.length === 0 && tab === GroupsTabEnum.EXTERNALLY_MANAGED) {
+  if (tabData.length === 0 && tab === OwnershipTabEnum.EXTERNALLY_MANAGED) {
     return (
       <div className="flex justify-center h-full">
         <IsEmptyExternallyManaged />
