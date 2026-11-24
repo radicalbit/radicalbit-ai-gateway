@@ -21,7 +21,6 @@ services:
         - path: ./ui/src
           action: rebuild
     environment:
-      DB_TYPE: "postgresql"
       DB_HOST: "postgres"
       DB_PORT: 5432
       DB_USER: "postgres"
@@ -99,7 +98,6 @@ services:
       context: ./gateway
       dockerfile: ./migrations.Dockerfile
     environment:
-      DB_TYPE: "postgresql"
       DB_HOST: "postgres"
       DB_PORT: 5432
       DB_USER: "postgres"

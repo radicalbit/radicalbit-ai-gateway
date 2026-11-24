@@ -59,8 +59,6 @@ spec:
           image: "{{ .Values.gateway.migrations.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: DB_TYPE
-              value: postgresql
             - name: DB_HOST
               value: {{ .Values.postgresql.host }}
             - name: DB_PORT
@@ -104,8 +102,6 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
-            - name: DB_TYPE
-              value: postgresql
             - name: DB_HOST
               value: {{ .Values.postgresql.host }}
             - name: DB_PORT

@@ -35,7 +35,6 @@ Create `gateway/.env.dev` with the connection details matching the compose servi
 
 ```dotenv
 # Database
-DB_TYPE=postgresql
 DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
