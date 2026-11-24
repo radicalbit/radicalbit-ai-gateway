@@ -91,28 +91,10 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   if (isExternallyManaged) {
     return [
       {
-        label: <Tooltip title="This group is managed externally and cannot be modified">Edit group</Tooltip>,
-        disabled: true,
-      },
-      {
-        type: 'divider',
-      },
-      {
         label: 'Associate routes',
         onClick: handleOnAssociateRoutes,
       },
-      {
-        label: <Tooltip title="This group is managed externally and cannot be modified">Associate credentials</Tooltip>,
-        disabled: true,
-      },
       applyLimitsItem,
-      {
-        type: 'divider',
-      },
-      {
-        label: <Tooltip title="This group is managed externally and cannot be modified"><div className="is-error">Delete group</div></Tooltip>,
-        disabled: true,
-      },
     ];
   }
 
