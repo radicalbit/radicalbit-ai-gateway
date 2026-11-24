@@ -22,6 +22,7 @@ from radicalbit_ai_gateway.limiting.limits import (
 )
 from radicalbit_ai_gateway.limiting.windows import (
     Category,
+    Window,
     credential_window,
     project_window,
 )
@@ -37,6 +38,7 @@ from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType
 from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitOut
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.utils.exceptions import (
+    AppError,
     AudioDurationLimitExceeded,
     BudgetLimitExceededError,
     InputTokenLimitExceeded,
@@ -127,7 +129,7 @@ def _scope(limits, route=None, credential=(), project=(), identity=IDENTITY):
     return limits.resolve(identity, route or RouteLimits(), credential, project)
 
 
-async def _consumed(limits, window) -> int:
+async def _consumed(limits: Limits, window: Window) -> int:
     stats = await window.limiter(limits.storage).get_window_stats(window.config)
     return stats.consumed
 
@@ -429,7 +431,7 @@ class TestOrder:
     async def _blocking(limits, demand, route, credential=(), project=()):
         scope = _scope(limits, route, credential, project)
         await scope.count(Usage(10, 10, (10_000_000_000,)))
-        with pytest.raises(Exception) as error:
+        with pytest.raises(AppError) as error:
             await scope.check(demand)
         return error.value.client_message.split(' limit')[0]
 

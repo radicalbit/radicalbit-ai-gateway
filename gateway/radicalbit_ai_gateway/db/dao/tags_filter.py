@@ -6,20 +6,23 @@ it identically. This is the one place that logic lives.
 """
 
 from collections import defaultdict
+from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.sql import ColumnElement
 
 
 def add_tags_filter(
-    conditions: list, tags_column: ColumnElement, tags: list[str] | None
+    conditions: list[ColumnElement[Any]],
+    tags_column: ColumnElement[Any],
+    tags: list[str] | None,
 ) -> None:
     """Append Google-style facet tag-filter conditions to `conditions`.
 
     Values for the same key are OR-ed together (`hasAny`); different keys end
     up as separate entries in `conditions`, which `.where(*conditions)` ANDs.
     """
-    if not tags:
+    if tags is None or len(tags) == 0:
         return
     by_key: dict[str, list[str]] = defaultdict(list)
     for tag in tags:

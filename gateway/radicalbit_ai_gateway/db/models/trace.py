@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
@@ -101,8 +102,8 @@ class SpanRecord(BaseModel):
     fallback_triggered: bool = False
     gen_ai_provider: str = ''
     # Additional fields for span detail
-    span_attributes: dict = Field(default_factory=dict)
+    span_attributes: dict[Any, Any] = Field(default_factory=dict)
     status_message: str | None = None
-    events: list[dict] = Field(default_factory=list)
+    events: list[dict[Any, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)

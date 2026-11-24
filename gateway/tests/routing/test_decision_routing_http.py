@@ -5,12 +5,14 @@ Typesafe and OpenAI are mocked with pook.
 
 from contextlib import nullcontext
 from types import SimpleNamespace
+from typing import Any
 import unittest
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pook
 import pytest
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.decision_routing import (
@@ -67,11 +69,11 @@ GPT_5 = {
 
 def _build_routes(
     *,
-    decision_models: tuple[dict, ...] = (JEV, JEV_BACKUP),
-    route: dict | None = None,
-    top_level: dict | None = None,
+    decision_models: tuple[dict[str, Any], ...] = (JEV, JEV_BACKUP),
+    route: dict[str, Any] | None = None,
+    top_level: dict[str, Any] | None = None,
     **routing,
-) -> dict:
+) -> dict[str, Any]:
     """One chat route with decision routing between gpt-4o and gpt-5.
 
     `route` adds to the chat route's config, `top_level` to the gateway's.
@@ -106,9 +108,11 @@ def _build_routes(
     )
 
 
-def _choice_answer(probabilities: dict, input_tokens: int = 280) -> dict:
+def _choice_answer(
+    probabilities: dict[str, Any], input_tokens: int = 280
+) -> dict[str, Any]:
     """Jev's answer for these probabilities: the top option, its confidence."""
-    top = max(probabilities, key=probabilities.get)
+    top = max(probabilities, key=lambda option: probabilities[option])
     return {
         'model': 'jev-1.13.0',
         'answers': {
@@ -124,6 +128,7 @@ def _choice_answer(probabilities: dict, input_tokens: int = 280) -> dict:
 
 
 class TestDecisionRoutingEndpoint(unittest.TestCase):
+    @override
     def setUp(self):
         self.span = MagicMock()
         self.span.is_recording.return_value = True
@@ -143,7 +148,7 @@ class TestDecisionRoutingEndpoint(unittest.TestCase):
         self.headers = gateway.headers
         self.api_key = gateway.api_key
 
-    def _chat(self, messages: list[dict] | None = None):
+    def _chat(self, messages: list[dict[str, Any]] | None = None):
         return self.client.post(
             '/v1/chat/completions',
             json={
@@ -181,7 +186,10 @@ class TestDecisionRoutingEndpoint(unittest.TestCase):
             )
             .times(times)
         )
-        mock.reply(status).json(body if body is not None else _choice_answer(choice))
+        if body is None:
+            assert choice is not None
+            body = _choice_answer(choice)
+        mock.reply(status).json(body)
         return mock
 
     def _mock_openai(self, model_name: str):
@@ -206,7 +214,7 @@ class TestDecisionRoutingEndpoint(unittest.TestCase):
         [event] = [e for e in self.gateway_events if isinstance(e, RoutingEventPayload)]
         return event
 
-    def _attributes(self) -> dict:
+    def _attributes(self) -> dict[str, Any]:
         return {c.args[0]: c.args[1] for c in self.span.set_attribute.call_args_list}
 
     def _assert_served(self, response, model_id: str, openai):
@@ -404,7 +412,7 @@ class TestDecisionRoutingEndpoint(unittest.TestCase):
     PRICEY_BACKUP = {**JEV_BACKUP, 'input_cost_per_million_tokens': 2000}
     CHOOSE_GPT_5 = {'option_1': 0.1, 'option_2': 0.9}
 
-    def _routing_events(self, payload_type: type) -> list:
+    def _routing_events(self, payload_type: type) -> list[Any]:
         return [e for e in self.emitted if isinstance(e, payload_type) and e.is_routing]
 
     def test_the_routing_call_emits_cost_events_flagged_as_routing(self):

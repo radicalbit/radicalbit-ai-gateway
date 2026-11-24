@@ -3,13 +3,15 @@ policy, and the canned replies of its model gpt-a. The golden scenarios of
 ``tests/endpoints/cross_endpoint/test_pipeline_golden.py`` run on it.
 """
 
+from typing import Any
+
 from tests.common import provider_responses as upstream
 from tests.common.provider_recorder import CannedResponse
 
 CREDENTIALS = {'api_key': 'sk-test'}
 
 
-def priced(model_id: str, name: str) -> dict:
+def priced(model_id: str, name: str) -> dict[str, Any]:
     """Return a model priced at 1 per million input tokens, 2 per million output."""
     return {
         'model_id': model_id,
@@ -20,7 +22,9 @@ def priced(model_id: str, name: str) -> dict:
     }
 
 
-def contains_guardrail(name: str, where: str, behavior: str, value: str) -> dict:
+def contains_guardrail(
+    name: str, where: str, behavior: str, value: str
+) -> dict[str, Any]:
     """Return a ``contains`` guardrail on ``value``."""
     return {
         'name': name,

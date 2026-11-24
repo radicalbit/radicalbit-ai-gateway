@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import TypedDict
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -48,6 +49,16 @@ class LastEventGuardrail(Base):
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
     )
+
+
+class LastEvents(TypedDict, total=False):
+    """The latest guardrail and fallback event, keyed by event type.
+
+    A type with no event is absent.
+    """
+
+    GUARDRAIL: LastEventGuardrail
+    FALLBACK: LastEventFallback
 
 
 class ModelInvocationCounter(Base):

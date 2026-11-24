@@ -18,7 +18,11 @@ def get_limit_storage() -> Storage:
     global _storage  # noqa: PLW0603
     if _storage is None:
         redis_url = get_app_config().redis_config.redis_url
-        _storage = RedisStorage(uri=redis_url) if redis_url else InMemoryStorage()
+        _storage = (
+            RedisStorage(uri=redis_url)
+            if redis_url is not None and redis_url != ''
+            else InMemoryStorage()
+        )
     return _storage
 
 

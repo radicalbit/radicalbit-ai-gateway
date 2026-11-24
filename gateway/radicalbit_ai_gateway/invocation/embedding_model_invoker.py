@@ -1,7 +1,9 @@
 import logging
+from typing import NoReturn
 
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 from openai.types.embedding import Embedding
+from typing_extensions import override
 
 from radicalbit_ai_gateway.invocation.errors import Surface, raising
 from radicalbit_ai_gateway.invocation.fallback_chain import (
@@ -35,7 +37,7 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 EMBEDDINGS_MODEL_TYPE = 'embeddings'
 
 
-class EmbeddingModelInvoker(ModelInvoker):
+class EmbeddingModelInvoker(ModelInvoker[Embeddings]):
     def __init__(
         self,
         models: list[Model],
@@ -51,6 +53,7 @@ class EmbeddingModelInvoker(ModelInvoker):
         )
         self._initialize_models(self._build_model)
 
+    @override
     def _build_model(self, model: Model) -> Embeddings:
         return build_embeddings(model, self.httpx_client)
 
@@ -101,7 +104,7 @@ class EmbeddingModelInvoker(ModelInvoker):
                     str(error),
                 )
 
-        def on_exhausted(failures: list[Failure]):
+        def on_exhausted(failures: list[Failure]) -> NoReturn:
             logger.error(
                 'All embedding models failed for route %s, model %s',
                 route_name,
@@ -110,7 +113,9 @@ class EmbeddingModelInvoker(ModelInvoker):
             )
             raising(Surface.EMBEDDINGS, route_name)(failures)
 
-        async def embed(candidate: Candidate) -> Reply:
+        async def embed(
+            candidate: Candidate[Embeddings],
+        ) -> Reply[tuple[list[list[float]], Model, int]]:
             vectors = await candidate.client.aembed_documents(input_texts)
             tokens = count_tokens(
                 build_user_content_from_texts(input_texts), candidate.model.model

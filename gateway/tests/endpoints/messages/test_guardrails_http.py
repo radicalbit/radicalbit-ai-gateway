@@ -7,9 +7,10 @@ gets, what each upstream received, and what the gateway records.
 """
 
 import json
+from typing import Any
 from unittest.mock import patch
 
-from anthropic.types import Message
+from anthropic.types import Message, TextBlock
 import pook
 import pytest
 
@@ -32,6 +33,7 @@ from tests.common.messages_api import (
     serve,
     stream_frames,
 )
+from tests.common.provider_recorder import CannedResponse
 
 from radicalbit_ai_gateway.limiting.limits import RequestLimits, Usage
 from radicalbit_ai_gateway.llm.messages_stream import MessageBuilder
@@ -41,7 +43,15 @@ EMAIL = 'mario.rossi@example.com'
 MASK = '<EMAIL_ADDRESS>'
 
 
-def _guardrail(name, type_, behavior, where, parameters, message=None) -> dict:
+def _sse_events(reply: CannedResponse) -> list[Any]:
+    """Return the events of a canned stream."""
+    assert reply.sse_events is not None
+    return reply.sse_events
+
+
+def _guardrail(
+    name, type_, behavior, where, parameters, message=None
+) -> dict[str, Any]:
     guardrail = {
         'name': name,
         'type': type_,
@@ -64,7 +74,9 @@ JEV = {
 INSTRUCTIONS = 'Is this about something other than billing?'
 
 
-def _judge(name: str, type_: str, where: str, parameters: dict) -> dict:
+def _judge(
+    name: str, type_: str, where: str, parameters: dict[str, Any]
+) -> dict[str, Any]:
     return _guardrail(name, type_, 'block', where, parameters)
 
 
@@ -110,7 +122,9 @@ GUARDRAILS = [
 ]
 
 
-def _serve(*guardrails: str, models: tuple[dict, ...] = (CLAUDE,), **route) -> None:
+def _serve(
+    *guardrails: str, models: tuple[dict[str, Any], ...] = (CLAUDE,), **route
+) -> None:
     """Serve the ``assistant`` route on Claude with the named guardrails.
 
     GPT is the LLM judge's model and JEV the decision judge's: the route
@@ -132,7 +146,7 @@ def gateway():
         yield gateway
 
 
-def _user(*blocks: dict | str) -> dict:
+def _user(*blocks: dict[str, Any] | str) -> dict[str, Any]:
     """Return BODY with one user message of ``blocks``; a string is a text block."""
     content = [
         {'type': 'text', 'text': block} if isinstance(block, str) else block
@@ -141,7 +155,7 @@ def _user(*blocks: dict | str) -> dict:
     return {**BODY, 'messages': [{'role': 'user', 'content': content}]}
 
 
-def _guardrail_events(gateway) -> list[tuple]:
+def _guardrail_events(gateway) -> list[tuple[Any, ...]]:
     """Return the guardrail events: name, where, behavior."""
     return [
         (e['GUARDRAIL_NAME'], e['GUARDRAIL_WHERE'], e['GUARDRAIL_BEHAVIOR'])
@@ -187,7 +201,7 @@ def test_input_redaction_masks_user_text_system_and_tool_results(gateway):
         {**TOOL_RESULT, 'content': [{'type': 'text', 'text': f'The owner is {MASK}'}]},
     ]
     assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-INPUT-WARN'] == 'true'
-    assert _guardrail_events(gateway) == [('redact_email', 'INPUT', 'BLOCK')]
+    assert _guardrail_events(gateway) == [('redact_email', 'INPUT', 'REDACT')]
 
 
 BY_KEYWORD = {
@@ -249,7 +263,7 @@ def test_a_tool_result_is_checked_as_input(gateway):
     assert not any(upstream.matched for upstream in upstreams)
 
 
-def _text_of(frames: list[tuple[str, dict]]) -> list[str]:
+def _text_of(frames: list[tuple[str, dict[str, Any]]]) -> list[str]:
     """Return the text deltas of a stream."""
     return [
         data['delta']['text']
@@ -258,7 +272,7 @@ def _text_of(frames: list[tuple[str, dict]]) -> list[str]:
     ]
 
 
-def _events(frames: list[tuple[str, dict]]) -> list[str]:
+def _events(frames: list[tuple[str, dict[str, Any]]]) -> list[str]:
     return [event for event, _ in frames]
 
 
@@ -282,7 +296,10 @@ def test_an_input_soft_block_answers_with_a_valid_message(gateway):
 
     assert response.status_code == 200
     message = Message.model_validate(response.json())
-    assert [block.text for block in message.content] == ['I cannot help with that.']
+    assert [type(block) for block in message.content] == [TextBlock]
+    assert [
+        block.text for block in message.content if isinstance(block, TextBlock)
+    ] == ['I cannot help with that.']
     assert (message.model, message.stop_reason) == (ROUTE_NAME, 'end_turn')
     assert (message.usage.input_tokens, message.usage.output_tokens) == (0, 0)
     assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-TRIGGERED'] == 'true'
@@ -325,7 +342,7 @@ def test_output_redaction_masks_the_answer(gateway, stream):
     assert _answer_text(response, stream) == [f'Mail {MASK} now']
     assert 'mario.rossi' not in response.text
     assert response.headers['X-RB-AIGATEWAY-GUARDRAILS-OUTPUT-WARN'] == 'true'
-    assert _guardrail_events(gateway) == [('redact_email', 'OUTPUT', 'BLOCK')]
+    assert _guardrail_events(gateway) == [('redact_email', 'OUTPUT', 'REDACT')]
 
 
 def test_a_stream_the_output_guardrails_read_is_a_valid_event_stream(gateway):
@@ -399,15 +416,18 @@ THINKING = {'type': 'thinking', 'thinking': 'Let me see.', 'signature': 'sig=='}
 TOOL_USE = {'type': 'tool_use', **canned.ANTHROPIC_WEATHER_TOOL_USE}
 
 
-def _sse(events: list[dict]) -> str:
+def _sse(events: list[dict[str, Any]]) -> str:
     return ''.join(f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n' for e in events)
 
 
 def _thinking_stream(text: str | None) -> str:
     """Return a stream of a thinking block, ``text`` and a tool use."""
-    events = canned.anthropic_stream(
-        [text] if text else [], tool_use=[canned.ANTHROPIC_WEATHER_TOOL_USE]
-    ).sse_events
+    events = _sse_events(
+        canned.anthropic_stream(
+            [text] if text is not None and text != '' else [],
+            tool_use=[canned.ANTHROPIC_WEATHER_TOOL_USE],
+        )
+    )
     thinking = [
         {
             'type': 'content_block_start',
@@ -434,12 +454,14 @@ def _thinking_stream(text: str | None) -> str:
     return _sse([events[0], *thinking, *shifted])
 
 
-def _blocks_of(frames: list[tuple[str, dict]]) -> list[dict]:
+def _blocks_of(frames: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
     """Return the content blocks a stream carries, put together."""
     builder = MessageBuilder()
     for event, data in frames:
         builder.add(event, json.dumps(data))
-    return builder.message()['content']
+    message = builder.message()
+    assert message is not None
+    return message['content']
 
 
 def test_a_buffered_stream_keeps_thinking_and_tool_use_blocks(gateway):
@@ -499,7 +521,7 @@ def test_a_stream_is_relayed_live_without_output_guardrails(gateway):
 
 def test_an_upstream_error_in_a_buffered_stream_ends_it_with_no_text(gateway):
     _serve('output_warn')
-    events = canned.anthropic_stream(['The secret']).sse_events[:3]
+    events = _sse_events(canned.anthropic_stream(['The secret']))[:3]
     error = {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'busy'}}
     mock_anthropic_stream(_sse([*events, error]))
 
@@ -510,7 +532,9 @@ def test_an_upstream_error_in_a_buffered_stream_ends_it_with_no_text(gateway):
 
 def test_a_buffered_stream_cut_before_its_end_is_an_error(gateway):
     _serve('output_warn')
-    mock_anthropic_stream(_sse(canned.anthropic_stream(['The secret']).sse_events[:3]))
+    mock_anthropic_stream(
+        _sse(_sse_events(canned.anthropic_stream(['The secret']))[:3])
+    )
 
     response = send_stream(gateway)
 
@@ -556,7 +580,11 @@ def _mock_llm_judge(triggered: bool):
 def _judged_text(judge: str, mock) -> str:
     """Return what a judge's upstream was asked to judge."""
     sent = sent_body(mock)
-    return sent['state'] if judge == 'decision' else json.dumps(sent['messages'])
+    if judge != 'decision':
+        return json.dumps(sent['messages'])
+    state = sent['state']
+    assert isinstance(state, str)
+    return state
 
 
 JUDGES = {'decision': _mock_decision_judge, 'llm': _mock_llm_judge}

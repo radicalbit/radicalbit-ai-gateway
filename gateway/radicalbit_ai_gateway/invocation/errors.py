@@ -122,7 +122,10 @@ def exhausted(
     provider's body. Any other failure is the gateway's own error.
     """
     first = errors[0] if errors else None
-    if surface in _HIDES_ACCESS_REFUSALS and (status := access_refusal(first)):
+    if (
+        surface in _HIDES_ACCESS_REFUSALS
+        and (status := access_refusal(first)) is not None
+    ):
         logger.error(
             "The provider refused the gateway's credentials for route %s (HTTP %s)",
             route,

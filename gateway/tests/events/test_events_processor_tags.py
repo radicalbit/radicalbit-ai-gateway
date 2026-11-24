@@ -1,5 +1,6 @@
 """Tags reach ``event`` rows via the request ContextVar, not the payload."""
 
+from typing import Any
 from unittest.mock import patch
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
@@ -25,7 +26,7 @@ def _payload() -> ModelInvocationPayload:
     )
 
 
-def _emit_and_capture() -> dict:
+def _emit_and_capture() -> dict[str, Any]:
     with patch(BUFFER) as buffer:
         emit_event(_payload())
     return buffer.add.call_args.args[0]

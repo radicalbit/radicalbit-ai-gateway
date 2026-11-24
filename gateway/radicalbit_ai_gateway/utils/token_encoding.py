@@ -54,7 +54,8 @@ class DeepSeekEncodingAdapter:
         self._tokenizer = ds_token
 
     def encode(self, text: str) -> list[int]:
-        return self._tokenizer.encode(text)
+        tokens = self._tokenizer.encode(text)
+        return [token for token in tokens if isinstance(token, int)]
 
 
 def _tiktoken_default() -> TiktokenEncodingAdapter:

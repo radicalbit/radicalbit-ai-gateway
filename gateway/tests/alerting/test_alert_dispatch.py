@@ -8,11 +8,13 @@ Windows are closed by calling the scheduler's tick, `close_windows`, directly.
 
 from datetime import UTC, datetime
 import json
+from typing import Any, Literal
 from unittest.mock import patch
 import uuid
 
 import pytest
 from redis import Redis
+from typing_extensions import override
 
 from tests.common.db_integration import DatabaseIntegration
 
@@ -32,6 +34,7 @@ from radicalbit_ai_gateway.models.event_payload import (
     LimitScope,
 )
 from radicalbit_ai_gateway.models.event_type import EventType
+from radicalbit_ai_gateway.services.email_service import EmailService
 
 PROJECT_UUID = str(uuid.uuid4())
 CREDENTIAL_UUID = str(uuid.uuid4())
@@ -39,11 +42,14 @@ NOW = datetime(2026, 10, 13, 9, 30, tzinfo=UTC)
 RESET = int(datetime(2026, 10, 13, 9, 31, tzinfo=UTC).timestamp())
 
 
-class FakeEmailService:
+class FakeEmailService(EmailService):
+    """Records the emails it is asked to send; no SMTP configuration needed."""
+
     def __init__(self):
-        self.sent: list[dict] = []
+        self.sent: list[dict[str, Any]] = []
         self.outcomes: list[bool | Exception] = []
 
+    @override
     def send_email(self, recipients: list[str], subject: str, body: str) -> bool:
         self.sent.append({'recipients': recipients, 'subject': subject, 'body': body})
         outcome = self.outcomes.pop(0) if self.outcomes else True
@@ -54,9 +60,9 @@ class FakeEmailService:
 
 class FakeBuffer:
     def __init__(self):
-        self.records: list[dict] = []
+        self.records: list[dict[str, Any]] = []
 
-    def add(self, record: dict) -> None:
+    def add(self, record: dict[str, Any]) -> None:
         self.records.append(record)
 
 
@@ -136,7 +142,9 @@ def limit_event(
     window_id: str | None = 'w1',
     reset_time: int = RESET,
     threshold_percentage: int | None = None,
-    event_type: EventType = EventType.RATE_LIMIT,
+    event_type: Literal[
+        EventType.RATE_LIMIT, EventType.LIMIT_THRESHOLD
+    ] = EventType.RATE_LIMIT,
     category: str = 'request_rate',
     consumption: float = 11,
     maximum: float = 10,
@@ -191,15 +199,15 @@ def credential_event(credential_uuid: str = CREDENTIAL_UUID, **fields):
     )
 
 
-def limit_rule(event: str = 'rate_limit-exceeded-1m', **columns) -> dict:
+def limit_rule(event: str = 'rate_limit-exceeded-1m', **columns) -> dict[str, Any]:
     return {'event': event, 'time_aggregation': 'limit_window', **columns}
 
 
-def project_rule(event: str = 'budget_limit-exceeded-1m', **columns) -> dict:
+def project_rule(event: str = 'budget_limit-exceeded-1m', **columns) -> dict[str, Any]:
     return limit_rule(event, scope='project', route=None, **columns)
 
 
-def credential_rule(event: str = 'rate_limit-exceeded-1m') -> dict:
+def credential_rule(event: str = 'rate_limit-exceeded-1m') -> dict[str, Any]:
     return limit_rule(
         event,
         scope='credential',
@@ -209,7 +217,7 @@ def credential_rule(event: str = 'rate_limit-exceeded-1m') -> dict:
     )
 
 
-def window_rule(size: str = '5m', **columns) -> dict:
+def window_rule(size: str = '5m', **columns) -> dict[str, Any]:
     return {'time_aggregation': 'window', 'window_size': size, **columns}
 
 
@@ -854,6 +862,7 @@ class TestDispatch(DispatcherHarness):
 
 
 class TestDispatchersSharingOneRedis(DispatcherHarness):
+    @override
     def make_store(self, request):
         self.redis_url = request.getfixturevalue('redis_connection_url')
         Redis.from_url(self.redis_url).flushdb()

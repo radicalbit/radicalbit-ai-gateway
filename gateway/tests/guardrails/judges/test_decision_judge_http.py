@@ -7,12 +7,14 @@ Typesafe and OpenAI are mocked with pook.
 from contextlib import nullcontext
 import json
 from types import SimpleNamespace
+from typing import Any
 import unittest
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pook
 import pytest
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.gateway_harness import build_routes, open_gateway
@@ -119,7 +121,7 @@ DECISION_ANSWER = {
 
 def _decision_judge(
     behavior: str = 'block', where: str = 'input', **parameters
-) -> dict:
+) -> dict[str, Any]:
     return {
         'name': f'off_topic_{behavior}',
         'type': 'decision_judge',
@@ -131,11 +133,11 @@ def _decision_judge(
 
 
 def _build_routes(
-    *guardrails: dict,
+    *guardrails: dict[str, Any],
     prompt_manager=None,
-    decision_models: tuple[dict, ...] = (JEV, JEV_BACKUP),
+    decision_models: tuple[dict[str, Any], ...] = (JEV, JEV_BACKUP),
     **chat_route,
-) -> dict:
+) -> dict[str, Any]:
     """One chat, one embedding and one decision route, each with `guardrails`.
 
     Output guardrails go on the chat route only: a route without chat models
@@ -159,7 +161,7 @@ def _build_routes(
     )
 
 
-def _noul_answer(noul, input_tokens: int = 40) -> dict:
+def _noul_answer(noul, input_tokens: int = 40) -> dict[str, Any]:
     return {
         'model': 'jev-1.13.0',
         'answers': {'decision_judge': {'type': 'noul', 'noul': noul}},
@@ -168,6 +170,7 @@ def _noul_answer(noul, input_tokens: int = 40) -> dict:
 
 
 class TestDecisionJudgeEndpoints(unittest.TestCase):
+    @override
     def setUp(self):
         self.emitted = []
         self.guardrail_events = []
@@ -184,7 +187,7 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         self.headers = gateway.headers
         self.api_key = gateway.api_key
 
-    def _chat(self, messages: list[dict] | None = None, stream: bool = False):
+    def _chat(self, messages: list[dict[str, Any]] | None = None, stream: bool = False):
         return self.client.post(
             '/v1/chat/completions',
             json={
@@ -374,7 +377,7 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
     PRICEY_JEV = {**JEV, 'input_cost_per_million_tokens': 1000}
     PRICEY_BACKUP = {**JEV_BACKUP, 'input_cost_per_million_tokens': 2000}
 
-    def _judge_events(self, payload_type: type) -> list:
+    def _judge_events(self, payload_type: type) -> list[Any]:
         return [e for e in self.emitted if isinstance(e, payload_type) and e.is_judge]
 
     def test_judge_call_emits_cost_events_flagged_as_judge(self):
@@ -485,14 +488,14 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
         return span
 
     @staticmethod
-    def _span_attributes(span: MagicMock) -> dict:
+    def _span_attributes(span: MagicMock) -> dict[str, Any]:
         return {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
 
     @staticmethod
-    def _question_with_criteria() -> dict:
+    def _question_with_criteria() -> dict[str, Any]:
         return {'type': 'noul', 'instructions': INSTRUCTIONS, 'criteria': CRITERIA}
 
-    def _assert_judge_recorded(self, attributes: dict, noul: float):
+    def _assert_judge_recorded(self, attributes: dict[str, Any], noul: float):
         assert attributes['guardrail.decision_judge.model_id'] == 'jev'
         assert attributes['guardrail.decision_judge.instructions'] == INSTRUCTIONS
         assert json.loads(attributes['guardrail.decision_judge.criteria']) == CRITERIA

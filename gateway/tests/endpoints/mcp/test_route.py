@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
@@ -18,6 +19,7 @@ from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
 from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.metrics.define_metrics import total_requests_counter
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -51,7 +53,7 @@ ALLOWED_ORIGIN = 'http://localhost:5173'
 PATH = '/proj/my-route/mcp'
 
 
-def _gateway_config(my_route: dict | None = None) -> GatewayConfig:
+def _gateway_config(my_route: dict[str, Any] | None = None) -> GatewayConfig:
     """Return the project's config; ``my_route`` adds to my-route's."""
     return GatewayConfig.model_validate(
         {
@@ -106,7 +108,7 @@ def _make_client(
     *,
     key_bound: bool = True,
     with_project: bool = True,
-    my_route: dict | None = None,
+    my_route: dict[str, Any] | None = None,
     request_uuid: str | None = REQUEST_UUID,
     project_budget_limit_dao=None,
 ) -> tuple[TestClient, MagicMock]:
@@ -131,9 +133,9 @@ def _make_client(
             service, Admission(group_service, project_budget_limit_dao)
         )
     )
-    app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
-    app.add_exception_handler(ApiKeyError, api_key_exception_handler)
-    app.add_exception_handler(RequestRateLimitExceeded, rate_limit_exceeded_handler)
+    add_exception_handler(app, McpTransportError, mcp_transport_exception_handler)
+    add_exception_handler(app, ApiKeyError, api_key_exception_handler)
+    add_exception_handler(app, RequestRateLimitExceeded, rate_limit_exceeded_handler)
     config = _gateway_config(my_route)
     app.state.project_configs = (
         {'proj': ProjectEntry(uuid=PROJECT_UUID, config=config)} if with_project else {}
@@ -152,23 +154,29 @@ def _make_client(
     return TestClient(app), group_service
 
 
+def _app(client: TestClient) -> FastAPI:
+    """Return the app ``_make_client`` serves, to reach its state."""
+    assert isinstance(client.app, FastAPI)
+    return client.app
+
+
 EVENTS_PROCESSOR = 'radicalbit_ai_gateway.events.events_processor'
 
 
 @pytest.fixture(autouse=True)
 def recorded_events():
     """Collect what these requests record, and keep it off the Celery buffer."""
-    recorded: list[dict] = []
+    recorded: list[dict[str, Any]] = []
     with patch(f'{EVENTS_PROCESSOR}._events_buffer') as buffer:
         buffer.add.side_effect = recorded.append
         yield recorded
 
 
-def _mcp_events(recorded: list[dict]) -> list[dict]:
+def _mcp_events(recorded: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [e for e in recorded if e['EVENT_TYPE'] is EventType.MCP_INVOCATION]
 
 
-def _ping(request_id=1) -> dict:
+def _ping(request_id=1) -> dict[str, Any]:
     return {'jsonrpc': '2.0', 'id': request_id, 'method': 'ping'}
 
 
@@ -193,7 +201,7 @@ def test_missing_bearer_is_401():
 
 def test_invalid_key_is_401():
     client, _ = _make_client()
-    client.app.state.token_validator.validate_token.side_effect = InvalidApiKey(
+    _app(client).state.token_validator.validate_token.side_effect = InvalidApiKey(
         'Invalid API key'
     )
     res = client.post(PATH, json=_ping(), headers=AUTH)
@@ -327,7 +335,7 @@ def test_tools_list_exposes_only_route_servers():
     upstream.list_tools = AsyncMock(
         return_value=types.ListToolsResult(
             tools=[
-                types.Tool(name='get_issue', inputSchema={'type': 'object'}),
+                types.Tool(name='get_issue', input_schema={'type': 'object'}),
             ]
         )
     )
@@ -341,6 +349,7 @@ def test_tools_list_exposes_only_route_servers():
     assert [t['name'] for t in res.json()['result']['tools']] == ['github__get_issue']
     # fan-out hit only the route's server ('jira' belongs to other-route)
     upstream.list_tools.assert_awaited_once()
+    assert upstream.list_tools.await_args is not None
     assert upstream.list_tools.await_args.args[0].alias == 'github'
 
 
@@ -359,7 +368,7 @@ def test_tools_call_forwards_and_other_routes_alias_is_invisible():
     upstream = MagicMock(spec_set=McpUpstreamClient)
     upstream.call_tool = AsyncMock(
         return_value=types.CallToolResult(
-            content=[types.TextContent(type='text', text='ok')], isError=False
+            content=[types.TextContent(type='text', text='ok')], is_error=False
         )
     )
     client, _ = _make_client(upstream)
@@ -376,6 +385,7 @@ def test_tools_call_forwards_and_other_routes_alias_is_invisible():
     )
     assert res.status_code == 200
     assert res.json()['result']['content'] == [{'type': 'text', 'text': 'ok'}]
+    assert upstream.call_tool.await_args is not None
     args = upstream.call_tool.await_args.args
     assert (args[0].alias, args[1], args[2]) == ('github', 'get_issue', {'id': '42'})
 
@@ -426,7 +436,7 @@ async def test_end_to_end_against_real_upstream():
         default_timeout=20.0, http_client_factory=upstream_client_factory
     )
     client, _ = _make_client(real_upstream_client)
-    client.app.state.project_configs['proj'].config.mcp_servers_by_alias[
+    _app(client).state.project_configs['proj'].config.mcp_servers_by_alias[
         'github'
     ].url = 'http://testserver/mcp'
 
@@ -582,13 +592,14 @@ def test_the_limits_receive_the_authenticated_identity():
         res = client.post(PATH, json=_ping(), headers=AUTH)
 
     assert res.status_code == 200
+    assert check.await_args is not None
     identity = check.await_args.args[0].identity
     assert identity.api_key_uuid == KEY_DETAILS.api_key_uuid
     assert identity.api_key_name == KEY_DETAILS.api_key_name
     assert identity.group_uuid == KEY_DETAILS.group_uuid
     assert identity.group_name == KEY_DETAILS.group_name
     assert identity.project_name == 'proj'
-    assert identity.project_uuid == str(client.app.state.project_configs['proj'].uuid)
+    assert identity.project_uuid == str(_app(client).state.project_configs['proj'].uuid)
 
 
 def test_a_fanout_call_counts_once_regardless_of_upstream_sessions():
@@ -624,7 +635,7 @@ def test_a_route_without_rate_limiting_is_unaffected():
 def test_a_missing_route_registry_is_a_503_like_the_v1_endpoints():
     """Shared with /v1 via get_gateway_routes: uninitialized is not 'unlimited'."""
     client, _ = _make_client()
-    del client.app.state.routes
+    del _app(client).state.routes
     assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 503
 
 
@@ -633,7 +644,7 @@ def test_a_missing_route_registry_is_a_503_like_the_v1_endpoints():
 # ---------------------------------------------------------------------------
 
 
-def _tools_list(request_id=1) -> dict:
+def _tools_list(request_id=1) -> dict[str, Any]:
     return {'jsonrpc': '2.0', 'id': request_id, 'method': 'tools/list'}
 
 
@@ -643,7 +654,7 @@ def _echoing_upstream() -> MagicMock:
         return_value=types.ListToolsResult(
             tools=[
                 types.Tool(
-                    name='echo', inputSchema={'type': 'object', 'properties': {}}
+                    name='echo', input_schema={'type': 'object', 'properties': {}}
                 )
             ]
         )
@@ -775,6 +786,7 @@ def test_an_mcp_request_reads_no_project_budget():
         assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
 
     dao.get_by_project_uuid.assert_not_called()
+    assert check.await_args is not None
     assert not check.await_args.args[0].applies(Demand(cost_room=True))
 
 
@@ -838,7 +850,7 @@ def test_a_configured_route_that_is_not_built_is_not_served():
     """
     upstream = _echoing_upstream()
     client, _ = _make_client(upstream)
-    del client.app.state.routes['proj/my-route']
+    del _app(client).state.routes['proj/my-route']
 
     assert client.post(PATH, json=_tools_list()).status_code == 401
     res = client.post(PATH, json=_tools_list(), headers=AUTH)
@@ -850,7 +862,7 @@ def test_a_configured_route_that_is_not_built_is_not_served():
 
 def test_a_built_route_missing_from_the_config_is_served():
     client, _ = _make_client()
-    client.app.state.project_configs.clear()
+    _app(client).state.project_configs.clear()
 
     assert client.post(PATH, json=_ping(), headers=AUTH).status_code == 200
 

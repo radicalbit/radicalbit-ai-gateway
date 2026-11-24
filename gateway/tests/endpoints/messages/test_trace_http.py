@@ -7,6 +7,7 @@ mocked over HTTP with pook. The tests read the spans the request leaves.
 
 import json
 
+from opentelemetry.sdk.trace import ReadableSpan
 import pytest
 
 from tests.common import provider_responses as canned
@@ -37,7 +38,7 @@ def gateway():
         yield gateway
 
 
-def _spans_of(span_collector, request) -> list:
+def _spans_of(span_collector, request) -> list[ReadableSpan]:
     """Return the spans a request leaves; ``request`` sends it and reads it all."""
     span_collector.spans.clear()
     span_collector.on = True
@@ -49,12 +50,12 @@ def _spans_of(span_collector, request) -> list:
     return list(span_collector.spans)
 
 
-def _root(spans: list):
+def _root(spans: list[ReadableSpan]):
     (root,) = [span for span in spans if span.parent is None]
     return root
 
 
-def _llm_span(spans: list):
+def _llm_span(spans: list[ReadableSpan]):
     (span,) = [span for span in spans if span.name == LLM_SPAN]
     return span
 
@@ -74,9 +75,9 @@ def test_the_root_span_is_a_chat_trace_and_carries_the_entry_endpoint(
     assert request_type_of_root_span(root.name) is RequestType.CHAT_COMPLETIONS
     assert root.attributes['gateway.entry_endpoint'] == '/v1/messages'
     # Only the root span says where the request came in.
-    assert [s.name for s in spans if 'gateway.entry_endpoint' in s.attributes] == [
-        'messages.workflow'
-    ]
+    assert [
+        s.name for s in spans if 'gateway.entry_endpoint' in (s.attributes or {})
+    ] == ['messages.workflow']
 
 
 def test_a_streaming_request_has_the_same_root_span(gateway, span_collector):

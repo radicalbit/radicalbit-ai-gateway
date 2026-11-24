@@ -3,7 +3,9 @@ import functools
 from typing import TypeVar
 import unittest
 
+from sqlalchemy import Constraint
 from testcontainers.community.postgres import PostgresContainer
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db import database
 from radicalbit_ai_gateway.db.database import Database
@@ -24,6 +26,7 @@ def _postgres() -> PostgresContainer:
 
 
 class DatabaseIntegration(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls) -> None:
         cls.postgres_container = _postgres()
@@ -31,11 +34,14 @@ class DatabaseIntegration(unittest.TestCase):
         cls.db = Database(conf=cls.db_conf)
         cls.db._db_url = cls.postgres_container.get_connection_url()
         cls.db.connect()
-        with cls.db._engine.connect() as conn:
+        engine = cls.db._engine
+        assert engine is not None
+        with engine.connect() as conn:
             conn.commit()
-        database.BaseTable.metadata.create_all(cls.db._engine)
+        database.BaseTable.metadata.create_all(engine)
         cls.db.init_mappings()
 
+    @override
     @classmethod
     def tearDownClass(cls) -> None:
         # Drop schema at class end
@@ -43,7 +49,9 @@ class DatabaseIntegration(unittest.TestCase):
         # Sanitize possible duplicated/reflected UNIQUE constraints left in metadata
         cls._sanitize_unique_constraints()
         # Close the pooled connections: reset_connection only drops the engine.
-        cls.db._engine.dispose()
+        engine = cls.db._engine
+        assert engine is not None
+        engine.dispose()
         cls.db.reset_connection()
 
     @classmethod
@@ -58,7 +66,7 @@ class DatabaseIntegration(unittest.TestCase):
         criteria and both end up removed, dropping the constraint entirely.
         """
         for table in list(database.BaseTable.metadata.tables.values()):
-            groups: dict[tuple[str, tuple[str, ...]], list] = {}
+            groups: dict[tuple[str, tuple[str, ...]], list[Constraint]] = {}
             for constraint in table.constraints:
                 if type(constraint).__name__ != 'UniqueConstraint':
                     continue
@@ -94,6 +102,7 @@ class DatabaseIntegration(unittest.TestCase):
                 else:
                     seen_idx.add(index.name)
 
+    @override
     def tearDown(self):
         with self.db.begin_session() as session:
             for table in reversed(database.BaseTable.metadata.sorted_tables):

@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
+from typing_extensions import override
 import yaml
 
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -12,8 +14,13 @@ from radicalbit_ai_gateway.utils.exceptions import (
 
 class SecretProvider(ABC):
     @abstractmethod
-    def get_secret(self, key: str) -> str:
-        """Resolve a secret by key. Raises SecretNotFoundError if unavailable."""
+    def get_secret(self, key: str) -> object:
+        """Resolve a secret by key. Raises SecretNotFoundError if unavailable.
+
+        The value is the one the config gets in place of its ``!secret``
+        reference: a string, or whatever value the backend holds (a secrets
+        file holds YAML values, such as a port as a number).
+        """
         ...
 
     @abstractmethod
@@ -42,9 +49,9 @@ class SecretProvider(ABC):
 class FileSecretProvider(SecretProvider):
     def __init__(self, secrets_path: str | Path):
         self._secrets_path = Path(secrets_path)
-        self._secrets: dict | None = None
+        self._secrets: dict[str, Any] | None = None
 
-    def _load(self) -> dict:
+    def _load(self) -> dict[str, Any]:
         if self._secrets is None:
             try:
                 with open(self._secrets_path) as f:
@@ -55,13 +62,15 @@ class FileSecretProvider(SecretProvider):
                 ) from e
         return self._secrets
 
-    def get_secret(self, key: str) -> str:
+    @override
+    def get_secret(self, key: str) -> object:
         secrets = self._load()
         value = secrets.get(key)
         if value is None:
             raise SecretNotFoundError(key, str(self._secrets_path))
         return value
 
+    @override
     def list_secret_keys(self) -> list[str]:
         return list(self._load().keys())
 
@@ -91,7 +100,7 @@ def get_secret_provider(secrets_path: str | Path | None = None) -> SecretProvide
 def resolve_secrets_from_string(
     yaml_content: str,
     provider: SecretProvider | None = None,
-) -> dict:
+) -> dict[str, Any]:
     if provider is None:
         provider = get_secret_provider()
 

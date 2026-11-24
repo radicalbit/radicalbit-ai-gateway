@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable
 import logging
 import time
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.invocation.fallback_chain import (
@@ -94,7 +94,7 @@ class JudgeEngine:
             prompt_ref=judge_parameter.prompt_ref,
             include_reasoning=judge_parameter.include_reasoning,
         )
-        media_blocks: list[dict] = (
+        media_blocks: list[dict[str, Any]] = (
             extract_media_blocks_for_judge(messages, **kwargs)
             if judge_parameter.include_media
             else []
@@ -123,12 +123,20 @@ class JudgeEngine:
             **kwargs,
         )
 
+    def _prompt(self, config: JudgeRuntimeConfig) -> str:
+        """Return the judge's prompt: written inline, or read from its file.
+        A judge parameter has one of the two (its validator says so).
+        """
+        if config.prompt is not None and config.prompt != '':
+            return config.prompt
+        if config.prompt_ref is None:
+            raise ValueError('A judge has neither a prompt nor a prompt_ref')
+        return self.prompt_manager.get_judge_prompt(config.prompt_ref)
+
     def _build_prompt_template(
         self, config: JudgeRuntimeConfig, include_media: bool = False
     ) -> PromptTemplate:
-        base_template = config.prompt or self.prompt_manager.get_judge_prompt(
-            config.prompt_ref
-        )
+        base_template = self._prompt(config)
         reasoning_note = (
             "You may include a short reasoning in the 'reasoning' field."
             if config.include_reasoning
@@ -153,7 +161,7 @@ class JudgeEngine:
         prompt_template: PromptTemplate,
         content: str,
         cost_service: CostService,
-        media_blocks: list[dict] | None = None,
+        media_blocks: list[dict[str, Any]] | None = None,
         count_usage: JudgeUsageCounter | None = None,
         **kwargs,
     ) -> JudgeResult:
@@ -161,11 +169,11 @@ class JudgeEngine:
         valid answer.
         """
 
-        async def judge(candidate: Candidate) -> Reply:
+        async def judge(candidate: Candidate) -> Reply[JudgeResult]:
             if candidate.is_fallback:
                 logger.info(
                     'Attempting fallback model %s after primary model %s failed',
-                    fallback_model.model_id,
+                    candidate.model.model_id,
                     primary_model.model_id,
                 )
             try:
@@ -221,7 +229,7 @@ class JudgeEngine:
         content: str,
         prompt_template: PromptTemplate,
         cost_service: CostService,
-        media_blocks: list[dict] | None = None,
+        media_blocks: list[dict[str, Any]] | None = None,
         fallback_triggerd: bool = False,
         target_model_id: str = '',
         count_usage: JudgeUsageCounter | None = None,
@@ -259,14 +267,14 @@ class JudgeEngine:
         judge_runtime_config: JudgeRuntimeConfig,
         content: str,
         prompt_template: PromptTemplate,
-        media_blocks: list[dict] | None = None,
+        media_blocks: list[dict[str, Any]] | None = None,
     ) -> JudgeInvocationResult:
         structured_model = self._get_or_create_model(judge_runtime_config, model)
 
         start_time = time.monotonic()
-        if media_blocks:
+        if media_blocks is not None and len(media_blocks) > 0:
             judge_text = prompt_template.format(content=content)
-            human_content: list[dict] = [
+            human_content: list[str | dict[str, Any]] = [
                 {'type': 'text', 'text': judge_text},
                 *media_blocks,
             ]
@@ -387,7 +395,10 @@ class JudgeEngine:
             {'route_name': route_name, 'model_name': model.model_id},
         )
 
-        if invocation.cached_token_count and invocation.cached_token_count > 0:
+        if (
+            invocation.cached_token_count is not None
+            and invocation.cached_token_count > 0
+        ):
             cost = cost_service.compute_cost(
                 model_id=model.model_id,
                 token_processed=invocation.cached_token_count,
@@ -421,7 +432,10 @@ class JudgeEngine:
                 {'route_name': route_name, 'model_name': model.model_id},
             )
 
-        if invocation.token_input_count:
+        if (
+            invocation.token_input_count is not None
+            and invocation.token_input_count != 0
+        ):
             cost = cost_service.compute_cost(
                 token_processed=invocation.token_input_count
                 - (invocation.cached_token_count or 0),
@@ -455,7 +469,10 @@ class JudgeEngine:
                 {'route_name': route_name, 'model_name': model.model_id},
             )
 
-        if invocation.token_output_count:
+        if (
+            invocation.token_output_count is not None
+            and invocation.token_output_count != 0
+        ):
             cost = cost_service.compute_cost(
                 token_processed=invocation.token_output_count,
                 model_id=model.model_id,
@@ -489,7 +506,7 @@ class JudgeEngine:
             )
 
 
-def _identity(kwargs: dict) -> RequestIdentity:
+def _identity(kwargs: dict[str, Any]) -> RequestIdentity:
     """Return the request a judge call is for, from the guardrail kwargs."""
     return RequestIdentity(
         **{

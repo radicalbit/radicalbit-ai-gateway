@@ -5,7 +5,7 @@ whether a fallback answered.
 from dataclasses import dataclass
 from decimal import Decimal
 import logging
-from typing import Any
+from typing import Any, TypedDict
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.metrics.define_metrics import (
@@ -41,6 +41,21 @@ class Tokens:
     cached: int | None = None
     cache_5m: int | None = None
     cache_1h: int | None = None
+
+
+class _CallFields(TypedDict):
+    """The fields every token event of a call shares."""
+
+    request_uuid: str
+    api_key_uuid: str
+    api_key_name: str
+    group_name: str
+    group_uuid: str
+    route_name: str
+    model: Model
+    model_type: str
+    project_uuid: str
+    project_name: str
 
 
 @dataclass(frozen=True)
@@ -216,7 +231,7 @@ class Recorder:
         model: Model,
         latency_ms: float,
         model_type: str,
-        token_input_count: int | None = None,
+        token_input_count: int | float | None = None,
         token_output_count: int | None = None,
         cached_token_count: int | None = None,
         cache_creation_5m_token_count: int | None = None,
@@ -334,7 +349,7 @@ class Recorder:
         if usage is None:
             return Decimal(0)
         identity = call.identity
-        common = {
+        common: _CallFields = {
             'request_uuid': identity.request_uuid,
             'api_key_uuid': identity.api_key_uuid,
             'api_key_name': identity.api_key_name,

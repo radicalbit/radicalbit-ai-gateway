@@ -1,10 +1,13 @@
 import json
+from typing import Any
 
 from openai.types.responses import Response, ResponseStreamEvent
 from pydantic import TypeAdapter
+import pytest
 
 from tests.common.responses_api import events_of
 
+from radicalbit_ai_gateway.endpoints.common.streaming_response import StreamRefused
 from radicalbit_ai_gateway.endpoints.responses.events import response_events
 from radicalbit_ai_gateway.endpoints.responses.output import (
     ResponsesOutput,
@@ -21,7 +24,7 @@ from radicalbit_ai_gateway.utils.exceptions import (
 EVENT_ADAPTER = TypeAdapter(ResponseStreamEvent)
 
 
-def _response(output: list) -> dict:
+def _response(output: list[Any]) -> dict[str, Any]:
     response = gateway_response('0000-1111', 'route', {'input': 'Hi'}, '')
     return {**response, 'output': output}
 
@@ -248,17 +251,25 @@ class TestServeStream:
             raise ModelInvokerUpstreamError('too long', 400, body)
             yield
 
-        assert await _collect(serve_stream(frames())) == [(json.dumps(body), 400, {})]
+        with pytest.raises(StreamRefused) as refused:
+            await _collect(serve_stream(frames()))
+
+        assert (refused.value.body, refused.value.status_code) == (
+            json.dumps(body),
+            400,
+        )
+        assert refused.value.headers == {}
 
     async def test_gateway_failure_before_streaming_is_an_http_error(self):
         async def frames():
             raise GatewayBadRequest('nope')
             yield
 
-        ((body, status, _),) = await _collect(serve_stream(frames()))
+        with pytest.raises(StreamRefused) as refused:
+            await _collect(serve_stream(frames()))
 
-        assert status == 400
-        assert json.loads(body)['error']['message'] == 'nope'
+        assert refused.value.status_code == 400
+        assert json.loads(refused.value.body)['error']['message'] == 'nope'
 
     async def test_failure_while_streaming_ends_with_an_error_event(self):
         async def frames():

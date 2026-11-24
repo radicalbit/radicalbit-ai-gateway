@@ -1,13 +1,14 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from enum import Enum
 from functools import wraps
-from typing import TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 from opentelemetry.context import attach, detach, get_current, get_value
 
 from radicalbit_ai_gateway.telemetry.tracing import set_association_properties
 
 T = TypeVar('T')
+P = ParamSpec('P')
 
 
 class OperationCategory(str, Enum):
@@ -22,13 +23,16 @@ class OperationCategory(str, Enum):
     INVOCATION = 'invocation'
 
 
-def _merge_association_properties(new_properties: dict) -> None:
+def _merge_association_properties(new_properties: dict[str, Any]) -> None:
     """Merge new properties into existing association_properties without losing
     previously-set values. set_association_properties replaces the entire
     dict, so we must read-merge-write.
     """
-    existing = get_value('association_properties') or {}
-    merged = {**existing, **new_properties}
+    existing = get_value('association_properties')
+    merged = {
+        **(existing if isinstance(existing, Mapping) else {}),
+        **new_properties,
+    }
     set_association_properties(merged)
 
 
@@ -60,7 +64,7 @@ def set_trace_attributes(
         'group_name': group_name,
         'project_uuid': project_uuid,
         'project_name': project_name,
-        'tags': ','.join(tags) if tags else None,
+        'tags': ','.join(tags) if tags is not None and len(tags) > 0 else None,
     }
     properties = {k: v for k, v in properties.items() if v is not None}
     if properties:
@@ -105,7 +109,9 @@ def set_mcp_attributes(
         _merge_association_properties(properties)
 
 
-def ensure_endpoint_category(func):
+def ensure_endpoint_category(
+    func: Callable[P, Awaitable[T]],
+) -> Callable[P, Awaitable[T]]:
     """Ensure the workflow span always ends with ENDPOINT category.
 
     When errors occur during request processing (e.g., rate limit exceeded),
@@ -115,7 +121,7 @@ def ensure_endpoint_category(func):
     """
 
     @wraps(func)
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
         try:
             return await func(*args, **kwargs)
         finally:

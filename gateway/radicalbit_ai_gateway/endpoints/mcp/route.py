@@ -35,7 +35,7 @@ class McpRoute:
             # not counted: a tools/list opening five upstream sessions is still
             # a single call against the gateway's contract with its client.
             rules = McpAdmissionRules(mcp_service, project_name, route_name)
-            scope = await admission.admit(
+            admitted = await admission.admit_caller(
                 request,
                 gateway_routes,
                 f'{project_name}/{route_name}',
@@ -43,14 +43,14 @@ class McpRoute:
                 authenticate=rules.authenticate,
                 rules=rules,
             )
-            route = scope.route
+            route = admitted.scope.route
             authorized = mcp_service.authorized(
                 request,
                 request_uuid=request_uuid,
                 project_name=project_name,
                 project_uuid=rules.project_uuid or route.project_uuid,
                 route_name=route_name,
-                key_details=rules.key_details,
+                key_details=admitted.key_details,
             )
             list_cache = McpListCache.for_route(
                 gateway_cache=route.gateway_cache,

@@ -101,12 +101,14 @@ def build_gateway_routes_from_config(
     for route_name, route_config in gateway_config.routes.items():
         chat_models = (
             [chat_by_id[mid] for mid in (route_config.chat_models or [])]
-            if route_config.chat_models
+            if route_config.chat_models is not None
+            and len(route_config.chat_models) > 0
             else None
         )
         embedding_models = (
             [emb_by_id[mid] for mid in (route_config.embedding_models or [])]
-            if route_config.embedding_models
+            if route_config.embedding_models is not None
+            and len(route_config.embedding_models) > 0
             else None
         )
         transcription_models = (
@@ -114,19 +116,26 @@ def build_gateway_routes_from_config(
                 transcription_by_id[mid]
                 for mid in (route_config.transcription_models or [])
             ]
-            if route_config.transcription_models
+            if route_config.transcription_models is not None
+            and len(route_config.transcription_models) > 0
             else None
         )
         decision_models = (
             [decision_by_id[mid] for mid in route_config.decision_models]
-            if route_config.decision_models
+            if route_config.decision_models is not None
+            and len(route_config.decision_models) > 0
             else None
         )
         cache_client = get_proper_cache(route_config, redis_client)
         gateway_cache = GatewayCache(cache_client) if cache_client is not None else None
         route_limits = RouteLimits.from_config(route_config, project_uuid)
         router = None
-        if route_config.routing and gateway_config.routing:
+        if (
+            route_config.routing is not None
+            and route_config.routing != ''
+            and gateway_config.routing is not None
+            and len(gateway_config.routing) > 0
+        ):
             routing_config = gateway_config.routing_by_name.get(route_config.routing)
             if routing_config:
                 route_models_by_id = {m.model_id: m for m in (chat_models or [])}
@@ -152,7 +161,7 @@ def build_gateway_routes_from_config(
                         config=routing_config,
                         models_by_id=route_models_by_id,
                         invoker=DecisionModelInvoker(
-                            models=gateway_config.decision_models,
+                            models=gateway_config.decision_models or [],
                             cost_service=cost_service,
                             httpx_client=httpx_client,
                         ),
@@ -204,6 +213,7 @@ def build_gateway_routes_from_config(
 def build_project_route_registrar(
     app: FastAPI,
     httpx_client,
+    prompt_manager: PromptManager,
 ) -> tuple[
     Callable[[UUID, str, str], Awaitable[None]], Callable[[UUID], Awaitable[None]]
 ]:
@@ -215,10 +225,12 @@ def build_project_route_registrar(
 
     The deregister callable removes all routes and the project config
     for a given project UUID.
+
+    The judges of the routes read their ``prompt_ref`` with ``prompt_manager``.
     """
     presidio_engine = PresidioEngine()
     judge_engine = JudgeEngine(
-        prompt_manager=PromptManager.get_global(),
+        prompt_manager=prompt_manager,
         httpx_client=httpx_client,
     )
 

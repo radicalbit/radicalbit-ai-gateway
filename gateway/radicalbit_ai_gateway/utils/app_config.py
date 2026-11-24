@@ -2,12 +2,13 @@ from enum import Enum
 from functools import lru_cache
 import logging
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator
 from pydantic.alias_generators import to_camel
 from pydantic_core.core_schema import ValidationInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing_extensions import override
 
 
 class LogMode(str, Enum):
@@ -17,6 +18,7 @@ class LogMode(str, Enum):
 
 
 class HealthCheckFilter(logging.Filter):
+    @override
     def filter(self, record):
         return record.getMessage().find('/health') == -1
 
@@ -166,11 +168,11 @@ class LogConfig(BaseSettings):
     version: int = 1
     disable_existing_loggers: bool = True
 
-    formatters: dict = Field(default_factory=dict)
-    handlers: dict = Field(default_factory=dict)
-    loggers: dict = Field(default_factory=dict)
+    formatters: dict[Any, Any] = Field(default_factory=dict)
+    handlers: dict[Any, Any] = Field(default_factory=dict)
+    loggers: dict[Any, Any] = Field(default_factory=dict)
 
-    filters: dict = {
+    filters: dict[Any, Any] = {
         'healthcheck_filter': {'()': HealthCheckFilter},
     }
 
@@ -197,7 +199,7 @@ class OtlpExporterConfig(BaseModel):
 
     url: str
     api_key: str | None = None
-    headers: dict | None = Field(default_factory=dict)
+    headers: dict[Any, Any] | None = Field(default_factory=dict)
 
 
 class TelemetryConfig(BaseSettings):
@@ -245,6 +247,7 @@ class AppConfig(BaseSettings):
     smtp_config: SmtpConfig = SmtpConfig()
     alert_config: AlertConfig = AlertConfig()
 
+    @override
     def model_post_init(self, __context) -> None:
         lvl_str = (
             self.log_config.debug_log_level

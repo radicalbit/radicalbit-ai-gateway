@@ -14,11 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from httpx_aiohttp import HttpxAiohttpClient
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace import SpanProcessor
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 from prometheus_client import start_http_server
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
+from typing_extensions import override
 
 from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
 from radicalbit_ai_gateway.alerting.alert_store import build_alert_store
@@ -53,10 +55,12 @@ from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
 from radicalbit_ai_gateway.gateway_route.factory import build_project_route_registrar
 from radicalbit_ai_gateway.limiter.storage.shared import close_limit_storage
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
 )
 from radicalbit_ai_gateway.models.project_dto import ProjectOut
+from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.plugins.loader import discover_plugins, init_plugins
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
@@ -169,7 +173,7 @@ request_event_dao = RequestEventDAO(ch_database)
 otel_traces_dao = OtelTracesDAO(ch_database)
 api_key_security = ApiKeySecurity()
 
-project_configs: dict = {}
+project_configs: dict[str, ProjectEntry] = {}
 key_service = KeyService(
     key_dao=key_dao,
     api_key_security=api_key_security,
@@ -242,7 +246,9 @@ async def lifespan(app: FastAPI):
     app.state.project_configs = project_configs
     app.state.routes = {}
 
-    register_fn, _ = build_project_route_registrar(app, httpx_aiohttp_client)
+    register_fn, _ = build_project_route_registrar(
+        app, httpx_aiohttp_client, _PROMPT_MANAGER
+    )
 
     async def _safe_register(project_out: ProjectOut) -> None:
         try:
@@ -254,7 +260,7 @@ async def lifespan(app: FastAPI):
                 ),
                 None,
             )
-            if served and served.config_file:
+            if served and served.config_file is not None and served.config_file != '':
                 await register_fn(
                     project_out.uuid,
                     project_out.name,
@@ -292,21 +298,24 @@ async def lifespan(app: FastAPI):
             return url.rstrip('/') + '/v1/traces'
         return url
 
-    processors = []
+    processors: list[SpanProcessor] = []
 
-    def _build_processor(exporter: OTLPSpanExporter) -> BatchSpanProcessor:
+    def _build_processor(exporter: SpanExporter) -> BatchSpanProcessor:
         for wrap in get_exporter_wrappers():
             exporter = wrap(exporter)
         return BatchSpanProcessor(exporter)
 
-    if app_config.telemetry_config.collector_base_url:
+    if (
+        app_config.telemetry_config.collector_base_url is not None
+        and app_config.telemetry_config.collector_base_url != ''
+    ):
         endpoint = _otlp_endpoint(app_config.telemetry_config.collector_base_url)
         processors.append(_build_processor(OTLPSpanExporter(endpoint=endpoint)))
         logger.info('Configured otel-collector for url: %s', endpoint)
 
     for exp_cfg in app_config.telemetry_config.otlp_exporters:
         headers = dict(exp_cfg.headers or {})
-        if exp_cfg.api_key:
+        if exp_cfg.api_key is not None and exp_cfg.api_key != '':
             headers['Authorization'] = f'Bearer {exp_cfg.api_key}'
         endpoint = _otlp_endpoint(exp_cfg.url)
         processors.append(
@@ -338,6 +347,7 @@ class GatewayApp(FastAPI):
     anyway, so none is missed.
     """
 
+    @override
     def build_middleware_stack(self) -> ASGIApp:
         handlers = self.exception_handlers
         self.exception_handlers = with_messages_error_shapes(handlers)
@@ -445,29 +455,29 @@ app.include_router(
 )
 
 # exception_handler
-app.add_exception_handler(Exception, unhandled_exception_handler)
-app.add_exception_handler(StarletteHTTPException, http_exception_handler)
-app.add_exception_handler(RequestRateLimitExceeded, rate_limit_exceeded_handler)
-app.add_exception_handler(TokenLimitExceeded, token_limiter_exception_handler)
-app.add_exception_handler(
-    AudioDurationLimitExceeded, audio_duration_limit_exceeded_handler
+add_exception_handler(app, Exception, unhandled_exception_handler)
+add_exception_handler(app, StarletteHTTPException, http_exception_handler)
+add_exception_handler(app, RequestRateLimitExceeded, rate_limit_exceeded_handler)
+add_exception_handler(app, TokenLimitExceeded, token_limiter_exception_handler)
+add_exception_handler(
+    app, AudioDurationLimitExceeded, audio_duration_limit_exceeded_handler
 )
-app.add_exception_handler(GatewayError, gateway_exception_handler)
-app.add_exception_handler(ModelInvokerError, model_invoker_exception_handler)
-app.add_exception_handler(ApiKeyError, api_key_exception_handler)
-app.add_exception_handler(GuardrailError, guardrail_exception_handler)
-app.add_exception_handler(JudgeInternalError, judge_exception_handler)
-app.add_exception_handler(BudgetLimitExceeded, budget_limiter_exception_handler)
-app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
-app.add_exception_handler(McpTransportError, mcp_transport_exception_handler)
-app.add_exception_handler(AlertRuleNotFoundError, alert_rule_exception_handler)
-app.add_exception_handler(AlertRuleInvalidEventError, alert_rule_exception_handler)
-app.add_exception_handler(AlertRuleInvalidTargetError, alert_rule_exception_handler)
-app.add_exception_handler(
-    AlertRuleUnsupportedTimeAggregationError, alert_rule_exception_handler
+add_exception_handler(app, GatewayError, gateway_exception_handler)
+add_exception_handler(app, ModelInvokerError, model_invoker_exception_handler)
+add_exception_handler(app, ApiKeyError, api_key_exception_handler)
+add_exception_handler(app, GuardrailError, guardrail_exception_handler)
+add_exception_handler(app, JudgeInternalError, judge_exception_handler)
+add_exception_handler(app, BudgetLimitExceeded, budget_limiter_exception_handler)
+add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
+add_exception_handler(app, McpTransportError, mcp_transport_exception_handler)
+add_exception_handler(app, AlertRuleNotFoundError, alert_rule_exception_handler)
+add_exception_handler(app, AlertRuleInvalidEventError, alert_rule_exception_handler)
+add_exception_handler(app, AlertRuleInvalidTargetError, alert_rule_exception_handler)
+add_exception_handler(
+    app, AlertRuleUnsupportedTimeAggregationError, alert_rule_exception_handler
 )
-app.add_exception_handler(AlertRuleInternalError, alert_rule_exception_handler)
-app.add_exception_handler(SecretsBackendError, secrets_backend_exception_handler)
+add_exception_handler(app, AlertRuleInternalError, alert_rule_exception_handler)
+add_exception_handler(app, SecretsBackendError, secrets_backend_exception_handler)
 app.include_router(KeyRoute.get_key_router(key_service), prefix=prefix)
 app.include_router(
     AlertRuleRoute.get_alert_rule_router(alert_rule_service), prefix=prefix
@@ -480,7 +490,9 @@ app.include_router(
     GroupRoute.get_group_router(group_service, project_service),
     prefix=prefix,
 )
-_register, _deregister = build_project_route_registrar(app, httpx_aiohttp_client)
+_register, _deregister = build_project_route_registrar(
+    app, httpx_aiohttp_client, _PROMPT_MANAGER
+)
 app.include_router(
     ProjectRoute.get_project_router(
         project_service,
@@ -508,7 +520,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             content={
                 'error': {
                     'message': f'Invalid value for {param}: {first.get("msg")}'
-                    if param
+                    if param is not None
                     else 'Invalid request body',
                     'type': 'invalid_request_error',
                     'param': param,

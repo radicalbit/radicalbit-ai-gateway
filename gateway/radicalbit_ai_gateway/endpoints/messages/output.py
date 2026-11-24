@@ -9,6 +9,7 @@ message and writes their changes back.
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 from radicalbit_ai_gateway.endpoints.messages.request import is_text_block
 from radicalbit_ai_gateway.llm.messages import AIMessage, BaseMessage
@@ -23,7 +24,7 @@ class MessagesOutput:
     Blocks without text (thinking, tool use...) are never touched.
     """
 
-    def __init__(self, message: dict):
+    def __init__(self, message: dict[str, Any]):
         self.message = copy.deepcopy(message)
         content = self.message.get('content')
         self._blocks = (
@@ -32,7 +33,7 @@ class MessagesOutput:
             else []
         )
 
-    def messages(self) -> list[AIMessage]:
+    def messages(self) -> list[BaseMessage]:
         """Return the answer's text as one message, or nothing when it has none.
 
         One text block reads as a string, many as text parts, as the request's
@@ -41,7 +42,7 @@ class MessagesOutput:
         if not self._blocks:
             return []
         texts = [block['text'] for block in self._blocks]
-        content: str | list = (
+        content: str | list[dict[str, Any]] = (
             texts[0]
             if len(texts) == 1
             else [{'type': 'text', 'text': text} for text in texts]
@@ -81,11 +82,11 @@ def _gateway_message_id(request_id: str) -> str:
     return f'msg_{request_id.replace("-", "")}'
 
 
-def _text_block(text: str) -> dict:
+def _text_block(text: str) -> dict[str, Any]:
     return {'type': 'text', 'text': text}
 
 
-def gateway_message(request_id: str, route_name: str, text: str) -> dict:
+def gateway_message(request_id: str, route_name: str, text: str) -> dict[str, Any]:
     """Build a complete answer with one text block. Nothing called a model,
     so its usage is zero.
     """
@@ -106,7 +107,7 @@ def gateway_message(request_id: str, route_name: str, text: str) -> dict:
     }
 
 
-def with_text(message: dict, text: str) -> dict:
+def with_text(message: dict[str, Any], text: str) -> dict[str, Any]:
     """Return ``message`` with ``text`` as its whole reply (an output soft
     block). The model was called, so its id and usage stay.
     """

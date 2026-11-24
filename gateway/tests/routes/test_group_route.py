@@ -8,6 +8,7 @@ from starlette.testclient import TestClient
 
 from tests.common import db_mock
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
     GroupRouteOut,
@@ -59,7 +60,7 @@ def project_service():
 
 def _client(group_service, project_service) -> TestClient:
     app = FastAPI(title='AI Gateway', debug=True)
-    app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+    add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
     app.include_router(
         GroupRoute.get_group_router(group_service, project_service), prefix=PREFIX
     )

@@ -1,7 +1,7 @@
 import logging
 
 from clickhouse_connect.driver.httputil import get_pool_manager
-from sqlalchemy import MetaData, create_engine
+from sqlalchemy import Engine, MetaData, create_engine
 from sqlalchemy.engine.url import URL
 from sqlalchemy.ext.declarative import DeferredReflection
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
@@ -31,8 +31,8 @@ class ClickHouseDatabase:
             port=conf.clickhouse_db_http_port,
             database=conf.clickhouse_db_name,
         )
-        self._engine = None
-        self._SessionFactory = None
+        self._engine: Engine | None = None
+        self._SessionFactory: sessionmaker[Session] | None = None
         self._connected = False
 
     def connect(self):
@@ -65,9 +65,13 @@ class ClickHouseDatabase:
 
     def init_mappings(self):
         logger.info('Initiating DB orm mappings')
+        if self._engine is None:
+            raise RuntimeError('Not connected to the DB: call connect() first')
         Reflected.prepare(self._engine)
 
     def begin_session(self) -> Session:
+        if self._SessionFactory is None:
+            raise RuntimeError('Not connected to the DB: call connect() first')
         return self._SessionFactory()
 
     @property

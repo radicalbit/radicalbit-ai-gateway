@@ -12,7 +12,7 @@ def route_meta(**kwargs: Any) -> Callable[[F], F]:
     """
 
     def decorator(func: F) -> F:
-        func._route_meta = kwargs  # type: ignore[attr-defined]  # noqa: SLF001
+        func.__dict__['_route_meta'] = kwargs
         return func
 
     return decorator

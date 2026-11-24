@@ -16,15 +16,18 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import uuid
 
+from fastapi import FastAPI
 from openai.types.chat.chat_completion import ChatCompletion
 import pook
 import pytest
+from starlette.datastructures import State
 
 from tests.common.db_mock import API_KEY_UUID, GROUP_UUID, REQUEST_UUID
 from tests.common.limits import request_limits
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
+from tests.common.pook_activate import pook_activate
 from tests.common.scope import scope_of
 
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
@@ -41,11 +44,16 @@ from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
+from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.routing.llm_router import LLMRouter
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.utils.app_config import PromptManagerConfig
 from radicalbit_ai_gateway.utils.secrets import resolve_secrets_from_string
 
 _PROJECT_UUID = '2f1c6d4e-0000-4000-8000-0000000000aa'
+_PROJECT_A_UUID = uuid.UUID('aaaaaaaa-0000-4000-8000-000000000001')
+_PROJECT_B_UUID = uuid.UUID('bbbbbbbb-0000-4000-8000-000000000002')
+_BAD_PROJECT_UUID = uuid.UUID('cccccccc-0000-4000-8000-000000000003')
 
 # Minimal config with a literal api_key (no !secret refs needed here —
 # secret resolution is already covered in test_secrets.py).
@@ -305,7 +313,7 @@ def test_build_gateway_routes_empty_config():
 
 
 @patch('radicalbit_ai_gateway.invocation.recorder.emit_event', autospec=True)
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_project_route_full_pipeline(mock_emit_event, fake_redis_client):
     """All three steps + route invocation via 'project_name/route_name'."""
@@ -422,21 +430,26 @@ async def test_per_project_guardrails_isolation():
     presidio_engine = PresidioEngine()
     judge_engine = MagicMock(spec_set=JudgeEngine)
 
-    app_state = SimpleNamespace(
+    app = _make_app(
         presidio_engine=presidio_engine,
         judge_engine=judge_engine,
         redis_client=None,
         routes={},
         project_configs={},
     )
-    app = SimpleNamespace(state=app_state)
 
-    registrar, _deregistrar = build_project_route_registrar(app, httpx_client=None)
-    await registrar('aaaa-aaaa', 'project-a', _PROJECT_A_YAML)
-    await registrar('bbbb-bbbb', 'project-b', _PROJECT_B_YAML)
+    registrar, _deregistrar = build_project_route_registrar(
+        app, httpx_client=None, prompt_manager=PromptManager(PromptManagerConfig())
+    )
+    await registrar(_PROJECT_A_UUID, 'project-a', _PROJECT_A_YAML)
+    await registrar(_PROJECT_B_UUID, 'project-b', _PROJECT_B_YAML)
 
-    [guardrail_a] = app.state.routes['project-a/route-a'].guardrails.input_check
-    [guardrail_b] = app.state.routes['project-b/route-b'].guardrails.input_check
+    [guardrail_a] = app.state.routes[
+        'project-a/route-a'
+    ].guardrails.input_check.guardrails
+    [guardrail_b] = app.state.routes[
+        'project-b/route-b'
+    ].guardrails.input_check.guardrails
 
     assert guardrail_a.parameters.values == ['bad-word-A']
     assert guardrail_b.parameters.values == ['bad-word-B']
@@ -447,8 +460,15 @@ async def test_per_project_guardrails_isolation():
 # ---------------------------------------------------------------------------
 
 
-def _make_app_state(**kwargs):
-    return SimpleNamespace(
+def _make_app(**state: object) -> FastAPI:
+    """Build an app whose state holds what the registrar reads and writes."""
+    app = FastAPI()
+    app.state = State(state)
+    return app
+
+
+def _make_registrar_app(**kwargs: object) -> FastAPI:
+    return _make_app(
         presidio_engine=PresidioEngine(),
         judge_engine=MagicMock(spec_set=JudgeEngine),
         redis_client=None,
@@ -460,18 +480,19 @@ def _make_app_state(**kwargs):
 
 async def test_startup_loads_active_projects():
     """register_fn is called once per project with a non-null config_file."""
-    app_state = _make_app_state()
-    app = SimpleNamespace(state=app_state)
+    app = _make_registrar_app()
 
-    register_fn, _deregister_fn = build_project_route_registrar(app, httpx_client=None)
+    register_fn, _deregister_fn = build_project_route_registrar(
+        app, httpx_client=None, prompt_manager=PromptManager(PromptManagerConfig())
+    )
     active_projects = [
         SimpleNamespace(
-            uuid='aaaa-aaaa',
+            uuid=_PROJECT_A_UUID,
             name='project-a',
             config_file=_PROJECT_A_YAML,
         ),
         SimpleNamespace(
-            uuid='bbbb-bbbb',
+            uuid=_PROJECT_B_UUID,
             name='project-b',
             config_file=_PROJECT_B_YAML,
         ),
@@ -483,25 +504,28 @@ async def test_startup_loads_active_projects():
     assert 'project-b/route-b' in app.state.routes
     assert 'project-a' in app.state.project_configs
     assert 'project-b' in app.state.project_configs
-    entry_a: ProjectEntry = app.state.project_configs['project-a']
-    assert entry_a.uuid == 'aaaa-aaaa'
+    entry_a = app.state.project_configs['project-a']
+    assert isinstance(entry_a, ProjectEntry)
+    assert entry_a.uuid == _PROJECT_A_UUID
     assert isinstance(entry_a.config, GatewayConfig)
-    entry_b: ProjectEntry = app.state.project_configs['project-b']
-    assert entry_b.uuid == 'bbbb-bbbb'
+    entry_b = app.state.project_configs['project-b']
+    assert isinstance(entry_b, ProjectEntry)
+    assert entry_b.uuid == _PROJECT_B_UUID
 
 
 async def test_startup_skips_failed_project():
     """A broken config for one project must not prevent others from loading."""
-    app_state = _make_app_state()
-    app = SimpleNamespace(state=app_state)
+    app = _make_registrar_app()
 
-    register_fn, _deregister_fn = build_project_route_registrar(app, httpx_client=None)
+    register_fn, _deregister_fn = build_project_route_registrar(
+        app, httpx_client=None, prompt_manager=PromptManager(PromptManagerConfig())
+    )
 
     # Project A loads fine; project bad has invalid YAML
     with contextlib.suppress(Exception):
-        await register_fn('bad-project', '{{not valid yaml', '')
+        await register_fn(_BAD_PROJECT_UUID, '{{not valid yaml', '')
 
-    await register_fn('aaaa-bbbb', 'project-a', _PROJECT_A_YAML)
+    await register_fn(_PROJECT_A_UUID, 'project-a', _PROJECT_A_YAML)
 
     assert 'bad-project' not in app.state.project_configs
     assert 'project-a/route-a' in app.state.routes
@@ -535,16 +559,10 @@ async def test_cache_client_asks_for_resp2():
     AttributeError inside the client, which SemanticCache.get swallows and
     reports as a miss, so every semantic lookup fails.
     """
-    app = SimpleNamespace(
-        state=SimpleNamespace(
-            presidio_engine=PresidioEngine(),
-            judge_engine=MagicMock(spec_set=JudgeEngine),
-            redis_client=None,
-            routes={},
-            project_configs={},
-        )
+    app = _make_registrar_app()
+    registrar, _deregistrar = build_project_route_registrar(
+        app, httpx_client=None, prompt_manager=PromptManager(PromptManagerConfig())
     )
-    registrar, _deregistrar = build_project_route_registrar(app, httpx_client=None)
 
     with patch(
         'radicalbit_ai_gateway.gateway_route.factory.redis.asyncio.Redis',
@@ -608,6 +626,7 @@ def test_enabled_route_caching_falls_back_to_memory_without_redis():
     routes = _build_routes(_CACHED_PROJECT_YAML, redis_client=None)
 
     cache = routes['my-route'].gateway_cache
+    assert cache is not None
     assert isinstance(cache.cache_client, CacheToolsInMemory)
 
 
@@ -661,4 +680,6 @@ def test_llm_routing_without_fallback_builds_only_the_router_model():
     )
     routes = _build_routes(yaml_content, redis_client=None)
 
-    assert set(routes['my-route'].router._router_models) == {'router'}
+    router = routes['my-route'].router
+    assert isinstance(router, LLMRouter)
+    assert set(router._router_models) == {'router'}

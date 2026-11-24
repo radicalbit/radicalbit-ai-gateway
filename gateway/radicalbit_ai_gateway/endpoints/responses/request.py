@@ -69,11 +69,13 @@ _UNCACHED_FIELDS = frozenset({'input', 'instructions', 'stream', 'stream_options
 class _Text:
     """Where one text of the request lives: ``container[key]``."""
 
-    container: dict
+    container: dict[str, Any]
     key: str
 
     def get(self) -> str:
-        return self.container[self.key]
+        # Built over string values only, and ``set`` writes strings.
+        text = self.container[self.key]
+        return text if isinstance(text, str) else ''
 
     def set(self, text: str) -> None:
         self.container[self.key] = text
@@ -89,7 +91,7 @@ class _Slot:
 
     def message(self) -> BaseMessage:
         values = [text.get() for text in self.texts]
-        content: str | list = (
+        content: str | list[dict[str, Any]] = (
             values[0]
             if len(values) == 1
             else [{'type': 'text', 'text': value} for value in values]
@@ -99,7 +101,7 @@ class _Slot:
         return self.message_type(content=content)
 
 
-def _content_texts(item: dict, key: str) -> list[_Text]:
+def _content_texts(item: dict[str, Any], key: str) -> list[_Text]:
     content = item.get(key)
     if isinstance(content, str):
         return [_Text(item, key)]
@@ -114,7 +116,7 @@ def _content_texts(item: dict, key: str) -> list[_Text]:
     return []
 
 
-def _tool_output_texts(item: dict) -> list[_Text]:
+def _tool_output_texts(item: dict[str, Any]) -> list[_Text]:
     """Return the texts of a tool output item; a shell call's are its non-empty
     stdout and stderr.
     """
@@ -143,12 +145,12 @@ def _message_texts(content: Any) -> list[str]:
     return []
 
 
-def _input_items(body: dict) -> list:
+def _input_items(body: dict[str, Any]) -> list[Any]:
     raw_input = body.get('input')
     return raw_input if isinstance(raw_input, list) else []
 
 
-def _prompt_variable_texts(body: dict) -> list[_Text]:
+def _prompt_variable_texts(body: dict[str, Any]) -> list[_Text]:
     """Return the texts a reusable prompt's variables put in the prompt."""
     prompt = body.get('prompt')
     variables = prompt.get('variables') if isinstance(prompt, dict) else None
@@ -167,7 +169,7 @@ def _prompt_variable_texts(body: dict) -> list[_Text]:
     return texts
 
 
-def _slots(body: dict) -> list[_Slot]:
+def _slots(body: dict[str, Any]) -> list[_Slot]:
     slots = []
     if isinstance(body.get('instructions'), str):
         slots.append(_Slot(SystemMessage, [_Text(body, 'instructions')]))
@@ -194,17 +196,17 @@ def _slots(body: dict) -> list[_Slot]:
 
 
 def _is_user_message(item: Any) -> bool:
-    return (
-        isinstance(item, dict)
-        and item.get('type', 'message') == 'message'
-        and item.get('role') == 'user'
-    )
+    if not isinstance(item, dict):
+        return False
+    item_type: object = item.get('type', 'message')
+    role: object = item.get('role')
+    return item_type == 'message' and role == 'user'
 
 
 class ResponsesRequest:
     """A copy of a Responses request body, with its texts read as chat messages."""
 
-    def __init__(self, body: dict):
+    def __init__(self, body: dict[str, Any]):
         self.body = copy.deepcopy(body)
         self._slots = _slots(self.body)
 
@@ -246,7 +248,7 @@ class ResponsesRequest:
         ]
 
 
-def references_stored_state(body: dict) -> bool:
+def references_stored_state(body: dict[str, Any]) -> bool:
     """Whether the request continues state stored at the provider.
 
     Only the provider account that stored it can serve such a request.
@@ -259,7 +261,7 @@ def references_stored_state(body: dict) -> bool:
     )
 
 
-def check_supported(body: dict) -> None:
+def check_supported(body: dict[str, Any]) -> None:
     """Refuse the Responses API features the gateway does not serve yet."""
     if body.get('background'):
         # A background response is read later from GET /v1/responses/{id}.
@@ -285,7 +287,7 @@ def hosted_tool_type(tool: Any) -> str | None:
 
 
 def apply_governance(
-    body: dict, settings: ResponsesSettings | None, route_name: str
+    body: dict[str, Any], settings: ResponsesSettings | None, route_name: str
 ) -> None:
     """Enforce the route's Responses API settings on ``body``, in place."""
     if settings is None:
@@ -321,17 +323,18 @@ def apply_governance(
             ]
 
 
-def last_user_text(body: dict) -> str:
+def last_user_text(body: dict[str, Any]) -> str:
     """Return the text of the request's last user message."""
-    if isinstance(body.get('input'), str):
-        return body['input']
+    raw_input = body.get('input')
+    if isinstance(raw_input, str):
+        return raw_input
     for item in reversed(_input_items(body)):
         if _is_user_message(item):
             return ' '.join(text.get() for text in _content_texts(item, 'content'))
     return ''
 
 
-def cache_signature(body: dict) -> dict | None:
+def cache_signature(body: dict[str, Any]) -> dict[str, Any] | None:
     """Return what identifies a request's reply in the cache, as for chat completions:
     the input from the last user message on, and the parameters.
 

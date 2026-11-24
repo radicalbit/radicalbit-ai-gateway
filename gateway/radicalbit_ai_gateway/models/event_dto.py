@@ -286,7 +286,7 @@ class EventsDTO(BaseModel):
     def _get_enablement_flags(
         config: GatewayConfig, route_name: str | None
     ) -> dict[str, bool]:
-        if route_name:
+        if route_name is not None and route_name != '':
             route_config = config.routes[route_name]
             return {
                 'fallback_enabled': bool(route_config.fallback),
@@ -866,7 +866,11 @@ class CostDataDTO(BaseModel):
         total_saved_amount: float | None = None
         if cost_data.total_saved_amount is not None:
             total_saved_amount = cost_data.total_saved_amount
-            if semantic_cache_cost_data and semantic_cache_cost_data.net_savings:
+            if (
+                semantic_cache_cost_data
+                and semantic_cache_cost_data.net_savings is not None
+                and semantic_cache_cost_data.net_savings != 0
+            ):
                 total_saved_amount += semantic_cache_cost_data.net_savings
 
         # Build new nested breakdown structure

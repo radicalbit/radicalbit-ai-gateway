@@ -13,6 +13,18 @@ from openai.types.completion_usage import CompletionUsage
 
 from radicalbit_ai_gateway.llm.messages import AIMessage
 
+FinishReason = Literal[
+    'stop', 'length', 'tool_calls', 'content_filter', 'function_call'
+]
+# The finish reasons of a chat completion, by their lowercase spelling.
+_FINISH_REASONS: dict[str, FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'tool_calls': 'tool_calls',
+    'content_filter': 'content_filter',
+    'function_call': 'function_call',
+}
+
 
 class ChatUtils:
     @staticmethod
@@ -23,9 +35,7 @@ class ChatUtils:
         usage_metadata = ai_message.usage_metadata or {}
 
         message_to_send: ChatCompletionMessage
-        finish_reason: Literal[
-            'stop', 'length', 'tool_calls', 'content_filter', 'function_call'
-        ]
+        finish_reason: FinishReason
         if ai_message.tool_calls:
             openai_tool_calls = [
                 ChatCompletionMessageToolCall(
@@ -42,9 +52,6 @@ class ChatUtils:
                 content=None,
                 tool_calls=openai_tool_calls,
             )
-            reasoning_content = ai_message.additional_kwargs.get('reasoning_content')
-            if reasoning_content:
-                message_to_send.reasoning_content = reasoning_content
             finish_reason = 'tool_calls'
         else:
             content = ai_message.content
@@ -55,20 +62,28 @@ class ChatUtils:
                 content=content,
                 tool_calls=None,
             )
-            reasoning_content = ai_message.additional_kwargs.get('reasoning_content')
-            if reasoning_content:
-                message_to_send.reasoning_content = reasoning_content
             # Normalize finish_reason to lowercase (Gemini returns uppercase like 'STOP')
+            # A reason a chat completion does not have reads as 'stop'.
             finish_reason_raw = response_metadata.get('finish_reason', 'stop')
             finish_reason = (
-                finish_reason_raw.lower()
+                _FINISH_REASONS.get(finish_reason_raw.lower(), 'stop')
                 if isinstance(finish_reason_raw, str)
                 else 'stop'
             )
+        reasoning_content = ai_message.additional_kwargs.get('reasoning_content')
+        if reasoning_content:
+            # Not a field of the SDK's message: kept as an extra field.
+            message_to_send = message_to_send.model_copy(
+                update={'reasoning_content': reasoning_content}
+            )
         return ChatCompletion(
             id=request_id
-            if request_id
-            else (ai_message.id if ai_message.id else f'chatcmpl-{uuid.uuid4()}'),
+            if request_id is not None and request_id != ''
+            else (
+                ai_message.id
+                if ai_message.id is not None and ai_message.id != ''
+                else f'chatcmpl-{uuid.uuid4()}'
+            ),
             object='chat.completion',
             created=int(time()),
             model=model_id_invoked,

@@ -5,18 +5,18 @@ in-memory exporter and metric reader (``monkeypatch`` restores them), so no
 global OpenTelemetry state is touched.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 import dataclasses
 import datetime
 import json
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx2
 from httpx_aiohttp import HttpxAiohttpClient
 import openai
 from opentelemetry import context as context_api, trace
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.metrics.export import HistogramDataPoint, InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -24,6 +24,7 @@ from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 from opentelemetry.trace import SpanKind, StatusCode
 from pydantic import BaseModel
 import pytest
+from typing_extensions import override
 
 from tests.common import provider_responses as canned
 from tests.common.provider_recorder import ProviderRecorder
@@ -39,6 +40,7 @@ from radicalbit_ai_gateway.llm.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    UsageMetadata,
     tool_call_chunk,
 )
 from radicalbit_ai_gateway.llm.providers.openai import _langchain_error_type
@@ -48,18 +50,27 @@ from radicalbit_ai_gateway.models.model import MockGatewayChatModel
 class _Model(ChatModel):
     _gen_ai_provider = 'fake'
 
-    def __init__(self, reply=None, chunks=(), error=None, **settings: Any):
+    def __init__(
+        self,
+        reply: AIMessage | None = None,
+        chunks=(),
+        error: BaseException | None = None,
+        **settings: Any,
+    ):
         self.reply = reply
         self.chunks = list(chunks)
         self.error = error
         for name, value in settings.items():
             setattr(self, name, value)
 
+    @override
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
         if self.error:
             raise self.error
+        assert self.reply is not None
         return self.reply
 
+    @override
     async def _astream(
         self, messages: list[BaseMessage], **kwargs: Any
     ) -> AsyncIterator[AIMessageChunk]:
@@ -68,7 +79,8 @@ class _Model(ChatModel):
         if self.error:
             raise self.error
 
-    def _generation_info(self, message: AIMessage) -> dict | None:
+    @override
+    def _generation_info(self, message: AIMessage) -> dict[str, Any] | None:
         if reason := message.response_metadata.get('finish_reason'):
             return {'finish_reason': reason}
         return None
@@ -77,11 +89,12 @@ class _Model(ChatModel):
 class _LlmOutputModel(_Model):
     """A model reporting LangChain's ``llm_output`` (model, id, raw usage)."""
 
-    def __init__(self, llm_output: dict, *args: Any, **kwargs: Any):
+    def __init__(self, llm_output: dict[str, Any], *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.llm_output = llm_output
 
-    def _llm_output(self, message: AIMessage) -> dict | None:
+    @override
+    def _llm_output(self, message: AIMessage) -> dict[str, Any] | None:
         return self.llm_output
 
 
@@ -131,21 +144,30 @@ def _only_span(exporter: InMemorySpanExporter):
     return span
 
 
-def _points(reader: InMemoryMetricReader) -> dict[str, list[tuple[dict, int, float]]]:
+def _histogram_point(point: object) -> HistogramDataPoint:
+    assert isinstance(point, HistogramDataPoint)
+    return point
+
+
+def _points(
+    reader: InMemoryMetricReader,
+) -> dict[str, list[tuple[dict[str, Any], int, float]]]:
     """Each histogram's points as ``(attributes, count, sum)``."""
     data = reader.get_metrics_data()
-    points: dict[str, list] = {}
+    points: dict[str, list[tuple[dict[str, Any], int, float]]] = {}
     for resource_metrics in data.resource_metrics if data else []:
         for scope_metrics in resource_metrics.scope_metrics:
             for metric in scope_metrics.metrics:
+                histogram = [_histogram_point(p) for p in metric.data.data_points]
                 points[metric.name] = [
-                    (dict(p.attributes), p.count, p.sum)
-                    for p in metric.data.data_points
+                    (dict(p.attributes or {}), p.count, p.sum) for p in histogram
                 ]
     return points
 
 
-def _token_points(reader: InMemoryMetricReader) -> dict[str, tuple[str, str, int]]:
+def _token_points(
+    reader: InMemoryMetricReader,
+) -> dict[str, tuple[str, str, float]]:
     """Return the token usage histogram as ``{token type: (provider, model, sum)}``."""
     return {
         attributes['gen_ai.token.type']: (
@@ -157,16 +179,19 @@ def _token_points(reader: InMemoryMetricReader) -> dict[str, tuple[str, str, int
     }
 
 
-def _input_messages(span) -> list[dict]:
+def _input_messages(span) -> list[dict[str, Any]]:
     return json.loads(span.attributes['gen_ai.input.messages'])
 
 
-def _output(span) -> dict:
+def _output(span) -> dict[str, Any]:
     (output,) = json.loads(span.attributes['gen_ai.output.messages'])
     return output
 
 
-async def _collect(stream: AsyncIterator[AIMessageChunk]) -> list[AIMessageChunk]:
+_T = TypeVar('_T')
+
+
+async def _collect(stream: AsyncIterator[_T]) -> list[_T]:
     return [chunk async for chunk in stream]
 
 
@@ -259,7 +284,7 @@ async def test_usage_and_response_model_reach_the_metrics(spans, metrics):
 
 
 async def test_zero_usage_sets_no_usage_attributes_nor_token_metrics(spans, metrics):
-    zero = {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
+    zero: UsageMetadata = {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
     await _Model(AIMessage('ok', usage_metadata=zero), model='m').ainvoke(MESSAGES)
 
     attributes = _only_span(spans).attributes
@@ -272,7 +297,7 @@ async def test_zero_usage_sets_no_usage_attributes_nor_token_metrics(spans, metr
 
 
 async def test_only_output_tokens_are_recorded_when_input_is_zero(spans, metrics):
-    usage = {'input_tokens': 0, 'output_tokens': 4, 'total_tokens': 4}
+    usage: UsageMetadata = {'input_tokens': 0, 'output_tokens': 4, 'total_tokens': 4}
     await _Model(AIMessage('ok', usage_metadata=usage), model='m').ainvoke(MESSAGES)
 
     assert _only_span(spans).attributes['gen_ai.usage.input_tokens'] == 0
@@ -280,7 +305,7 @@ async def test_only_output_tokens_are_recorded_when_input_is_zero(spans, metrics
 
 
 async def test_cache_tokens_from_usage_details(spans):
-    usage = {
+    usage: UsageMetadata = {
         'input_tokens': 10,
         'output_tokens': 2,
         'total_tokens': 12,
@@ -295,7 +320,7 @@ async def test_cache_tokens_from_usage_details(spans):
 
 
 async def test_cache_tokens_alone_are_reported(spans):
-    usage = {
+    usage: UsageMetadata = {
         'input_tokens': 0,
         'output_tokens': 0,
         'total_tokens': 0,
@@ -434,7 +459,8 @@ async def test_call_params_are_reported_when_the_model_has_none(spans, metrics):
 
 async def test_nested_constructor_params(spans):
     class _Nested(_Model):
-        def _serialized_kwargs(self) -> dict:
+        @override
+        def _serialized_kwargs(self) -> dict[str, Any]:
             return {'model_name': 'm-n', 'params': {'top_p': 0.3, 'max_tokens': 9}}
 
     await _Nested(AIMessage('ok')).ainvoke(MESSAGES, top_p=0.9)
@@ -637,16 +663,18 @@ class _Shape(BaseModel):
 
 
 class _Serializable:
-    def to_json(self) -> dict:
+    def to_json(self) -> dict[str, Any]:
         return {'kind': 'serializable'}
 
 
 class _Opaque:
+    @override
     def __str__(self) -> str:
         return 'opaque'
 
 
 class _Unprintable:
+    @override
     def __str__(self) -> str:
         raise RuntimeError('no')
 
@@ -896,7 +924,8 @@ async def test_single_chunk_stream(spans, metrics):
 
 async def test_stream_generation_infos_are_merged(spans):
     class _InfoModel(_Model):
-        def _generation_info(self, message: AIMessage) -> dict | None:
+        @override
+        def _generation_info(self, message: AIMessage) -> dict[str, Any] | None:
             return message.additional_kwargs.get('info')
 
     chunks = [
@@ -1013,9 +1042,14 @@ async def test_stream_with_mismatched_metadata_types_still_streams(spans):
 
 async def test_stream_with_unaddable_usage_still_streams(spans):
     usage = {'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}
+    # A provider payload whose usage carries a string, as raw wire data.
     chunks = [
-        AIMessageChunk('a', usage_metadata={**usage, 'service_tier': 'standard'}),
-        AIMessageChunk('b', usage_metadata={**usage, 'service_tier': 'flex'}),
+        AIMessageChunk.model_validate(
+            {'content': 'a', 'usage_metadata': {**usage, 'service_tier': 'standard'}}
+        ),
+        AIMessageChunk.model_validate(
+            {'content': 'b', 'usage_metadata': {**usage, 'service_tier': 'flex'}}
+        ),
     ]
     received = await _collect(_Model(chunks=chunks, model='m').astream(MESSAGES))
 
@@ -1066,6 +1100,7 @@ async def test_stream_stopped_by_the_consumer_is_an_error_span(spans):
     chunks = [AIMessageChunk('a'), AIMessageChunk('b')]
     stream = _Model(chunks=chunks, model='m').astream(MESSAGES)
     first = await anext(stream)
+    assert isinstance(stream, AsyncGenerator)
     await stream.aclose()
 
     assert first.content == 'a'
@@ -1148,7 +1183,8 @@ async def test_nothing_is_recorded_when_the_span_is_not_recording(
 
 async def test_a_broken_tracing_hook_does_not_fail_the_call(spans):
     class _Broken(_Model):
-        def _invocation_params(self, stop=None, **kwargs: Any) -> dict:
+        @override
+        def _invocation_params(self, stop=None, **kwargs: Any) -> dict[str, Any]:
             raise RuntimeError('hook')
 
     model = _Broken(AIMessage('ok'), chunks=[AIMessageChunk('a')], model='m')
@@ -1292,7 +1328,7 @@ PROVIDER_REPLIES = {
 }
 
 
-def _span_view(span, expected: dict) -> dict:
+def _span_view(span, expected: dict[str, Any]) -> dict[str, Any]:
     return {
         key: span.name if key == 'name' else span.attributes.get(key)
         for key in expected
@@ -1432,18 +1468,27 @@ async def test_mock_model_spans(spans, metrics):
 class _ResponsesModel(_Model):
     """A model serving the Responses API with canned events or a response."""
 
-    def __init__(self, response=None, events=(), error=None, **settings: Any):
+    def __init__(
+        self,
+        response: dict[str, Any] | None = None,
+        events=(),
+        error: BaseException | None = None,
+        **settings: Any,
+    ):
         super().__init__(error=error, **settings)
         self.response = response
         self.events = list(events)
 
-    async def _ainvoke_native_responses(self, body: dict) -> dict:
+    @override
+    async def _ainvoke_native_responses(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.error:
             raise self.error
+        assert self.response is not None
         return self.response
 
+    @override
     async def _astream_native_responses(
-        self, body: dict
+        self, body: dict[str, Any]
     ) -> AsyncIterator[tuple[str, str]]:
         for event in self.events:
             yield event['type'], json.dumps(event)
@@ -1511,7 +1556,7 @@ RESPONSE = {
 }
 
 
-def _stream_events(response: dict) -> list[dict]:
+def _stream_events(response: dict[str, Any]) -> list[dict[str, Any]]:
     final = {
         'completed': 'response.completed',
         'incomplete': 'response.incomplete',
@@ -1727,6 +1772,7 @@ async def test_responses_stream_stopped_early_fails_the_span(spans):
 
     stream = model.astream_native_responses({'input': 'Hi'})
     await anext(stream)
+    assert isinstance(stream, AsyncGenerator)
     await stream.aclose()
 
     span = _only_span(spans)
@@ -1748,10 +1794,11 @@ async def test_responses_content_tracing_switch(spans, content_tracing_off):
 
 
 class _ServerModel(_ResponsesModel):
-    def __init__(self, url, *args: Any, **kwargs: Any):
+    def __init__(self, url: str, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.url = url
 
+    @override
     def _server_url(self) -> str | None:
         return self.url
 
@@ -1776,6 +1823,7 @@ async def test_server_of_the_call(spans, url, address, port):
 
 async def test_a_failing_server_hook_does_not_stop_the_trace(spans):
     class _Broken(_Model):
+        @override
         def _server_url(self) -> str | None:
             raise RuntimeError('no client')
 
@@ -1861,6 +1909,7 @@ async def test_responses_stream_stopped_after_its_final_event_succeeds(spans, me
     async for event, _ in stream:
         if event == 'response.completed':
             break
+    assert isinstance(stream, AsyncGenerator)
     await stream.aclose()
 
     span = _only_span(spans)
@@ -1877,20 +1926,29 @@ async def test_responses_stream_stopped_after_its_final_event_succeeds(spans, me
 class _MessagesModel(_Model):
     """A model serving the Messages API with canned events or a message."""
 
-    def __init__(self, message=None, events=(), error=None, **settings: Any):
+    def __init__(
+        self,
+        message: dict[str, Any] | None = None,
+        events=(),
+        error: BaseException | None = None,
+        **settings: Any,
+    ):
         super().__init__(error=error, **settings)
         self.message = message
         self.events = list(events)
 
+    @override
     async def _ainvoke_native_messages(
-        self, body: dict, headers: dict[str, str]
-    ) -> dict:
+        self, body: dict[str, Any], headers: dict[str, str]
+    ) -> dict[str, Any]:
         if self.error:
             raise self.error
+        assert self.message is not None
         return self.message
 
+    @override
     async def _astream_native_messages(
-        self, body: dict, headers: dict[str, str]
+        self, body: dict[str, Any], headers: dict[str, str]
     ) -> AsyncIterator[tuple[str, str]]:
         for event in self.events:
             yield event['type'], json.dumps(event)
@@ -2002,10 +2060,10 @@ MESSAGE_OUTPUT = {
 }
 
 
-def _message_events(message: dict) -> list[dict]:
+def _message_events(message: dict[str, Any]) -> list[dict[str, Any]]:
     """Return ``message`` as Anthropic streams it: text and JSON in two pieces."""
     usage = message['usage']
-    events: list[dict] = [
+    events: list[dict[str, Any]] = [
         {
             'type': 'message_start',
             'message': {
@@ -2295,6 +2353,7 @@ async def test_messages_stream_stopped_early_fails_the_span(spans):
 
     stream = model.astream_native_messages(MESSAGES_BODY, {})
     await anext(stream)
+    assert isinstance(stream, AsyncGenerator)
     await stream.aclose()
 
     span = _only_span(spans)
@@ -2311,6 +2370,7 @@ async def test_messages_stream_stopped_after_its_stop_reason_succeeds(spans, met
     async for event, _ in stream:
         if event == 'message_delta':
             break
+    assert isinstance(stream, AsyncGenerator)
     await stream.aclose()
 
     span = _only_span(spans)

@@ -10,6 +10,7 @@ from starlette.testclient import TestClient
 from tests.common import db_mock
 from tests.common.sse import first_events
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
@@ -76,7 +77,7 @@ def _app(deps, config: ProjectRouteConfig | None = None) -> FastAPI:
         config_generator_service=deps.config_generator_service,
     )
     app = FastAPI(title='AI Gateway', debug=True)
-    app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+    add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
     app.include_router(router, prefix=PREFIX)
     return app
 
@@ -319,6 +320,21 @@ def test_generate_config_rejected_when_served(client, deps):
 
     assert res.status_code == 400
     deps.config_generator_service.generate_config.assert_not_awaited()
+
+
+def test_generate_config_is_not_served_without_a_generator(deps):
+    """A router given no config generator has no generate-config endpoint,
+    instead of one that fails on every call.
+    """
+    deps.config_generator_service = None
+    deps.project_service.get_config.return_value = db_mock.get_sample_config_slot_out(
+        uuid=CID, config_file='# x'
+    )
+    client = TestClient(_app(deps), raise_server_exceptions=False)
+
+    res = client.post(f'{CONFIG}/generate-config', json={'description': 'make it'})
+
+    assert res.status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -617,7 +633,7 @@ def _get_endpoint(app, path_suffix: str, method: str = 'PATCH') -> object:
 def test_update_budget_limit_value_is_audited_on_the_project(client):
     endpoint = _get_endpoint(client.app, 'budget-limits/{limit_uuid}', 'PATCH')
 
-    assert endpoint._route_meta == {
+    assert endpoint.__dict__['_route_meta'] == {
         'entity_type': 'PROJECT',
         'entity_uuid_param': 'project_uuid',
     }

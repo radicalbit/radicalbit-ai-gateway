@@ -1,6 +1,8 @@
 """Canned provider responses in each provider's native wire format."""
 
+from collections.abc import Sequence
 import json
+from typing import Any
 
 from tests.common.provider_recorder import CannedResponse
 
@@ -11,15 +13,15 @@ def openai_completion(
     content: str | None = 'Hello from the model',
     *,
     model: str = 'gpt-4o-mini-2024-07-18',
-    tool_calls: list[dict] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
     finish_reason: str = 'stop',
     prompt_tokens: int = 21,
     completion_tokens: int = 7,
     cached_tokens: int = 0,
-    extra_message: dict | None = None,
+    extra_message: dict[str, Any] | None = None,
 ) -> CannedResponse:
     message = {'role': 'assistant', 'content': content, 'refusal': None}
-    if tool_calls:
+    if tool_calls is not None and len(tool_calls) > 0:
         message['tool_calls'] = tool_calls
     message.update(extra_message or {})
     return CannedResponse(
@@ -56,7 +58,9 @@ def openai_completion(
     )
 
 
-def _openai_chunk(delta: dict, finish_reason=None, model='gpt-4o-mini-2024-07-18'):
+def _openai_chunk(
+    delta: dict[str, Any], finish_reason=None, model='gpt-4o-mini-2024-07-18'
+):
     return {
         'id': 'chatcmpl-provider-1',
         'object': 'chat.completion.chunk',
@@ -75,15 +79,15 @@ def _openai_chunk(delta: dict, finish_reason=None, model='gpt-4o-mini-2024-07-18
 
 
 def openai_stream(
-    parts: list[str] = ('Hello', ' from', ' the model'),
+    parts: Sequence[str] = ('Hello', ' from', ' the model'),
     *,
     model: str = 'gpt-4o-mini-2024-07-18',
-    tool_calls: list[dict] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
     prompt_tokens: int = 21,
     completion_tokens: int = 7,
     cached_tokens: int = 0,
     include_usage: bool = True,
-    extra_first_delta: dict | None = None,
+    extra_first_delta: dict[str, Any] | None = None,
     finish_reason: str | None = None,
 ) -> CannedResponse:
     events = [
@@ -129,7 +133,12 @@ def openai_stream(
     events.append(
         _openai_chunk(
             {},
-            finish_reason=finish_reason or ('tool_calls' if tool_calls else 'stop'),
+            finish_reason=finish_reason
+            or (
+                'tool_calls'
+                if tool_calls is not None and len(tool_calls) > 0
+                else 'stop'
+            ),
             model=model,
         )
     )
@@ -199,7 +208,7 @@ def _anthropic_usage(input_tokens, output_tokens, cache_read, cache_5m, cache_1h
 def anthropic_message(
     text: str | None = 'Hello from the model',
     *,
-    tool_use: list[dict] | None = None,
+    tool_use: list[dict[str, Any]] | None = None,
     input_tokens: int = 21,
     output_tokens: int = 7,
     cache_read: int = 0,
@@ -217,7 +226,9 @@ def anthropic_message(
             'role': 'assistant',
             'model': _ANTHROPIC_MODEL,
             'content': content,
-            'stop_reason': 'tool_use' if tool_use else 'end_turn',
+            'stop_reason': 'tool_use'
+            if tool_use is not None and len(tool_use) > 0
+            else 'end_turn',
             'stop_sequence': None,
             'usage': _anthropic_usage(
                 input_tokens, output_tokens, cache_read, cache_5m, cache_1h
@@ -227,9 +238,9 @@ def anthropic_message(
 
 
 def anthropic_stream(
-    parts: list[str] = ('Hello', ' from', ' the model'),
+    parts: Sequence[str] = ('Hello', ' from', ' the model'),
     *,
-    tool_use: list[dict] | None = None,
+    tool_use: list[dict[str, Any]] | None = None,
     input_tokens: int = 21,
     output_tokens: int = 7,
     cache_read: int = 0,
@@ -300,7 +311,9 @@ def anthropic_stream(
         {
             'type': 'message_delta',
             'delta': {
-                'stop_reason': 'tool_use' if tool_use else 'end_turn',
+                'stop_reason': 'tool_use'
+                if tool_use is not None and len(tool_use) > 0
+                else 'end_turn',
                 'stop_sequence': None,
             },
             'usage': {'output_tokens': output_tokens},
@@ -353,12 +366,12 @@ def _gemini_usage(prompt_tokens, output_tokens, cached_tokens):
 def gemini_response(
     text: str | None = 'Hello from the model',
     *,
-    function_calls: list[dict] | None = None,
+    function_calls: list[dict[str, Any]] | None = None,
     prompt_tokens: int = 21,
     output_tokens: int = 7,
     cached_tokens: int = 0,
 ) -> CannedResponse:
-    parts = []
+    parts: list[dict[str, Any]] = []
     if text is not None:
         parts.append({'text': text})
     parts += [{'functionCall': fc} for fc in function_calls or []]
@@ -370,9 +383,9 @@ def gemini_response(
 
 
 def gemini_stream(
-    parts: list[str] = ('Hello', ' from', ' the model'),
+    parts: Sequence[str] = ('Hello', ' from', ' the model'),
     *,
-    function_calls: list[dict] | None = None,
+    function_calls: list[dict[str, Any]] | None = None,
     prompt_tokens: int = 21,
     output_tokens: int = 7,
     cached_tokens: int = 0,
@@ -385,7 +398,7 @@ def gemini_stream(
         )
         for i, p in enumerate(parts)
     ]
-    if function_calls:
+    if function_calls is not None and len(function_calls) > 0:
         events.append(
             _gemini_payload(
                 [{'functionCall': fc} for fc in function_calls],
@@ -418,7 +431,7 @@ MISTRAL_WEATHER_TOOL_CALL = {
 def mistral_completion(
     content: str | None = 'Hello from the model',
     *,
-    tool_calls: list[dict] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
     prompt_tokens: int = 21,
     completion_tokens: int = 7,
 ) -> CannedResponse:
@@ -436,7 +449,9 @@ def mistral_completion(
                         'content': content or '',
                         'tool_calls': tool_calls,
                     },
-                    'finish_reason': 'tool_calls' if tool_calls else 'stop',
+                    'finish_reason': 'tool_calls'
+                    if tool_calls is not None and len(tool_calls) > 0
+                    else 'stop',
                 }
             ],
             'usage': {
@@ -449,9 +464,9 @@ def mistral_completion(
 
 
 def mistral_stream(
-    parts: list[str] = ('Hello', ' from', ' the model'),
+    parts: Sequence[str] = ('Hello', ' from', ' the model'),
     *,
-    tool_calls: list[dict] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
     prompt_tokens: int = 21,
     completion_tokens: int = 7,
 ) -> CannedResponse:
@@ -469,12 +484,14 @@ def mistral_stream(
 
     events = [chunk({'role': 'assistant', 'content': ''})]
     events += [chunk({'content': p}) for p in parts]
-    if tool_calls:
+    if tool_calls is not None and len(tool_calls) > 0:
         events.append(chunk({'tool_calls': tool_calls}))
     events.append(
         chunk(
             {'content': ''},
-            finish_reason='tool_calls' if tool_calls else 'stop',
+            finish_reason='tool_calls'
+            if tool_calls is not None and len(tool_calls) > 0
+            else 'stop',
             usage={
                 'prompt_tokens': prompt_tokens,
                 'completion_tokens': completion_tokens,
@@ -528,7 +545,7 @@ _REASONING_ITEM_ID = 'rs_golden_1'
 _FUNCTION_ITEM_ID = 'fc_golden_1'
 
 
-def _message_item(text: str) -> dict:
+def _message_item(text: str) -> dict[str, Any]:
     return {
         'type': 'message',
         'id': _MESSAGE_ITEM_ID,
@@ -538,7 +555,7 @@ def _message_item(text: str) -> dict:
     }
 
 
-def _reasoning_item(summary: str) -> dict:
+def _reasoning_item(summary: str) -> dict[str, Any]:
     return {
         'type': 'reasoning',
         'id': _REASONING_ITEM_ID,
@@ -546,7 +563,7 @@ def _reasoning_item(summary: str) -> dict:
     }
 
 
-def _function_call_item(tool_call: dict) -> dict:
+def _function_call_item(tool_call: dict[str, Any]) -> dict[str, Any]:
     return {
         'type': 'function_call',
         'id': _FUNCTION_ITEM_ID,
@@ -557,7 +574,7 @@ def _function_call_item(tool_call: dict) -> dict:
     }
 
 
-def _response_body(output: list[dict], model: str, status: str = 'completed'):
+def _response_body(output: list[dict[str, Any]], model: str, status: str = 'completed'):
     return {
         'id': _RESPONSE_ID,
         'object': 'response',
@@ -588,8 +605,8 @@ def _response_body(output: list[dict], model: str, status: str = 'completed'):
 
 
 def _response_output(
-    text: str | None, reasoning: str | None, tool_calls: list[dict] | None
-) -> list[dict]:
+    text: str | None, reasoning: str | None, tool_calls: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
     output = []
     if reasoning is not None:
         output.append(_reasoning_item(reasoning))
@@ -604,7 +621,7 @@ def openai_response(
     *,
     model: str = 'gpt-5-codex',
     reasoning: str | None = 'Thinking.',
-    tool_calls: list[dict] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
 ) -> CannedResponse:
     return CannedResponse(
         json_body=_response_body(_response_output(text, reasoning, tool_calls), model)
@@ -612,15 +629,15 @@ def openai_response(
 
 
 def openai_response_stream(
-    parts: list[str] | None = ('Hello', ' from', ' the model'),
+    parts: Sequence[str] | None = ('Hello', ' from', ' the model'),
     *,
     model: str = 'gpt-5-codex',
     reasoning: str | None = 'Thinking.',
-    tool_calls: list[dict] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
 ) -> CannedResponse:
     text = ''.join(parts) if parts is not None else None
     final = _response_body(_response_output(text, reasoning, tool_calls), model)
-    events: list[dict] = [
+    events: list[dict[str, Any]] = [
         {
             'type': 'response.created',
             'response': _response_body([], model, status='in_progress'),
@@ -663,7 +680,7 @@ def openai_response_stream(
             },
         ]
         index += 1
-    if parts is not None:
+    if parts is not None and text is not None:
         item = {
             'type': 'message',
             'id': _MESSAGE_ITEM_ID,

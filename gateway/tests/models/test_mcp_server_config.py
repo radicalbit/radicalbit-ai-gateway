@@ -138,7 +138,9 @@ def test_forward_headers_are_normalized_and_deduped():
     config = GatewayConfig.model_validate(
         _base_config(mcp_servers=[{**HTTP_SERVER, 'forward_headers': headers}])
     )
-    assert config.mcp_servers_by_alias['github'].forward_headers == [
+    server = config.mcp_servers_by_alias['github']
+    assert isinstance(server, McpHttpServer)
+    assert server.forward_headers == [
         'authorization',
         'x-user-jwt',
         'x-a',

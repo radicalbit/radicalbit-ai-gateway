@@ -1,6 +1,7 @@
 """Tests for the OpenAI Responses API path of the native OpenAI chat model."""
 
 import json
+from typing import Any
 
 from httpx_aiohttp import HttpxAiohttpClient
 from pydantic import BaseModel
@@ -43,10 +44,12 @@ WEATHER_TOOL = {
 def model(name='gpt-4o-mini', **kwargs) -> ChatOpenAI:
     kwargs.setdefault('http_async_client', HttpxAiohttpClient())
     kwargs.setdefault('use_responses_api', True)
-    return init_chat_model(f'openai:{name}', api_key='sk', **kwargs)
+    chat_model = init_chat_model(f'openai:{name}', api_key='sk', **kwargs)
+    assert isinstance(chat_model, ChatOpenAI)
+    return chat_model
 
 
-def build(messages, chat_model=None, **kwargs) -> dict:
+def build(messages, chat_model=None, **kwargs) -> dict[str, Any]:
     chat_model = chat_model or model()
     return chat_model._get_request_payload(messages, **chat_model._call_kwargs(kwargs))
 
@@ -721,10 +724,9 @@ async def test_stream_text_reasoning_and_tool_calls():
         'call_id': 'call_weather_1',
         'id': 'fc_golden_1',
     }
-    assert (
-        ''.join(c['arguments'] for c in calls)
-        == canned.WEATHER_TOOL_CALL['function']['arguments']
-    )
+    function = canned.WEATHER_TOOL_CALL['function']
+    assert isinstance(function, dict)
+    assert ''.join(c['arguments'] for c in calls) == function['arguments']
     last = chunks[-1]
     assert last.chunk_position == 'last'
     assert last.usage_metadata['input_token_details'] == {'cache_read': 4}

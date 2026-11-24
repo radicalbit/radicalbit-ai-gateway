@@ -1,11 +1,15 @@
 from fastapi.encoders import jsonable_encoder
+from typing_extensions import override
 
 from radicalbit_ai_gateway.models.guardrails import (
     AhdsParams,
     DecisionCriteria,
+    DecisionJudgeGuardrail,
     DecisionJudgeParameter,
-    Guardrail,
+    GuardrailType,
+    JudgeGuardrail,
     JudgeParameter,
+    PresidioAnalyzerGuardrail,
     RedactParameter,
 )
 from radicalbit_ai_gateway.utils.exceptions import _guardrail_param_payload
@@ -18,6 +22,7 @@ class _WeirdGuardrail:
     def name(self):
         raise RuntimeError('boom')
 
+    @override
     def __str__(self) -> str:
         raise RuntimeError('nope')
 
@@ -43,6 +48,7 @@ class _GuardrailWithParamsModel:
 
 
 class _UnserializableParams:
+    @override
     def __str__(self) -> str:
         raise RuntimeError('nope')
 
@@ -108,9 +114,9 @@ def test_guardrail_param_payload_is_json_safe_on_weird_objects():
 
 def test_guardrail_param_payload_strips_ahds_connection_settings():
     """The AHDS block (endpoint, service principal, secret) must never reach clients."""
-    guardrail = Guardrail(
+    guardrail = PresidioAnalyzerGuardrail(
         name='redact-phi-ahds-block',
-        type='presidio_analyzer',
+        type=GuardrailType.PRESIDIO_ANALYZER,
         where='input',
         behavior='block',
         parameters=RedactParameter(
@@ -148,9 +154,9 @@ def test_guardrail_param_payload_strips_sensitive_keys_from_dict_params():
 
 def test_guardrail_param_payload_strips_inline_judge_prompt():
     """An inline judge prompt must never reach clients."""
-    guardrail = Guardrail(
+    guardrail = JudgeGuardrail(
         name='medical-advice-check',
-        type='judge',
+        type=GuardrailType.JUDGE,
         where='input',
         behavior='block',
         parameters=JudgeParameter(
@@ -171,9 +177,9 @@ def test_guardrail_param_payload_strips_inline_judge_prompt():
 
 def test_guardrail_param_payload_strips_judge_configuration():
     """Judge configuration stays internal, as it does in the sanitized reason."""
-    guardrail = Guardrail(
+    guardrail = JudgeGuardrail(
         name='injection-check',
-        type='judge',
+        type=GuardrailType.JUDGE,
         where='input',
         behavior='block',
         parameters=JudgeParameter(
@@ -189,9 +195,9 @@ def test_guardrail_param_payload_strips_judge_configuration():
 
 
 def test_guardrail_param_payload_strips_decision_judge_configuration():
-    guardrail = Guardrail(
+    guardrail = DecisionJudgeGuardrail(
         name='override-check',
-        type='decision_judge',
+        type=GuardrailType.DECISION_JUDGE,
         where='input',
         behavior='block',
         parameters=DecisionJudgeParameter(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from typing import Any
 
 # The event that ends a stream, by the final response's status.
 FINAL_EVENT_TYPES = {
@@ -31,7 +32,7 @@ class NativeResponsesEvent:
 
     event: str
     data: str
-    payload: dict | None = None
+    payload: dict[str, Any] | None = None
 
     @classmethod
     def parse(cls, event: str, data: str) -> NativeResponsesEvent:
@@ -43,18 +44,18 @@ class NativeResponsesEvent:
         return self.event in _FINAL_EVENTS
 
     @property
-    def response(self) -> dict | None:
+    def response(self) -> dict[str, Any] | None:
         if self.payload is None:
             return None
         return self.payload.get('response')
 
     @property
-    def usage(self) -> dict | None:
+    def usage(self) -> dict[str, Any] | None:
         return (self.response or {}).get('usage')
 
     def to_sse(self, route_name: str) -> str:
         data = self.data
-        if isinstance(self.response, dict):
+        if self.payload is not None and isinstance(self.response, dict):
             payload = {
                 **self.payload,
                 'response': {**self.response, 'model': route_name},

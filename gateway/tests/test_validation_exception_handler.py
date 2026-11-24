@@ -14,17 +14,20 @@ import unittest
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
+from typing_extensions import override
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.credential_limiting import CredentialLimitsIn
 from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitsIn
 from radicalbit_ai_gateway.server import validation_exception_handler
 
 
 class TestValidationExceptionHandler(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         app = FastAPI()
-        app.add_exception_handler(RequestValidationError, validation_exception_handler)
+        add_exception_handler(app, RequestValidationError, validation_exception_handler)
 
         @app.post('/limits')
         def _create_limits(limits_in: CredentialLimitsIn):
@@ -57,7 +60,7 @@ class TestValidationExceptionHandler(unittest.TestCase):
 
     def test_project_budget_window_size_error_points_at_the_field(self):
         app = FastAPI()
-        app.add_exception_handler(RequestValidationError, validation_exception_handler)
+        add_exception_handler(app, RequestValidationError, validation_exception_handler)
 
         @app.post('/budget-limits')
         def _create_budget_limits(limits_in: ProjectBudgetLimitsIn):

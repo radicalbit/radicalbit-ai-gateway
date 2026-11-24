@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, update
 
+from radicalbit_ai_gateway.db.dao.dml import rows_matched
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 from radicalbit_ai_gateway.db.tables.group_table import Group
@@ -21,7 +22,7 @@ class GroupDAO:
             session.flush()
             return group
 
-    def get_by_uuid(self, group_uuid: UUID) -> Group:
+    def get_by_uuid(self, group_uuid: UUID) -> Group | None:
         with self.db.begin_session() as session:
             stmt = select(Group).where(Group.uuid == group_uuid)
             return session.scalar(stmt)
@@ -40,7 +41,7 @@ class GroupDAO:
         with self.db.begin_session() as session:
             query = select(Group).where(Group.uuid == group_uuid)
             group_to_delete = session.execute(query).scalar_one_or_none()
-            if not group_to_delete:
+            if group_to_delete is None:
                 return None
             session.delete(group_to_delete)
             return group_to_delete
@@ -54,7 +55,7 @@ class GroupDAO:
                 .where(Group.uuid == group_uuid)
                 .values(name=name, updated_at=now)
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)
 
     def add_route(self, group_route: GroupRoute) -> GroupRoute:
         with self.db.begin_session() as session:
@@ -71,7 +72,7 @@ class GroupDAO:
                 GroupRoute.project_uuid == project_uuid,
                 GroupRoute.route_name == route_name,
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)
 
     def get_by_name_and_owner(self, name: str, owner: str) -> Group | None:
         with self.db.begin_session() as session:
@@ -116,7 +117,7 @@ class GroupDAO:
                 GroupRoute.project_uuid == project_uuid,
                 GroupRoute.route_name.notin_(valid_route_names),
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)
 
     def get_route_names_by_group_uuid(self, group_uuid: UUID) -> list[str]:
         """Return fully-qualified route names (project_name/route_name) for a group."""

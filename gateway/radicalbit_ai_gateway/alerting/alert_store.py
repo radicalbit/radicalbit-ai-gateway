@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 import threading
 
 from redis import Redis
+from typing_extensions import override
 
 Clock = Callable[[], datetime]
 
@@ -56,6 +57,17 @@ class AlertStore(ABC):
         """Unregister `window`. Return whether this call removed it."""
 
 
+def _member(member: object) -> str:
+    """Return a sorted set member read without scores, as text: bytes, or
+    text when the client decodes responses.
+    """
+    if isinstance(member, bytes):
+        return member.decode()
+    if isinstance(member, str):
+        return member
+    raise TypeError(f'Unexpected sorted set member: {member!r}')
+
+
 class RedisAlertStore(AlertStore):
     _OPEN_WINDOWS = 'alert:windows:open'
 
@@ -63,9 +75,11 @@ class RedisAlertStore(AlertStore):
         super().__init__(clock)
         self._client = client
 
+    @override
     def claim(self, key: str, ttl_seconds: int) -> bool:
         return bool(self._client.set(key, 1, nx=True, ex=ttl_seconds))
 
+    @override
     def increment(self, key: str, ttl_seconds: int) -> int:
         pipe = self._client.pipeline()
         pipe.incr(key)
@@ -73,19 +87,23 @@ class RedisAlertStore(AlertStore):
         count, _ = pipe.execute()
         return int(count)
 
+    @override
     def take(self, key: str) -> int:
         value = self._client.getdel(key)
         return int(value) if value is not None else 0
 
+    @override
     def open_window(self, window: str, closes_at: datetime) -> None:
         self._client.zadd(self._OPEN_WINDOWS, {window: closes_at.timestamp()})
 
+    @override
     def windows_due(self, now: datetime) -> list[str]:
         members = self._client.zrangebyscore(
             self._OPEN_WINDOWS, '-inf', now.timestamp()
         )
-        return [m.decode() if isinstance(m, bytes) else m for m in members]
+        return [_member(m) for m in members]
 
+    @override
     def close_window(self, window: str) -> bool:
         return self._client.zrem(self._OPEN_WINDOWS, window) == 1
 
@@ -110,6 +128,7 @@ class InProcessAlertStore(AlertStore):
     def _expiry(self, ttl_seconds: int) -> float:
         return self.now().timestamp() + ttl_seconds
 
+    @override
     def claim(self, key: str, ttl_seconds: int) -> bool:
         with self._lock:
             if self._live(key) is not None:
@@ -117,26 +136,31 @@ class InProcessAlertStore(AlertStore):
             self._values[key] = (1, self._expiry(ttl_seconds))
             return True
 
+    @override
     def increment(self, key: str, ttl_seconds: int) -> int:
         with self._lock:
             count = (self._live(key) or 0) + 1
             self._values[key] = (count, self._expiry(ttl_seconds))
             return count
 
+    @override
     def take(self, key: str) -> int:
         with self._lock:
             count = self._live(key) or 0
             self._values.pop(key, None)
             return count
 
+    @override
     def open_window(self, window: str, closes_at: datetime) -> None:
         with self._lock:
             self._open_windows[window] = closes_at
 
+    @override
     def windows_due(self, now: datetime) -> list[str]:
         with self._lock:
             return [w for w, closes in self._open_windows.items() if closes <= now]
 
+    @override
     def close_window(self, window: str) -> bool:
         with self._lock:
             return self._open_windows.pop(window, None) is not None
@@ -144,6 +168,6 @@ class InProcessAlertStore(AlertStore):
 
 def build_alert_store(redis_url: str | None, clock: Clock = utc_now) -> AlertStore:
     """Build the store on Redis when it is configured, in process otherwise."""
-    if redis_url:
+    if redis_url is not None and redis_url != '':
         return RedisAlertStore(Redis.from_url(redis_url), clock=clock)
     return InProcessAlertStore(clock=clock)

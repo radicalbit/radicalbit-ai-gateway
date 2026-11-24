@@ -1,3 +1,4 @@
+from contextlib import AbstractContextManager
 import logging
 
 from sqlalchemy import MetaData, create_engine
@@ -76,9 +77,13 @@ class Database:
 
     def init_mappings(self):
         logger.info('Initiating DB orm mappings')
+        if self._engine is None:
+            raise RuntimeError('Not connected to the DB: call connect() first')
         Reflected.prepare(self._engine, views=True)
 
-    def begin_session(self) -> Session:
+    def begin_session(self) -> AbstractContextManager[Session]:
+        if self._SessionFactory is None:
+            raise RuntimeError('Not connected to the DB: call connect() first')
         return self._SessionFactory.begin()
 
     @property

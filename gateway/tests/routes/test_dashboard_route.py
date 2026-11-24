@@ -1,6 +1,7 @@
 import copy
 import datetime
 import os
+from typing import Any
 import unittest
 from unittest.mock import MagicMock
 import uuid
@@ -10,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 import pytest
 from starlette.testclient import TestClient
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.mocked_gateway_config_openai import (
@@ -23,6 +25,7 @@ from radicalbit_ai_gateway.db.models.event import (
     LastEventFallback,
     LastEventGuardrail,
 )
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.event_dto import (
     CacheHitEventDetailDTO,
     ChartDataSeriesDTO,
@@ -44,16 +47,21 @@ from radicalbit_ai_gateway.models.event_dto import (
     TokenChartDataSeriesDTO,
 )
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
-from radicalbit_ai_gateway.models.gateway_config_out import GatewayRouteConfigOut
+from radicalbit_ai_gateway.models.gateway_config_out import (
+    GatewayRouteConfigOut,
+    McpHttpServerOut,
+    McpStdioServerOut,
+)
 from radicalbit_ai_gateway.models.gateway_route_out import GatewayRouteOut
 from radicalbit_ai_gateway.models.guardrails import (
-    Guardrail as GuardrailConfig,
     GuardrailType,
+    JudgeGuardrail,
     JudgeParameter,
 )
+from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.models.prompt_dto import PromptCategory
 from radicalbit_ai_gateway.models.routing import (
-    DeterministicRoutingConfig,
+    KeywordRoutingConfig,
     RoutingRuleType,
     TextClassificationRoutingConfig,
 )
@@ -74,6 +82,7 @@ PROJECT_NAME = 'test-project'
 
 
 class TestDashboardRoute(unittest.TestCase):
+    @override
     @classmethod
     def setUpClass(cls):
         cls.prefix = '/public/api/v1'
@@ -91,25 +100,28 @@ class TestDashboardRoute(unittest.TestCase):
             mcp_usage_service=cls.mcp_usage_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(GatewayError, gateway_exception_handler)
+        add_exception_handler(app, GatewayError, gateway_exception_handler)
         app.include_router(router, prefix=cls.prefix)
 
         cls.gateway_config = get_gateway_dashboard_test_config()
 
-        cls.project_entry_mock = MagicMock()
-        cls.project_entry_mock.config = cls.gateway_config
-
-        app.state.project_configs = {PROJECT_NAME: cls.project_entry_mock}
+        app.state.project_configs = {
+            PROJECT_NAME: ProjectEntry(uuid=PROJECT_UUID, config=cls.gateway_config)
+        }
         app.state.routes = {}
 
+        cls.app = app
         cls.client = TestClient(app)
         cls.project_path = f'{cls.prefix}/projects/{PROJECT_UUID}'
 
+    @override
     def setUp(self):
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
         self.project_service.get_by_uuid = MagicMock(return_value=project_mock)
-        self.project_entry_mock.config = self.gateway_config
+        self.app.state.project_configs[PROJECT_NAME] = ProjectEntry(
+            uuid=PROJECT_UUID, config=self.gateway_config
+        )
 
     def test_metrics_endpoint(self):
         mock_metric_dto = EventsDTO(
@@ -146,13 +158,6 @@ class TestDashboardRoute(unittest.TestCase):
             rate_limit_triggered=2,
             token_input_limit_triggered=0,
             token_output_limit_triggered=0,
-            cache_triggered=3,
-            cache_saved_tokens_input=47,
-            cache_saved_tokens_output=60,
-            saved_amount_input=1.4099999999999999e-05,
-            saved_amount_output=0.0,
-            input_cost=7.5e-05,
-            output_cost=0.0,
         )
         self.event_service.get_total_counter = MagicMock(return_value=mock_metric_dto)
         response = self.client.get(
@@ -177,13 +182,6 @@ class TestDashboardRoute(unittest.TestCase):
             rate_limit_triggered=4,
             token_input_limit_triggered=5,
             token_output_limit_triggered=76,
-            cache_triggered=20,
-            input_cost=0.66326,
-            output_cost=0.66326,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
         )
         expected_response: list[GatewayRouteOut] = []
         groups = [
@@ -220,13 +218,6 @@ class TestDashboardRoute(unittest.TestCase):
             rate_limit_triggered=4,
             token_input_limit_triggered=5,
             token_output_limit_triggered=76,
-            cache_triggered=20,
-            input_cost=0.66326,
-            output_cost=0.66326,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
         )
         route_name = 'rb-gateway'
         route_config = [
@@ -414,11 +405,9 @@ class TestDashboardRoute(unittest.TestCase):
             route_dict['embedding_models'] = []
         else:
             emb_registry = {m.model_id: m for m in (gw_cfg.embedding_models or [])}
-            route_dict['embedding_models'] = (
-                [emb_registry[mid].model_dump() for mid in (emb_ids or [])]
-                if emb_ids is not None
-                else None
-            )
+            route_dict['embedding_models'] = [
+                emb_registry[mid].model_dump() for mid in emb_ids
+            ]
 
         guardrails = route_dict.get('guardrails')
 
@@ -438,7 +427,7 @@ class TestDashboardRoute(unittest.TestCase):
             return GatewayRouteConfigOut(**route_dict)
 
         by_name = {g.name: g for g in global_list}
-        resolved: list[dict] = []
+        resolved: list[dict[str, Any]] = []
         for name in guardrails:
             gr = by_name.get(name)
             if gr is not None:
@@ -476,7 +465,9 @@ class TestDashboardRoute(unittest.TestCase):
         model = config.chat_models_by_id['openai']
         object.__setattr__(model, 'prompt', None)
         object.__setattr__(model, 'prompt_ref', None)
-        self.client.app.state.project_configs[PROJECT_NAME].config = config
+        self.app.state.project_configs[PROJECT_NAME] = ProjectEntry(
+            uuid=PROJECT_UUID, config=config
+        )
 
         response = self.client.get(f'{self.project_path}/routes/rb-gateway/prompts')
         assert response.status_code == 200
@@ -493,7 +484,7 @@ class TestDashboardRoute(unittest.TestCase):
 
         config = copy.deepcopy(self.gateway_config)
 
-        judge_guardrail = GuardrailConfig(
+        judge_guardrail = JudgeGuardrail(
             name='injection_check',
             type=GuardrailType.JUDGE,
             where='INPUT',
@@ -512,7 +503,9 @@ class TestDashboardRoute(unittest.TestCase):
             route.guardrails = []
         route.guardrails.append('injection_check')
 
-        self.client.app.state.project_configs[PROJECT_NAME].config = config
+        self.app.state.project_configs[PROJECT_NAME] = ProjectEntry(
+            uuid=PROJECT_UUID, config=config
+        )
 
         response = self.client.get(f'{self.project_path}/routes/rb-gateway/prompts')
         assert response.status_code == 200
@@ -532,7 +525,7 @@ class TestDashboardRoute(unittest.TestCase):
         """A JUDGE guardrail with an inline prompt should return that prompt."""
         config = copy.deepcopy(self.gateway_config)
 
-        judge_guardrail = GuardrailConfig(
+        judge_guardrail = JudgeGuardrail(
             name='medical_check',
             type=GuardrailType.JUDGE,
             where='INPUT',
@@ -551,7 +544,9 @@ class TestDashboardRoute(unittest.TestCase):
             route.guardrails = []
         route.guardrails.append('medical_check')
 
-        self.client.app.state.project_configs[PROJECT_NAME].config = config
+        self.app.state.project_configs[PROJECT_NAME] = ProjectEntry(
+            uuid=PROJECT_UUID, config=config
+        )
 
         response = self.client.get(f'{self.project_path}/routes/rb-gateway/prompts')
         assert response.status_code == 200
@@ -578,7 +573,7 @@ class TestDashboardRoute(unittest.TestCase):
         assert len(out.routing.output_mapping) == 2
 
     def test_build_route_config_out_deterministic_routing(self):
-        """Routing field is resolved to the full DeterministicRoutingConfig."""
+        """Routing field is resolved to the full KeywordRoutingConfig."""
 
         raw = {
             'chat_models': [
@@ -625,7 +620,7 @@ class TestDashboardRoute(unittest.TestCase):
 
         out = EventService._build_route_config_out(route_config, config)
 
-        assert isinstance(out.routing, DeterministicRoutingConfig)
+        assert isinstance(out.routing, KeywordRoutingConfig)
         assert out.routing.name == 'kw_routing'
         assert out.routing.rule == RoutingRuleType.KEYWORD
         assert out.routing.default_model_id == 'default_model'
@@ -673,8 +668,13 @@ class TestDashboardRoute(unittest.TestCase):
         config = GatewayConfig.model_validate(raw)
 
         out = EventService._build_route_config_out(config.routes['mcp_route'], config)
+        assert out.mcp_servers is not None
         assert len(out.mcp_servers) == 2
         http_server, stdio_server = out.mcp_servers
+        assert isinstance(http_server, McpHttpServerOut)
+        assert isinstance(stdio_server, McpStdioServerOut)
+        assert http_server.headers is not None
+        assert stdio_server.env is not None
         assert http_server.alias == 'github'
         assert http_server.url == 'https://api.githubcopilot.com/mcp/'
         assert str(http_server.headers['authorization']) == '**********'
@@ -697,6 +697,7 @@ class TestDashboardRouteNoActiveConfig(unittest.TestCase):
     when the project exists in the DB but has no actively served config.
     """
 
+    @override
     @classmethod
     def setUpClass(cls):
         cls.prefix = '/public/api/v1'
@@ -714,13 +715,14 @@ class TestDashboardRouteNoActiveConfig(unittest.TestCase):
             mcp_usage_service=cls.mcp_usage_service,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(GatewayError, gateway_exception_handler)
+        add_exception_handler(app, GatewayError, gateway_exception_handler)
         app.include_router(router, prefix=cls.prefix)
         app.state.project_configs = {}
         app.state.routes = {}
         cls.client = TestClient(app)
         cls.project_path = f'{cls.prefix}/projects/{PROJECT_UUID}'
 
+    @override
     def setUp(self):
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME

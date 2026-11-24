@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import select, update
 
+from radicalbit_ai_gateway.db.dao.dml import rows_matched
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
@@ -121,4 +122,4 @@ class ProjectDAO:
                 .where(Project.uuid == project_uuid)
                 .values(deleted_at=now, updated_at=now)
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)

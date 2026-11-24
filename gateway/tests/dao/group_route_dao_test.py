@@ -1,5 +1,7 @@
 import uuid
 
+from typing_extensions import override
+
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
 
@@ -9,6 +11,7 @@ from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 
 
 class GroupRouteDAOTest(DatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -22,11 +25,13 @@ class GroupRouteDAOTest(DatabaseIntegration):
         )
         cls.project_uuid = uuid.uuid4()
 
+    @override
     def setUp(self):
         self.project_dao.insert(
             db_mock.get_sample_project(uuid=self.project_uuid, name='my-project')
         )
 
+    @override
     def tearDown(self):
         super().tearDown()
 

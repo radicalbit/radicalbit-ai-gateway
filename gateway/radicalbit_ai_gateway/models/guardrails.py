@@ -1,16 +1,22 @@
 from enum import Enum
 import logging
 import re
-from typing import Annotated, Literal, Union
+from typing import Annotated, Generic, Literal, Union
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
     SecretStr,
+    Tag,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
+
+# typing_extensions: a TypeVar default needs Python 3.13, override needs 3.12.
+from typing_extensions import TypeVar, override
 
 from radicalbit_ai_gateway.prompt_manager import PromptManager
 from radicalbit_ai_gateway.utils.app_config import get_app_config
@@ -155,7 +161,9 @@ class RedactParameter(BaseModel):
                 f"Language '{self.language}' is not supported, use one of: "
                 f'{", ".join(PRESIDIO_LANGUAGES)}.'
             )
-        if self.backend == 'ahds' and not (self.ahds and self.ahds.endpoint):
+        if self.backend == 'ahds' and not (
+            self.ahds and self.ahds.endpoint is not None and self.ahds.endpoint != ''
+        ):
             raise ValueError("ahds.endpoint must be set when backend is 'ahds'.")
         return self
 
@@ -210,7 +218,7 @@ class JudgeParameter(BaseModel):
 
     @model_validator(mode='after')
     def resolve_prompt_ref(self) -> 'JudgeParameter':
-        if not self.prompt_ref:
+        if self.prompt_ref is None or self.prompt_ref == '':
             return self
 
         prompt_manager = PromptManager.get_global() or PromptManager(
@@ -291,21 +299,45 @@ GuardrailParameter = Union[
     GuardrailsAIParameter,
 ]
 
-# Mapping GuardrailType → parameters.type
-PARAMETERS_TYPE_BY_GUARDRAIL_TYPE = {
-    GuardrailType.JUDGE: 'JUDGE',
-    GuardrailType.DECISION_JUDGE: 'DECISION_JUDGE',
-    GuardrailType.GUARDRAILS_AI: 'GUARDRAILS_AI',
-    GuardrailType.PRESIDIO_ANONYMIZER: 'REDACT',
-    GuardrailType.PRESIDIO_ANALYZER: 'REDACT',
-    GuardrailType.STARTS_WITH: 'CHECK',
-    GuardrailType.ENDS_WITH: 'CHECK',
-    GuardrailType.CONTAINS: 'CHECK',
-    GuardrailType.REGEX: 'CHECK',
-}
+# The types of a guardrail class, and the parameters it holds: the
+# configuration's, or a response's.
+TypeT = TypeVar('TypeT', bound=GuardrailType, default=GuardrailType)
+ParametersT = TypeVar(
+    'ParametersT', bound=GuardrailParameter, default=GuardrailParameter
+)
+CheckParameterT = TypeVar(
+    'CheckParameterT', bound=CheckParameter, default=CheckParameter
+)
+RedactParameterT = TypeVar(
+    'RedactParameterT', bound=RedactParameter, default=RedactParameter
+)
+JudgeParameterT = TypeVar(
+    'JudgeParameterT', bound=JudgeParameter, default=JudgeParameter
+)
+DecisionJudgeParameterT = TypeVar(
+    'DecisionJudgeParameterT',
+    bound=DecisionJudgeParameter,
+    default=DecisionJudgeParameter,
+)
+GuardrailsAIParameterT = TypeVar(
+    'GuardrailsAIParameterT',
+    bound=GuardrailsAIParameter,
+    default=GuardrailsAIParameter,
+)
+
+CheckType = Literal[
+    GuardrailType.STARTS_WITH,
+    GuardrailType.ENDS_WITH,
+    GuardrailType.CONTAINS,
+    GuardrailType.REGEX,
+]
 
 
-class Guardrail(BaseModel):
+class GuardrailBase(BaseModel, Generic[TypeT, ParametersT]):
+    """The fields every guardrail has. A guardrail is one of its subclasses,
+    picked by ``type``: see ``Guardrail``.
+    """
+
     model_config = ConfigDict(extra='forbid')
 
     name: str = Field(
@@ -313,8 +345,7 @@ class Guardrail(BaseModel):
         description='Unique name for the guardrail.',
         examples=['input_length_check', 'output_format_check'],
     )
-    type: GuardrailType = Field(
-        GuardrailType.STARTS_WITH,
+    type: TypeT = Field(
         description='Type of guardrail check to perform.',
         examples=['starts_with', 'ends_with', 'contains', 'regex'],
     )
@@ -331,22 +362,11 @@ class Guardrail(BaseModel):
         description='When to apply the guardrail: input (before model), output (after model), or io (both). Default: io for maximum protection.',
         examples=['input', 'output', 'io'],
     )
-    behavior: GuardrailBehaviorType | None = Field(
-        GuardrailBehaviorType.BLOCK,
-        description='Behavior when the guardrail check fails.',
-        examples=['block', 'warn', 'soft_block'],
-    )
-    parameters: GuardrailParameter = Field(
+    # The parameters' own type field is fixed by their class: it is kept
+    # because configs may carry it and dumps (stored configs, guardrail
+    # errors) hold it.
+    parameters: ParametersT = Field(
         description='Parameters for the guardrail check, based on the guardrail to be used',
-        discriminator='type',
-    )
-    response_message: str | None = Field(
-        default=None,
-        description='Response message to return when the guardrail is triggered.',
-        examples=[
-            'Specific UUID format detected and blocked.',
-            'Email addresses are not allowed.',
-        ],
     )
     enabled: bool = Field(
         default=True,
@@ -380,30 +400,12 @@ class Guardrail(BaseModel):
         examples=[1, 3, 10],
     )
 
-    @model_validator(mode='before')
+    @field_validator('type', 'where', 'history', mode='before')
     @classmethod
-    def set_parameters_type(cls, data):
-        # The guardrail type picks the parameter class, so an invalid guardrail
-        # reports only the errors of its own parameters.
-        if not isinstance(data, dict) or not isinstance(data.get('parameters'), dict):
-            return data
-        guardrail_type = data.get('type', GuardrailType.STARTS_WITH)
-        if not isinstance(guardrail_type, str):
-            return data
-        try:
-            parameters_type = PARAMETERS_TYPE_BY_GUARDRAIL_TYPE[
-                GuardrailType(guardrail_type.upper())
-            ]
-        except ValueError:
-            return data
-        return {
-            **data,
-            'parameters': {'type': parameters_type, **data['parameters']},
-        }
-
-    @field_validator('type', 'where', 'behavior', 'history', mode='before')
-    def validate_lower_case_enum(cls, value: GuardrailBehaviorType) -> str:
-        return value.upper()
+    def validate_lower_case_enum(cls, value: object) -> object:
+        # Anything but a string (null, a number) is left to the enum check,
+        # which rejects it with a validation error.
+        return value.upper() if isinstance(value, str) else value
 
     @model_validator(mode='after')
     def validate_history(self):
@@ -421,18 +423,6 @@ class Guardrail(BaseModel):
             raise ValueError(
                 'history is not allowed with where: output, it applies to input only'
             )
-        if (
-            self.type == GuardrailType.PRESIDIO_ANONYMIZER
-            and self.history != GuardrailHistory.ALL
-        ):
-            # The client sends back its own copy of the history, not the
-            # redacted one. Older messages reach the model in clear text.
-            logger.warning(
-                'Guardrail %s: presidio_anonymizer with history: %s '
-                'does not redact older messages, they reach the model as sent.',
-                self.name,
-                self.history.value.lower(),
-            )
         return self
 
     @field_validator('message_roles', mode='before')
@@ -445,35 +435,51 @@ class Guardrail(BaseModel):
             return [v.upper() if isinstance(v, str) else v for v in value]
         return value
 
-    def guardrail_class(self):
-        if self.type in [
-            GuardrailType.STARTS_WITH,
-            GuardrailType.ENDS_WITH,
-            GuardrailType.CONTAINS,
-            GuardrailType.REGEX,
-            GuardrailType.PRESIDIO_ANALYZER,
-            GuardrailType.JUDGE,
-            GuardrailType.DECISION_JUDGE,
-            GuardrailType.GUARDRAILS_AI,
-        ]:
-            return GuardrailClass.CHECK
-        if self.type in [GuardrailType.PRESIDIO_ANONYMIZER]:
-            return GuardrailClass.REDACT
-        return None
+    def guardrail_class(self) -> GuardrailClass:
+        return GuardrailClass.CHECK
 
-    @model_validator(mode='after')
-    def validate_config_type(self):
-        expected = PARAMETERS_TYPE_BY_GUARDRAIL_TYPE.get(self.type)
-        if expected and self.parameters.type != expected:
-            raise ValueError(
-                f'Guardrail type {self.type} requires parameters.config_type={expected}, '
-                f'got {self.parameters.type}'
-            )
-        return self
+
+class BehaviorGuardrailBase(
+    GuardrailBase[TypeT, ParametersT], Generic[TypeT, ParametersT]
+):
+    """A guardrail of class CHECK: when it triggers, its behavior decides
+    what happens to the request.
+    """
+
+    behavior: GuardrailBehaviorType = Field(
+        GuardrailBehaviorType.BLOCK,
+        description='Behavior when the guardrail check fails.',
+        examples=['block', 'warn', 'soft_block'],
+    )
+    response_message: str | None = Field(
+        default=None,
+        description='Response message to return when the guardrail is triggered.',
+        examples=[
+            'Specific UUID format detected and blocked.',
+            'Email addresses are not allowed.',
+        ],
+    )
+
+    @field_validator('behavior', mode='before')
+    @classmethod
+    def validate_lower_case_behavior(cls, value: object) -> object:
+        return value.upper() if isinstance(value, str) else value
+
+
+class CheckGuardrail(
+    BehaviorGuardrailBase[CheckType, CheckParameterT], Generic[CheckParameterT]
+):
+    """A text check: starts_with (the default type), ends_with, contains or regex."""
+
+    type: CheckType = Field(
+        GuardrailType.STARTS_WITH,
+        description='Type of guardrail check to perform.',
+        examples=['starts_with', 'ends_with', 'contains', 'regex'],
+    )
 
     @model_validator(mode='after')
     def validate_regex_values(self):
-        if self.type != GuardrailType.REGEX:
+        if self.type is not GuardrailType.REGEX:
             return self
         for pattern in self.parameters.values:
             try:
@@ -481,3 +487,177 @@ class Guardrail(BaseModel):
             except re.error as e:
                 raise ValueError(f"Invalid regex '{pattern}': {e}") from e
         return self
+
+
+class PresidioAnalyzerGuardrail(
+    BehaviorGuardrailBase[Literal[GuardrailType.PRESIDIO_ANALYZER], RedactParameterT],
+    Generic[RedactParameterT],
+):
+    """A PII check: triggers when the text holds one of the entities."""
+
+    type: Literal[GuardrailType.PRESIDIO_ANALYZER] = Field(
+        description='Type of guardrail check to perform.',
+        examples=['presidio_analyzer'],
+    )
+
+
+class _AnonymizerIgnoredFields(BaseModel):
+    """The fields a presidio_anonymizer took before it had no behavior: a
+    config may still set them. They are checked as they were, then dropped.
+    """
+
+    behavior: GuardrailBehaviorType = GuardrailBehaviorType.BLOCK
+    response_message: str | None = None
+
+    @field_validator('behavior', mode='before')
+    @classmethod
+    def validate_lower_case_behavior(cls, value: object) -> object:
+        return value.upper() if isinstance(value, str) else value
+
+
+_ANONYMIZER_IGNORED_FIELDS = tuple(_AnonymizerIgnoredFields.model_fields)
+
+
+class PresidioAnonymizerGuardrail(
+    GuardrailBase[Literal[GuardrailType.PRESIDIO_ANONYMIZER], RedactParameterT],
+    Generic[RedactParameterT],
+):
+    """A PII redaction: replaces the entities in the text and lets the
+    request through. It has no behavior, it never blocks.
+    """
+
+    type: Literal[GuardrailType.PRESIDIO_ANONYMIZER] = Field(
+        description='Type of guardrail check to perform.',
+        examples=['presidio_anonymizer'],
+    )
+
+    @model_validator(mode='before')
+    @classmethod
+    def drop_ignored_fields(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        ignored = [k for k in _ANONYMIZER_IGNORED_FIELDS if k in data]
+        if not ignored:
+            return data
+        # They are dropped, but a value the fields never took is still an
+        # error: the configs that loaded before are the ones that load now.
+        _AnonymizerIgnoredFields.model_validate({k: data[k] for k in ignored})
+        logger.warning(
+            'Guardrail %s: presidio_anonymizer ignores %s, it redacts and '
+            'never blocks. Remove them from the config.',
+            data.get('name'),
+            ', '.join(ignored),
+        )
+        return {k: v for k, v in data.items() if k not in ignored}
+
+    @model_validator(mode='after')
+    def warn_anonymizer_history(self):
+        if self.history != GuardrailHistory.ALL:
+            # The client sends back its own copy of the history, not the
+            # redacted one. Older messages reach the model in clear text.
+            logger.warning(
+                'Guardrail %s: presidio_anonymizer with history: %s '
+                'does not redact older messages, they reach the model as sent.',
+                self.name,
+                self.history.value.lower(),
+            )
+        return self
+
+    @override
+    def guardrail_class(self) -> GuardrailClass:
+        return GuardrailClass.REDACT
+
+
+class JudgeGuardrail(
+    BehaviorGuardrailBase[Literal[GuardrailType.JUDGE], JudgeParameterT],
+    Generic[JudgeParameterT],
+):
+    """An LLM judge."""
+
+    type: Literal[GuardrailType.JUDGE] = Field(
+        description='Type of guardrail check to perform.', examples=['judge']
+    )
+
+
+class DecisionJudgeGuardrail(
+    BehaviorGuardrailBase[
+        Literal[GuardrailType.DECISION_JUDGE], DecisionJudgeParameterT
+    ],
+    Generic[DecisionJudgeParameterT],
+):
+    """A yes/no question to a decision model."""
+
+    type: Literal[GuardrailType.DECISION_JUDGE] = Field(
+        description='Type of guardrail check to perform.', examples=['decision_judge']
+    )
+
+
+class GuardrailsAIGuardrail(
+    BehaviorGuardrailBase[Literal[GuardrailType.GUARDRAILS_AI], GuardrailsAIParameterT],
+    Generic[GuardrailsAIParameterT],
+):
+    """A guard of a guardrails-api server."""
+
+    type: Literal[GuardrailType.GUARDRAILS_AI] = Field(
+        description='Type of guardrail check to perform.', examples=['guardrails_ai']
+    )
+
+
+# The tag of each guardrail class in the Guardrail union.
+GUARDRAIL_TAG_BY_TYPE: dict[GuardrailType, str] = {
+    GuardrailType.STARTS_WITH: 'CHECK',
+    GuardrailType.ENDS_WITH: 'CHECK',
+    GuardrailType.CONTAINS: 'CHECK',
+    GuardrailType.REGEX: 'CHECK',
+    GuardrailType.PRESIDIO_ANALYZER: 'PRESIDIO_ANALYZER',
+    GuardrailType.PRESIDIO_ANONYMIZER: 'PRESIDIO_ANONYMIZER',
+    GuardrailType.JUDGE: 'JUDGE',
+    GuardrailType.DECISION_JUDGE: 'DECISION_JUDGE',
+    GuardrailType.GUARDRAILS_AI: 'GUARDRAILS_AI',
+}
+
+
+def guardrail_tag(value: object) -> str | None:
+    """Return the tag of the guardrail class a value is for, from its type
+    in any case; starts_with when the type is left out. None for an unknown
+    type.
+    """
+    if isinstance(value, dict):
+        guardrail_type = value.get('type', GuardrailType.STARTS_WITH)
+    else:
+        guardrail_type = getattr(value, 'type', None)
+    if not isinstance(guardrail_type, str):
+        return None
+    try:
+        return GUARDRAIL_TAG_BY_TYPE[GuardrailType(guardrail_type.upper())]
+    except ValueError:
+        return None
+
+
+GUARDRAIL_DISCRIMINATOR = Discriminator(
+    guardrail_tag,
+    custom_error_type='guardrail_type',
+    custom_error_message='Guardrail type should be one of: '
+    + ', '.join(t.value.lower() for t in GuardrailType),
+)
+
+Guardrail = Annotated[
+    Annotated[CheckGuardrail, Tag('CHECK')]
+    | Annotated[PresidioAnalyzerGuardrail, Tag('PRESIDIO_ANALYZER')]
+    | Annotated[PresidioAnonymizerGuardrail, Tag('PRESIDIO_ANONYMIZER')]
+    | Annotated[JudgeGuardrail, Tag('JUDGE')]
+    | Annotated[DecisionJudgeGuardrail, Tag('DECISION_JUDGE')]
+    | Annotated[GuardrailsAIGuardrail, Tag('GUARDRAILS_AI')],
+    GUARDRAIL_DISCRIMINATOR,
+]
+
+guardrail_adapter: TypeAdapter[Guardrail] = TypeAdapter(Guardrail)
+
+# The guardrails of class CHECK: every one but presidio_anonymizer.
+CheckClassGuardrail = (
+    CheckGuardrail
+    | PresidioAnalyzerGuardrail
+    | JudgeGuardrail
+    | DecisionJudgeGuardrail
+    | GuardrailsAIGuardrail
+)

@@ -71,7 +71,11 @@ def set_request_error_info(request: Request, error: AppError) -> None:
     """Set error info in the request context for exception handlers."""
     ctx = RequestEventContext.get_or_create(request)
     ctx.error_type = type(error).__name__
-    ctx.error_code = str(error.code) if error.code else None
+    ctx.error_code = (
+        str(error.code)
+        if error.code is not None and error.code not in ('', 0)
+        else None
+    )
 
 
 class GatewayError(AppError):
@@ -199,7 +203,7 @@ class GuardrailError(AppError):
         *,
         log_message: str | None = None,
         code: Any = None,
-        reason: dict | None = None,
+        reason: dict[str, Any] | None = None,
     ):
         super().__init__(
             client_message=message,
@@ -219,7 +223,7 @@ class GuardrailBadRequest(GuardrailError):
         guardrail: Any,
         *,
         log_message: str | None = None,
-        reason: dict | None = None,
+        reason: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ):
         # The gateway's headers of the request so far (cache, guardrails).
@@ -288,7 +292,7 @@ class JudgeParsingError(JudgeInternalError):
         self.original_error = original_error
         content_preview = (
             (raw_content[:100] + '...')
-            if raw_content and len(raw_content) > 100
+            if raw_content is not None and len(raw_content) > 100
             else raw_content
         )
         message = 'Failed to parse judge output. The model did not return valid JSON.'
@@ -1084,7 +1088,7 @@ def budget_limiter_exception_handler(request: Request, err: BudgetLimitExceeded)
     return _limit_response(err, 'budget_limit_error')
 
 
-def validation_error_param(error: dict) -> str:
+def validation_error_param(error: dict[str, Any]) -> str:
     """Return the body field a request validation error points at, as ``a.b.0``.
 
     The ``body`` part of the error's location is left out.

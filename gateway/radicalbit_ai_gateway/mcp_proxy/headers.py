@@ -28,7 +28,12 @@ def build_upstream_headers(
     credentials always win over client-supplied values.
     """
     headers: dict[str, str] = {}
-    if inbound_headers and server.forward_headers:
+    if (
+        inbound_headers is not None
+        and len(inbound_headers) > 0
+        and server.forward_headers is not None
+        and len(server.forward_headers) > 0
+    ):
         allowed = set(server.forward_headers) - FORBIDDEN_FORWARD_HEADERS
         prefix = f'{MCP_FORWARD_HEADER_PREFIX}{server.alias.lower()}-'
         prefixed: dict[str, str] = {}
@@ -41,7 +46,7 @@ def build_upstream_headers(
             elif lowered in allowed and lowered != GATEWAY_AUTH_HEADER:
                 headers[lowered] = value
         headers.update(prefixed)
-    if server.headers:
+    if server.headers is not None and len(server.headers) > 0:
         for name, value in server.headers.items():
             headers.pop(name.lower(), None)
             headers[name] = value

@@ -10,6 +10,7 @@ see, and what the request counts and records.
 import asyncio
 import datetime
 import json
+from typing import Any, TypedDict
 from unittest.mock import patch
 
 import pook
@@ -56,6 +57,12 @@ from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerBadRequest,
     ModelInvokerInternalError,
 )
+
+
+def _sse_events(reply: CannedResponse) -> list[Any]:
+    """Return the events of a canned stream."""
+    assert reply.sse_events is not None
+    return reply.sse_events
 
 
 @pytest.fixture
@@ -420,7 +427,7 @@ def test_an_upstream_server_error_without_fallback_is_an_api_error(gateway):
 
 
 def test_a_stream_is_relayed_in_order_with_the_route_name(gateway):
-    upstream_events = canned.anthropic_stream().sse_events
+    upstream_events = _sse_events(canned.anthropic_stream())
     upstream = mock_anthropic_stream()
 
     response = send_stream(gateway)
@@ -456,7 +463,7 @@ def test_a_failure_before_streaming_is_an_http_error_in_the_messages_shape(gatew
 
 
 def test_a_failure_after_the_first_event_ends_with_an_error_event(gateway):
-    start = canned.anthropic_stream().sse_events[0]
+    start = _sse_events(canned.anthropic_stream())[0]
     mock_anthropic_stream(
         f'event: message_start\ndata: {json.dumps(start)}\n\ndata: {{broken\n\n'
     )
@@ -470,7 +477,7 @@ def test_a_failure_after_the_first_event_ends_with_an_error_event(gateway):
 
 
 def test_an_upstream_error_event_after_the_first_event_reaches_the_client(gateway):
-    start = canned.anthropic_stream().sse_events[0]
+    start = _sse_events(canned.anthropic_stream())[0]
     overloaded = error_body('overloaded_error', 'Overloaded')
     mock_anthropic_stream(
         f'event: message_start\ndata: {json.dumps(start)}\n\n'
@@ -758,7 +765,15 @@ def test_a_request_over_the_route_token_limit_is_refused_before_any_call(gateway
 
 
 # 21 input tokens, 4 read from the cache, 5 written to it for 5 minutes.
-CACHED_REPLY = {'input_tokens': 21, 'cache_read': 4, 'cache_5m': 5}
+class _CachedReply(TypedDict):
+    """The token counts of a reply, as the canned replies take them."""
+
+    input_tokens: int
+    cache_read: int
+    cache_5m: int
+
+
+CACHED_REPLY: _CachedReply = {'input_tokens': 21, 'cache_read': 4, 'cache_5m': 5}
 
 
 def _mock_cached_reply(stream: bool):
@@ -810,7 +825,7 @@ def _mock_reply_without_ttl(stream: bool):
     if not stream:
         reply = {**canned.anthropic_message().json_body, 'usage': USAGE_WITHOUT_TTL}
         return mock_anthropic(reply)
-    start, *events = canned.anthropic_stream().sse_events
+    start, *events = _sse_events(canned.anthropic_stream())
     start = {
         **start,
         'message': {
@@ -867,14 +882,12 @@ SIGNATURE_REFUSAL = {
 FOREIGN_THINKING = {'type': 'thinking', 'thinking': 'Hm.', 'signature': 'deepseek'}
 ANSWER = {'type': 'text', 'text': 'Hello'}
 # A conversation another provider answered with thinking.
-FOREIGN_HISTORY = {
-    **BODY,
-    'messages': [
-        {'role': 'user', 'content': 'Hi'},
-        {'role': 'assistant', 'content': [FOREIGN_THINKING, ANSWER]},
-        {'role': 'user', 'content': 'And now?'},
-    ],
-}
+FOREIGN_MESSAGES = [
+    {'role': 'user', 'content': 'Hi'},
+    {'role': 'assistant', 'content': [FOREIGN_THINKING, ANSWER]},
+    {'role': 'user', 'content': 'And now?'},
+]
+FOREIGN_HISTORY = {**BODY, 'messages': FOREIGN_MESSAGES}
 # FOREIGN_HISTORY's messages without the old thinking.
 STRIPPED_HISTORY = [
     {'role': 'user', 'content': 'Hi'},
@@ -928,7 +941,7 @@ def test_the_thinking_of_a_running_tool_loop_stays_on_retry(gateway):
             ],
         },
     ]
-    body = {**FOREIGN_HISTORY, 'messages': FOREIGN_HISTORY['messages'] + tool_loop}
+    body = {**FOREIGN_HISTORY, 'messages': [*FOREIGN_MESSAGES, *tool_loop]}
     refuse(400, SIGNATURE_REFUSAL)
     retry = mock_anthropic()
 

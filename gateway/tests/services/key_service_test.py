@@ -7,6 +7,7 @@ import uuid
 from freezegun import freeze_time
 import pytest
 from sqlalchemy.exc import IntegrityError
+from typing_extensions import override
 
 from tests.common import db_mock
 
@@ -63,11 +64,12 @@ def _fake_insert_many(limits):
 
 
 class KeyServiceTest(unittest.TestCase):
+    @override
     def setUp(self):
-        self.key_dao: KeyDAO = MagicMock(spec_set=KeyDAO)
-        self.group_dao: GroupDAO = MagicMock(spec_set=GroupDAO)
-        self.api_key_security: ApiKeySecurity = MagicMock(spec_set=ApiKeySecurity)
-        self.key_limit_dao: KeyLimitDAO = MagicMock(spec_set=KeyLimitDAO)
+        self.key_dao: MagicMock = MagicMock(spec_set=KeyDAO)
+        self.group_dao: MagicMock = MagicMock(spec_set=GroupDAO)
+        self.api_key_security: MagicMock = MagicMock(spec_set=ApiKeySecurity)
+        self.key_limit_dao: MagicMock = MagicMock(spec_set=KeyLimitDAO)
         self.key_service = KeyService(
             key_dao=self.key_dao,
             api_key_security=self.api_key_security,
@@ -84,7 +86,9 @@ class KeyServiceTest(unittest.TestCase):
         key_in = db_mock.get_sample_key_create_in()
         res = self.key_service.create_key(key_in)
         self.key_dao.insert.assert_called_once()
-        assert res == KeyFullOut.from_key(key=key, plain_api_key=api_key_sec.plain_key)
+        assert res == KeyFullOut.from_new_key(
+            key=key, plain_api_key=api_key_sec.plain_key
+        )
 
     def test_get_all(self):
         group_one, group_two = uuid.uuid4(), uuid.uuid4()
@@ -306,7 +310,7 @@ class KeyServiceTest(unittest.TestCase):
         assert res == []
 
     @freeze_time('2026-11-11 00:00:00')
-    def test_get_associable_groups_expired_key_returns_empty(self):
+    def test_get_associable_groups_expired_key_returns_empty(self) -> None:
         key = db_mock.get_sample_key(expires_on=datetime.date(2026, 11, 10))
         get_all_by_owner_mock = MagicMock()
         self.key_dao.get_by_uuid = MagicMock(return_value=key)
@@ -316,7 +320,7 @@ class KeyServiceTest(unittest.TestCase):
         assert res == []
 
     @freeze_time('2026-11-11 00:00:00')
-    def test_get_associable_keys_leaves_out_expired_keys(self):
+    def test_get_associable_keys_leaves_out_expired_keys(self) -> None:
         group = db_mock.get_sample_group_plain(uuid=uuid.uuid4(), name='g1')
         expired = db_mock.get_sample_key(
             uuid=uuid.uuid4(), name='expired', expires_on=datetime.date(2026, 11, 10)
@@ -648,7 +652,7 @@ class TestUpdateLimitValue:
         key_limit_dao.save_many.assert_not_called()
 
     @freeze_time('2026-11-11 00:00:00')
-    def test_expired_key_is_refused(self):
+    def test_expired_key_is_refused(self) -> None:
         service, key_dao, key_limit_dao = self._make_service()
         key = db_mock.get_sample_key(
             uuid=uuid.uuid4(), expires_on=datetime.date(2026, 11, 10)

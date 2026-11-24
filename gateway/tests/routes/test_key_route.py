@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from freezegun import freeze_time
 import pytest
 from starlette.testclient import TestClient
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.sse import first_events
@@ -18,7 +19,9 @@ from radicalbit_ai_gateway.auth.api_key_validator import ApiKeyValidator
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
+from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.limiting.limits import shared_limits
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.api_key_dto import ApiKeySec
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -63,7 +66,7 @@ def key_service():
 @pytest.fixture
 def client(key_service):
     app = FastAPI(title='AI Gateway', debug=True)
-    app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+    add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
     app.include_router(KeyRoute.get_key_router(key_service), prefix=PREFIX)
     return TestClient(app)
 
@@ -468,7 +471,7 @@ def test_update_limit_value_is_audited_on_the_key(client):
 
     endpoint = find_endpoint(client.app.routes)
 
-    assert endpoint._route_meta == {
+    assert endpoint.__dict__['_route_meta'] == {
         'entity_type': 'KEY',
         'entity_uuid_param': 'key_uuid',
     }
@@ -477,13 +480,14 @@ def test_update_limit_value_is_audited_on_the_key(client):
 class TestKeyRouteExpiry(unittest.TestCase):
     """Expiry date on create, and expiresOn/state on every read."""
 
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.key_service = MagicMock(spec_set=KeyService)
         router = KeyRoute.get_key_router(self.key_service)
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
-        app.add_exception_handler(RequestValidationError, validation_exception_handler)
+        add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
+        add_exception_handler(app, RequestValidationError, validation_exception_handler)
         app.include_router(router, prefix=self.prefix)
         self.client = TestClient(app)
 
@@ -495,7 +499,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
         return key_out
 
     @freeze_time('2026-11-01 12:00:00')
-    def test_create_without_expires_on(self):
+    def test_create_without_expires_on(self) -> None:
         self._created()
         res = self.client.post(f'{self.prefix}/keys', json={'name': 'no-expiry'})
         assert res.status_code == 201
@@ -506,7 +510,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
         )
 
     @freeze_time('2026-11-01 12:00:00')
-    def test_create_with_expires_on(self):
+    def test_create_with_expires_on(self) -> None:
         self._created(expires_on=datetime.date(2026, 11, 10))
         res = self.client.post(
             f'{self.prefix}/keys', json={'name': 'expiry', 'expiresOn': '2026-11-10'}
@@ -519,7 +523,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
         )
 
     @freeze_time('2026-11-01 23:59:59')
-    def test_create_with_today_is_accepted(self):
+    def test_create_with_today_is_accepted(self) -> None:
         self._created(expires_on=datetime.date(2026, 11, 1))
         res = self.client.post(
             f'{self.prefix}/keys', json={'name': 'today', 'expiresOn': '2026-11-01'}
@@ -528,7 +532,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
         assert res.json()['state'] == 'expiring'
 
     @freeze_time('2026-11-02 00:00:00')
-    def test_create_with_a_past_date_is_rejected(self):
+    def test_create_with_a_past_date_is_rejected(self) -> None:
         res = self.client.post(
             f'{self.prefix}/keys', json={'name': 'past', 'expiresOn': '2026-11-01'}
         )
@@ -537,7 +541,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
         self.key_service.create_key.assert_not_called()
 
     @freeze_time('2026-11-11 00:00:00')
-    def test_reads_carry_expires_on_and_state(self):
+    def test_reads_carry_expires_on_and_state(self) -> None:
         expired = KeyFullOut.from_key_obscured(
             db_mock.get_sample_key(expires_on=datetime.date(2026, 11, 10))
         )
@@ -572,6 +576,7 @@ LIMITS_BODY = {'limits': [{'category': 'budget', 'windowSize': '1 day', 'value':
 class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
     """A real KeyService over mocked DAOs, so the guards run behind the routes."""
 
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.key_uuid = uuid.uuid4()
@@ -602,7 +607,7 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
             key_limit_dao=self.key_limit_dao,
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+        add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
         app.include_router(
             KeyRoute.get_key_router(self.key_service), prefix=self.prefix
         )
@@ -630,7 +635,7 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         }
 
     @freeze_time(EXPIRED_AT)
-    def test_operations_on_an_expired_key_are_refused(self):
+    def test_operations_on_an_expired_key_are_refused(self) -> None:
         for name, call in self._operations().items():
             with self.subTest(name):
                 res = call()
@@ -643,7 +648,7 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         self.key_limit_dao.delete_by_uuid.assert_not_called()
 
     @freeze_time(EXPIRED_AT)
-    def test_group_unassign_on_an_expired_key_succeeds(self):
+    def test_group_unassign_on_an_expired_key_succeeds(self) -> None:
         self.key.group_uuid = self.group.uuid
         self.key.group = self.group
         # Unassign is cleanup, like delete: allowed on an expired key (ADR 0007).
@@ -656,19 +661,19 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         )
 
     @freeze_time(EXPIRED_AT)
-    def test_delete_on_an_expired_key_succeeds(self):
+    def test_delete_on_an_expired_key_succeeds(self) -> None:
         res = self.client.delete(f'{self.prefix}/keys/{self.key_uuid}')
         assert res.status_code == 200
         self.key_dao.delete_by_uuid.assert_called_once_with(self.key_uuid)
 
     @freeze_time(EXPIRING_AT)
-    def test_operations_on_an_expiring_key_still_succeed(self):
+    def test_operations_on_an_expiring_key_still_succeed(self) -> None:
         for name, call in self._operations().items():
             with self.subTest(name):
                 assert call().status_code in (200, 201)
 
     @freeze_time(EXPIRING_AT)
-    def test_group_unassign_on_an_expiring_key_still_succeeds(self):
+    def test_group_unassign_on_an_expiring_key_still_succeeds(self) -> None:
         self.key.group_uuid = self.group.uuid
         self.key.group = self.group
         asyncio.run(
@@ -688,6 +693,7 @@ class TestKeyRouteRotation(unittest.TestCase):
     real KeyService over mocked DAOs (AG-1042, AG-1043).
     """
 
+    @override
     def setUp(self):
         self.prefix = '/public/api/v1'
         self.key_uuid = uuid.uuid4()
@@ -721,8 +727,8 @@ class TestKeyRouteRotation(unittest.TestCase):
             key_limit_dao=MagicMock(spec_set=KeyLimitDAO),
         )
         app = FastAPI(title='AI Gateway', debug=True)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
-        app.add_exception_handler(RequestValidationError, validation_exception_handler)
+        add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
+        add_exception_handler(app, RequestValidationError, validation_exception_handler)
         app.include_router(
             KeyRoute.get_key_router(self.key_service), prefix=self.prefix
         )
@@ -734,26 +740,38 @@ class TestKeyRouteRotation(unittest.TestCase):
         frozen.start()
         self.addCleanup(frozen.stop)
 
+    @property
+    def stored_key(self) -> Key:
+        """The credential the mocked DAO holds: present until a test deletes it."""
+        assert self.key is not None
+        return self.key
+
     # The mocked DAO behaves like the conditional update it stands for
     def _apply_rotation(
         self, *, expected_hashed_key, hashed_key, obscured_key, grace_ends_at, now, **_
     ):
-        if self.key.hashed_key != expected_hashed_key or (
-            self.key.grace_ends_at is not None and self.key.grace_ends_at > now
+        if self.stored_key.hashed_key != expected_hashed_key or (
+            self.stored_key.grace_ends_at is not None
+            and self.stored_key.grace_ends_at > now
         ):
             return None
-        self.key.previous_hashed_key = expected_hashed_key if grace_ends_at else None
-        self.key.hashed_key = hashed_key
-        self.key.obscured_key = obscured_key
-        self.key.grace_ends_at = grace_ends_at
-        self.key.last_rotated_at = now
+        self.stored_key.previous_hashed_key = (
+            expected_hashed_key if grace_ends_at else None
+        )
+        self.stored_key.hashed_key = hashed_key
+        self.stored_key.obscured_key = obscured_key
+        self.stored_key.grace_ends_at = grace_ends_at
+        self.stored_key.last_rotated_at = now
         return self.key
 
     def _apply_end_grace(self, _key_uuid, now):
-        if self.key.grace_ends_at is None or self.key.grace_ends_at <= now:
+        if (
+            self.stored_key.grace_ends_at is None
+            or self.stored_key.grace_ends_at <= now
+        ):
             return None
-        self.key.previous_hashed_key = None
-        self.key.grace_ends_at = None
+        self.stored_key.previous_hashed_key = None
+        self.stored_key.grace_ends_at = None
         return self.key
 
     def _apply_delete(self, _key_uuid):
@@ -761,14 +779,14 @@ class TestKeyRouteRotation(unittest.TestCase):
         return 1
 
     def _lookup(self, hashed_api_key):
-        if self.key and hashed_api_key in (
+        if self.key is not None and hashed_api_key in (
             self.key.hashed_key,
             self.key.previous_hashed_key,
         ):
             return self.key
         return None
 
-    def _authenticate(self, token: str) -> str:
+    def _authenticate(self, token: str) -> str | int | None:
         """Return the credential uuid the token resolves to, or the 401 code."""
         try:
             return asyncio.run(self.validator.validate_token(token)).api_key_uuid
@@ -779,17 +797,17 @@ class TestKeyRouteRotation(unittest.TestCase):
         return self.client.post(self.url, json={'gracePeriod': grace_period})
 
     def _in_grace(self, hours=24):
-        self.key.previous_hashed_key = 'previous'
-        self.key.grace_ends_at = NOW + datetime.timedelta(hours=hours)
-        self.key.last_rotated_at = NOW - datetime.timedelta(hours=1)
+        self.stored_key.previous_hashed_key = 'previous'
+        self.stored_key.grace_ends_at = NOW + datetime.timedelta(hours=hours)
+        self.stored_key.last_rotated_at = NOW - datetime.timedelta(hours=1)
 
     def test_rotate_returns_the_new_value_once_and_keeps_the_credential(self):
-        old_hash = self.key.hashed_key
+        old_hash = self.stored_key.hashed_key
         res = self._rotate('24 hours')
         assert res.status_code == 200
         body = res.json()
         assert body['apiKey'] == db_mock.ROTATED_PLAIN_KEY
-        assert self.key.hashed_key == db_mock.ROTATED_HASHED_KEY != old_hash
+        assert self.stored_key.hashed_key == db_mock.ROTATED_HASHED_KEY != old_hash
         assert body['uuid'] == str(self.key_uuid)
         assert body['name'] == 'rb-key'
         assert body['group']['uuid'] == str(self.group.uuid)
@@ -798,7 +816,7 @@ class TestKeyRouteRotation(unittest.TestCase):
         assert body['graceEndsAt'] == '2026-11-04T12:00:00Z'
         assert body['rotationState'] == 'grace_ending'
         assert body['lastRotatedAt'] == '2026-11-03T12:00:00Z'
-        assert self.key.previous_hashed_key == old_hash
+        assert self.stored_key.previous_hashed_key == old_hash
         # Never shown again: a read returns the obscured value
         read = self.client.get(f'{self.prefix}/keys/{self.key_uuid}').json()
         assert read['apiKey'] != body['apiKey']
@@ -810,19 +828,19 @@ class TestKeyRouteRotation(unittest.TestCase):
             ('1 week', '2026-11-10T12:00:00Z', 'in_grace'),
         ]:
             with self.subTest(grace_period):
-                self.key.grace_ends_at = None
+                self.stored_key.grace_ends_at = None
                 body = self._rotate(grace_period).json()
                 assert body['graceEndsAt'] == grace_ends_at
                 assert body['rotationState'] == state
 
     def test_rotate_with_no_grace_period(self):
-        old_hash = self.key.hashed_key
+        old_hash = self.stored_key.hashed_key
         body = self._rotate(None).json()
         assert body['graceEndsAt'] is None
         assert body['rotationState'] == 'rotated'
         assert body['lastRotatedAt'] == '2026-11-03T12:00:00Z'
-        assert self.key.previous_hashed_key is None
-        assert self.key.hashed_key != old_hash
+        assert self.stored_key.previous_hashed_key is None
+        assert self.stored_key.hashed_key != old_hash
 
     def test_grace_period_bounds_are_validation_errors(self):
         for name, body in {
@@ -873,7 +891,7 @@ class TestKeyRouteRotation(unittest.TestCase):
         self.key_dao.rotate.assert_not_called()
 
     def test_rotate_is_refused_on_an_externally_managed_credential(self):
-        self.key.owner = 'keycloak'
+        self.stored_key.owner = 'keycloak'
         res = self._rotate(None)
         assert res.status_code == 409
         assert res.json()['error']['code'] == 'key_externally_managed'

@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi_pagination import Page, Params
@@ -19,6 +19,7 @@ from radicalbit_ai_gateway.db.models.event import (
     InvocationChartDataPoint,
     LastEventFallback,
     LastEventGuardrail,
+    LastEvents,
     ModelInvocationCounter,
     MostExpensiveChartData,
     MostExpensiveRoute,
@@ -78,7 +79,7 @@ class EventDAO:
     def _count_metric(self, event_type: str):
         return F.sumIf(literal(1), self.T.c['EVENT_TYPE'] == event_type)
 
-    def _get_metric_columns(self) -> list:
+    def _get_metric_columns(self) -> list[ColumnElement[Any]]:
         return [
             self._count_metric('GUARDRAIL').label('guardrail_value'),
             self._count_metric('FALLBACK').label('fallback_value'),
@@ -96,7 +97,7 @@ class EventDAO:
             self._count_metric('CACHE_HIT').label('cache_triggered'),
         ]
 
-    def _get_detailed_cost_breakdown_columns(self) -> list:
+    def _get_detailed_cost_breakdown_columns(self) -> list[ColumnElement[Any]]:
         T = self.T
 
         chat_input_direct = F.sumIf(
@@ -247,7 +248,7 @@ class EventDAO:
             decision_input.label('decision_input'),
         ]
 
-    def _get_attrs_per_metric(self, event_type: str) -> list:
+    def _get_attrs_per_metric(self, event_type: str) -> list[ColumnElement[Any]]:
         if event_type == 'FALLBACK':
             return [
                 self.T.c['TARGET'].label('target'),
@@ -263,7 +264,9 @@ class EventDAO:
             ]
         return []
 
-    def _add_project_filter(self, conditions: list, project_uuid: UUID | None) -> None:
+    def _add_project_filter(
+        self, conditions: list[ColumnElement[Any]], project_uuid: UUID | None
+    ) -> None:
         if project_uuid is not None:
             conditions.append(self.T.c['PROJECT_UUID'] == str(project_uuid))
 
@@ -274,7 +277,7 @@ class EventDAO:
         _from: datetime | None,
         _to: datetime | None,
         tags: list[str] | None,
-    ) -> list:
+    ) -> list[ColumnElement[Any]]:
         """Build the predicate both MCP usage reads share.
 
         The chart and the ranked table start from the same rows, so a filter
@@ -291,7 +294,9 @@ class EventDAO:
             conditions.append(self.T.c['TIMESTAMP'] <= _to)
         return conditions
 
-    def _add_tags_filter(self, conditions: list, tags: list[str] | None) -> None:
+    def _add_tags_filter(
+        self, conditions: list[ColumnElement[Any]], tags: list[str] | None
+    ) -> None:
         add_tags_filter(conditions, self.T.c['TAGS'], tags=tags)
 
     def get_all_counters(
@@ -323,7 +328,7 @@ class EventDAO:
         _from: datetime | None,
         _to: datetime | None,
         tags: list[str] | None,
-    ) -> list:
+    ) -> list[ColumnElement[Any]]:
         """Build the predicate the per-route metric reads share."""
         T = self.T
         conditions = [T.c['ROUTE_NAME'].in_(route_names)]
@@ -387,7 +392,7 @@ class EventDAO:
         'behavior',
     )
 
-    def _latest_event(self) -> ColumnElement:
+    def _latest_event(self) -> ColumnElement[Any]:
         """Aggregate a group of events down to its latest one.
 
         argMax keeps one row per group in a single pass; ordering the events
@@ -411,11 +416,15 @@ class EventDAO:
             T.c['TIMESTAMP'],
         )
 
-    def _last_event(
-        self, event_type: str, values: tuple
-    ) -> LastEventFallback | LastEventGuardrail:
-        model = LastEventFallback if event_type == 'FALLBACK' else LastEventGuardrail
-        return model.model_validate(dict(zip(self._LAST_EVENT_FIELDS, values)))
+    def _add_last_event(
+        self, last_events: LastEvents, event_type: str, values: tuple[Any, ...]
+    ):
+        """Put one latest event in `last_events`, as its type's model."""
+        fields = dict(zip(self._LAST_EVENT_FIELDS, values))
+        if event_type == EventType.GUARDRAIL:
+            last_events['GUARDRAIL'] = LastEventGuardrail.model_validate(fields)
+        elif event_type == EventType.FALLBACK:
+            last_events['FALLBACK'] = LastEventFallback.model_validate(fields)
 
     def get_last_events(
         self,
@@ -424,13 +433,15 @@ class EventDAO:
         _from: datetime | None,
         _to: datetime | None,
         tags: list[str] | None = None,
-    ) -> dict[str, LastEventFallback | LastEventGuardrail]:
+    ) -> LastEvents:
         """Return the project's latest event of each type, in one query.
 
-        Keyed by event type; a type with no event is absent.
+        Keyed by event type; a type with no event is absent. Only guardrail
+        and fallback events have a last-event model, other types are skipped.
         """
+        last_events: LastEvents = {}
         if not event_types:
-            return {}
+            return last_events
         T = self.T
         conditions = [T.c['EVENT_TYPE'].in_(event_types)]
         self._add_project_filter(conditions, project_uuid)
@@ -447,10 +458,9 @@ class EventDAO:
         )
         with self.db.begin_session() as session:
             rows = session.execute(stmt).all()
-        return {
-            event_type: self._last_event(event_type, values)
-            for event_type, values in rows
-        }
+        for event_type, values in rows:
+            self._add_last_event(last_events, event_type, values)
+        return last_events
 
     def get_last_event(
         self,
@@ -463,7 +473,7 @@ class EventDAO:
         last_events = self.get_last_events(
             project_uuid, [event_type], _from, _to, tags=tags
         )
-        return last_events.get(event_type)
+        return _last_event_of_type(last_events, event_type)
 
     def get_last_events_of_routes(
         self,
@@ -473,10 +483,12 @@ class EventDAO:
         _from: datetime | None,
         _to: datetime | None,
         tags: list[str] | None = None,
-    ) -> dict[tuple[str, str], LastEventFallback | LastEventGuardrail]:
+    ) -> dict[str, LastEvents]:
         """Return the latest event of each type on each route, in one query.
 
-        Keyed by `(route_name, event_type)`; a pair with no event is absent.
+        Keyed by route name, then by event type; a route with no event is
+        absent, and so is a type with no event on a route. Only guardrail and
+        fallback events have a last-event model, other types are skipped.
         """
         if not route_names or not event_types:
             return {}
@@ -490,10 +502,12 @@ class EventDAO:
         )
         with self.db.begin_session() as session:
             rows = session.execute(stmt).all()
-        return {
-            (route_name, event_type): self._last_event(event_type, values)
-            for route_name, event_type, values in rows
-        }
+        last_events_of_routes: dict[str, LastEvents] = {}
+        for route_name, event_type, values in rows:
+            self._add_last_event(
+                last_events_of_routes.setdefault(route_name, {}), event_type, values
+            )
+        return last_events_of_routes
 
     def get_last_event_route(
         self,
@@ -507,7 +521,7 @@ class EventDAO:
         last_events = self.get_last_events_of_routes(
             project_uuid, [event_type], [route_name], _from, _to, tags=tags
         )
-        return last_events.get((route_name, event_type))
+        return _last_event_of_type(last_events.get(route_name, {}), event_type)
 
     def get_routing_model_counters(
         self,
@@ -519,7 +533,7 @@ class EventDAO:
     ) -> list[ModelInvocationCounter]:
         T = self.T
         conditions = [T.c['EVENT_TYPE'] == 'ROUTING']
-        if route_name:
+        if route_name is not None and route_name != '':
             conditions.append(T.c['ROUTE_NAME'] == route_name)
         self._add_project_filter(conditions, project_uuid)
         self._add_tags_filter(conditions, tags=tags)
@@ -751,8 +765,6 @@ class EventDAO:
         )
         with self.db.begin_session() as session:
             res = session.execute(final_stmt).all()
-            if res is None:
-                return None
             return [
                 EventDetails.model_validate(dict(zip(field_names, row_tuple)))
                 for row_tuple in res
@@ -976,11 +988,13 @@ class EventDAO:
             ]
 
     @staticmethod
-    def _distinct(condition: ColumnElement, *values: ColumnElement) -> ColumnElement:
+    def _distinct(
+        condition: ColumnElement[Any], *values: ColumnElement[Any]
+    ) -> ColumnElement[Any]:
         """Collect the distinct `values` tuples of the events matching `condition`."""
         return F.groupUniqArrayIf(F.tuple(*values), condition)
 
-    def _attribute(self, key: str) -> ColumnElement:
+    def _attribute(self, key: str) -> ColumnElement[Any]:
         """Read one ATTRIBUTES entry, '' when the event has no such key."""
         return F.arrayElement(self.ATTRIBUTES, key)
 
@@ -1601,7 +1615,7 @@ class EventDAO:
         _to: datetime | None,
         params: Params,
         tags: list[str] | None = None,
-    ) -> Page[Row]:
+    ) -> Page[Row[Any]]:
         """Rank the keys that made MCP invocations in a project.
 
         Membership comes from the event type alone: the emission side already
@@ -1649,7 +1663,7 @@ class EventDAO:
             # unique=False: every row is one key, so there is nothing to dedup.
             return paginate(session, stmt, params, unique=False)
 
-    def _mcp_entity_column(self, entity_column: McpSeriesColumn) -> ColumnElement:
+    def _mcp_entity_column(self, entity_column: McpSeriesColumn) -> ColumnElement[Any]:
         """Read an entity column as text, so it groups and compares as a string.
 
         The alias and the target are already text. The two uuid columns are
@@ -1663,8 +1677,8 @@ class EventDAO:
 
     def _bucket_mcp_invocations(
         self,
-        series_expr: ColumnElement,
-        conditions: list,
+        series_expr: ColumnElement[Any],
+        conditions: list[ColumnElement[Any]],
         granularity: Literal['hours', 'days', 'weeks', 'months'],
         timezone_offset_seconds: int,
     ) -> list[InvocationChartDataPoint]:
@@ -1787,7 +1801,7 @@ class EventDAO:
         request_uuid: UUID,
         date_from: date,
         date_to: date,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Every event of one request, oldest first.
 
         Bounded to `[date_from, date_to]` on DATE so ClickHouse prunes
@@ -1839,3 +1853,13 @@ class EventDAO:
                 k: v for k, v in event['attributes'].items() if k != 'parameters'
             }
         return events
+
+
+def _last_event_of_type(
+    last_events: LastEvents, event_type: str
+) -> LastEventFallback | LastEventGuardrail | None:
+    if event_type == EventType.GUARDRAIL:
+        return last_events.get('GUARDRAIL')
+    if event_type == EventType.FALLBACK:
+        return last_events.get('FALLBACK')
+    return None

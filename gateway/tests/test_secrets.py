@@ -1,4 +1,5 @@
 import pytest
+from typing_extensions import override
 
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -170,8 +171,14 @@ def test_get_secret_provider_returns_file_provider(secrets_path):
 
 def test_secret_provider_must_implement_list_secret_keys():
     class IncompleteProvider(SecretProvider):
+        @override
         def get_secret(self, key: str) -> str:
             return 'value'
 
+    # Built as any provider class is: the instantiation the checker refuses
+    # for this class is the one this test proves Python refuses too.
+    def build(provider_class: type[SecretProvider]) -> SecretProvider:
+        return provider_class()
+
     with pytest.raises(TypeError, match='list_secret_keys'):
-        IncompleteProvider()
+        build(IncompleteProvider)

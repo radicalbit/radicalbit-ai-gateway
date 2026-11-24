@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from contextvars import ContextVar
 from importlib.metadata import PackageNotFoundError, version as _package_version
 import logging
+from typing import Any
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from fastapi import Request
@@ -79,7 +80,7 @@ def _warn_unadvertised(
     kind: str, alias: str, allowlist: list[str] | None, advertised: set[str]
 ) -> None:
     """Warn once about allowlist entries this upstream does not advertise."""
-    if not allowlist:
+    if allowlist is None or len(allowlist) == 0:
         return
     missing = sorted(set(allowlist) - advertised)
     if not missing:
@@ -163,7 +164,7 @@ def strip_uri_credentials(uri: str) -> str:
     try:
         split = urlsplit(uri)
         authority = split.hostname or ''
-        if authority and split.port:
+        if authority and split.port is not None and split.port != 0:
             authority = f'{authority}:{split.port}'
         if not split.query and not split.fragment and authority == split.netloc:
             return uri
@@ -172,7 +173,9 @@ def strip_uri_credentials(uri: str) -> str:
         return uri
 
 
-def target_attributes(method: str, params: dict, servers: list[AnyMcpServer]) -> dict:
+def target_attributes(
+    method: str, params: dict[str, Any], servers: list[AnyMcpServer]
+) -> dict[str, Any]:
     """``alias``/``target`` for the methods addressing one object.
 
     Resolved here rather than inside each handler because a ``@task`` detaches
@@ -244,7 +247,9 @@ class McpService:
         still names the route and project it targeted in both the span and
         the REQUEST event.
         """
-        entry: ProjectEntry | None = request.app.state.project_configs.get(project_name)
+        entry: object = request.app.state.project_configs.get(project_name)
+        if not isinstance(entry, ProjectEntry):
+            entry = None
         project_uuid = str(entry.uuid) if entry else ''
         set_trace_attributes(
             request_uuid=request_uuid,
@@ -272,7 +277,9 @@ class McpService:
         """Return what admission established, with the route's upstream
         servers, for :meth:`dispatch`.
         """
-        entry: ProjectEntry | None = request.app.state.project_configs.get(project_name)
+        entry: object = request.app.state.project_configs.get(project_name)
+        if not isinstance(entry, ProjectEntry):
+            entry = None
         return McpAuthorizedRequest(
             request_uuid=request_uuid,
             project_name=project_name,
@@ -385,7 +392,7 @@ class McpService:
         list_cache: McpListCache | None,
         method: str,
         key: str,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Return the cached result for a list method, or ``None`` to fan out."""
         if list_cache is None:
             return None
@@ -401,7 +408,7 @@ class McpService:
     async def _store_list(
         list_cache: McpListCache | None,
         method: str,
-        result: dict,
+        result: dict[str, Any],
         failed: list[str],
     ) -> None:
         """Cache a list method's result, unless the fan-out was degraded.
@@ -430,7 +437,7 @@ class McpService:
 
     @staticmethod
     def _record_invocation(
-        authorized: McpAuthorizedRequest, method: str, target: dict
+        authorized: McpAuthorizedRequest, method: str, target: dict[str, Any]
     ) -> None:
         """Report an addressed MCP invocation to the events pipeline.
 
@@ -464,7 +471,7 @@ class McpService:
 
     async def _dispatch(
         self,
-        body: dict,
+        body: object,
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
@@ -579,7 +586,7 @@ class McpService:
         )
 
     @task(name='mcp_initialize')
-    def _initialize(self, params: dict) -> dict:
+    def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         return {
             'protocolVersion': negotiate_protocol_version(
                 params.get('protocolVersion')
@@ -594,7 +601,7 @@ class McpService:
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Fan out to the route's upstreams and merge their tools.
 
         Each tool name is prefixed ``'{alias}__{tool}'``; all other fields
@@ -616,7 +623,7 @@ class McpService:
             ),
             return_exceptions=True,
         )
-        tools: list[dict] = []
+        tools: list[dict[str, Any]] = []
         failed: list[str] = []
         for server, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
@@ -651,10 +658,10 @@ class McpService:
     @task(name='mcp_tools_call')
     async def _tools_call(
         self,
-        params: dict,
+        params: dict[str, Any],
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Resolve the ``'{alias}__{tool}'`` prefix and forward the call.
 
         The upstream ``CallToolResult`` passes through unchanged, including
@@ -697,7 +704,7 @@ class McpService:
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Fan out to the route's upstreams and merge their prompts.
 
         Same shape as :meth:`_tools_list`, ``allowed_prompts`` included: each
@@ -722,7 +729,7 @@ class McpService:
             ),
             return_exceptions=True,
         )
-        prompts: list[dict] = []
+        prompts: list[dict[str, Any]] = []
         failed: list[str] = []
         for server, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
@@ -757,10 +764,10 @@ class McpService:
     @task(name='mcp_prompts_get')
     async def _prompts_get(
         self,
-        params: dict,
+        params: dict[str, Any],
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Resolve the ``'{alias}__{name}'`` prefix and forward the call.
 
         Same shape as :meth:`_tools_call`.
@@ -796,7 +803,7 @@ class McpService:
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
         list_cache: McpListCache | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Fan out to the route's upstreams and merge their resources.
 
         Each resource ``uri`` is wrapped via :func:`encode_resource_uri` so
@@ -825,7 +832,7 @@ class McpService:
             ),
             return_exceptions=True,
         )
-        resources: list[dict] = []
+        resources: list[dict[str, Any]] = []
         failed: list[str] = []
         for server, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
@@ -866,10 +873,10 @@ class McpService:
     @task(name='mcp_resources_read')
     async def _resources_read(
         self,
-        params: dict,
+        params: dict[str, Any],
         servers: list[AnyMcpServer],
         client_headers: Mapping[str, str] | None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Unwrap the aliased ``uri`` and forward the read.
 
         The returned ``contents[].uri`` is re-wrapped so the raw upstream URI

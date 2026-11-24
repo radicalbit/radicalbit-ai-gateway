@@ -1,9 +1,13 @@
+from typing import Any
+
+from pydantic import TypeAdapter
 import pytest
 
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.gateway_config_out import GuardrailOut
 from radicalbit_ai_gateway.models.guardrails import (
     DecisionJudgeParameter,
+    Guardrail,
     GuardrailClass,
     GuardrailType,
 )
@@ -22,7 +26,7 @@ JEV_BACKUP = {
 }
 
 
-def _decision_judge(**parameters) -> dict:
+def _decision_judge(**parameters) -> dict[str, Any]:
     return {
         'name': 'off_topic',
         'type': 'decision_judge',
@@ -35,7 +39,7 @@ def _decision_judge(**parameters) -> dict:
     }
 
 
-def _config(guardrail: dict) -> GatewayConfig:
+def _config(guardrail: dict[str, Any]) -> GatewayConfig:
     return GatewayConfig.model_validate(
         {
             'chat_models': [{'model_id': 'gpt', 'model': 'openai/gpt-4o-mini'}],
@@ -52,8 +56,15 @@ def _config(guardrail: dict) -> GatewayConfig:
     )
 
 
+def _guardrail(guardrail: dict[str, Any]) -> Guardrail:
+    """Return the one guardrail of the config built around ``guardrail``."""
+    guardrails = _config(guardrail).guardrails
+    assert guardrails is not None
+    return guardrails[0]
+
+
 def test_decision_judge_loads_as_a_check_guardrail_with_defaults():
-    guardrail = _config(_decision_judge()).guardrails[0]
+    guardrail = _guardrail(_decision_judge())
 
     assert guardrail.type == GuardrailType.DECISION_JUDGE
     assert guardrail.guardrail_class() == GuardrailClass.CHECK
@@ -66,8 +77,9 @@ def test_decision_judge_loads_as_a_check_guardrail_with_defaults():
 
 @pytest.mark.parametrize('threshold', [0, 0.2, 1])
 def test_threshold_inside_zero_one_is_accepted(threshold):
-    guardrail = _config(_decision_judge(threshold=threshold)).guardrails[0]
+    guardrail = _guardrail(_decision_judge(threshold=threshold))
 
+    assert isinstance(guardrail.parameters, DecisionJudgeParameter)
     assert guardrail.parameters.threshold == threshold
 
 
@@ -78,10 +90,12 @@ def test_threshold_outside_zero_one_is_rejected(threshold):
 
 
 def test_criteria_keep_their_true_and_false_descriptions():
-    guardrail = _config(
+    guardrail = _guardrail(
         _decision_judge(criteria={'true': 'Off topic', 'false': 'About billing'})
-    ).guardrails[0]
+    )
 
+    assert isinstance(guardrail.parameters, DecisionJudgeParameter)
+    assert guardrail.parameters.criteria is not None
     assert guardrail.parameters.criteria.model_dump() == {
         'true': 'Off topic',
         'false': 'About billing',
@@ -107,11 +121,11 @@ def test_llm_judge_fields_are_rejected(llm_judge_field):
 
 
 def test_decision_judge_is_shown_in_the_config_out():
-    guardrail = _config(
+    guardrail = _guardrail(
         _decision_judge(threshold=0.7, criteria={'true': 'yes', 'false': 'no'})
-    ).guardrails[0]
+    )
 
-    out = GuardrailOut.model_validate(guardrail.model_dump())
+    out = TypeAdapter(GuardrailOut).validate_python(guardrail.model_dump())
 
     assert out.parameters.model_dump(by_alias=True) == {
         'type': 'DECISION_JUDGE',
@@ -163,9 +177,10 @@ def test_non_decision_model_is_rejected(field, label, model_id):
 
 def test_decision_models_not_on_the_route_are_accepted():
     # The route lists only the chat model 'gpt'.
-    guardrail = _config(
+    guardrail = _guardrail(
         _decision_judge(model_id='jev', fallback_model_id='jev-backup')
-    ).guardrails[0]
+    )
 
+    assert isinstance(guardrail.parameters, DecisionJudgeParameter)
     assert guardrail.parameters.model_id == 'jev'
     assert guardrail.parameters.fallback_model_id == 'jev-backup'

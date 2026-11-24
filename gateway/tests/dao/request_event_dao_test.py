@@ -1,6 +1,7 @@
 import datetime
 
 import pytest
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
@@ -13,6 +14,7 @@ T0 = datetime.datetime(2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc)
 H = datetime.timedelta(hours=1)
 M = datetime.timedelta(minutes=1)
 D = datetime.timedelta(days=1)
+PROJECT = db_mock.TEST_PROJECT_UUID
 S = RequestStatus.SUCCESS
 HE = RequestStatus.HANDLED_ERROR
 UE = RequestStatus.UNHANDLED_ERROR
@@ -24,6 +26,7 @@ def _event(route, at, status=S, **kwargs):
         route_name=route,
         request_status=status,
         http_status_code=200 if status == S else 500,
+        project_uuid=PROJECT,
         **kwargs,
     )
 
@@ -33,6 +36,7 @@ def _midnight(at):
 
 
 class RequestEventDAOTest(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -60,18 +64,20 @@ class RequestEventDAOTest(DatabaseIntegrationClickhouse):
         )
 
         def chart(_from, _to, granularity, tz=0, route='rb-gateway'):
-            res = dao.get_request_chart_data(None, route, _from, _to, granularity, tz)
+            res = dao.get_request_chart_data(
+                PROJECT, route, _from, _to, granularity, tz
+            )
             return [(p.bucket, p.total_requests) for p in res]
 
         def grouped(_from, _to, granularity):
             res = dao.get_request_chart_data_grouped(
-                None, 'rb-gateway', _from, _to, granularity, 0
+                PROJECT, 'rb-gateway', _from, _to, granularity, 0
             )
             return [(p.bucket, p.success_count, p.error_count) for p in res]
 
         def errors(route, _from, _to, granularity='hours'):
             res = dao.get_request_error_chart_data(
-                None, route, granularity, _from, _to, 0
+                PROJECT, route, granularity, _from, _to, 0
             )
             return [(p.bucket, p.total_requests) for p in res]
 
@@ -79,7 +85,7 @@ class RequestEventDAOTest(DatabaseIntegrationClickhouse):
         assert chart(*window, 'hours') == [(T0, 2), (T0 + H, 2)]
         # A whole-hour offset keeps hour buckets on the same instants.
         hourly_gmt1 = dao.get_request_chart_data(
-            None, 'rb-gateway', *window, 'hours', 3600
+            PROJECT, 'rb-gateway', *window, 'hours', 3600
         )
         assert [(p.bucket, p.total_requests, p.timestamp) for p in hourly_gmt1] == [
             (T0, 2, int(T0.timestamp())),
@@ -112,8 +118,8 @@ class RequestEventDAOTest(DatabaseIntegrationClickhouse):
         dao = self.request_event_dao
         window = (T0, T0 + H)
         routes = ['route-a', 'route-b']
-        assert dao.get_request_stats_global(None, *window) == RequestStats()
-        assert dao.get_most_requested_route(None, routes, *window) is None
+        assert dao.get_request_stats_global(PROJECT, *window) == RequestStats()
+        assert dao.get_most_requested_route(PROJECT, routes, *window) is None
 
         self.insert(
             [
@@ -123,6 +129,7 @@ class RequestEventDAOTest(DatabaseIntegrationClickhouse):
                 # MCP returns JSON-RPC failures as an `error` body over HTTP 200:
                 # REQUEST_STATUS, not HTTP_STATUS_CODE, classifies it as an error.
                 db_mock.get_sample_request_event(
+                    project_uuid=PROJECT,
                     timestamp=T0 + 30 * M,
                     route_name='route-a',
                     request_type=RequestType.MCP,
@@ -138,24 +145,24 @@ class RequestEventDAOTest(DatabaseIntegrationClickhouse):
         )
 
         stats = dao.get_request_stats_global
-        assert stats(None, *window) == RequestStats(
+        assert stats(PROJECT, *window) == RequestStats(
             successful_requests=2,
             error_requests=2,
             total_requests=4,
             last_request_timestamp=T0 + 30 * M,
         )
-        assert stats(None, None, None) == RequestStats(
+        assert stats(PROJECT, None, None) == RequestStats(
             successful_requests=4,
             error_requests=2,
             total_requests=6,
             last_request_timestamp=T0 + 10 * D,
         )
         assert {
-            'window': dao.get_most_requested_route(None, routes, *window),
+            'window': dao.get_most_requested_route(PROJECT, routes, *window),
             'later': dao.get_most_requested_route(
-                None, routes, T0 + 2 * H, T0 + 11 * D
+                PROJECT, routes, T0 + 2 * H, T0 + 11 * D
             ),
-            'no_routes': dao.get_most_requested_route(None, [], None, None),
+            'no_routes': dao.get_most_requested_route(PROJECT, [], None, None),
         } == {'window': 'route-a', 'later': 'route-b', 'no_routes': None}
 
     def test_get_most_route_with_error(self):
@@ -192,7 +199,7 @@ class RequestEventDAOTest(DatabaseIntegrationClickhouse):
 
         def worst(day):
             res = self.request_event_dao.get_most_route_with_error(
-                None, ['route-a', 'route-b'], day, day + H
+                PROJECT, ['route-a', 'route-b'], day, day + H
             )
             return res and (res.route_name, res.error_perc)
 
@@ -205,6 +212,6 @@ class RequestEventDAOTest(DatabaseIntegrationClickhouse):
             ('route-b', 25.0),
         ]
         assert (
-            self.request_event_dao.get_most_route_with_error(None, [], None, None)
+            self.request_event_dao.get_most_route_with_error(PROJECT, [], None, None)
             is None
         )

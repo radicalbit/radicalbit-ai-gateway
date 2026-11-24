@@ -4,11 +4,12 @@ import logging.config
 from celery import Celery
 import fakeredis
 from opentelemetry import context as otel_context
-from opentelemetry.sdk.trace import SpanProcessor
+from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 import pytest
 import tiktoken
 import tldextract
 from tldextract import tldextract as tldextract_module
+from typing_extensions import override
 
 import tests.common.pook_httpx2  # noqa: F401
 
@@ -124,8 +125,9 @@ class SpanCollector(SpanProcessor):
 
     def __init__(self):
         self.on = False
-        self.spans: list = []
+        self.spans: list[ReadableSpan] = []
 
+    @override
     def on_end(self, span) -> None:
         if self.on:
             self.spans.append(span)

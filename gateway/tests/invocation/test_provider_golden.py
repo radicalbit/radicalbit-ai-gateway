@@ -12,6 +12,7 @@ structured output, are pinned the same way.
 ``EXPECTED`` lives in ``provider_golden_expected.py``.
 """
 
+from collections.abc import Mapping
 import contextlib
 from decimal import Decimal
 import json
@@ -21,7 +22,7 @@ from unittest.mock import patch
 
 import anthropic
 import openai
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel, Field
@@ -59,7 +60,7 @@ _UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 _HEX_ID = re.compile(r'\b[0-9a-f]{32}\b')
 
 
-def _chat(model_id: str, name: str, **extra) -> dict:
+def _chat(model_id: str, name: str, **extra) -> dict[str, Any]:
     # Distinct prices, so every cost tells which count it was made of.
     return {
         'model_id': model_id,
@@ -74,7 +75,7 @@ def _chat(model_id: str, name: str, **extra) -> dict:
     }
 
 
-def _options() -> list[dict]:
+def _options() -> list[dict[str, Any]]:
     return [
         {'model_id': 'gpt', 'description': 'Questions about geography'},
         {'model_id': 'deepseek', 'description': 'Questions about code'},
@@ -139,7 +140,7 @@ CONFIG = {
 }
 
 
-def _no_retries() -> list:
+def _no_retries() -> list[Any]:
     """Return patches that stop the SDKs' own retries (they ask for more replies)."""
     return [
         patch.object(
@@ -165,8 +166,14 @@ def gateway(spans):
     with open_gateway(
         build_routes(CONFIG), metrics=METRICS, gateway_class=_Gateway
     ) as gateway:
+        assert isinstance(gateway, _Gateway)
         gateway.exporter = spans
         yield gateway
+
+
+def _attributes(span: ReadableSpan) -> Mapping[str, Any]:
+    assert span.attributes is not None
+    return span.attributes
 
 
 def _scrub(value: Any) -> Any:
@@ -181,7 +188,9 @@ def _scrub(value: Any) -> Any:
 
 
 class _Gateway(Gateway):
-    def events(self) -> list[tuple]:
+    exporter: InMemorySpanExporter
+
+    def events(self) -> list[tuple[Any, ...]]:
         """Return the model events: type, model, target, fallback, value, cost,
         cached, cache type, judge, routing.
         """
@@ -202,7 +211,7 @@ class _Gateway(Gateway):
             if e['EVENT_TYPE'] in MODEL_EVENTS
         ]
 
-    def spans(self) -> list[tuple[str, dict]]:
+    def spans(self) -> list[tuple[str, dict[str, Any]]]:
         """Return each model span's name and attributes, timings left out."""
         return [
             (
@@ -210,7 +219,7 @@ class _Gateway(Gateway):
                 _scrub(
                     {
                         k: v
-                        for k, v in sorted(span.attributes.items())
+                        for k, v in sorted(_attributes(span).items())
                         if 'time_to_first' not in k and 'duration' not in k
                     }
                 ),
@@ -243,7 +252,7 @@ def _client_body(response) -> Any:
     return _scrub(body)
 
 
-def _snapshot(gateway: _Gateway, response) -> dict:
+def _snapshot(gateway: _Gateway, response) -> dict[str, Any]:
     return {
         'status': response.status_code,
         'body': _client_body(response),
@@ -259,7 +268,7 @@ def _snapshot(gateway: _Gateway, response) -> dict:
 # ── Canned provider replies ──────────────────────────────────────────────────
 
 
-def _openai_usage(prompt: int, completion: int, cached: int) -> dict:
+def _openai_usage(prompt: int, completion: int, cached: int) -> dict[str, Any]:
     return {
         'prompt_tokens': prompt,
         'completion_tokens': completion,
@@ -269,7 +278,7 @@ def _openai_usage(prompt: int, completion: int, cached: int) -> dict:
     }
 
 
-def _with_usage(reply: CannedResponse, usage: dict) -> CannedResponse:
+def _with_usage(reply: CannedResponse, usage: dict[str, Any]) -> CannedResponse:
     """Return ``reply`` with its usage (the last event's, for a stream) replaced."""
     if reply.sse_events is None:
         return CannedResponse(json_body={**reply.json_body, 'usage': usage})
@@ -301,6 +310,7 @@ def _claude(stream: bool = False, **cache) -> CannedResponse:
     if not stream:
         return upstream.anthropic_message('Paris is in France', **cache)
     reply = upstream.anthropic_stream(['Paris', ' is in France'], **cache)
+    assert reply.sse_events is not None
     # As the API does, message_delta reports the whole usage, cache included.
     usage = upstream._anthropic_usage(
         21,
@@ -369,7 +379,7 @@ NOT_TRIGGERED = {'triggered': False, 'reasoning': None, 'violation_type': None}
 SCORES = {'option_1': 0.9, 'option_2': 0.1}
 
 
-def _structured(provider: str, name: str, content: dict) -> CannedResponse:
+def _structured(provider: str, name: str, content: dict[str, Any]) -> CannedResponse:
     """Return a structured answer, with 6 cached prompt tokens where it can."""
     text = json.dumps(content)
     if provider == 'gpt':
@@ -468,7 +478,7 @@ STREAM = {'stream': True}
 STREAM_USAGE = {'stream': True, 'stream_options': {'include_usage': True}}
 
 
-def _usage_scenarios() -> dict:
+def _usage_scenarios() -> dict[str, Any]:
     scenarios = {}
     for provider, variants in CACHE_VARIANTS.items():
         for variant, cache in variants.items():
@@ -481,7 +491,7 @@ def _usage_scenarios() -> dict:
     return scenarios
 
 
-def _request_scenarios() -> dict:
+def _request_scenarios() -> dict[str, Any]:
     scenarios = {}
     for provider in PROVIDERS:
         scenarios[f'{provider}_complete_max_completion_tokens'] = lambda g, p=provider: (

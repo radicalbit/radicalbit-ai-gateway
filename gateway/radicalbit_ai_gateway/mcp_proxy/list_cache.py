@@ -15,6 +15,7 @@ route may not be cached at all — see :meth:`McpListCache.for_route`.
 import hashlib
 import json
 import logging
+from typing import Any
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.events.events_processor import emit_event
@@ -72,7 +73,7 @@ def servers_signature(servers: list[AnyMcpServer]) -> str:
 
 def _digest(values: dict[str, str] | None) -> str:
     """Hash a credential-bearing mapping for inclusion in the signature."""
-    if not values:
+    if values is None or len(values) == 0:
         return ''
     canonical = json.dumps(values, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
@@ -89,7 +90,7 @@ class McpListCache:
         signature: str,
     ):
         self._cache = gateway_cache
-        self._ttl = ttl if ttl and ttl > 0 else DEFAULT_LIST_TTL_SECONDS
+        self._ttl = ttl if ttl is not None and ttl > 0 else DEFAULT_LIST_TTL_SECONDS
         self._authorized = authorized
         self._signature = signature
 
@@ -141,7 +142,7 @@ class McpListCache:
             signature=servers_signature(servers),
         )
 
-    async def get(self, method: str) -> dict | None:
+    async def get(self, method: str) -> dict[str, Any] | None:
         """Return the cached result for ``method``, or ``None`` on a miss.
 
         Never returns a half-trusted entry: what comes back here is handed to
@@ -159,7 +160,7 @@ class McpListCache:
         except Exception:
             logger.warning('MCP %s cache lookup failed', method, exc_info=True)
             return None
-        if not raw:
+        if raw is None or raw == '':
             return None
         try:
             cached = json.loads(raw)
@@ -173,7 +174,7 @@ class McpListCache:
             return None
         return cached
 
-    async def set(self, method: str, result: dict) -> None:
+    async def set(self, method: str, result: dict[str, Any]) -> None:
         """Store ``result`` for ``method``. Never raises."""
         try:
             await self._cache.set(

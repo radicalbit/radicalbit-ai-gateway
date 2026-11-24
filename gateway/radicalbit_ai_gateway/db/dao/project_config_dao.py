@@ -5,6 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select, update
 
+from radicalbit_ai_gateway.db.dao.dml import rows_matched
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
@@ -70,7 +71,7 @@ class ProjectConfigDAO:
                     updated_at=now,
                 )
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)
 
     def set_status(self, config_uuid: UUID, status: ConfigStatus) -> int:
         with self.db.begin_session() as session:
@@ -82,7 +83,7 @@ class ProjectConfigDAO:
                 )
                 .values(config_status=status.value)
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)
 
     def serve(self, config_uuid: UUID) -> ProjectConfig | None:
         """Atomically serve a config: demote any currently SERVED config of the
@@ -190,4 +191,4 @@ class ProjectConfigDAO:
                 )
                 .values(deleted_at=now)
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)

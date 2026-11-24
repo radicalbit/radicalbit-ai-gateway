@@ -1,6 +1,10 @@
 from enum import Enum
+from typing import Generic
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# typing_extensions: a TypeVar default needs Python 3.13.
+from typing_extensions import TypeVar
 
 from radicalbit_ai_gateway.limiter.window_config import format_window, parse_window
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
@@ -203,25 +207,30 @@ class Limiting(BaseModel):
 class RateLimiting(Limiting):
     @model_validator(mode='after')
     def max_requests_set(self):
-        if not self.max_requests:
+        if self.max_requests is None:
             raise ValueError('max_requests must be set for rate limiting.')
         return self
 
 
-class TokenLimiting(BaseModel):
+# The limit a token limiting holds per side: the configuration's, or a
+# response's.
+LimitingT = TypeVar('LimitingT', bound=Limiting, default=Limiting)
+
+
+class TokenLimiting(BaseModel, Generic[LimitingT]):
     model_config = ConfigDict(extra='forbid')
 
-    input: Limiting | None = Field(
+    input: LimitingT | None = Field(
         default=None, description='Rate limiting for input tokens.'
     )
-    output: Limiting | None = Field(
+    output: LimitingT | None = Field(
         default=None, description='Rate limiting for output tokens.'
     )
 
     @model_validator(mode='after')
     def max_tokens_set(self):
         for side, limiting in (('input', self.input), ('output', self.output)):
-            if limiting is not None and not limiting.max_tokens:
+            if limiting is not None and limiting.max_tokens is None:
                 raise ValueError(f'{side}.max_tokens must be set for token limiting.')
         return self
 
@@ -238,6 +247,6 @@ class BudgetLimiting(Limiting):
 class AudioDurationLimiting(Limiting):
     @model_validator(mode='after')
     def max_duration_seconds_set(self):
-        if not self.max_duration_seconds:
+        if self.max_duration_seconds is None:
             raise ValueError('max_duration_seconds must be set for duration limiting.')
         return self

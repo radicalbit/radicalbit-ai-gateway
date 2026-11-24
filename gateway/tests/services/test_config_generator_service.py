@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from pydantic import SecretStr
 import pytest
+from typing_extensions import override
 
 from radicalbit_ai_gateway.services.config_generator_service import (
     ConfigGeneratorService,
@@ -47,6 +48,7 @@ def _mock_llm(*yaml_contents: str):
 
 
 class TestConfigGeneratorService(unittest.IsolatedAsyncioTestCase):
+    @override
     def setUp(self):
         self.svc = ConfigGeneratorService()
 

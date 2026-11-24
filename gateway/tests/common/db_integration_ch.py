@@ -7,6 +7,7 @@ import unittest
 from clickhouse_connect import common as clickhouse_common
 from sqlalchemy import text
 from testcontainers.community.clickhouse import ClickHouseContainer
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db.clickhouse_database import (
     ClickHouseBaseTable,
@@ -44,12 +45,14 @@ def _clickhouse() -> ClickHouseContainer:
 
 
 class DatabaseIntegrationClickhouse(unittest.TestCase):
-    container = None
+    container: ClickHouseContainer | None = None
     engine = None
+    db: ClickHouseDatabase
     # Subclasses that build the schema themselves (e.g. from the ClickHouse
     # migrations) turn this off.
     create_orm_schema = True
 
+    @override
     @classmethod
     def setUpClass(cls):
         cls.container = _clickhouse()
@@ -65,30 +68,37 @@ class DatabaseIntegrationClickhouse(unittest.TestCase):
         if cls.create_orm_schema:
             ClickHouseBaseTable.metadata.create_all(cls.db._engine)
 
+    @override
     def setUp(self):
         pass
 
+    @override
     def tearDown(self) -> None:
         self.clean()
 
+    @override
     @classmethod
     def tearDownClass(cls):
         # Close the pooled connections: reset_connection only drops the engine.
-        cls.db._engine.dispose()
+        engine = cls.db._engine
+        assert engine is not None
+        engine.dispose()
         cls.container = None
-        cls.db = None
+        del cls.db
 
-    def insert(self, table: list[T]):
+    @classmethod
+    def insert(cls, table: list[T]):
         """Insert objects into the database."""
         if not table:
             return
-        with self.db.begin_session() as session:
+        with cls.db.begin_session() as session:
             for obj in table:
                 session.add(obj)
             session.commit()
 
-    def clean(self):
-        with self.db.begin_session() as session:
+    @classmethod
+    def clean(cls):
+        with cls.db.begin_session() as session:
             session.execute(text(f'TRUNCATE TABLE {Event.__tablename__}'))
             session.execute(text(f'TRUNCATE TABLE {RequestEvent.__tablename__}'))
             session.execute(text(f'TRUNCATE TABLE {OtelTraces.__tablename__}'))

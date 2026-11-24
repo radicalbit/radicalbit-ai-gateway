@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import difflib
 from importlib.resources import files
 import re
-from typing import get_args
+from typing import Any, get_args
 
 from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
@@ -22,7 +22,7 @@ def _config_field_names(
     if model in seen:
         return set()
     seen.add(model)
-    names = set(model.model_fields)
+    names: set[str] = set(model.model_fields)
     for field in model.model_fields.values():
         for tp in _nested_types(field.annotation):
             if isinstance(tp, type) and issubclass(tp, BaseModel):
@@ -30,7 +30,7 @@ def _config_field_names(
     return names
 
 
-def _nested_types(tp) -> Iterator:
+def _nested_types(tp) -> Iterator[Any]:
     yield tp
     for arg in get_args(tp):
         yield from _nested_types(arg)
@@ -69,11 +69,11 @@ def _format_validation_error(err: ErrorDetails, yaml_str: str) -> str:
     msg = err['msg']
     if err['type'] == 'extra_forbidden' and err['loc']:
         suggestion = _suggest_field(str(err['loc'][-1]))
-        if suggestion:
+        if suggestion is not None and suggestion != '':
             msg = f"{msg} (did you mean '{suggestion}'?)"
     string_keys = [p for p in err['loc'] if isinstance(p, str)]
     line = _find_key_line(yaml_str, string_keys[-1]) if string_keys else None
-    location = f' (line {line})' if line else ''
+    location = f' (line {line})' if line is not None else ''
     return f"'{loc}'{location}: {msg}"
 
 
@@ -106,7 +106,9 @@ def check_no_literal_secrets(yaml_content: str) -> list[str]:
     return violations
 
 
-def check_no_literal_secrets_in_mcp_servers(parsed: dict, yaml_str: str) -> list[str]:
+def check_no_literal_secrets_in_mcp_servers(
+    parsed: dict[str, Any], yaml_str: str
+) -> list[str]:
     """Reject literal values for sensitive-looking keys under
     ``mcp_servers[].headers`` and ``mcp_servers[].env``.
 
@@ -133,7 +135,7 @@ def check_no_literal_secrets_in_mcp_servers(parsed: dict, yaml_str: str) -> list
                 if value == SECRET_PLACEHOLDER:
                     continue
                 line = _find_key_line(yaml_str, key)
-                loc = f' (line {line})' if line else ''
+                loc = f' (line {line})' if line is not None else ''
                 violations.append(
                     f'mcp_servers[{alias}].{block_name}.{key}{loc}: '
                     'literal value for a sensitive key; use a !secret reference'
@@ -143,10 +145,11 @@ def check_no_literal_secrets_in_mcp_servers(parsed: dict, yaml_str: str) -> list
 
 def _parse_yaml_with_secrets(
     yaml_content: str,
-) -> tuple[dict, list[tuple[str, int | None]]]:
+) -> tuple[object, list[tuple[str, int | None]]]:
     """Parse *yaml_content*, replacing ``!secret`` tags with placeholders.
 
-    Returns ``(parsed_dict, secret_refs)`` where *secret_refs* is a list of
+    Returns ``(parsed, secret_refs)`` where *parsed* is whatever the YAML
+    holds (not always a mapping) and *secret_refs* is a list of
     ``(key, line_number)`` for every ``!secret`` reference found.
     """
     refs: list[tuple[str, int | None]] = []
@@ -191,20 +194,20 @@ def check_secret_references(
     try:
         for key, line in refs:
             error = provider.validate_secret(key)
-            if error:
-                loc = f'line {line}: ' if line else ''
+            if error is not None and error != '':
+                loc = f'line {line}: ' if line is not None else ''
                 violations.append(f'{loc}!secret {key} - {error}')
     except OSError as e:
         return [f'Cannot read secrets file: {e}']
     return violations
 
 
-def parse_yaml_with_secret_placeholders(yaml_content: str) -> dict:
+def parse_yaml_with_secret_placeholders(yaml_content: str) -> object:
     data, _ = _parse_yaml_with_secrets(yaml_content)
     return data
 
 
-def _detail(loc: list, msg: str, type_: str) -> dict:
+def _detail(loc: list[str | int], msg: str, type_: str) -> dict[str, Any]:
     """One entry of ProjectConfigValidationError.details."""
     return {'loc': loc, 'msg': msg, 'type': type_}
 

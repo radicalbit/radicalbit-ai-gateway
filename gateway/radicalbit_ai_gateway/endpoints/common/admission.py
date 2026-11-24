@@ -1,7 +1,9 @@
 """Admission: what every proxy endpoint does before it serves a request."""
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 import logging
+from typing import Any
 from uuid import UUID
 
 from fastapi import Request
@@ -118,6 +120,14 @@ class AdmissionRules:
 V1_RULES = AdmissionRules()
 
 
+@dataclass(frozen=True)
+class Admitted:
+    """A request the gateway serves: its scope, and the key of its caller."""
+
+    scope: RequestScope[Any, Any]
+    key_details: KeyDetails
+
+
 class Admission:
     """Admits a request to a route: finds the route, authenticates the
     caller, checks the caller may use the route, and resolves and checks the
@@ -143,17 +153,45 @@ class Admission:
         announce: Callable[[str], None] | None = None,
         authenticate: Authenticate | None = None,
         rules: AdmissionRules = V1_RULES,
-    ) -> RequestScope:
+    ) -> RequestScope[Any, Any]:
         """Return the scope of a request the gateway serves, or raise the
         error that refuses it. ``announce`` logs the request once its caller
         is known. ``authenticate`` reads the caller's credential: by default,
         its bearer token. ``rules`` are where endpoints differ (see
         ``AdmissionRules``).
         """
+        admitted = await self.admit_caller(
+            request,
+            routes,
+            route_key,
+            request_uuid,
+            streaming=streaming,
+            announce=announce,
+            authenticate=authenticate,
+            rules=rules,
+        )
+        return admitted.scope
+
+    async def admit_caller(
+        self,
+        request: Request,
+        routes: dict[str, GatewayRoute],
+        route_key: str | None,
+        request_uuid: str,
+        *,
+        streaming: bool = False,
+        announce: Callable[[str], None] | None = None,
+        authenticate: Authenticate | None = None,
+        rules: AdmissionRules = V1_RULES,
+    ) -> Admitted:
+        """Admit a request as ``admit`` does; return its scope with the key
+        its caller authenticated with.
+        """
         authenticate = authenticate or set_api_key_uuid
         route = routes.get(route_key)
         rules.opened(request, route_key, route, request_uuid)
-        if route is None:
+        # No key names no route: routes.get(None) is None.
+        if route_key is None or route is None:
             raise await rules.unknown_route(request, route_key, authenticate)
         route_name = route.gateway_route_config.route_name
         # The route labels the request's metrics and, for per-route log
@@ -200,7 +238,7 @@ class Admission:
         )
         # Request limits first, before anything is processed or spent.
         await limits.check(ADMISSION)
-        return route.for_request(limits.identity, limits)
+        return Admitted(route.for_request(limits.identity, limits), key_details)
 
     async def _resolve_limits(
         self,

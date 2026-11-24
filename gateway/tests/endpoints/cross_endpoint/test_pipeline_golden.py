@@ -11,9 +11,12 @@ streamed transcription. Only the drivers (the functions that build the routes,
 send the requests and read what they caused) may change.
 """
 
+from collections.abc import Callable
 import json
 import re
+from typing import Any
 
+from opentelemetry.sdk.trace import ReadableSpan
 import pytest
 
 from tests.common import provider_responses as upstream
@@ -35,14 +38,14 @@ def gateway(caplog):
         yield gateway
 
 
-def _upstream_call(request: dict) -> str:
+def _upstream_call(request: dict[str, Any]) -> str:
     """Return a provider call as the URL path and the model it asks."""
     body = request['body'] if isinstance(request['body'], dict) else {}
     path = request['url'].split('://', 1)[1]
     return f'{path} {body.get("model", "")}'.strip()
 
 
-def _event(e: dict) -> tuple:
+def _event(e: dict[str, Any]) -> tuple[Any, ...]:
     kind = e['EVENT_TYPE'].name
     if kind == 'GUARDRAIL':
         return (
@@ -70,8 +73,10 @@ def _body(response):
     return body
 
 
-def _frames(text: str) -> list:
-    """Return the data frames of a stream, without ids and timestamps."""
+def _frames(text: str) -> list[Any] | str:
+    """Return the data frames of a stream, without ids and timestamps: the
+    text itself when it has none.
+    """
     frames = []
     for line in text.splitlines():
         if not line.startswith('data: '):
@@ -90,7 +95,7 @@ def _frames(text: str) -> list:
     return frames or text
 
 
-def _distinct(values: list) -> list:
+def _distinct(values: list[str | None]) -> list[str | None]:
     seen = []
     for value in values:
         if not seen or seen[-1] != value:
@@ -98,7 +103,7 @@ def _distinct(values: list) -> list:
     return seen
 
 
-def _snapshot(gateway: Gateway, response) -> dict:
+def _snapshot(gateway: Gateway, response) -> dict[str, Any]:
     request_event = gateway.request_events[-1] if gateway.request_events else None
     return {
         'status': response.status_code,
@@ -124,7 +129,7 @@ def _snapshot(gateway: Gateway, response) -> dict:
     }
 
 
-def _structured(model: str, content: dict) -> CannedResponse:
+def _structured(model: str, content: dict[str, Any]) -> CannedResponse:
     return upstream.openai_completion(
         json.dumps(content), model=model, prompt_tokens=30, completion_tokens=4
     )
@@ -714,7 +719,7 @@ async def test_golden(gateway, send, expected):
 # ---------------------------------------------------------------------------
 
 
-def _span_tree(spans: list) -> list[tuple[str, str | None]]:
+def _span_tree(spans: list[ReadableSpan]) -> list[tuple[str, str | None]]:
     """Return each span's name and its parent's, in the order they end."""
     names = {span.context.span_id: span.name for span in spans}
     return [
@@ -831,7 +836,18 @@ SPAN_CASES = [
 
 
 # The span scenarios, by name, for the tests below that read every span.
-SPAN_SCENARIOS = {case.id: case.values[0] for case in SPAN_CASES}
+def _scenario(case) -> Callable[[Gateway], object]:
+    """Return the request a span case sends."""
+    send = case.values[0]
+    assert callable(send)
+
+    def scenario(gateway: Gateway) -> object:
+        return send(gateway)
+
+    return scenario
+
+
+SPAN_SCENARIOS = {case.id: _scenario(case) for case in SPAN_CASES}
 
 
 @pytest.mark.parametrize(('send', 'expected'), SPAN_CASES)

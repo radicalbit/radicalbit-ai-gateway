@@ -4,9 +4,11 @@ Providers and the text classifier are mocked over HTTP with pook.
 """
 
 import json
+from typing import Any
 import unittest
 
 import pook
+from typing_extensions import override
 
 from tests.common.gateway_harness import build_routes, open_gateway
 from tests.common.mocked_build_openai_chat_completion import (
@@ -71,7 +73,9 @@ TOKEN_LENGTH = {
 }
 
 
-def _build_routes(routing: dict, guardrails: list[dict] | None = None) -> dict:
+def _build_routes(
+    routing: dict[str, Any], guardrails: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     return build_routes(
         {
             'chat_models': [BILLING, GENERAL],
@@ -88,12 +92,13 @@ def _build_routes(routing: dict, guardrails: list[dict] | None = None) -> dict:
     )
 
 
-def _sent(mock) -> dict:
+def _sent(mock) -> dict[str, Any]:
     """Return the JSON body of the one request a pook mock matched."""
     return mock.matches[0].json
 
 
 class TestRedactBeforeRouting(unittest.TestCase):
+    @override
     def setUp(self):
         self.gateway = self.enterContext(open_gateway(use_pook=True))
         self.client = self.gateway.client
@@ -145,7 +150,7 @@ class TestRedactBeforeRouting(unittest.TestCase):
         )
         return mock
 
-    def _openai_response(self) -> dict:
+    def _openai_response(self) -> dict[str, Any]:
         return {
             'id': 'resp_1',
             'object': 'response',

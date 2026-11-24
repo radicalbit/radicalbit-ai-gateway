@@ -8,6 +8,7 @@ over HTTP with pook. Mistral stands for a provider without the Responses API.
 
 import copy
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
@@ -15,6 +16,7 @@ from openai.types.embedding import Embedding
 from openai.types.responses import Response
 import pook
 import pytest
+from typing_extensions import override
 
 from tests.common.gateway_harness import build_routes, open_gateway
 from tests.common.limits import project_limit
@@ -23,7 +25,7 @@ from tests.common.scope import scope_of
 
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
 from radicalbit_ai_gateway.caching.in_memory_cache import CacheToolsInMemory
-from radicalbit_ai_gateway.caching.route_cache import RouteCache
+from radicalbit_ai_gateway.caching.route_cache import EnabledCache, RouteCache
 from radicalbit_ai_gateway.endpoints.chat_completions.cache import ChatEntry
 from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits
 from radicalbit_ai_gateway.llm.messages import HumanMessage
@@ -55,21 +57,19 @@ MISTRAL = {
     'credentials': {'api_key': 'mistral-key'},
 }
 
+TEXT = {'type': 'output_text', 'annotations': [], 'logprobs': [], 'text': 'Hello'}
 MESSAGE = {
     'id': 'msg_1',
     'type': 'message',
     'status': 'completed',
     'role': 'assistant',
-    'content': [
-        {'type': 'output_text', 'annotations': [], 'logprobs': [], 'text': 'Hello'}
-    ],
+    'content': [TEXT],
 }
 
 
-def upstream_events(text: str = 'Hello') -> list[dict]:
+def upstream_events(text: str = 'Hello') -> list[dict[str, Any]]:
     """Return a reply as OpenAI streams it."""
-    message = copy.deepcopy(MESSAGE)
-    message['content'][0]['text'] = text
+    message = copy.deepcopy({**MESSAGE, 'content': [{**TEXT, 'text': text}]})
     started = {
         'id': 'resp_1',
         'object': 'response',
@@ -121,7 +121,9 @@ def upstream_events(text: str = 'Hello') -> list[dict]:
     ]
 
 
-def _guardrail(name, type_, behavior, where, parameters, message=None) -> dict:
+def _guardrail(
+    name, type_, behavior, where, parameters, message=None
+) -> dict[str, Any]:
     guardrail = {
         'name': name,
         'type': type_,
@@ -164,28 +166,30 @@ GUARDRAILS = [
 
 
 def _routes(
-    *models: dict,
+    *models: dict[str, Any],
     guardrails: list[str] | None = None,
     cache: bool = False,
-    responses: dict | None = None,
+    responses: dict[str, Any] | None = None,
     prompt: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Build the ``agents`` route over ``models``: the first is the primary,
     the others its fallbacks. ``prompt`` is the primary's configured prompt.
     """
     model_ids = [model['model_id'] for model in models]
     chat_models = [
-        {**model, 'prompt': prompt} if prompt and index == 0 else model
+        {**model, 'prompt': prompt}
+        if prompt is not None and prompt != '' and index == 0
+        else model
         for index, model in enumerate(models)
     ]
-    route: dict = {'chat_models': model_ids}
+    route: dict[str, Any] = {'chat_models': model_ids}
     if len(model_ids) > 1:
         route['fallback'] = [{'target': model_ids[0], 'fallbacks': model_ids[1:]}]
-    if guardrails:
+    if guardrails is not None and len(guardrails) > 0:
         route['guardrails'] = guardrails
     if cache:
         route['caching'] = {'type': 'exact'}
-    if responses:
+    if responses is not None and len(responses) > 0:
         route['responses'] = responses
     config = {
         'chat_models': chat_models,
@@ -204,11 +208,23 @@ def gateway():
         yield gateway
 
 
-def _serve(*models: dict, **route: object):
+def _serve(
+    *models: dict[str, Any],
+    guardrails: list[str] | None = None,
+    cache: bool = False,
+    responses: dict[str, Any] | None = None,
+    prompt: str | None = None,
+):
     """Serve the ``agents`` route for the rest of the test (``open_gateway``
     puts the routes back); return it.
     """
-    app.state.routes = _routes(*models, **route)
+    app.state.routes = _routes(
+        *models,
+        guardrails=guardrails,
+        cache=cache,
+        responses=responses,
+        prompt=prompt,
+    )
     return app.state.routes[ROUTE_KEY]
 
 
@@ -217,7 +233,7 @@ def _send(gateway, **body):
     return gateway.post('/v1/responses', json={'model': ROUTE_KEY, **body})
 
 
-def _sse(events: list[dict]) -> str:
+def _sse(events: list[dict[str, Any]]) -> str:
     return ''.join(f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n' for e in events)
 
 
@@ -241,15 +257,15 @@ def _mock_reply(text: str, stream: bool):
     return _mock_openai_stream(text) if stream else _mock_openai(text)
 
 
-def _refuse(status: int, body: dict):
+def _refuse(status: int, body: dict[str, Any]):
     mock = pook.post(OPENAI_URL).times(1)
     mock.reply(status).json(body)
     return mock
 
 
-def _mock_every_upstream() -> list:
+def _mock_every_upstream() -> list[pook.Mock]:
     """Mock every upstream, to check later that none was called."""
-    mocks = []
+    mocks: list[pook.Mock] = []
     for url in (OPENAI_URL, MISTRAL_URL):
         mock = pook.post(url).times(1)
         mock.reply(500).json({})
@@ -257,16 +273,16 @@ def _mock_every_upstream() -> list:
     return mocks
 
 
-def _sent(mock, index: int = 0) -> dict:
+def _sent(mock, index: int = 0) -> dict[str, Any]:
     """Return the JSON body of a request a pook mock matched."""
     return mock.matches[index].json
 
 
-def stream_events(response) -> list[dict]:
+def stream_events(response) -> list[dict[str, Any]]:
     return events_of(response.text.split('\n\n')[:-1])
 
 
-def _final(response, stream: bool) -> dict:
+def _final(response, stream: bool) -> dict[str, Any]:
     """Return the response object a reply ends with, streamed or not."""
     return stream_events(response)[-1]['response'] if stream else response.json()
 
@@ -629,16 +645,19 @@ class SemanticInMemoryCache(GatewayCache):
 
     def __init__(self):
         super().__init__(CacheToolsInMemory())
-        self.calls: list[tuple[str, dict]] = []
+        self.calls: list[tuple[str, dict[str, Any]]] = []
 
     @property
+    @override
     def cache_type(self) -> CacheType:
         return CacheType.SEMANTIC
 
+    @override
     async def get(self, cache_key: str, **kwargs) -> str | None:
         self.calls.append(('get', kwargs))
         return await super().get(cache_key, **kwargs)
 
+    @override
     async def set(self, cache_key: str, response: str, ttl: int | None, **kwargs):
         self.calls.append(('set', kwargs))
         await super().set(cache_key, response, ttl, **kwargs)
@@ -661,10 +680,12 @@ def _serve_semantic(embedding_model: Model | None):
         )
     )
     route.cache = RouteCache(
-        backend=route.gateway_cache,
-        cost_service=route.cost_service,
-        embedder=embedder,
-        embedding_model=embedding_model,
+        EnabledCache(
+            backend=route.gateway_cache,
+            cost_service=route.cost_service,
+            embedder=embedder,
+            embedding_model=embedding_model,
+        )
     )
     return route
 
@@ -689,7 +710,7 @@ def test_semantic_cache_embeds_the_last_user_text(gateway):
     assert first.status_code == second.status_code == 200
     assert len(upstream.matches) == 1
     assert second.headers['X-RB-AIGATEWAY-CACHE-HIT'] == 'true'
-    embedded = route.cache.embedder.embed_answered.call_args.kwargs
+    embedded = route.cache.enabled.embedder.embed_answered.call_args.kwargs
     assert embedded['input_texts'] == ['Hi']
     assert embedded['model_id'] == 'embed'
     assert [name for name, _ in route.gateway_cache.calls] == ['get', 'set', 'get']
@@ -731,7 +752,7 @@ def test_output_warn_is_reported_and_the_reply_kept(gateway, stream):
 def test_output_warn_is_evaluated_once(gateway, stream):
     route = _serve(OPENAI, guardrails=['output_warn'])
     _mock_reply('The secret is 42', stream)
-    mapping = route.guardrails.check._guardrail_check_mapping
+    mapping = route.guardrails.output_check.engine._text_checks
     check = AsyncMock(wraps=mapping[GuardrailType.CONTAINS])
     mapping[GuardrailType.CONTAINS] = check
 

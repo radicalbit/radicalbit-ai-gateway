@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, update
 
+from radicalbit_ai_gateway.db.dao.dml import rows_matched
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.project_budget_limit_table import (
     ProjectBudgetLimit,
@@ -49,7 +50,7 @@ class ProjectBudgetLimitDAO:
         self, project_uuids: list[UUID]
     ) -> Sequence[ProjectBudgetLimit]:
         if not project_uuids:
-            return []
+            return list[ProjectBudgetLimit]()
         with self.db.begin_session() as session:
             stmt = select(ProjectBudgetLimit).where(
                 ProjectBudgetLimit.project_uuid.in_(project_uuids)
@@ -72,11 +73,11 @@ class ProjectBudgetLimitDAO:
             query = delete(ProjectBudgetLimit).where(
                 ProjectBudgetLimit.uuid == limit_uuid
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)
 
     def delete_by_project_uuid(self, project_uuid: UUID) -> int:
         with self.db.begin_session() as session:
             query = delete(ProjectBudgetLimit).where(
                 ProjectBudgetLimit.project_uuid == project_uuid
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)

@@ -1,10 +1,12 @@
 import datetime
+from typing import Literal
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 from uuid import UUID
 
 import pytest
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.mocked_gateway_config import (
@@ -87,11 +89,12 @@ from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 
 
 class EventServiceTest(unittest.TestCase):
+    @override
     def setUp(self):
-        self.event_dao: EventDAO = MagicMock(spec_set=EventDAO)
-        self.request_event_dao: RequestEventDAO = MagicMock(spec_set=RequestEventDAO)
-        self.key_service: KeyService = MagicMock(spec_set=KeyService)
-        self.group_service: GroupService = MagicMock(spec_set=GroupService)
+        self.event_dao: MagicMock = MagicMock(spec_set=EventDAO)
+        self.request_event_dao: MagicMock = MagicMock(spec_set=RequestEventDAO)
+        self.key_service: MagicMock = MagicMock(spec_set=KeyService)
+        self.group_service: MagicMock = MagicMock(spec_set=GroupService)
 
         global_guardrails = get_global_guardrails()
 
@@ -239,8 +242,8 @@ class EventServiceTest(unittest.TestCase):
         self.event_dao.get_tokens_by_model = MagicMock(return_value=self.tokens_counter)
         self.event_dao.get_last_events = MagicMock(
             return_value={
-                EventType.GUARDRAIL: self.get_last_event_details_guardrail,
-                EventType.FALLBACK: self.get_last_event_details_fallback,
+                'GUARDRAIL': self.get_last_event_details_guardrail,
+                'FALLBACK': self.get_last_event_details_fallback,
             }
         )
         self.key_service.get_key_by_uuid = MagicMock(
@@ -288,9 +291,12 @@ class EventServiceTest(unittest.TestCase):
         )
         self.event_dao.get_last_events_of_routes = MagicMock(
             return_value={
-                (route_name, event_type): event
-                for event_type, event in (last_events or {}).items()
+                route_name: {
+                    event_type.value: event for event_type, event in last_events.items()
+                }
             }
+            if last_events
+            else {}
         )
         self.event_dao.get_routing_model_counters_of_routes = MagicMock(
             return_value={route_name: list(routing)} if routing else {}
@@ -609,7 +615,13 @@ class EventServiceTest(unittest.TestCase):
             self.TEST_PROJECT_UUID, self.gateway_config, 'route-A', 3, None, None
         )
 
-        def block(event_type: str, hour: int, **limit) -> LimitEventDetailDTO:
+        def block(
+            event_type: Literal[
+                'RATE_LIMIT', 'CREDENTIAL_BUDGET_LIMIT', 'PROJECT_BUDGET_LIMIT'
+            ],
+            hour: int,
+            **limit,
+        ) -> LimitEventDetailDTO:
             return LimitEventDetailDTO(
                 timestamp=at(hour),
                 api_key_uuid=key,
@@ -1277,17 +1289,7 @@ class EventServiceTest(unittest.TestCase):
                 RouteCostDTO(
                     route_name='route-A',
                     summary=CostDataDTO(
-                        input_cost=10.0,
-                        output_cost=20.0,
-                        total_cost=30.0,
                         total=30.0,
-                        cache_triggered=2,
-                        saved_amount_input=0.05,
-                        saved_amount_output=0.10,
-                        total_saved_amount=0.15,
-                        cache_saved_tokens_input=0,
-                        cache_saved_tokens_output=0,
-                        total_cached_tokens=0,
                         totals=TotalCostDTO(
                             input=10.0, cached_input=0, output=20.0, saved=0.15
                         ),
@@ -1314,17 +1316,7 @@ class EventServiceTest(unittest.TestCase):
                 RouteCostDTO(
                     route_name='route-B',
                     summary=CostDataDTO(
-                        input_cost=5.0,
-                        output_cost=10.0,
-                        total_cost=15.0,
                         total=15.0,
-                        cache_triggered=0,
-                        saved_amount_input=0.0,
-                        saved_amount_output=0.0,
-                        total_saved_amount=0.0,
-                        cache_saved_tokens_input=0,
-                        cache_saved_tokens_output=0,
-                        total_cached_tokens=0,
                         totals=TotalCostDTO(
                             input=5.0, cached_input=0, output=10.0, saved=0.0
                         ),
@@ -1435,13 +1427,6 @@ class EventServiceTest(unittest.TestCase):
                 ),
                 total=0.0,
             ),
-            cache_triggered=0,
-            saved_amount_input=0.0,
-            saved_amount_output=0.0,
-            total_saved_amount=0.0,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            total_cached_tokens=None,
         )
         expected = UsageCostsDTO(
             total=0.0,
@@ -1499,17 +1484,7 @@ class EventServiceTest(unittest.TestCase):
 
         # Route with events has 0 for token fields
         route_a_cost_dto = CostDataDTO(
-            input_cost=10.0,
-            output_cost=20.0,
-            total_cost=30.0,
             total=30.0,
-            cache_triggered=2,
-            saved_amount_input=0.05,
-            saved_amount_output=0.10,
-            total_saved_amount=0.15,
-            cache_saved_tokens_input=0,
-            cache_saved_tokens_output=0,
-            total_cached_tokens=0,
             totals=TotalCostDTO(input=10.0, cached_input=0.0, output=20.0, saved=0.15),
             chat_models=ChatModelsCostDTO(
                 input=ChatModelsInputBreakdownDTO(total=10.0, direct=10.0, judges=None),
@@ -1546,13 +1521,6 @@ class EventServiceTest(unittest.TestCase):
                 ),
                 total=0.0,
             ),
-            cache_triggered=0,
-            saved_amount_input=0.0,
-            saved_amount_output=0.0,
-            total_saved_amount=0.0,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            total_cached_tokens=None,
         )
         expected = UsageCostsDTO(
             total=30.0,
@@ -1625,13 +1593,6 @@ class EventServiceTest(unittest.TestCase):
                 ),
                 total=0,
             ),
-            cache_triggered=0,
-            saved_amount_input=0,
-            saved_amount_output=0,
-            total_saved_amount=0,
-            cache_saved_tokens_input=0,
-            cache_saved_tokens_output=0,
-            total_cached_tokens=0,
         )
         expected = UsageCostsDTO(
             total=30.0,
@@ -1639,17 +1600,7 @@ class EventServiceTest(unittest.TestCase):
                 RouteCostDTO(
                     route_name='route-A',
                     summary=CostDataDTO(
-                        input_cost=10.0,
-                        output_cost=20.0,
-                        total_cost=30.0,
                         total=30.0,
-                        cache_triggered=2,
-                        saved_amount_input=0.05,
-                        saved_amount_output=0.10,
-                        total_saved_amount=0.15,
-                        cache_saved_tokens_input=100,
-                        cache_saved_tokens_output=200,
-                        total_cached_tokens=300,
                         totals=TotalCostDTO(
                             input=10.0, cached_input=0, output=20.0, saved=0.15
                         ),
@@ -1733,13 +1684,6 @@ class EventServiceTest(unittest.TestCase):
                 ),
                 total=0.0,
             ),
-            cache_triggered=0,
-            saved_amount_input=0.0,
-            saved_amount_output=0.0,
-            total_saved_amount=0.0,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            total_cached_tokens=None,
         )
         route_without_cache_cost_dto = CostDataDTO(
             total=0.0,
@@ -1758,13 +1702,6 @@ class EventServiceTest(unittest.TestCase):
                 ),
                 total=0.0,
             ),
-            cache_triggered=None,
-            saved_amount_input=None,
-            saved_amount_output=None,
-            total_saved_amount=None,
-            cache_saved_tokens_input=None,
-            cache_saved_tokens_output=None,
-            total_cached_tokens=None,
         )
         expected = UsageCostsDTO(
             total=0.0,
@@ -1870,17 +1807,7 @@ class EventServiceTest(unittest.TestCase):
                 RouteCostDTO(
                     route_name='route-with-cache',
                     summary=CostDataDTO(
-                        input_cost=10.0,
-                        output_cost=20.0,
-                        total_cost=30.0,
                         total=30.0,
-                        cache_triggered=2,
-                        saved_amount_input=0.05,
-                        saved_amount_output=0.10,
-                        total_saved_amount=0.15,
-                        cache_saved_tokens_input=100,
-                        cache_saved_tokens_output=200,
-                        total_cached_tokens=300,
                         totals=TotalCostDTO(
                             input=10.0, cached_input=0, output=20.0, saved=0.15
                         ),
@@ -1907,17 +1834,7 @@ class EventServiceTest(unittest.TestCase):
                 RouteCostDTO(
                     route_name='route-without-cache',
                     summary=CostDataDTO(
-                        input_cost=5.0,
-                        output_cost=15.0,
-                        total_cost=20.0,
                         total=20.0,
-                        cache_triggered=None,
-                        saved_amount_input=None,
-                        saved_amount_output=None,
-                        total_saved_amount=None,
-                        cache_saved_tokens_input=None,
-                        cache_saved_tokens_output=None,
-                        total_cached_tokens=None,
                         totals=TotalCostDTO(
                             input=5.0, cached_input=0, output=15.0, saved=None
                         ),
@@ -2114,6 +2031,7 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config_with_routing,
         )
 
+        assert res.routing is not None
         assert res.routing.value == 5
         assert len(res.routing.model_invocations) == 2
         assert (
@@ -2145,6 +2063,7 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config_with_routing,
         )
 
+        assert res.routing is not None
         assert res.routing.value == 0
         assert res.routing.model_invocations == []
 
@@ -2168,6 +2087,7 @@ class EventServiceTest(unittest.TestCase):
             project_name=self.TEST_PROJECT_NAME,
         )
 
+        assert res.metrics.routing is not None
         assert res.metrics.routing.value == 5
         assert len(res.metrics.routing.model_invocations) == 2
         assert (
@@ -2212,6 +2132,7 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config,
         )
 
+        assert res is not None
         assert res.name == 'route-A'
         assert res.increment_percentage == 0.0
         assert res.chart.total == 100.0
@@ -2244,6 +2165,7 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config,
         )
 
+        assert res is not None
         assert res.name == 'route-A'
         assert res.chart.granularity == 'hours'
         assert res.chart.total == 600
@@ -2269,6 +2191,7 @@ class EventServiceTest(unittest.TestCase):
             config=self.gateway_config,
         )
 
+        assert res is not None
         assert res.name == 'route-A'
         assert res.chart.total == 50
         # Single data point -> increment_percentage should be 0.0
@@ -2332,6 +2255,7 @@ class TestGetRouteLimitsProgress:
         ):
             if limit is None:
                 continue
+            assert remaining is not None
             window = Window(
                 scope=LimitScope.ROUTE,
                 category=category,
@@ -2561,6 +2485,7 @@ class TestDecisionModelsUsage:
         )
 
         by_route = {r.route_name: r.summary for r in res.routes}
+        assert by_route['agent'].decision_models is not None
         assert by_route['agent'].decision_models.input == spend
         assert by_route['agent'].decision_models.total == spend
         assert by_route['chat'].decision_models is None

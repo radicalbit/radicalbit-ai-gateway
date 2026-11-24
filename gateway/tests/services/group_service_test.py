@@ -6,6 +6,7 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.mocked_gateway_config import get_plain_gateway
@@ -41,11 +42,12 @@ _MY_PROJECT_UUID = UUID('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
 
 
 class GroupServiceTest(unittest.TestCase):
+    @override
     def setUp(self):
-        self.group_dao: GroupDAO = MagicMock(spec_set=GroupDAO)
-        self.key_dao: KeyDAO = MagicMock(spec_set=KeyDAO)
-        self.key_service: KeyService = MagicMock(spec_set=KeyService)
-        self.group_route_dao: GroupRouteDAO = MagicMock(spec_set=GroupRouteDAO)
+        self.group_dao: MagicMock = MagicMock(spec_set=GroupDAO)
+        self.key_dao: MagicMock = MagicMock(spec_set=KeyDAO)
+        self.key_service: MagicMock = MagicMock(spec_set=KeyService)
+        self.group_route_dao: MagicMock = MagicMock(spec_set=GroupRouteDAO)
         gw_a = get_plain_gateway('route-A')
         gw_b = get_plain_gateway('route-B')
         project_config = GatewayConfig(
@@ -580,6 +582,7 @@ class GroupServiceTest(unittest.TestCase):
         assert isinstance(res, GroupsRouteOut)
         assert res.route_name == 'my-route'
         assert res.project_name == 'my-project'
+        assert res.groups is not None
         assert len(res.groups) == 1
         assert res.groups[0].uuid == group.uuid
 

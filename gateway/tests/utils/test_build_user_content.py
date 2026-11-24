@@ -1,5 +1,7 @@
 import pytest
+from typing_extensions import override
 
+from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.utils.build_user_content import (
     _stable_json_dumps,
     build_user_content,
@@ -7,14 +9,8 @@ from radicalbit_ai_gateway.utils.build_user_content import (
 )
 
 
-class FakeMessage:
-    """Minimal stand-in for langchain_core.messages.BaseMessage for these tests."""
-
-    def __init__(self, content):
-        self.content = content
-
-
 class _Weird:
+    @override
     def __str__(self):
         return '  WEIRD  '
 
@@ -44,7 +40,7 @@ class _Weird:
     ],
 )
 def test_build_user_content(contents, expected):
-    assert build_user_content([FakeMessage(c) for c in contents]) == expected
+    assert build_user_content([HumanMessage(c) for c in contents]) == expected
 
 
 @pytest.mark.parametrize(

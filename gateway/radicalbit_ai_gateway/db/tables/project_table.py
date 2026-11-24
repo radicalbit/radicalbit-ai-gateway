@@ -1,6 +1,8 @@
-import uuid
+from datetime import datetime
+from uuid import UUID as PyUUID, uuid4
 
-from sqlalchemy import TEXT, TIMESTAMP, UUID, VARCHAR, Column, ForeignKey, Index, text
+from sqlalchemy import TEXT, TIMESTAMP, UUID, VARCHAR, ForeignKey, Index, text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from radicalbit_ai_gateway.db.dao.base_dao import BaseDAO
 from radicalbit_ai_gateway.db.database import BaseTable, Reflected
@@ -16,16 +18,18 @@ class Project(Reflected, BaseTable, BaseDAO):
             postgresql_where=text('"DELETED_AT" IS NULL'),
         ),
     )
-    uuid = Column(
+    uuid: Mapped[PyUUID] = mapped_column(
         'UUID',
         UUID(as_uuid=True),
         nullable=False,
-        default=uuid.uuid4,
+        default=uuid4,
         primary_key=True,
     )
-    name = Column('NAME', VARCHAR(), nullable=False)
-    description = Column('DESCRIPTION', TEXT(), nullable=True)
-    served_config_uuid = Column(
+    name: Mapped[str] = mapped_column('NAME', VARCHAR(), nullable=False)
+    description: Mapped[str | None] = mapped_column(
+        'DESCRIPTION', TEXT(), nullable=True
+    )
+    served_config_uuid: Mapped[PyUUID | None] = mapped_column(
         'SERVED_CONFIG_UUID',
         UUID(as_uuid=True),
         ForeignKey(
@@ -36,10 +40,18 @@ class Project(Reflected, BaseTable, BaseDAO):
         ),
         nullable=True,
     )
-    created_at = Column('CREATED_AT', TIMESTAMP(timezone=True), nullable=False)
-    updated_at = Column('UPDATED_AT', TIMESTAMP(timezone=True), nullable=False)
-    first_served_at = Column('FIRST_SERVED_AT', TIMESTAMP(timezone=True), nullable=True)
-    deleted_at = Column('DELETED_AT', TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        'CREATED_AT', TIMESTAMP(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        'UPDATED_AT', TIMESTAMP(timezone=True), nullable=False
+    )
+    first_served_at: Mapped[datetime | None] = mapped_column(
+        'FIRST_SERVED_AT', TIMESTAMP(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        'DELETED_AT', TIMESTAMP(timezone=True), nullable=True
+    )
 
 
 # Register the referenced table in the shared metadata so the

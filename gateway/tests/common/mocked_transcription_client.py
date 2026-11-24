@@ -1,3 +1,6 @@
+from typing import Any
+
+
 class _MockTranscriptionStream:
     """Mimics `AsyncStream[TranscriptionStreamEvent]` for a fixed list of events."""
 
@@ -52,7 +55,7 @@ class MockTranscriptionClient:
     """
 
     def __init__(self, response=None, exception=None, stream_events=None):
-        self.captured_kwargs: dict = {}
+        self.captured_kwargs: dict[str, Any] = {}
         self.audio = _MockAudio(
             _MockTranscriptions(
                 response, exception, self.captured_kwargs, stream_events

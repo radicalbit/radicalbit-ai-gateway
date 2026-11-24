@@ -1,5 +1,6 @@
 """Tests for the native Mistral chat and embedding models."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -16,6 +17,7 @@ from radicalbit_ai_gateway.llm.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    invalid_tool_call,
 )
 from radicalbit_ai_gateway.llm.providers.mistralai import (
     ChatMistralAI,
@@ -37,7 +39,11 @@ WEATHER_TOOL = {
 
 
 def model(**kwargs) -> ChatMistralAI:
-    return init_chat_model('mistralai:mistral-small-latest', api_key='sk', **kwargs)
+    chat_model = init_chat_model(
+        'mistralai:mistral-small-latest', api_key='sk', **kwargs
+    )
+    assert isinstance(chat_model, ChatMistralAI)
+    return chat_model
 
 
 async def invoke(chat_model, responses, messages=MESSAGES, **kwargs):
@@ -241,7 +247,7 @@ async def test_raw_tool_calls_in_additional_kwargs_are_parsed():
             AIMessage(
                 'ignored',
                 invalid_tool_calls=[
-                    {'name': 'f', 'args': '{bad', 'id': 'q', 'error': None}
+                    invalid_tool_call(name='f', args='{bad', id='q', error=None)
                 ],
             ),
             {'tool_calls': [{'function': {'name': 'f', 'arguments': '{bad'}, 'id': 'Q'}]},
@@ -286,10 +292,10 @@ async def test_raw_tool_calls_in_additional_kwargs_are_parsed():
 async def test_assistant_history_variants_on_the_wire(message, expected):
     _, [request] = await invoke(model(), [canned.mistral_completion()], [message])
 
-    expected = {'role': 'assistant', 'content': '', **expected}
-    for call in expected.get('tool_calls', []):
+    wire: dict[str, Any] = {'role': 'assistant', 'content': '', **expected}
+    for call in wire.get('tool_calls', []):
         call['id'] = _mistral_tool_call_id('q')
-    assert request['body']['messages'] == [expected]
+    assert request['body']['messages'] == [wire]
 
 
 def test_tool_call_ids_are_mistral_compatible():
@@ -356,6 +362,7 @@ async def test_tool_call_parsing():
             canned.MISTRAL_WEATHER_TOOL_CALL,
             {'function': {'name': 'bad', 'arguments': '{nope'}},
             {'function': {'name': 'noargs', 'arguments': ''}},
+            {'id': 'nofunc', 'type': 'custom'},
         ],
     )
     message, _ = await invoke(model(), [reply])
@@ -370,9 +377,12 @@ async def test_tool_call_parsing():
     # A missing id is filled with a random one.
     assert noargs['args'] == {}
     assert len(noargs['id']) == 32
-    [invalid] = message.invalid_tool_calls
+    [invalid, nofunc] = message.invalid_tool_calls
     assert invalid['name'] == 'bad'
     assert invalid['error'].startswith('Function bad arguments:')
+    # A call without a function is kept as invalid, not raised as a KeyError.
+    assert nofunc['id'] == 'nofunc'
+    assert nofunc['error'] == 'Unsupported tool call: it has no function.'
     assert (
         message.additional_kwargs['tool_calls'][0] == canned.MISTRAL_WEATHER_TOOL_CALL
     )

@@ -1,9 +1,11 @@
 import datetime
 import json
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 from radicalbit_ai_gateway.db.tables.group_table import Group
@@ -98,7 +100,7 @@ class KeyRotationIn(BaseModel):
         )
 
 
-def _rotation_fields(key: Key) -> dict:
+def _rotation_fields(key: Key) -> dict[str, Any]:
     rotation_state = get_rotation_state(
         key.expires_on, key.grace_ends_at, key.last_rotated_at
     )
@@ -140,7 +142,9 @@ class KeyOut(BaseModel):
             uuid=key.uuid,
             name=key.name,
             owner=key.owner,
-            metadata=json.loads(key.key_metadata) if key.key_metadata else None,
+            metadata=json.loads(key.key_metadata)
+            if key.key_metadata is not None and key.key_metadata != ''
+            else None,
             created_at=str(key.created_at),
             updated_at=str(key.updated_at),
             expires_on=key.expires_on,
@@ -265,7 +269,9 @@ class GroupOut(BaseModel):
             uuid=group.uuid,
             name=group.name,
             owner=group.owner,
-            metadata=json.loads(group.group_metadata) if group.group_metadata else None,
+            metadata=json.loads(group.group_metadata)
+            if group.group_metadata is not None and group.group_metadata != ''
+            else None,
             created_at=str(group.created_at),
             updated_at=str(group.updated_at),
         )
@@ -281,9 +287,9 @@ class KeyFullOut(KeyOut):
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
     )
 
-    # Used only on Key creation, to return api_key not obscured
+    # Used only on Key creation and rotation, to return api_key not obscured
     @staticmethod
-    def from_key(
+    def from_new_key(
         key: Key,
         plain_api_key: str,
         include_groups: bool = False,
@@ -293,11 +299,13 @@ class KeyFullOut(KeyOut):
             uuid=key.uuid,
             name=key.name,
             owner=key.owner,
-            metadata=json.loads(key.key_metadata) if key.key_metadata else None,
+            metadata=json.loads(key.key_metadata)
+            if key.key_metadata is not None and key.key_metadata != ''
+            else None,
             hashed_key=key.hashed_key,
             api_key=plain_api_key,
             group=GroupOut.from_group(key.group)
-            if include_groups and key.group
+            if include_groups and key.group is not None
             else None,
             limits=[CredentialLimitOut.from_key_limit(limit) for limit in key.limits]
             if include_limits
@@ -320,11 +328,13 @@ class KeyFullOut(KeyOut):
             uuid=key.uuid,
             name=key.name,
             owner=key.owner,
-            metadata=json.loads(key.key_metadata) if key.key_metadata else None,
+            metadata=json.loads(key.key_metadata)
+            if key.key_metadata is not None and key.key_metadata != ''
+            else None,
             hashed_key=key.hashed_key,
             api_key=key.obscured_key,
             group=GroupOut.from_group(key.group)
-            if include_groups and key.group
+            if include_groups and key.group is not None
             else None,
             limits=[CredentialLimitOut.from_key_limit(limit) for limit in key.limits]
             if include_limits
@@ -352,6 +362,7 @@ class GroupFullOut(GroupOut):
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
     )
 
+    @override
     @staticmethod
     def from_group(
         group: Group,
@@ -362,7 +373,9 @@ class GroupFullOut(GroupOut):
             uuid=group.uuid,
             name=group.name,
             owner=group.owner,
-            metadata=json.loads(group.group_metadata) if group.group_metadata else None,
+            metadata=json.loads(group.group_metadata)
+            if group.group_metadata is not None and group.group_metadata != ''
+            else None,
             routes=[
                 GroupRouteOut.from_group_route(route)
                 for route in group.group_routes
@@ -388,7 +401,9 @@ class GroupsRouteOut(BaseModel):
         return GroupsRouteOut(
             route_name=route_name,
             project_name=project_name,
-            groups=[GroupOut.from_group(i) for i in groups] if groups else None,
+            groups=[GroupOut.from_group(i) for i in groups]
+            if groups is not None and len(groups) > 0
+            else None,
         )
 
 

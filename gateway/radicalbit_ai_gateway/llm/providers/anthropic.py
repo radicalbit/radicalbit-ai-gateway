@@ -18,11 +18,13 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, TypeGuard
 import warnings
 
 import anthropic
+from anthropic.resources.messages import Messages
 from pydantic import BaseModel
+from typing_extensions import override
 
 from radicalbit_ai_gateway.llm.chat_model import ChatModel, StructuredChatModel
 from radicalbit_ai_gateway.llm.messages import (
@@ -33,6 +35,7 @@ from radicalbit_ai_gateway.llm.messages import (
     SystemMessage,
     ToolCall,
     ToolMessage,
+    UsageMetadata,
     tool_call,
     tool_call_chunk,
 )
@@ -42,7 +45,7 @@ from radicalbit_ai_gateway.llm.providers._schema import (
     rm_titles,
 )
 from radicalbit_ai_gateway.llm.providers._sse import iter_sse_events
-from radicalbit_ai_gateway.llm.usage import messages_usage
+from radicalbit_ai_gateway.llm.usage import input_token_details, messages_usage
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +320,7 @@ class ChatAnthropic(ChatModel):
             if self.default_request_timeout is None or self.default_request_timeout > 0:
                 params['timeout'] = self.default_request_timeout
                 http_params['timeout'] = self.default_request_timeout
-            if self.anthropic_proxy:
+            if self.anthropic_proxy is not None and self.anthropic_proxy != '':
                 http_params['proxy'] = self.anthropic_proxy
             params['http_client'] = _default_http_client(**http_params)
             self._client = anthropic.AsyncAnthropic(**params)
@@ -325,6 +328,7 @@ class ChatAnthropic(ChatModel):
 
     # ── tools and structured output ─────────────────────────────────────────
 
+    @override
     def _adapt_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         adapted = dict(kwargs)
         if 'max_completion_tokens' in adapted:
@@ -333,7 +337,12 @@ class ChatAnthropic(ChatModel):
         adapted.pop('stream_options', None)
         return adapted
 
-    def bind_tools(self, tools: list[dict], tool_choice: Any = None) -> 'ChatAnthropic':
+    @override
+    def bind_tools(
+        self,
+        tools: Sequence[Mapping[str, Any] | type[BaseModel]],
+        tool_choice: Any = None,
+    ) -> 'ChatAnthropic':
         formatted = [
             tool if _is_builtin_tool(tool) else _convert_tool(tool) for tool in tools
         ]
@@ -415,6 +424,7 @@ class ChatAnthropic(ChatModel):
             'adaptive',
         )
 
+    @override
     def with_structured_output(
         self, schema: type[BaseModel], include_raw: bool = False
     ) -> StructuredChatModel:
@@ -430,10 +440,14 @@ class ChatAnthropic(ChatModel):
 
     # ── tracing ─────────────────────────────────────────────────────────────
 
+    @override
     def _server_url(self) -> str | None:
         return self.anthropic_api_url
 
-    def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
+    @override
+    def _invocation_params(
+        self, stop: list[str] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return {
             'model': self.model,
             'max_tokens': self.max_tokens,
@@ -445,7 +459,8 @@ class ChatAnthropic(ChatModel):
             **kwargs,
         }
 
-    def _llm_output(self, message: AIMessage) -> dict | None:
+    @override
+    def _llm_output(self, message: AIMessage) -> dict[str, Any] | None:
         metadata = message.response_metadata
         return {
             'model_name': metadata.get('model_name'),
@@ -455,12 +470,14 @@ class ChatAnthropic(ChatModel):
 
     # ── invocation ──────────────────────────────────────────────────────────
 
+    @override
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
         stop = kwargs.pop('stop', None)
         payload = self._request_payload(messages, stop=stop, **kwargs)
         data = await (await self._create(payload)).parse()
         return _format_output(data)
 
+    @override
     async def _astream(
         self, messages: list[BaseMessage], **kwargs: Any
     ) -> AsyncIterator[AIMessageChunk]:
@@ -500,16 +517,19 @@ class ChatAnthropic(ChatModel):
     # not merged in. The gateway's retries and fallback are the only retry
     # layer, so the SDK does not retry.
 
+    @override
     def supports_native_messages(self) -> bool:
         return True
 
-    def _native_messages_call(self, body: dict, headers: dict[str, str]) -> dict:
+    def _native_messages_call(
+        self, body: dict[str, Any], headers: dict[str, str]
+    ) -> dict[str, Any]:
         """Return the SDK call's arguments for a client's Messages body."""
         forwarded = {
             'anthropic-version': headers.get('anthropic-version')
             or _DEFAULT_ANTHROPIC_VERSION
         }
-        if beta := headers.get('anthropic-beta'):
+        if (beta := headers.get('anthropic-beta')) is not None and beta != '':
             forwarded['anthropic-beta'] = beta
         return {
             # Required by the SDK's signature; the raw body below wins.
@@ -520,17 +540,19 @@ class ChatAnthropic(ChatModel):
             'extra_headers': forwarded,
         }
 
+    @override
     async def _ainvoke_native_messages(
-        self, body: dict, headers: dict[str, str]
-    ) -> dict:
+        self, body: dict[str, Any], headers: dict[str, str]
+    ) -> dict[str, Any]:
         client = self.client.with_options(max_retries=0)
         response = await client.messages.with_raw_response.create(
             **self._native_messages_call(body, headers)
         )
         return response.http_response.json()
 
+    @override
     async def _astream_native_messages(
-        self, body: dict, headers: dict[str, str]
+        self, body: dict[str, Any], headers: dict[str, str]
     ) -> AsyncIterator[tuple[str, str]]:
         client = self.client.with_options(max_retries=0)
         async with client.messages.with_streaming_response.create(
@@ -592,7 +614,7 @@ class ChatAnthropic(ChatModel):
         # > configured reasoning_effort > configured output_config.
         output_config: dict[str, Any] = dict(self.output_config or {})
         effort_applied = False
-        if self.reasoning_effort:
+        if self.reasoning_effort is not None and self.reasoning_effort != '':
             output_config['effort'] = self.reasoning_effort
             effort_applied = True
         if isinstance(payload_config := payload.get('output_config'), dict):
@@ -631,7 +653,11 @@ class ChatAnthropic(ChatModel):
         self, payload: dict[str, Any], messages: Sequence[BaseMessage]
     ) -> None:
         container = payload.get('container')
-        if not self.reuse_last_container or _container_id(container):
+        if (
+            self.reuse_last_container is None
+            or not self.reuse_last_container
+            or _has_container_id(container)
+        ):
             return
         # Reuse the container of the most recent reply (code execution).
         for message in reversed(messages):
@@ -654,7 +680,7 @@ class ChatAnthropic(ChatModel):
             self.thinking if self.thinking is not None else config.get('thinking')
         )
         output_config = dict(self.output_config or {})
-        if self.reasoning_effort:
+        if self.reasoning_effort is not None and self.reasoning_effort != '':
             output_config['effort'] = self.reasoning_effort
         if isinstance(config.get('output_config'), dict):
             output_config.update(config['output_config'])
@@ -717,6 +743,7 @@ class _StructuredAnthropic(StructuredChatModel):
         self.include_raw = include_raw
         self.require_tool = require_tool
 
+    @override
     async def ainvoke(self, input: Sequence[BaseMessage], **kwargs: Any) -> Any:  # noqa: A002
         raw = await self.model.ainvoke(input, **kwargs)
         if self.require_tool and not raw.tool_calls:
@@ -778,7 +805,7 @@ def _default_http_client(
 
 def _first_env(*names: str) -> str | None:
     for name in names:
-        if value := os.getenv(name):
+        if (value := os.getenv(name)) is not None and value != '':
             return value
     return None
 
@@ -789,9 +816,7 @@ def _first_env(*names: str) -> str | None:
 @cache
 def _unsupported_sampling_params() -> frozenset[str]:
     """Return the sampling params the installed SDK's ``create`` rejects."""
-    accepted = inspect.signature(
-        anthropic.resources.messages.Messages.create
-    ).parameters
+    accepted = inspect.signature(Messages.create).parameters
     return frozenset(p for p in _SAMPLING_PARAMS if p not in accepted)
 
 
@@ -843,18 +868,18 @@ def _apply_required_betas(payload: dict[str, Any]) -> None:
         _add_beta(payload, 'user-profiles-2026-03-24')
 
 
-def _container_id(container: Any) -> str | None:
+def _has_container_id(container: Any) -> bool:
     if isinstance(container, str):
-        return container
+        return bool(container)
     if isinstance(container, dict):
-        return container.get('id')
-    return None
+        return bool(container.get('id'))
+    return False
 
 
 # ── tools ───────────────────────────────────────────────────────────────────
 
 
-def _is_builtin_tool(tool: Any) -> bool:
+def _is_builtin_tool(tool: Any) -> TypeGuard[dict[str, Any]]:
     """Whether ``tool`` is a server-side Anthropic tool, sent as is."""
     if not isinstance(tool, dict):
         return False
@@ -974,13 +999,17 @@ def _drop_unsupported_root_composition_tools(
 
 def _normalize_tool_call_id(tool_call_id: str | None) -> str | None:
     """Map an id other providers minted to one Anthropic accepts, deterministically."""
-    if not tool_call_id or _TOOL_CALL_ID_PATTERN.match(tool_call_id):
+    if (
+        tool_call_id is None
+        or tool_call_id == ''
+        or _TOOL_CALL_ID_PATTERN.match(tool_call_id)
+    ):
         return tool_call_id
     digest = hashlib.sha256(tool_call_id.encode()).hexdigest()
     return f'toolu_{digest[:24]}'
 
 
-def _normalize_block_tool_use_id(block: dict) -> dict:
+def _normalize_block_tool_use_id(block: dict[str, Any]) -> dict[str, Any]:
     if 'tool_use_id' in block:
         return {**block, 'tool_use_id': _normalize_tool_call_id(block['tool_use_id'])}
     return block
@@ -1010,7 +1039,7 @@ def _merge_messages(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
             for c in (SystemMessage, HumanMessage)
         ):
             if isinstance(last.content, str):
-                new_content: list = [{'type': 'text', 'text': last.content}]
+                new_content: list[Any] = [{'type': 'text', 'text': last.content}]
             else:
                 new_content = copy.copy(last.content)
             if isinstance(curr.content, str):
@@ -1023,7 +1052,7 @@ def _merge_messages(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
     return merged
 
 
-def _tool_result_content(message: ToolMessage) -> list:
+def _tool_result_content(message: ToolMessage) -> list[Any]:
     content = message.content
     if (
         isinstance(content, list)
@@ -1057,10 +1086,10 @@ def _tool_result_content(message: ToolMessage) -> list:
 
 def _format_messages(
     messages: Sequence[BaseMessage],
-) -> tuple[str | list[dict] | None, list[dict]]:
+) -> tuple[str | list[dict[str, Any]] | None, list[dict[str, Any]]]:
     """Split ``messages`` into Anthropic's system prompt and message list."""
-    system: str | list[dict] | None = None
-    formatted: list[dict] = []
+    system: str | list[dict[str, Any]] | None = None
+    formatted: list[dict[str, Any]] = []
     merged = _merge_messages(messages)
     for i, message in enumerate(merged):
         if message.type == 'system':
@@ -1082,7 +1111,7 @@ def _format_messages(
             continue
 
         role = _ROLES[message.type]
-        content: str | list
+        content: str | list[Any]
         if isinstance(message.content, str):
             content = message.content
         elif isinstance(message.content, list):
@@ -1127,7 +1156,7 @@ def _format_messages(
     return system, formatted
 
 
-def _format_block(block: Any, message: BaseMessage) -> list[dict]:
+def _format_block(block: Any, message: BaseMessage) -> list[dict[str, Any]]:
     """Format one content block of a user or assistant message."""
     if isinstance(block, str):
         return [{'type': 'text', 'text': block}]
@@ -1204,7 +1233,7 @@ def _format_block(block: Any, message: BaseMessage) -> list[dict]:
     return [block]
 
 
-def _format_tool_use(block: dict, message: BaseMessage) -> dict:
+def _format_tool_use(block: dict[str, Any], message: BaseMessage) -> dict[str, Any]:
     # A tool call with the same id is preferred over the block.
     if (
         isinstance(message, AIMessage)
@@ -1233,7 +1262,7 @@ def _format_tool_use(block: dict, message: BaseMessage) -> dict:
     return tool_use
 
 
-def _format_text_block(block: dict) -> dict:
+def _format_text_block(block: dict[str, Any]) -> dict[str, Any]:
     """Keep only the text-block fields the API accepts."""
     formatted = {
         k: v
@@ -1248,7 +1277,7 @@ def _format_text_block(block: dict) -> dict:
     return formatted
 
 
-def _format_image(url: str) -> dict:
+def _format_image(url: str) -> dict[str, Any]:
     """Convert an OpenAI image URL (http or data URI) to an Anthropic source."""
     if match := re.match(r'^data:(?P<media_type>image/.+);base64,(?P<data>.+)$', url):
         return {
@@ -1265,7 +1294,9 @@ def _format_image(url: str) -> dict:
     )
 
 
-def _data_source(block: dict, default_mime: str | None) -> dict | None:
+def _data_source(
+    block: dict[str, Any], default_mime: str | None
+) -> dict[str, Any] | None:
     if 'url' in block:
         return None
     if 'base64' in block or block.get('source_type') == 'base64':
@@ -1287,7 +1318,7 @@ def _data_source(block: dict, default_mime: str | None) -> dict | None:
     return None
 
 
-def _format_data_content_block(block: dict) -> dict:
+def _format_data_content_block(block: dict[str, Any]) -> dict[str, Any]:
     """Format an image or file block as an Anthropic image or document block."""
     block_type = block['type']
     if block_type == 'image':
@@ -1437,9 +1468,7 @@ def _chunk_from_event(
             if block.type == 'text':
                 if text := getattr(block, 'text', '') or '':
                     chunk = AIMessageChunk(content=text)
-            elif (getattr(block, 'thinking', '') or '') or (
-                getattr(block, 'signature', '') or ''
-            ):
+            elif getattr(block, 'thinking', '') or getattr(block, 'signature', ''):
                 chunk = AIMessageChunk(content='')
     elif event.type == 'content_block_delta':
         delta_type = event.delta.type
@@ -1482,13 +1511,14 @@ def _chunk_from_event(
     return chunk, block_start
 
 
-def _usage_metadata(usage: Any) -> dict[str, Any]:
+def _usage_metadata(usage: Any) -> UsageMetadata:
     """Usage in gateway terms: input_tokens includes cache reads and writes.
 
     The counts come from ``messages_usage``, as on the native Messages path.
     """
     counts = messages_usage(usage)
-    input_token_details: dict[str, Any] = {
+    # None: a count the provider did not report, left out.
+    details: dict[str, int | None] = {
         'cache_read': getattr(usage, 'cache_read_input_tokens', None),
         'cache_creation': getattr(usage, 'cache_creation_input_tokens', None),
     }
@@ -1497,24 +1527,25 @@ def _usage_metadata(usage: Any) -> dict[str, Any]:
         if isinstance(cache_creation, BaseModel):
             cache_creation = cache_creation.model_dump()
         for key in ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens'):
-            input_token_details[key] = cache_creation.get(key)
+            details[key] = cache_creation.get(key)
         if any(
-            isinstance(input_token_details[key], int) and input_token_details[key] > 0
-            for key in ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens')
+            isinstance(count, int) and count > 0
+            for count in (
+                details['ephemeral_5m_input_tokens'],
+                details['ephemeral_1h_input_tokens'],
+            )
         ):
             # The TTL breakdown replaces the total, so it is not counted twice.
-            input_token_details['cache_creation'] = 0
+            details['cache_creation'] = 0
 
     input_tokens = counts.input
     output_tokens = counts.output
-    usage_metadata: dict[str, Any] = {
-        'input_tokens': input_tokens,
-        'output_tokens': output_tokens,
-        'total_tokens': input_tokens + output_tokens,
-        'input_token_details': {
-            k: v for k, v in input_token_details.items() if v is not None
-        },
-    }
+    usage_metadata = UsageMetadata(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        input_token_details=input_token_details(details),
+    )
     reasoning = getattr(
         getattr(usage, 'output_tokens_details', None), 'thinking_tokens', None
     )

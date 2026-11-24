@@ -37,7 +37,7 @@ def _spacy_nlp_engine(languages: tuple[str, ...]) -> NlpEngine:
 class PresidioEngine:
     def __init__(self, languages: list[str] = PRESIDIO_LANGUAGES):
         self._analyzer_local = None
-        self._anonymizer = None
+        self._anonymizer: AnonymizerEngine | None = None
         self._languages = languages
 
     def _get_nlp_engine(self) -> NlpEngine:
@@ -82,7 +82,7 @@ class PresidioEngine:
     def _resolve_ahds_settings(self, ahds: AhdsParams | None):
         """Resolve AHDS connection settings from the per-guardrail AhdsParams."""
         endpoint = ahds.endpoint if ahds else None
-        if not endpoint:
+        if endpoint is None or endpoint == '':
             raise ValueError(
                 'AHDS endpoint must be set when backend="ahds" is used '
                 '(guardrail parameters.ahds.endpoint)'
@@ -92,7 +92,7 @@ class PresidioEngine:
         client_id = ahds.client_id if ahds else None
         client_secret = (
             ahds.client_secret.get_secret_value()
-            if ahds and ahds.client_secret
+            if ahds and ahds.client_secret is not None and len(ahds.client_secret) > 0
             else None
         )
         return endpoint, api_version, tenant_id, client_id, client_secret
@@ -133,7 +133,7 @@ class PresidioEngine:
         return analyzer
 
     @property
-    def anonymizer(self):
+    def anonymizer(self) -> AnonymizerEngine:
         if not self._anonymizer:
             logger.info('Presidio Anonymizer initialization...')
             self._anonymizer = AnonymizerEngine()

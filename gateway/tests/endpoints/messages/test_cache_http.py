@@ -9,12 +9,13 @@ and what the gateway records.
 import asyncio
 from contextlib import contextmanager
 import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import tiktoken
 
-from tests.caching.test_semantic_caching import FakeSearchRedis
+from tests.caching.test_semantic_caching import FakeSearchRedis, redis_serving
 from tests.common import provider_responses as canned
 from tests.common.db_mock import TEST_PROJECT_UUID
 from tests.common.gateway_harness import open_gateway
@@ -94,16 +95,16 @@ def _serve_cached(*guardrails: str) -> GatewayRoute:
     )
 
 
-def _answer(text: str) -> dict:
+def _answer(text: str) -> dict[str, Any]:
     return canned.anthropic_message(text).json_body
 
 
-def _ask(text: str, **fields: object) -> dict:
+def _ask(text: str, **fields: object) -> dict[str, Any]:
     """Return BODY with ``text`` as its one user message."""
     return {**BODY, 'messages': [{'role': 'user', 'content': text}], **fields}
 
 
-def _cut_off(answer: dict) -> dict:
+def _cut_off(answer: dict[str, Any]) -> dict[str, Any]:
     return {**answer, 'stop_reason': 'max_tokens'}
 
 
@@ -112,20 +113,21 @@ def _cut_off_stream(*parts: str) -> str:
     events = (
         canned.anthropic_stream(list(parts)) if parts else canned.anthropic_stream()
     ).sse_events
+    assert events is not None
     for event in events:
         if event['type'] == 'message_delta':
             event['delta']['stop_reason'] = 'max_tokens'
     return ''.join(f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n' for e in events)
 
 
-def _answer_of(response) -> dict:
+def _answer_of(response) -> dict[str, Any]:
     """Return the answer a stream carries: its blocks and its stop reason."""
     frames = stream_frames(response.text)
     assert [event for event, _ in frames][0] == 'message_start'
     assert [event for event, _ in frames][-1] == 'message_stop'
-    blocks: dict[int, dict] = {}
+    blocks: dict[int, dict[str, Any]] = {}
     inputs: dict[int, str] = {}
-    answer: dict = {}
+    answer: dict[str, Any] = {}
     for event, data in frames:
         if event == 'message_start':
             answer = dict(data['message'])
@@ -148,7 +150,7 @@ def _answer_of(response) -> dict:
     }
 
 
-def _cache_events(gateway) -> list[tuple]:
+def _cache_events(gateway) -> list[tuple[Any, ...]]:
     """Return the cache events: type, value, cache type, model."""
     return [
         (e['EVENT_TYPE'].name, e['VALUE'], e['CACHE_TYPE'], e['MODEL_ID'])
@@ -508,9 +510,9 @@ def test_a_hit_does_not_count_on_the_limits(gateway, stream):
 DIM = 4
 
 
-def _serve_semantic() -> GatewayRoute:
+def _serve_semantic() -> tuple[GatewayRoute, FakeSearchRedis]:
     """Serve the route on Claude with a semantic cache on a fake Redis search
-    index, embedding with OpenAI.
+    index, embedding with OpenAI. Returns the route and the fake index.
     """
     route = serve(
         CLAUDE,
@@ -521,9 +523,11 @@ def _serve_semantic() -> GatewayRoute:
         project_uuid=str(TEST_PROJECT_UUID),
     )
 
+    fake_redis = FakeSearchRedis()
+
     async def build() -> SemanticCache:
         cache = SemanticCache(
-            redis_client=FakeSearchRedis(),
+            redis_client=redis_serving(fake_redis),
             similarity_threshold=0.8,
             dim=DIM,
             distance_metric='cosine',
@@ -540,7 +544,7 @@ def _serve_semantic() -> GatewayRoute:
         route.embedding_invoker,
         route.embedding_models,
     )
-    return route
+    return route, fake_redis
 
 
 def _embedded(mock) -> list[str]:
@@ -551,13 +555,13 @@ def _embedded(mock) -> list[str]:
     return [encoding.decode(tokens) for tokens in sent_body(mock)['input']]
 
 
-def _stored(route: GatewayRoute) -> dict:
+def _stored(fake_redis: FakeSearchRedis) -> dict[str, Any]:
     """Return the entries of the route's semantic index."""
-    return route.gateway_cache.cache_client.redis_client.hashes
+    return fake_redis.hashes
 
 
 def test_semantic_cache_hits_on_a_similar_request(gateway):
-    route = _serve_semantic()
+    route, fake_redis = _serve_semantic()
     upstream = mock_anthropic()
     first_embedding = mock_embedding(1, 0, 0, 0)
     second_embedding = mock_embedding(0.98, 0.2, 0, 0)
@@ -582,7 +586,7 @@ def test_semantic_cache_hits_on_a_similar_request(gateway):
     assert sent_body(first_embedding)['model'] == 'text-embedding-3-small'
     assert _embedded(second_embedding) == ['Hello there']
     assert _cache_events(gateway)[0] == ('CACHE_HIT', 1.0, 'semantic', 'claude')
-    assert len(_stored(route)) == 1
+    assert len(_stored(fake_redis)) == 1
 
 
 def test_semantic_cache_misses_on_a_request_that_is_not_similar(gateway):
@@ -603,7 +607,7 @@ def test_semantic_cache_misses_on_a_request_that_is_not_similar(gateway):
 def test_semantic_cache_is_skipped_without_an_embedding_model(gateway):
     # The config refuses a semantic cache on a route with no embedding model:
     # the route loses its model after it is built.
-    route = _serve_semantic()
+    route, fake_redis = _serve_semantic()
     route.cache = RouteCache.from_config(
         route.gateway_route_config, route.gateway_cache, route.cost_service
     )
@@ -617,12 +621,12 @@ def test_semantic_cache_is_skipped_without_an_embedding_model(gateway):
     assert response.status_code == 200
     assert first.isdone() and second.isdone()
     assert not embeddings.matches
-    assert _stored(route) == {}
+    assert _stored(fake_redis) == {}
     assert CACHE_HIT not in response.headers
 
 
 def test_semantic_cache_is_skipped_when_the_last_user_turn_has_no_text(gateway):
-    route = _serve_semantic()
+    route, fake_redis = _serve_semantic()
     first = mock_anthropic()
     second = mock_anthropic()
     embeddings = mock_embedding(1, 0, 0, 0)
@@ -650,7 +654,7 @@ def test_semantic_cache_is_skipped_when_the_last_user_turn_has_no_text(gateway):
     assert response.status_code == 200
     assert first.isdone() and second.isdone()
     assert not embeddings.matches
-    assert _stored(route) == {}
+    assert _stored(fake_redis) == {}
     assert CACHE_HIT not in response.headers
 
 

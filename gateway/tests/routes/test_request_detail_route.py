@@ -6,7 +6,9 @@ from uuid import UUID
 
 from fastapi import FastAPI
 from starlette.testclient import TestClient
+from typing_extensions import override
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.request_dto import EventDTO, RequestDetailDTO
 from radicalbit_ai_gateway.models.request_event_type import RequestStatus
 from radicalbit_ai_gateway.routes.requests_route import RequestsRoute
@@ -26,12 +28,13 @@ PREFIX = '/public/api/v1'
 
 
 class TestRequestDetailRoute(unittest.TestCase):
+    @override
     def setUp(self):
         self.requests_service = MagicMock(spec_set=RequestsService)
         self.project_service = MagicMock(spec_set=ProjectService)
         app = FastAPI()
-        app.add_exception_handler(GatewayError, gateway_exception_handler)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+        add_exception_handler(app, GatewayError, gateway_exception_handler)
+        add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
         app.include_router(
             RequestsRoute.get_requests_router(
                 requests_service=self.requests_service,

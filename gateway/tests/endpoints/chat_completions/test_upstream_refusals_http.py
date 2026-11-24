@@ -6,6 +6,8 @@ and the client gets a bad gateway without the provider's body. The provider
 is mocked over HTTP with pook.
 """
 
+from typing import Any
+
 import pook
 import pytest
 
@@ -25,7 +27,7 @@ KEY_REFUSAL = {
 }
 
 
-def _model(model_id: str) -> dict:
+def _model(model_id: str) -> dict[str, Any]:
     return {
         'model_id': model_id,
         'model': 'openai/gpt-4o-mini',
@@ -51,7 +53,7 @@ def gateway():
         yield gateway
 
 
-def _refuse(status: int, body: dict) -> None:
+def _refuse(status: int, body: dict[str, Any]) -> None:
     pook.post(OPENAI_URL).times(1).reply(status).json(body)
 
 

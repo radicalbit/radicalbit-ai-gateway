@@ -8,12 +8,15 @@ from radicalbit_ai_gateway.guardrails.guardrail_check import _select_messages
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.metrics.define_metrics import guardrails_triggered_counter
-from radicalbit_ai_gateway.models.event_payload import GuardrailEventPayload
+from radicalbit_ai_gateway.models.event_payload import (
+    GuardrailEventBehavior,
+    GuardrailEventPayload,
+)
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.guardrails import (
-    Guardrail,
     GuardrailType,
     GuardrailWhereType,
+    PresidioAnonymizerGuardrail,
     RedactParameter,
 )
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
@@ -31,35 +34,16 @@ GuardrailRedactFunction = Callable[
 
 
 def _with_content(msg: BaseMessage, new_content: Any) -> BaseMessage:
-    """Create a copy of the message with updated content, preserving other fields.
-    If not possible, falls back to mutating the instance (preserves special fields like tool_call_id).
+    """Return a copy of the message with new content, its other fields
+    (a tool call id...) kept.
     """
-    if hasattr(msg, 'model_copy'):
-        # Gateway messages are pydantic models
-        try:
-            return msg.model_copy(update={'content': new_content})
-        except Exception:
-            pass
-
-    try:
-        return msg.__class__(
-            content=new_content,
-            additional_kwargs=getattr(msg, 'additional_kwargs', {}),
-            response_metadata=getattr(msg, 'response_metadata', {}),
-        )
-    except Exception:
-        # fallback: mutate the object directly (useful for ToolMessage)
-        try:
-            msg.content = new_content
-        except Exception:
-            logger.debug('Unable to set new content on message; returning original.')
-        return msg
+    return msg.model_copy(update={'content': new_content})
 
 
 async def _anonymize_text_with_presidio(
     text: str,
     language: str,
-    entities: list,
+    entities: list[str] | None,
     presidio_engine: PresidioEngine,
     backend: str = 'local',
     ahds=None,
@@ -67,7 +51,7 @@ async def _anonymize_text_with_presidio(
     """Execute analyze + anonymize on a string.
     Returns (redacted_text, True) if changed, otherwise (original_text, False).
     """
-    if not isinstance(text, str) or not text:
+    if not text:
         return text, False
 
     try:
@@ -100,7 +84,7 @@ async def _anonymize_text_with_presidio(
     anon_result = await asyncio.to_thread(
         presidio_engine.anonymizer.anonymize, text=text, analyzer_results=results
     )
-    redacted = getattr(anon_result, 'text', None) or text
+    redacted = anon_result.text or text
     return redacted, (redacted != text)
 
 
@@ -180,7 +164,7 @@ class GuardrailRedact:
     async def apply(
         self,
         identity: RequestIdentity,
-        guardrails: Sequence[Guardrail],
+        guardrails: Sequence[PresidioAnonymizerGuardrail],
         messages: list[BaseMessage],
         where: GuardrailWhereType,
         *,
@@ -205,11 +189,10 @@ class GuardrailRedact:
 
         for guardrail in guardrails:
             logger.debug(
-                'Evaluating guardrail: %s (type=%s, where=%s, behavior=%s)',
+                'Evaluating guardrail: %s (type=%s, where=%s)',
                 guardrail.name,
                 guardrail.type.name,
                 guardrail.where.name,
-                guardrail.behavior.name,
             )
 
             redact_fn = self._guardrail_redact_mapping.get(guardrail.type)
@@ -217,6 +200,7 @@ class GuardrailRedact:
                 raise GuardrailBadRequest(
                     f'Unknown guardrail type: {guardrail.type}', guardrail
                 )
+            params = guardrail.parameters
 
             # Each message keeps its index, so the redacted copy goes back
             # in its place.
@@ -234,9 +218,7 @@ class GuardrailRedact:
                 continue
 
             filtered_only = [m for _, m in filtered_indexed]
-            redacted_filtered, was_redacted = await redact_fn(
-                filtered_only, guardrail.parameters
-            )
+            redacted_filtered, was_redacted = await redact_fn(filtered_only, params)
 
             # Reintegrate redacted messages into their original positions
             result = list(messages_to_redact)
@@ -244,12 +226,14 @@ class GuardrailRedact:
                 result[orig_idx] = redacted_msg
 
             if was_redacted:
+                # An anonymizer has no behavior: its event records what it did.
+                behavior = GuardrailEventBehavior.REDACT
                 attrs = {
                     'name': guardrail.name,
                     'type': guardrail.type.name,
                     'where': where.name,
                     'parameters': str(guardrail.parameters),
-                    'behavior': guardrail.behavior.name,
+                    'behavior': behavior.value,
                 }
                 emit_event(
                     GuardrailEventPayload(
@@ -267,7 +251,7 @@ class GuardrailRedact:
                         type=guardrail.type.name,
                         where=where.name,
                         parameters=str(guardrail.parameters),
-                        behavior=guardrail.behavior.name,
+                        behavior=behavior,
                     )
                 )
                 guardrails_triggered_counter.add(
@@ -277,7 +261,7 @@ class GuardrailRedact:
                 log_message = (
                     f'[GUARDRAIL TRIGGERED] [route={identity.route_name}] '
                     f'[name={guardrail.name}] [type={guardrail.type.name}] '
-                    f'[where={where.name}] [behavior={guardrail.behavior.name}]'
+                    f'[where={where.name}] [behavior={behavior.value}]'
                 )
 
                 logger.warning(log_message)

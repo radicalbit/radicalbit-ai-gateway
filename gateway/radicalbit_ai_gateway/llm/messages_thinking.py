@@ -34,10 +34,13 @@ def _is_thinking(block: Any) -> bool:
 
 
 def _is_tool_result(block: Any) -> bool:
-    return isinstance(block, dict) and block.get('type') == 'tool_result'
+    if not isinstance(block, dict):
+        return False
+    block_type: object = block.get('type')
+    return block_type == 'tool_result'
 
 
-def _last_index(messages: list, role: str) -> int | None:
+def _last_index(messages: list[Any], role: str) -> int | None:
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
         if isinstance(message, dict) and message.get('role') == role:
@@ -45,7 +48,7 @@ def _last_index(messages: list, role: str) -> int | None:
     return None
 
 
-def _kept_index(messages: list) -> int | None:
+def _kept_index(messages: list[Any]) -> int | None:
     """Return the assistant message whose thinking must stay, if any.
 
     That is the last assistant message while a tool loop runs: the last user
@@ -60,7 +63,7 @@ def _kept_index(messages: list) -> int | None:
     return _last_index(messages, 'assistant')
 
 
-def without_old_thinking(body: dict) -> tuple[dict, int]:
+def without_old_thinking(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
     """Return a copy of ``body`` without the old thinking blocks, and their number.
 
     Thinking and redacted thinking blocks leave the assistant messages, except

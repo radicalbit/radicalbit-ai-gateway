@@ -7,6 +7,7 @@ import zipfile
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
@@ -73,6 +74,7 @@ _ROUTE_BUDGET = ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITIN
 
 
 class ProjectServiceTest(DatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -453,10 +455,9 @@ class ProjectServiceTest(DatabaseIntegration):
         self._add_limit(out.uuid)
 
         assert self.svc.get_by_uuid(out.uuid).limits is None
-        assert [
-            limit.window_size
-            for limit in self.svc.get_by_uuid(out.uuid, include_limits=True).limits
-        ] == ['1 day']
+        limits = self.svc.get_by_uuid(out.uuid, include_limits=True).limits
+        assert limits is not None
+        assert [limit.window_size for limit in limits] == ['1 day']
         [found] = [p for p in self.svc.get_all_filtered() if p.uuid == out.uuid]
         assert found.limits is None
         [found] = [
@@ -464,6 +465,7 @@ class ProjectServiceTest(DatabaseIntegration):
             for p in self.svc.get_all_filtered(include_limits=True)
             if p.uuid == out.uuid
         ]
+        assert found.limits is not None
         assert [limit.window_size for limit in found.limits] == ['1 day']
 
     # --- project budget limits ---
@@ -500,6 +502,29 @@ class ProjectServiceTest(DatabaseIntegration):
             for lim in self.svc.get_budget_limits_for_project(out.uuid)
         }
         assert saved[limit.uuid] == 42.5
+
+    def test_update_budget_limit_value_of_a_limit_deleted_meanwhile_is_not_found(
+        self,
+    ):
+        out, _, _ = self._create(name='budget-raced')
+        [limit] = self.svc.add_budget_limits_to_project(
+            out.uuid, db_mock.get_sample_project_budget_limits_in()
+        )
+        dao = self.svc.project_budget_limit_dao
+
+        def update_then_deleted(limit_uuid, value):
+            # Another request deletes the limit between the update and the
+            # read of the updated row.
+            ProjectBudgetLimitDAO.update_max_value(dao, limit_uuid, value)
+            dao.delete_by_uuid(limit_uuid)
+
+        with (
+            patch.object(dao, 'update_max_value', side_effect=update_then_deleted),
+            pytest.raises(ProjectBudgetLimitNotFoundError),
+        ):
+            self.svc.update_budget_limit_value(
+                out.uuid, limit.uuid, ProjectBudgetLimitValueIn(value=42.5)
+            )
 
     def test_add_budget_limits_to_project_duplicate_window_raises(self):
         out, _, _ = self._create(name='budget-dup')
@@ -546,6 +571,7 @@ class ProjectServiceTest(DatabaseIntegration):
         assert conflicts.published == ['test-route']
         assert conflicts.draft_configs == []
         project = self.svc.get_by_uuid(out.uuid, include_limits=True)
+        assert project.route_budgets is not None
         assert project.route_budgets.published == ['test-route']
         assert project.route_budgets.draft == []
         assert project.route_budgets.draft_configs == []

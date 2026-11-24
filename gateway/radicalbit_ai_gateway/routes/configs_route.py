@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 import logging
 from typing import Any
 
@@ -39,7 +40,7 @@ class ConfigsRoute:
             lambda _, f: project_service.get_configs(f)
         )
         router = APIRouter()
-        runtime_configs = ['runtime_configs_api']
+        runtime_configs: list[str | Enum] = ['runtime_configs_api']
 
         @router.get(
             '/configs/runtime',

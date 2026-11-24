@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 from sqlalchemy import update
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
@@ -184,6 +185,7 @@ class _UnreachableSecretProvider(FakeSecretProvider):
     def __init__(self):
         super().__init__({})
 
+    @override
     def list_secret_keys(self) -> list[str]:
         raise SecretsBackendError('connection refused')
 
@@ -213,6 +215,7 @@ _OPENAI_CONFIG = 'chat_models:\n  - model_id: m\n    api_key: !secret OPENAI_API
 class SecretServiceUsedInTest(DatabaseIntegration):
     """Derived per-key project usage — needs real served configs."""
 
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()

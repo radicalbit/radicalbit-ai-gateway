@@ -21,7 +21,7 @@ class TestGeminiChatModelInvoker:
     def test_gemini_chat_model_with_api_key(self, mock_init_chat_model):
         """Test that a Gemini model is correctly initialized with api_key via init_chat_model."""
         mock_init_chat_model.return_value = MagicMock()
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         model = Model(
             model_id='gemini-test',
             model='google-genai/gemini-1.5-pro',
@@ -42,7 +42,7 @@ class TestGeminiChatModelInvoker:
     def test_gemini_chat_model_uses_init_chat_model(self, mock_init_chat_model):
         """Test that init_chat_model is called for Gemini models."""
         mock_init_chat_model.return_value = MagicMock()
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         model = Model(
             model_id='gemini-test',
             model='google-genai/gemini-1.5-pro',
@@ -62,7 +62,7 @@ class TestGeminiChatModelInvoker:
             model='google-genai/gemini-1.5-pro',
             credentials=Credentials(),
         )
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         with pytest.raises(ValueError, match='API key required'):
             ChatModelInvoker([model], cost_service, None)
 
@@ -70,7 +70,7 @@ class TestGeminiChatModelInvoker:
     def test_gemini_chat_model_with_params(self, mock_init_chat_model):
         """Test that parameters are correctly passed to the Gemini model via init_chat_model."""
         mock_init_chat_model.return_value = MagicMock()
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         model = Model(
             model_id='gemini-test',
             model='google-genai/gemini-1.5-pro',
@@ -136,7 +136,7 @@ class TestGeminiEmbeddingModelInvoker:
     def test_gemini_embedding_model_with_api_key(self, mock_init_embeddings):
         """Test that a Gemini embedding model is correctly initialized with api_key via init_embeddings."""
         mock_init_embeddings.return_value = MagicMock()
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         model = Model(
             model_id='gemini-embed-test',
             model='google-genai/models/gemini-embedding-001',
@@ -158,7 +158,7 @@ class TestGeminiEmbeddingModelInvoker:
     def test_gemini_embedding_model_with_task_type(self, mock_init_embeddings):
         """Test that task_type is correctly passed to the Gemini embedding model via init_embeddings."""
         mock_init_embeddings.return_value = MagicMock()
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         model = Model(
             model_id='gemini-embed-test',
             model='google-genai/models/gemini-embedding-001',
@@ -178,7 +178,7 @@ class TestGeminiEmbeddingModelInvoker:
     def test_gemini_embedding_model_uses_init_embeddings(self, mock_init_embeddings):
         """Test that init_embeddings is called for Gemini embedding models."""
         mock_init_embeddings.return_value = MagicMock()
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         model = Model(
             model_id='gemini-embed-test',
             model='google-genai/models/gemini-embedding-001',
@@ -197,6 +197,6 @@ class TestGeminiEmbeddingModelInvoker:
             model='google-genai/models/gemini-embedding-001',
             credentials=Credentials(),
         )
-        cost_service: CostService = MagicMock(spec_set=CostService)
+        cost_service = MagicMock(spec_set=CostService)
         with pytest.raises(ValueError, match='API key required'):
             EmbeddingModelInvoker([model], cost_service, None)

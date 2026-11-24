@@ -1,6 +1,7 @@
 import logging
 
 import pytest
+from typing_extensions import override
 
 from radicalbit_ai_gateway.utils import logging_hooks
 from radicalbit_ai_gateway.utils.logging_hooks import (
@@ -18,6 +19,7 @@ def _clean_registry():
 
 
 class _DropAll(logging.Filter):
+    @override
     def filter(self, record):
         return False
 

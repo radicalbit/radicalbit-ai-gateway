@@ -1,16 +1,20 @@
+from decimal import Decimal
 import uuid
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
+from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 
 
 class KeyLimitDAOTest(DatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -20,6 +24,11 @@ class KeyLimitDAOTest(DatabaseIntegration):
     def _insert_key(self, name='rb-key'):
         key = db_mock.get_sample_key(uuid=uuid.uuid4(), name=name)
         return self.key_dao.insert(key)
+
+    def _limit(self, limit_uuid: uuid.UUID) -> KeyLimit:
+        found = self.key_limit_dao.get_by_uuid(limit_uuid)
+        assert found is not None
+        return found
 
     def test_insert(self):
         key = self._insert_key()
@@ -31,7 +40,7 @@ class KeyLimitDAOTest(DatabaseIntegration):
         key = self._insert_key()
         limit = db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
         self.key_limit_dao.insert(limit)
-        res = self.key_limit_dao.get_by_uuid(limit.uuid)
+        res = self._limit(limit.uuid)
         assert res.uuid == limit.uuid
 
     def test_get_by_key_uuid(self):
@@ -98,12 +107,12 @@ class KeyLimitDAOTest(DatabaseIntegration):
         existing = self.key_limit_dao.insert(
             db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
         )
-        existing.max_value = 99.0
+        existing.max_value = Decimal('99')
         new = db_mock.get_sample_key_limit(
             uuid=uuid.uuid4(), key_uuid=key.uuid, category='request_rate'
         )
         self.key_limit_dao.save_many([new], [existing])
-        assert self.key_limit_dao.get_by_uuid(existing.uuid).max_value == 99.0
+        assert self._limit(existing.uuid).max_value == 99.0
         assert self.key_limit_dao.get_by_uuid(new.uuid) is not None
 
     def test_save_many_is_atomic_on_conflict(self):
@@ -111,13 +120,13 @@ class KeyLimitDAOTest(DatabaseIntegration):
         existing = self.key_limit_dao.insert(
             db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
         )
-        existing.max_value = 99.0
+        existing.max_value = Decimal('99')
         # Same category/algorithm/window as the existing one
         duplicate = db_mock.get_sample_key_limit(uuid=uuid.uuid4(), key_uuid=key.uuid)
         pytest.raises(
             IntegrityError, self.key_limit_dao.save_many, [duplicate], [existing]
         )
-        assert self.key_limit_dao.get_by_uuid(existing.uuid).max_value == 10.0
+        assert self._limit(existing.uuid).max_value == 10.0
 
     def test_insert_many_is_atomic_on_conflict(self):
         key = self._insert_key()

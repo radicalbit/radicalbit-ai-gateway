@@ -88,7 +88,7 @@ def _check_target(fields: Mapping[str, Any]) -> None:
             raise AlertRuleInvalidTargetError(
                 'A project rule takes no route and no credential'
             )
-    elif scope is AlertRuleScope.CREDENTIAL:
+    else:
         if not credential:
             raise AlertRuleInvalidTargetError('A credential rule requires a credential')
         if project or route:
@@ -213,7 +213,7 @@ class AlertRuleService:
             return False
 
     def _resolve_project_name(self, project_uuid: str | None) -> str | None:
-        if not project_uuid:
+        if project_uuid is None or project_uuid == '':
             return None
         for p_name, entry in self._project_configs.items():
             if str(entry.uuid) == project_uuid:
@@ -221,7 +221,7 @@ class AlertRuleService:
         if self.project_dao is not None:
             try:
                 proj = self.project_dao.get_by_uuid(UUID(project_uuid))
-                if proj and proj.name:
+                if proj is not None and proj.name:
                     return proj.name
             except Exception:
                 pass
@@ -289,7 +289,7 @@ class AlertRuleService:
 
     def get_rule_by_uuid(self, alert_rule_uuid: UUID) -> AlertRuleOut:
         rule = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
-        if not rule:
+        if rule is None:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
@@ -306,7 +306,7 @@ class AlertRuleService:
         _from: datetime | None = None,
         _to: datetime | None = None,
     ) -> list[AlertHistoryBucketOut]:
-        if not self.alert_rule_dao.get_by_uuid(rule_uuid):
+        if self.alert_rule_dao.get_by_uuid(rule_uuid) is None:
             raise AlertRuleNotFoundError(f'Alert rule with UUID {rule_uuid} not found')
         return self._history(_from, _to, rule_uuid)
 
@@ -363,7 +363,7 @@ class AlertRuleService:
         self, alert_rule_uuid: UUID, alert_rule_in: AlertRuleUpdateIn
     ) -> AlertRuleOut:
         existing = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
-        if not existing:
+        if existing is None:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
@@ -381,7 +381,7 @@ class AlertRuleService:
             self._check_event(merged)
 
         updated = self.alert_rule_dao.update_rule(alert_rule_uuid, update_fields)
-        if not updated:
+        if updated is None:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
@@ -391,13 +391,13 @@ class AlertRuleService:
 
     def toggle_rule_enabled(self, alert_rule_uuid: UUID, enabled: bool) -> AlertRuleOut:
         existing = self.alert_rule_dao.get_by_uuid(alert_rule_uuid)
-        if not existing:
+        if existing is None:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
 
         updated = self.alert_rule_dao.toggle_enabled(alert_rule_uuid, enabled)
-        if not updated:
+        if updated is None:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )
@@ -407,7 +407,7 @@ class AlertRuleService:
 
     def delete_rule(self, alert_rule_uuid: UUID) -> AlertRuleOut:
         deleted = self.alert_rule_dao.soft_delete_by_uuid(alert_rule_uuid)
-        if not deleted:
+        if deleted is None:
             raise AlertRuleNotFoundError(
                 f'Alert rule with UUID {alert_rule_uuid} not found'
             )

@@ -96,6 +96,12 @@ def _thresholds(events: list[LimitEventPayload]) -> list[LimitEventPayload]:
     return [e for e in events if e.event_type == EventType.LIMIT_THRESHOLD]
 
 
+def _percentage(event: LimitEventPayload) -> int:
+    """Return the percentage a threshold event crossed."""
+    assert event.threshold_percentage is not None
+    return event.threshold_percentage
+
+
 def _only(events: list[LimitEventPayload]) -> LimitEventPayload:
     """Return the one block event, ignoring the threshold events of the counts."""
     (event,) = _blocks(events)
@@ -106,7 +112,7 @@ def _assert_live_window(event: LimitEventPayload, window_seconds: int) -> None:
     now = int(time.time())
     assert event.window_seconds == window_seconds
     assert now < event.reset_time <= now + window_seconds
-    assert event.window_id
+    assert event.window_id is not None and event.window_id != ''
     assert event.threshold_percentage is None
 
 
@@ -151,7 +157,7 @@ def limits() -> Limits:
 
 
 @pytest.fixture
-def route_limits(limits):
+def route_limits(limits: Limits):
     def resolve(**route) -> RequestLimits:
         return limits.resolve(_IDENTITY, _route(**route))
 
@@ -159,7 +165,7 @@ def route_limits(limits):
 
 
 @pytest.fixture
-def credential_limits(limits):
+def credential_limits(limits: Limits):
     def resolve(*credential: CredentialLimitOut) -> RequestLimits:
         return limits.resolve(_CREDENTIAL_IDENTITY, RouteLimits(), credential)
 
@@ -167,7 +173,7 @@ def credential_limits(limits):
 
 
 @pytest.fixture
-def project_limits(limits):
+def project_limits(limits: Limits):
     def resolve(value: float) -> RequestLimits:
         return limits.resolve(_IDENTITY, RouteLimits(), (), [_project_limit(value)])
 
@@ -474,7 +480,7 @@ class TestThresholdEvents:
         now = int(time.time())
         assert event.window_seconds == 60
         assert now < event.reset_time <= now + 60
-        assert event.window_id
+        assert event.window_id is not None and event.window_id != ''
 
     @pytest.mark.asyncio
     async def test_one_hit_crossing_both_percentages_emits_both(
@@ -482,7 +488,7 @@ class TestThresholdEvents:
     ):
         await route_limits(**INPUT_OF_100).count(Usage(input_tokens=99))
 
-        assert sorted(e.threshold_percentage for e in _thresholds(events)) == [75, 98]
+        assert sorted(_percentage(e) for e in _thresholds(events)) == [75, 98]
 
     @pytest.mark.asyncio
     async def test_a_crossed_threshold_does_not_fire_again_in_the_window(

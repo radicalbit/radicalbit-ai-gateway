@@ -6,14 +6,31 @@ SQL is put together.
 """
 
 import datetime
+from typing import Literal, TypedDict
 import uuid
 
 from fastapi_pagination import Params
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 
-from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
+from radicalbit_ai_gateway.db.dao.event_dao import (
+    EventDAO,
+    McpEntityColumn,
+    McpSeriesColumn,
+)
+
+Granularity = Literal['hours', 'days', 'weeks', 'months']
+Bucket = tuple[int, str, int]
+
+
+class _Filters(TypedDict, total=False):
+    route_names: list[str] | None
+    _from: datetime.datetime | None
+    _to: datetime.datetime | None
+    tags: list[str] | None
+
 
 PROJECT_A = uuid.UUID('11111111-1111-1111-1111-111111111111')
 PROJECT_B = uuid.UUID('22222222-2222-2222-2222-222222222222')
@@ -74,6 +91,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
     drill-down is checked against the bar of the grouped chart it opens from.
     """
 
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -81,8 +99,8 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
 
     def grouped(
         self,
-        group_by: str = 'services',
-        granularity: str = 'hours',
+        group_by: Literal['services', 'groups', 'keys'] = 'services',
+        granularity: Granularity = 'hours',
         route_names: list[str] | None = None,
         _from: datetime.datetime | None = None,
         _to: datetime.datetime | None = None,
@@ -104,15 +122,15 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
 
     def drilled(
         self,
-        entity_column: str = 'MCP_ALIAS',
+        entity_column: McpEntityColumn = 'MCP_ALIAS',
         entity_value: str = 'files',
-        granularity: str = 'hours',
+        granularity: Granularity = 'hours',
         route_names: list[str] | None = None,
         _from: datetime.datetime | None = None,
         _to: datetime.datetime | None = None,
         tags: list[str] | None = None,
         timezone_offset_seconds: int = 0,
-        series_column: str | None = None,
+        series_column: McpSeriesColumn | None = None,
     ) -> list[tuple[int, str, int]]:
         return buckets(
             self.event_dao.get_mcp_server_chart_data_by_entity(
@@ -176,7 +194,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
         )
         h_before = ts(BASE_TIME - datetime.timedelta(hours=1))
 
-        for filters, expected in (
+        cases: list[tuple[_Filters, list[Bucket]]] = [
             (
                 {},
                 [
@@ -211,13 +229,16 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
                 [(H0, 'files', 2), (H1, 'search', 1)],
             ),
             ({'tags': ['env=prod', 'cost_center=retail']}, [(H0, 'files', 1)]),
-        ):
+        ]
+        for filters, expected in cases:
             with self.subTest(**filters):
                 table = self.event_dao.get_mcp_key_usage_paginated(
                     project_uuid=PROJECT_A,
                     params=Params(page=1, size=50),
-                    **{'route_names': None, '_from': None, '_to': None, 'tags': None}
-                    | filters,
+                    route_names=filters.get('route_names'),
+                    _from=filters.get('_from'),
+                    _to=filters.get('_to'),
+                    tags=filters.get('tags'),
                 )
 
                 assert self.grouped(**filters) == expected
@@ -270,14 +291,20 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
             ('months', 0, [(utc(1, 1), 5), (utc(2, 1), 1)]),
         ):
             with self.subTest(granularity=granularity, offset=offset):
-                query = {
-                    'granularity': granularity,
-                    'timezone_offset_seconds': offset,
-                }
                 points = [(bucket, 'files', count) for bucket, count in expected]
 
-                assert self.grouped(**query) == points
-                assert self.drilled(**query) == points
+                assert (
+                    self.grouped(
+                        granularity=granularity, timezone_offset_seconds=offset
+                    )
+                    == points
+                )
+                assert (
+                    self.drilled(
+                        granularity=granularity, timezone_offset_seconds=offset
+                    )
+                    == points
+                )
 
     def test_a_group_or_key_drills_into_its_own_bar(self):
         """Drilling into a bar shows the numbers the bar was drawn from, and
@@ -384,7 +411,7 @@ class EventDAOMcpServerChartTest(DatabaseIntegrationClickhouse):
                 ),
             ]
         )
-        filters = {
+        filters: _Filters = {
             'route_names': ['agents'],
             '_from': BASE_TIME,
             '_to': BASE_TIME + datetime.timedelta(hours=1),

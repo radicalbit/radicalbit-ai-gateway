@@ -15,12 +15,14 @@ MESSAGES = [HumanMessage('Hi')]
 
 
 def model(name='deepseek-reasoner', **kwargs) -> GatewayDeepSeekChatModel:
-    return init_chat_model(
+    chat_model = init_chat_model(
         f'deepseek:{name}',
         api_key='sk',
         http_async_client=HttpxAiohttpClient(),
         **kwargs,
     )
+    assert isinstance(chat_model, GatewayDeepSeekChatModel)
+    return chat_model
 
 
 class Judgement(BaseModel):
@@ -73,7 +75,7 @@ async def test_stream_reasoning_content_in_deltas():
     assert 'stream_options' not in recorder.requests[0]['body']
     assert chunks[0].additional_kwargs == {'reasoning_content': 'Hmm.'}
     assert chunks[0].response_metadata == {'model_provider': 'deepseek'}
-    assert ''.join(c.content for c in chunks) == 'Hello from the model'
+    assert ''.join(c.text for c in chunks) == 'Hello from the model'
 
 
 async def test_structured_output_uses_function_calling():

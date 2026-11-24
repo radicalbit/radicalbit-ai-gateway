@@ -1,10 +1,11 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, TypeVar
 from uuid import UUID
 
 from fastapi_pagination import Page, Params
 from pydantic import BaseModel
-from sqlalchemy import Float, Row, desc, func as F, select
+from sqlalchemy import ColumnElement, Float, Row, desc, func as F, select
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
@@ -28,6 +29,9 @@ from radicalbit_ai_gateway.utils.chart_utils import (
 _PAGE_BUCKET = timedelta(hours=1)
 
 
+_RowModel = TypeVar('_RowModel', bound=BaseModel)
+
+
 class PageWindow(NamedTuple):
     """Where a page lies among time buckets ordered newest first."""
 
@@ -47,6 +51,7 @@ def page_window(
     """
     skipped = 0
     newest = None
+    inner_offset = 0
     for start, count in buckets:
         if newest is None:
             if skipped + count <= offset:
@@ -86,26 +91,30 @@ class RequestEventDAO:
     def _add_time_filters(
         self,
         project_uuid: UUID,
-        conditions: list,
+        conditions: list[ColumnElement[Any]],
         _from: datetime | None,
         _to: datetime | None,
         route_name: str | None = None,
     ) -> None:
         if route_name is not None:
             conditions.append(self.T.c['ROUTE_NAME'] == route_name)
-        if project_uuid is not None:
-            conditions.append(self.T.c['PROJECT_UUID'] == str(project_uuid))
+        conditions.append(self.T.c['PROJECT_UUID'] == str(project_uuid))
         if _from is not None:
             conditions.append(self.T.c['TIMESTAMP'] >= _from)
         if _to is not None:
             conditions.append(self.T.c['TIMESTAMP'] <= _to)
 
-    def _add_tags_filter(self, conditions: list, tags: list[str] | None) -> None:
+    def _add_tags_filter(
+        self, conditions: list[ColumnElement[Any]], tags: list[str] | None
+    ) -> None:
         add_tags_filter(conditions, self.T.c['TAGS'], tags=tags)
 
     def _validate_row(
-        self, model_class: type[BaseModel], field_names: list[str], row: tuple
-    ) -> Any:
+        self,
+        model_class: type[_RowModel],
+        field_names: list[str],
+        row: Sequence[object],
+    ) -> _RowModel:
         return model_class.model_validate(dict(zip(field_names, row)))
 
     def get_request_chart_data(
@@ -224,7 +233,10 @@ class RequestEventDAO:
 
         with self.db.begin_session() as session:
             res = session.execute(stmt).first()
-            return res.route_name if res else None
+            if res is None:
+                return None
+            route_name = res.route_name
+            return route_name if isinstance(route_name, str) else None
 
     def get_most_route_with_error(
         self,
@@ -438,7 +450,7 @@ class RequestEventDAO:
             res = session.execute(stmt).all()
             return [self._validate_row(ErrorDetail, FIELD_NAMES, row) for row in res]
 
-    def _request_columns(self) -> list:
+    def _request_columns(self) -> list[ColumnElement[Any]]:
         """Return the columns of one request, shared by the Requests list and detail."""
         T = self.T
         return [
@@ -470,19 +482,19 @@ class RequestEventDAO:
         params: Params,
         tags: list[str] | None = None,
         request_types: list[RequestType] | None = None,
-    ) -> Page[Row]:
+    ) -> Page[Row[Any]]:
         """One page of the project's requests, newest first."""
         T = self.T
-        conditions: list = []
+        conditions: list[ColumnElement[Any]] = []
         self._add_time_filters(project_uuid, conditions, _from, _to)
         self._add_tags_filter(conditions, tags=tags)
-        if route_names:
+        if route_names is not None and len(route_names) > 0:
             conditions.append(T.c['ROUTE_NAME'].in_(route_names))
-        if group_uuids:
+        if group_uuids is not None and len(group_uuids) > 0:
             conditions.append(T.c['GROUP_UUID'].in_([str(g) for g in group_uuids]))
-        if key_uuids:
+        if key_uuids is not None and len(key_uuids) > 0:
             conditions.append(T.c['API_KEY_UUID'].in_([str(k) for k in key_uuids]))
-        if request_types:
+        if request_types is not None and len(request_types) > 0:
             conditions.append(T.c['REQUEST_TYPE'].in_([r.value for r in request_types]))
 
         # Requests per hour, newest hour first. It costs what a plain count
@@ -544,7 +556,7 @@ class RequestEventDAO:
             res = session.execute(stmt).all()
             return {str(row.request_uuid): row.http_status_code for row in res}
 
-    def get_request(self, project_uuid: UUID, request_uuid: UUID) -> Row | None:
+    def get_request(self, project_uuid: UUID, request_uuid: UUID) -> Row[Any] | None:
         """One request of the project by its UUID, or None if there is none."""
         T = self.T
         stmt = (

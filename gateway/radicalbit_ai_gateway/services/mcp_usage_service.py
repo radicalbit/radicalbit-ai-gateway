@@ -62,7 +62,7 @@ class McpUsageService:
             )
             for row in page.items
         ]
-        return Page.create(items, params, total=page.total)
+        return Page[McpKeyUsageDTO].create(items, params, total=page.total)
 
     def get_mcp_server_chart_data(
         self,

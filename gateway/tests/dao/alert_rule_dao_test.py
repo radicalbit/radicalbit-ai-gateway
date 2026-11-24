@@ -4,6 +4,8 @@ import datetime
 import json
 import uuid
 
+from typing_extensions import override
+
 from tests.common.db_integration import DatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
@@ -14,11 +16,13 @@ CREDENTIAL = uuid.uuid4()
 
 
 class AlertRuleDAOTest(DatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.dao = AlertRuleDAO(cls.db)
 
+    @override
     def setUp(self):
         with self.db.begin_session() as session:
             session.query(AlertRule).delete()

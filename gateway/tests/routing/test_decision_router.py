@@ -1,6 +1,7 @@
 """DecisionRouter.select_model with Typesafe mocked over HTTP."""
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -74,7 +75,7 @@ def _router(**overrides) -> DecisionRouter:
     )
 
 
-def _answer(**fields) -> dict:
+def _answer(**fields) -> dict[str, Any]:
     """Build a Jev response whose Choice answer has exactly these fields."""
     return {
         'model': 'jev-1.13.0',
@@ -83,9 +84,11 @@ def _answer(**fields) -> dict:
     }
 
 
-def _choice_answer(probabilities: dict, confidence: float | None = None) -> dict:
+def _choice_answer(
+    probabilities: dict[str, Any], confidence: float | None = None
+) -> dict[str, Any]:
     """Jev's answer for these probabilities: the top option, its confidence."""
-    top = max(probabilities, key=probabilities.get)
+    top = max(probabilities, key=lambda option: probabilities[option])
     return _answer(
         choice=top,
         confidence=probabilities[top] if confidence is None else confidence,
@@ -101,7 +104,7 @@ def _mock_typesafe(
     model: str = 'jev-latest',
     status: int = 200,
     times: int = 1,
-    options: dict = OPTIONS,
+    options: dict[str, Any] = OPTIONS,
 ):
     mock = (
         pook.post(TYPESAFE_URL)
@@ -121,7 +124,10 @@ def _mock_typesafe(
         )
         .times(times)
     )
-    mock.reply(status).json(body if body is not None else _choice_answer(choice))
+    if body is None:
+        assert choice is not None
+        body = _choice_answer(choice)
+    mock.reply(status).json(body)
     return mock
 
 
@@ -143,7 +149,7 @@ def span():
         yield span
 
 
-def _attributes(span) -> dict:
+def _attributes(span) -> dict[str, Any]:
     return {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
 
 

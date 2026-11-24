@@ -1,3 +1,5 @@
+from typing import Any
+
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
     HumanMessage,
@@ -7,7 +9,7 @@ from radicalbit_ai_gateway.llm.messages import (
 from radicalbit_ai_gateway.llm.providers.deepseek import GatewayDeepSeekChatModel
 
 
-def _payload(messages) -> dict:
+def _payload(messages) -> dict[str, Any]:
     model = GatewayDeepSeekChatModel(model='deepseek-reasoner', api_key='test-key')
     return model._get_request_payload(messages)
 

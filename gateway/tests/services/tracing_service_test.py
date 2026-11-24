@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi_pagination import Page, Params
 import pytest
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
 from radicalbit_ai_gateway.db.models.trace import (
@@ -36,6 +37,7 @@ PROJECT_UUID = UUID('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
 
 
 class TracingServiceTest(unittest.TestCase):
+    @override
     def setUp(self):
         self.otel_traces_dao = MagicMock(spec_set=OtelTracesDAO)
         self.key_service = MagicMock(spec_set=KeyService)
@@ -446,6 +448,7 @@ class TracingServiceTest(unittest.TestCase):
         assert result.api_key_name == 'test-key'
         assert result.group_uuid == UUID('550e8400-e29b-41d4-a716-446655440003')
         assert result.group_name == 'test-group'
+        assert result.tree is not None
         assert result.tree.span_id == 'span-1'
 
     def test_get_trace_by_id_with_hierarchy(self):
@@ -513,6 +516,7 @@ class TracingServiceTest(unittest.TestCase):
         assert result.root_span_id == 'span-root'
         assert result.trace_status == TraceStatus.SUCCESS
         # Verify tree structure
+        assert result.tree is not None
         assert result.tree.span_id == 'span-root'
         assert len(result.tree.children) == 1
         child = result.tree.children[0]
@@ -560,6 +564,7 @@ class TracingServiceTest(unittest.TestCase):
 
         tree = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
 
+        assert tree is not None
         assert (tree.operation_category, tree.span_kind) == ('endpoint', 'workflow')
         children = {c.span_id: c for c in tree.children}
         assert children['auth'].operation_category == 'auth'
@@ -577,7 +582,14 @@ class TracingServiceTest(unittest.TestCase):
         return self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
 
     @staticmethod
-    def _named_span(span_id, parent, span_name, **kwargs):
+    def _named_span(
+        span_id: str,
+        parent: str,
+        span_name: str,
+        status_code: str = 'Unset',
+        gen_ai_provider: str = '',
+        fallback_triggered: bool = False,
+    ) -> SpanRecord:
         return SpanRecord(
             timestamp=datetime.datetime(
                 2025, 1, 8, 10, 0, 0, tzinfo=datetime.timezone.utc
@@ -594,7 +606,9 @@ class TracingServiceTest(unittest.TestCase):
             api_key_name='',
             group_uuid='',
             group_name='',
-            **{'status_code': 'Unset', **kwargs},
+            status_code=status_code,
+            gen_ai_provider=gen_ai_provider,
+            fallback_triggered=fallback_triggered,
         )
 
     def test_tree_nodes_carry_a_readable_label(self):
@@ -838,6 +852,7 @@ class TracingServiceTest(unittest.TestCase):
 
         tree = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
 
+        assert tree is not None
         assert tree.start_offset_ms == 0
         children = {c.span_id: c for c in tree.children}
         a, b = children['child-a'], children['child-b']

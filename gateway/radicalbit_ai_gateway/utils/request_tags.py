@@ -82,10 +82,10 @@ def parse_tags_header(raw: str | None) -> tuple[str, ...]:
         if not sep or not key or not value:
             raise _reject(position, f'{segment.strip()!r} must be a key=value pair')
 
-        if reason := _invalid_key_reason(key):
+        if (reason := _invalid_key_reason(key)) is not None:
             raise _reject(position, reason)
 
-        if reason := _invalid_value_reason(value):
+        if (reason := _invalid_value_reason(value)) is not None:
             raise _reject(position, reason)
 
         tags.add(f'{key}={value}')
@@ -104,10 +104,10 @@ def parse_tag_query_value(raw: str) -> str:
     if not sep or not key or not value:
         raise GatewayBadRequest(f'Invalid tag {raw!r}: expected a key=value pair')
 
-    if reason := _invalid_key_reason(key):
+    if (reason := _invalid_key_reason(key)) is not None:
         raise GatewayBadRequest(f'Invalid tag {raw!r}: {reason}')
 
-    if reason := _invalid_value_reason(value):
+    if (reason := _invalid_value_reason(value)) is not None:
         raise GatewayBadRequest(f'Invalid tag {raw!r}: {reason}')
 
     return raw
@@ -127,4 +127,8 @@ def parse_tags_query(
     ] = None,
 ) -> list[str] | None:
     """FastAPI dependency validating the repeated ``tags`` query param."""
-    return [parse_tag_query_value(tag) for tag in tags] if tags else None
+    return (
+        [parse_tag_query_value(tag) for tag in tags]
+        if tags is not None and len(tags) > 0
+        else None
+    )

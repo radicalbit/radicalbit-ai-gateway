@@ -1,3 +1,5 @@
+from typing import Protocol
+
 from fastapi import Request
 
 from radicalbit_ai_gateway.middleware.request_event_context import RequestEventContext
@@ -5,6 +7,12 @@ from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.utils.exceptions import MissingApiKey
 from radicalbit_ai_gateway.utils.request_context import get_current_request_tags
 from radicalbit_ai_gateway.utils.trace_attributes import set_trace_attributes
+
+
+class TokenValidator(Protocol):
+    """What ``app.state.token_validator`` provides: a token's key details."""
+
+    async def validate_token(self, token: str) -> KeyDetails: ...
 
 
 async def authenticate_bearer_request(
@@ -17,7 +25,7 @@ async def authenticate_bearer_request(
     ``/v1/chat/completions`` auth step.
     """
     auth = request.headers.get('authorization')
-    if not auth or not auth.startswith('Bearer '):
+    if auth is None or not auth.startswith('Bearer '):
         raise MissingApiKey('Missing API key')
     token = auth.split(' ')[1]
     return await _authenticate_token(request, token, project_uuid, project_name)
@@ -30,7 +38,7 @@ async def authenticate_anthropic_request(
     send their key (``x-api-key``) or as an ``Authorization: Bearer`` token.
     """
     token = request.headers.get('x-api-key')
-    if token:
+    if token is not None and token != '':
         return await _authenticate_token(request, token, project_uuid, project_name)
     return await authenticate_bearer_request(request, project_uuid, project_name)
 
@@ -38,9 +46,8 @@ async def authenticate_anthropic_request(
 async def _authenticate_token(
     request: Request, token: str, project_uuid: str, project_name: str
 ) -> KeyDetails:
-    key_details = await request.app.state.token_validator.validate_token(
-        token,
-    )
+    token_validator: TokenValidator = request.app.state.token_validator
+    key_details = await token_validator.validate_token(token)
     request.state.api_key_uuid = key_details.api_key_uuid
     request.state.api_key_name = key_details.api_key_name
     request.state.group_uuid = key_details.group_uuid

@@ -5,13 +5,18 @@ the response shape and the status codes a caller sees.
 """
 
 from datetime import UTC, datetime
+from unittest.mock import create_autospec
 from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
+from typing_extensions import override
 
+from radicalbit_ai_gateway.db.dao.alert_dao import AlertDAO
+from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
 from radicalbit_ai_gateway.db.models.alert import AlertHistoryBucket
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.routes.alert_rule_route import AlertRuleRoute
 from radicalbit_ai_gateway.services.alert_rule_service import AlertRuleService
 from radicalbit_ai_gateway.utils.exceptions import (
@@ -24,10 +29,13 @@ UNKNOWN_RULE = UUID('cccccccc-cccc-cccc-cccc-cccccccccccc')
 NOW = datetime(2025, 1, 8, 10, 20, tzinfo=UTC)
 
 
-class FakeAlertDAO:
-    def __init__(self):
+class FakeAlertDAO(AlertDAO):
+    """Records each history query and answers with one bucket."""
+
+    def __init__(self):  # no database: only get_history is called
         self.calls = []
 
+    @override
     def get_history(self, _from, _to, rule_uuid=None):
         self.calls.append((_from, _to, rule_uuid))
         return [
@@ -41,23 +49,28 @@ class FakeAlertDAO:
         ]
 
 
-class FakeAlertRuleDAO:
-    def get_by_uuid(self, rule_uuid):
-        return object() if rule_uuid == KNOWN_RULE else None
+def alert_rule_dao() -> AlertRuleDAO:
+    """Build an alert rule DAO that knows only ``KNOWN_RULE``."""
+    dao = create_autospec(AlertRuleDAO, instance=True, spec_set=True)
+    dao.get_by_uuid.side_effect = lambda rule_uuid: (
+        object() if rule_uuid == KNOWN_RULE else None
+    )
+    assert isinstance(dao, AlertRuleDAO)
+    return dao
 
 
 @pytest.fixture
-def alert_dao():
+def alert_dao() -> FakeAlertDAO:
     return FakeAlertDAO()
 
 
 @pytest.fixture
 def client(alert_dao):
     service = AlertRuleService(
-        alert_rule_dao=FakeAlertRuleDAO(), alert_dao=alert_dao, clock=lambda: NOW
+        alert_rule_dao=alert_rule_dao(), alert_dao=alert_dao, clock=lambda: NOW
     )
     app = FastAPI()
-    app.add_exception_handler(AlertRuleNotFoundError, alert_rule_exception_handler)
+    add_exception_handler(app, AlertRuleNotFoundError, alert_rule_exception_handler)
     app.include_router(AlertRuleRoute.get_alert_rule_router(service))
     return TestClient(app)
 

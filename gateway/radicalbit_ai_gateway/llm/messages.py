@@ -5,25 +5,29 @@ exact and semantic cache keys embed ``model_dump_json()`` of these messages, so
 changing it invalidates every cached entry.
 """
 
+from collections.abc import Sequence
 import json
-from typing import Any, Literal
+from typing import Any, Literal, Unpack
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # pydantic needs typing_extensions.TypedDict before Python 3.12.
 from typing_extensions import NotRequired, TypedDict
 
 MessageContent = str | list[str | dict[Any, Any]]
+# What a constructor takes as content: any sequence of blocks validates to a list.
+MessageContentInput = str | Sequence[str | dict[Any, Any]]
 
 
-class InputTokenDetails(TypedDict, total=False):
-    # Providers may add further keys (e.g. ephemeral_5m_input_tokens).
+class InputTokenDetails(TypedDict, total=False, extra_items=int):
+    # Providers add further counts (e.g. ephemeral_5m_input_tokens, or a
+    # service tier's tokens), serialized after these.
     audio: int
     cache_creation: int
     cache_read: int
 
 
-class OutputTokenDetails(TypedDict, total=False):
+class OutputTokenDetails(TypedDict, total=False, extra_items=int):
     audio: int
     reasoning: int
 
@@ -90,20 +94,65 @@ def invalid_tool_call(
     )
 
 
+class _MessageKwargs(TypedDict, total=False):
+    """Optional fields every message accepts as keyword arguments."""
+
+    additional_kwargs: dict[Any, Any]
+    response_metadata: dict[Any, Any]
+    id: str | None
+
+
+class _NamedMessageKwargs(_MessageKwargs, total=False):
+    name: str | None
+
+
+class _BaseMessageKwargs(_NamedMessageKwargs, total=False):
+    # Required by BaseMessage itself; a subclass's default may stand in.
+    type: str
+
+
+class _ToolMessageKwargs(_NamedMessageKwargs, total=False):
+    artifact: Any
+    status: Literal['success', 'error']
+
+
+class _AIMessageKwargs(_NamedMessageKwargs, total=False):
+    tool_calls: list[ToolCall]
+    invalid_tool_calls: list[InvalidToolCall]
+    usage_metadata: UsageMetadata | None
+
+
+class _AIMessageChunkKwargs(_AIMessageKwargs, total=False):
+    tool_call_chunks: list[ToolCallChunk]
+    chunk_position: Literal['last'] | None
+
+
 class BaseMessage(BaseModel):
-    """Base for every chat message. ``content`` may be passed positionally."""
+    """Base for every chat message. ``content`` may be passed positionally.
+
+    Each class defines ``__init__`` with the fields it accepts (type checkers
+    synthesize a keyword-only one for every pydantic model that does not), and
+    initializes the model directly: a parent's ``__init__`` does not take the
+    subclass's fields.
+
+    ``type`` and ``name`` are frozen: they never change once a message is
+    built, and declaring them read-only lets a subclass narrow them (each
+    ``type`` to its own literal, ``FunctionMessage.name`` to required).
+    """
 
     model_config = ConfigDict(extra='allow')
 
     content: MessageContent
     additional_kwargs: dict[Any, Any] = Field(default_factory=dict)
     response_metadata: dict[Any, Any] = Field(default_factory=dict)
-    type: str
-    name: str | None = None
+    type: str = Field(frozen=True)
+    name: str | None = Field(default=None, frozen=True)
     id: str | None = Field(default=None, coerce_numbers_to_str=True)
 
-    def __init__(self, content: MessageContent | None = None, **kwargs: Any):
-        super().__init__(content=content, **kwargs)
+    def __init__(
+        self, content: MessageContentInput, **kwargs: Unpack[_BaseMessageKwargs]
+    ) -> None:
+        BaseModel.__init__(self, content=content, **kwargs)
 
     @property
     def text(self) -> str:
@@ -119,23 +168,51 @@ class BaseMessage(BaseModel):
 
 
 class HumanMessage(BaseMessage):
-    type: Literal['human'] = 'human'
+    type: Literal['human'] = Field(default='human', frozen=True)
+
+    def __init__(
+        self, content: MessageContentInput, **kwargs: Unpack[_NamedMessageKwargs]
+    ) -> None:
+        BaseModel.__init__(self, content=content, **kwargs)
 
 
 class SystemMessage(BaseMessage):
-    type: Literal['system'] = 'system'
+    type: Literal['system'] = Field(default='system', frozen=True)
+
+    def __init__(
+        self, content: MessageContentInput, **kwargs: Unpack[_NamedMessageKwargs]
+    ) -> None:
+        BaseModel.__init__(self, content=content, **kwargs)
 
 
 class FunctionMessage(BaseMessage):
-    name: str
-    type: Literal['function'] = 'function'
+    name: str = Field(frozen=True)
+    type: Literal['function'] = Field(default='function', frozen=True)
+
+    def __init__(
+        self,
+        content: MessageContentInput,
+        *,
+        name: str,
+        **kwargs: Unpack[_MessageKwargs],
+    ) -> None:
+        BaseModel.__init__(self, content=content, name=name, **kwargs)
 
 
 class ToolMessage(BaseMessage):
     tool_call_id: str
-    type: Literal['tool'] = 'tool'
+    type: Literal['tool'] = Field(default='tool', frozen=True)
     artifact: Any = None
     status: Literal['success', 'error'] = 'success'
+
+    def __init__(
+        self,
+        content: MessageContentInput,
+        *,
+        tool_call_id: str,
+        **kwargs: Unpack[_ToolMessageKwargs],
+    ) -> None:
+        BaseModel.__init__(self, content=content, tool_call_id=tool_call_id, **kwargs)
 
     @model_validator(mode='before')
     @classmethod
@@ -159,7 +236,22 @@ class AIMessage(BaseMessage):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     invalid_tool_calls: list[InvalidToolCall] = Field(default_factory=list)
     usage_metadata: UsageMetadata | None = None
-    type: Literal['ai'] = 'ai'
+    # A chunk is an AIMessage, so reading ``type`` off one may give either tag;
+    # ``_own_type`` still accepts only the tag of the class being built.
+    type: Literal['ai', 'AIMessageChunk'] = Field(default='ai', frozen=True)
+
+    def __init__(
+        self, content: MessageContentInput, **kwargs: Unpack[_AIMessageKwargs]
+    ) -> None:
+        BaseModel.__init__(self, content=content, **kwargs)
+
+    @field_validator('type')
+    @classmethod
+    def _own_type(cls, value: str) -> str:
+        expected = cls.model_fields['type'].default
+        if value != expected:
+            raise ValueError(f'Input should be {expected!r}')
+        return value
 
     @model_validator(mode='before')
     @classmethod
@@ -189,9 +281,14 @@ class AIMessage(BaseMessage):
 class AIMessageChunk(AIMessage):
     """A streamed piece of an assistant message."""
 
-    type: Literal['AIMessageChunk'] = 'AIMessageChunk'  # type: ignore[assignment]
+    type: Literal['AIMessageChunk'] = Field(default='AIMessageChunk', frozen=True)
     tool_call_chunks: list[ToolCallChunk] = Field(default_factory=list)
     chunk_position: Literal['last'] | None = None
+
+    def __init__(
+        self, content: MessageContentInput, **kwargs: Unpack[_AIMessageChunkKwargs]
+    ) -> None:
+        BaseModel.__init__(self, content=content, **kwargs)
 
     @model_validator(mode='after')
     def _init_tool_calls(self):
@@ -221,7 +318,11 @@ class AIMessageChunk(AIMessage):
         invalid: list[InvalidToolCall] = []
         for chunk in self.tool_call_chunks:
             try:
-                args = parse_partial_json(chunk['args']) if chunk['args'] else {}
+                args = (
+                    parse_partial_json(chunk['args'])
+                    if chunk['args'] is not None and chunk['args'] != ''
+                    else {}
+                )
             except Exception:
                 args = None
             if isinstance(args, dict):

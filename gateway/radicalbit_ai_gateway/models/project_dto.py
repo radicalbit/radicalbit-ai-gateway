@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db.tables.project_config_table import ProjectConfig
 from radicalbit_ai_gateway.db.tables.project_table import Project
@@ -21,6 +22,7 @@ class ProjectFilter(str, Enum):
     DEV = 'dev'
     PROD = 'prod'
 
+    @override
     @classmethod
     def _missing_(cls, value: object):
         if isinstance(value, str):
@@ -36,6 +38,7 @@ class ConfigListFilter(str, Enum):
     REQUEST_TO_PUBLISH = 'request_to_publish'
     DRAFT = 'draft'
 
+    @override
     @classmethod
     def _missing_(cls, value: object):
         if isinstance(value, str):
@@ -159,8 +162,10 @@ class ProjectOut(BaseModel):
             uuid=project.uuid,
             name=project.name,
             description=project.description,
-            project_status=ProjectStatus.PROD if served else ProjectStatus.DEV,
-            served_config_uuid=served.uuid if served else None,
+            project_status=ProjectStatus.PROD
+            if served is not None
+            else ProjectStatus.DEV,
+            served_config_uuid=served.uuid if served is not None else None,
             configs=[ConfigSlotOut.from_config(c) for c in ordered],
             limits=limits,
             route_budgets=route_budgets,

@@ -3,18 +3,21 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 import logging
+from typing import Any
 
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
+from openai.types.chat.chat_completion_tool_union_param import (
+    ChatCompletionToolUnionParam,
+)
 
 from radicalbit_ai_gateway.endpoints.chat_completions import streaming
 from radicalbit_ai_gateway.endpoints.chat_completions.cache import (
     ChatEntry,
     StreamedReply,
 )
-from radicalbit_ai_gateway.endpoints.chat_completions.guardrails import Reply
+from radicalbit_ai_gateway.endpoints.chat_completions.guardrails import Reply, T
 from radicalbit_ai_gateway.endpoints.chat_completions.params import (
     CompletionCreateParams,
 )
@@ -27,8 +30,14 @@ from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config
 from radicalbit_ai_gateway.endpoints.common.streams import stream_of
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Conversation
+from radicalbit_ai_gateway.invocation.chat_model_invoker import ChatModelInvoker
 from radicalbit_ai_gateway.limiting.limits import Usage
-from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMessage
+from radicalbit_ai_gateway.llm.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    UsageMetadata,
+)
 from radicalbit_ai_gateway.llm.tracing import merge_chunks
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
@@ -45,6 +54,9 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
     set_streaming,
 )
 
+#: A chat request: its hits are completions; it stores completions and streamed replies.
+ChatScope = RequestScope[ChatCompletion, ChatCompletion | StreamedReply]
+
 logger = logging.getLogger(get_app_config().log_config.logger_name)
 
 CHAT_FIELDS = {'model', 'messages', 'tools', 'tool_choice'}
@@ -57,9 +69,9 @@ class ChatRequest:
     """
 
     messages: list[BaseMessage]
-    tools: list[ChatCompletionToolParam] | None = None
+    tools: list[ChatCompletionToolUnionParam] | None = None
     tool_choice: ChatCompletionToolChoiceOptionParam | None = None
-    params: dict = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def of(cls, params: CompletionCreateParams) -> 'ChatRequest':
@@ -76,8 +88,9 @@ class ChatRequest:
 
 
 class _Prepared:
-    """A request after its input policies: the model it goes to, its
-    messages, and the soft block that answers it in the model's place.
+    """A request after its input policies: the invoker and the model it
+    goes to, its messages, and the soft block that answers it in the
+    model's place.
 
     Not a dataclass: tracing would record its model whole, credentials
     included. Tracing records it by ``to_json``.
@@ -85,20 +98,22 @@ class _Prepared:
 
     def __init__(
         self,
+        invoker: ChatModelInvoker,
         model: Model,
         messages: list[BaseMessage],
         soft_block: ChatCompletion | None = None,
     ) -> None:
+        self.invoker = invoker
         self.model = model
         self.messages = messages
         self.soft_block = soft_block
 
-    def to_json(self) -> dict:
+    def to_json(self) -> dict[str, Any]:
         """Return what a span records: the model by its id, and the messages."""
         return {'model_id': self.model.model_id, 'messages': self.messages}
 
 
-async def complete(scope: RequestScope, chat: ChatRequest) -> ChatCompletion:
+async def complete(scope: ChatScope, chat: ChatRequest) -> ChatCompletion:
     """Answer a chat request with one completion."""
     route = scope.route
     prepared = await _prepare(scope, chat)
@@ -120,7 +135,7 @@ async def complete(scope: RequestScope, chat: ChatRequest) -> ChatCompletion:
 
 
 async def stream(
-    scope: RequestScope, chat: ChatRequest
+    scope: ChatScope, chat: ChatRequest
 ) -> AsyncIterator[ChatCompletionChunk]:
     """Answer a chat request with chunks.
 
@@ -134,10 +149,11 @@ async def stream(
     return _live(scope, chat, prepared)
 
 
-async def _prepare(scope: RequestScope, chat: ChatRequest) -> _Prepared:
+async def _prepare(scope: ChatScope, chat: ChatRequest) -> _Prepared:
     route = scope.route
     route_name = route.gateway_route_config.route_name
-    if not route.chat_invoker:
+    invoker = route.chat_invoker
+    if invoker is None:
         raise GatewayBadRequest(f'Route {route_name} has no chat models defined')
 
     # Limits come first, before anything that spends. A judge's spend then
@@ -165,7 +181,10 @@ async def _prepare(scope: RequestScope, chat: ChatRequest) -> _Prepared:
     scope.flags |= screened.flags
     if screened.soft_block:
         return _Prepared(
-            model, messages, screened.soft_block.build_soft_block_response(route_name)
+            invoker,
+            model,
+            messages,
+            screened.soft_block.build_soft_block_response(route_name),
         )
 
     # The cache reads the redacted messages, as the model does (ADR 0010).
@@ -174,18 +193,18 @@ async def _prepare(scope: RequestScope, chat: ChatRequest) -> _Prepared:
             messages, chat.tools, chat.tool_choice, chat.params, stream=chat.stream
         )
     )
-    return _Prepared(model, messages)
+    return _Prepared(invoker, model, messages)
 
 
 async def _invoke(
-    scope: RequestScope, chat: ChatRequest, prepared: _Prepared
+    scope: ChatScope, chat: ChatRequest, prepared: _Prepared
 ) -> ChatCompletion:
     logger.debug(
         'Processing request for model %s with %d messages.',
         prepared.model.model_id,
         len(prepared.messages),
     )
-    response = await scope.route.chat_invoker.complete(
+    response = await prepared.invoker.complete(
         identity=scope.identity,
         messages=prepared.messages,
         model_id=prepared.model.model_id,
@@ -205,9 +224,7 @@ async def _invoke(
 
 
 @workflow(name='apply_output_guardrails')
-async def _screen_output(
-    scope: RequestScope, response: ChatCompletion
-) -> ChatCompletion:
+async def _screen_output(scope: ChatScope, response: ChatCompletion) -> ChatCompletion:
     """Apply the output guardrails to a chat completion."""
     screened = await scope.guardrails.screen_output(
         Reply(response.choices[0].message.content)
@@ -235,7 +252,7 @@ async def _screen_output(
 
 
 async def _live(
-    scope: RequestScope, chat: ChatRequest, prepared: _Prepared
+    scope: ChatScope, chat: ChatRequest, prepared: _Prepared
 ) -> AsyncIterator[ChatCompletionChunk]:
     """Relay the model's chunks, then count the usage and store the reply."""
     set_streaming()
@@ -280,10 +297,10 @@ async def _live(
 
 
 def _model_stream(
-    scope: RequestScope, chat: ChatRequest, prepared: _Prepared, params: dict
-) -> AsyncIterator:
+    scope: ChatScope, chat: ChatRequest, prepared: _Prepared, params: dict[str, Any]
+) -> AsyncIterator[AIMessageChunk]:
     """Return the model's stream of a request."""
-    return scope.route.chat_invoker.stream(
+    return prepared.invoker.stream(
         identity=scope.identity,
         messages=prepared.messages,
         model_id=prepared.model.model_id,
@@ -301,10 +318,10 @@ class _Received:
     def __init__(self) -> None:
         self.chunks: list[AIMessageChunk] = []
         self.text = ''
-        self.usage: dict | None = None
+        self.usage: UsageMetadata | None = None
 
     async def take(
-        self, stream: AsyncIterator, *, warn_unexpected: bool = False
+        self, stream: AsyncIterator[object], *, warn_unexpected: bool = False
     ) -> AsyncIterator[AIMessageChunk]:
         """Take in the model's chunks, and pass them on. Anything else the
         stream sends is dropped; ``warn_unexpected`` logs it.
@@ -320,7 +337,7 @@ class _Received:
             elif warn_unexpected:
                 logger.warning('Unexpected chunk type during stream: %s', type(chunk))
 
-    async def count(self, scope: RequestScope, model: Model) -> None:
+    async def count(self, scope: ChatScope, model: Model) -> None:
         """Count the usage the stream reported on the request's limits."""
         if self.usage:
             await scope.limits.count(
@@ -333,7 +350,7 @@ class _Received:
 
 
 async def _buffered(
-    scope: RequestScope, chat: ChatRequest, prepared: _Prepared
+    scope: ChatScope, chat: ChatRequest, prepared: _Prepared
 ) -> list[ChatCompletionChunk]:
     """Return the chunks of a reply the output guardrails read whole."""
     set_streaming()
@@ -368,11 +385,11 @@ async def _buffered(
 
 @workflow(name='stream_with_output_guardrails')
 async def _stream_whole(
-    scope: RequestScope,
+    scope: ChatScope,
     chat: ChatRequest,
     prepared: _Prepared,
-    params: dict,
-    user_stream_options: dict | None,
+    params: dict[str, Any],
+    user_stream_options: dict[str, Any] | None,
 ) -> list[ChatCompletionChunk]:
     """Stream the model's reply whole, so the output guardrails can read it."""
     route_name = scope.route.gateway_route_config.route_name
@@ -417,8 +434,8 @@ async def _stream_whole(
 
 
 async def _screen_streamed(
-    scope: RequestScope, text: str | None, usage: dict | None = None
-) -> str | None:
+    scope: ChatScope, text: T, usage: UsageMetadata | None = None
+) -> T:
     """Apply the output guardrails to a streamed reply's text, or to a cache
     hit sent as a stream. Return the text to send.
 
@@ -448,7 +465,7 @@ def _wants_usage(stream_options) -> bool:
 def _streamed_reply(
     chunks: list[AIMessageChunk],
     text: str | None,
-    usage: dict | None,
+    usage: UsageMetadata | None,
     model_id: str,
     request_id: str | None = None,
 ) -> StreamedReply | None:
@@ -457,7 +474,7 @@ def _streamed_reply(
     reply has neither text nor tool calls: it would answer with nothing.
     """
     merged = merge_chunks(chunks) if chunks else AIMessageChunk(content='')
-    if not text and not merged.tool_calls:
+    if (text is None or text == '') and not merged.tool_calls:
         return None
     # The last finish reason wins: merging the chunks would join repeated ones.
     finish_reason = next(

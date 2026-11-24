@@ -18,10 +18,13 @@ from radicalbit_ai_gateway.utils.trace_attributes import (
     set_operation_category,
 )
 
+#: A decision request: it serves and stores the decision response as a dict.
+DecisionScope = RequestScope[dict[str, Any], dict[str, Any]]
+
 SCREENED_FIELDS = ('state', 'questions')
 
 
-async def decide(scope: RequestScope, body: dict) -> DecisionResponse:
+async def decide(scope: DecisionScope, body: dict[str, Any]) -> DecisionResponse:
     """Answer a decision request, Typesafe's body passed through (ADR 0004)."""
     route = scope.route
     config = route.gateway_route_config
@@ -39,7 +42,7 @@ async def decide(scope: RequestScope, body: dict) -> DecisionResponse:
     await check_limits(scope.limits, Demand(input='room', cost_room=True))
 
     screened = {f: body[f] for f in SCREENED_FIELDS if f in body}
-    if config.guardrails and screened:
+    if config.guardrails is not None and len(config.guardrails) > 0 and screened:
         body = {**body, **await _screen_fields(scope.guardrails, screened)}
 
     scope.cached = await scope.cache.lookup(

@@ -1,5 +1,7 @@
 import uuid
 
+from typing_extensions import override
+
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
 
@@ -11,6 +13,7 @@ from radicalbit_ai_gateway.db.tables.group_route_table import GroupRoute
 
 
 class GroupDAOTest(DatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -20,11 +23,13 @@ class GroupDAOTest(DatabaseIntegration):
         cls.project_dao = ProjectDAO(cls.db)
         cls.project_uuid = uuid.uuid4()
 
+    @override
     def setUp(self):
         self.project_dao.insert(
             db_mock.get_sample_project(uuid=self.project_uuid, name='my-project')
         )
 
+    @override
     def tearDown(self):
         super().tearDown()
 
@@ -63,6 +68,7 @@ class GroupDAOTest(DatabaseIntegration):
         res = self.group_dao.get_all()
         assert len(res) == 2
         deleted_group = self.group_dao.delete_by_uuid(groups[0].uuid)
+        assert deleted_group is not None
         assert deleted_group.uuid == groups[0].uuid
         res = self.group_dao.get_all()
         assert len(res) == 1
@@ -78,6 +84,7 @@ class GroupDAOTest(DatabaseIntegration):
         self.group_dao.delete_by_uuid(group.uuid)
 
         kept = self.key_dao.get_by_uuid(key.uuid)
+        assert kept is not None
         assert kept.group_uuid is None
         assert [item.uuid for item in self.key_limit_dao.get_by_key_uuid(key.uuid)] == [
             limit.uuid
@@ -88,6 +95,7 @@ class GroupDAOTest(DatabaseIntegration):
         inserted = self.group_dao.insert(group)
         assert inserted.uuid == group.uuid
         retrieved_group = self.group_dao.get_by_uuid(group.uuid)
+        assert retrieved_group is not None
         assert retrieved_group.uuid == group.uuid
         assert retrieved_group.name == group.name
 
@@ -99,6 +107,7 @@ class GroupDAOTest(DatabaseIntegration):
         update_rows = self.group_dao.update_group_name(group.uuid, new_name)
         assert update_rows == 1
         retrieved_group = self.group_dao.get_by_uuid(group.uuid)
+        assert retrieved_group is not None
         assert retrieved_group.uuid == group.uuid
         assert retrieved_group.name == new_name
 

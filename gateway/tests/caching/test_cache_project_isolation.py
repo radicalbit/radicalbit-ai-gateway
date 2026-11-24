@@ -44,8 +44,8 @@ ROUTE_NAME = 'default'
 
 
 def _build_route(gateway_cache: GatewayCache, project_uuid: str) -> GatewayRoute:
-    cost_service: CostService = MagicMock(spec_set=CostService)
-    prompt_manager: PromptManager = MagicMock(spec_set=PromptManager)
+    cost_service = MagicMock(spec_set=CostService)
+    prompt_manager = MagicMock(spec_set=PromptManager)
     chat_registry = [
         Model(
             model_id='openai-o4-mini',

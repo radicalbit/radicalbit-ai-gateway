@@ -27,7 +27,7 @@ def apply_config_prompt(messages: list[BaseMessage], model_selected: Model) -> i
         role,
     )
 
-    if config_prompt:
+    if config_prompt is not None and config_prompt != '':
         logger.debug('Adding config prompt to messages')
         enable_prompt_cache = bool(
             (model_selected.params or {}).get(ENABLE_PROMPT_CACHE_PARAM, False)

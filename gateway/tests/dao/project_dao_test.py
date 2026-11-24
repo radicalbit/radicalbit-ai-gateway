@@ -1,7 +1,9 @@
 import datetime
+from typing import Any
 import uuid
 
 from sqlalchemy import update
+from typing_extensions import override
 
 from tests.common import db_mock
 from tests.common.db_integration import DatabaseIntegration
@@ -20,6 +22,7 @@ def _names(projects) -> list[str]:
 
 
 class ProjectDAOTest(DatabaseIntegration):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -49,7 +52,7 @@ class ProjectDAOTest(DatabaseIntegration):
         return project
 
     def _insert_project_with_config(
-        self, name: str, *configs: tuple[Slot, ConfigStatus, dict]
+        self, name: str, *configs: tuple[Slot, ConfigStatus, dict[str, Any]]
     ) -> Project:
         """Insert a project plus one config per (slot, status, overrides)."""
         project = self._insert_project(name)
@@ -81,7 +84,9 @@ class ProjectDAOTest(DatabaseIntegration):
         assert self.project_dao.soft_delete(deleted_served.uuid) == 1
         assert self.project_dao.soft_delete(deleted.uuid) == 1
 
-        assert self.project_dao.get_by_uuid(dev.uuid).uuid == dev.uuid
+        live_dev = self.project_dao.get_by_uuid(dev.uuid)
+        assert live_dev is not None
+        assert live_dev.uuid == dev.uuid
         assert self.project_dao.get_by_uuid(deleted.uuid) is None
         assert self.project_dao.get_by_uuid(deleted_served.uuid) is None
         live = ['dev', 'served', 'was-served']

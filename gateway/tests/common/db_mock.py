@@ -1,4 +1,5 @@
 import datetime
+from decimal import Decimal
 import uuid
 from uuid import UUID, uuid4
 
@@ -133,7 +134,7 @@ def get_sample_key_limit(
     category: str = CredentialLimitCategory.BUDGET.value,
     algorithm: str = 'FIXED_WINDOW',
     window_size: str = '1 day',
-    max_value: float = 10.0,
+    max_value: float | Decimal = 10.0,
 ) -> KeyLimit:
     now = datetime.datetime.now(tz=UTC)
     return KeyLimit(
@@ -173,7 +174,7 @@ def get_sample_project_budget_limit(
     project_uuid: uuid.UUID = RANDOM_UUID,
     algorithm: str = 'FIXED_WINDOW',
     window_size: str = '1 day',
-    max_value: float = 10.0,
+    max_value: float | Decimal = 10.0,
 ) -> ProjectBudgetLimit:
     now = datetime.datetime.now(tz=UTC)
     return ProjectBudgetLimit(
@@ -577,7 +578,7 @@ def get_sample_event(
         group_uuid=group_uuid if group_uuid else uuid.uuid4(),
         group_name=group_name,
         cost=cost,
-        tags=tags if tags else [],
+        tags=tags if tags is not None and len(tags) > 0 else [],
         attributes=kwargs,
         model_id=model_id,
         model_type=model_type,
@@ -657,7 +658,7 @@ def get_sample_request_event(
         date=timestamp.date(),
         route_name=route_name,
         project_uuid=project_uuid,
-        tags=tags if tags else [],
+        tags=tags if tags is not None and len(tags) > 0 else [],
         api_key_uuid=api_key_uuid if api_key_uuid else uuid.uuid4(),
         api_key_name=api_key_name,
         group_uuid=group_uuid if group_uuid else uuid.uuid4(),
@@ -688,13 +689,13 @@ def get_sample_otel_span(
     resource_attributes: dict[str, str] | None = None,
     scope_name: str = '',
     scope_version: str = '',
-    events_timestamp: list | None = None,
-    events_name: list | None = None,
-    events_attributes: list | None = None,
+    events_timestamp: list[datetime.datetime] | None = None,
+    events_name: list[str] | None = None,
+    events_attributes: list[dict[str, str]] | None = None,
 ):
     """Create a sample OtelTraces instance for testing."""
     attrs = {_TEST_PROJECT_UUID_KEY: str(TEST_PROJECT_UUID)}
-    if span_attributes:
+    if span_attributes is not None and len(span_attributes) > 0:
         attrs.update(span_attributes)
     return OtelTraces(
         timestamp=timestamp,

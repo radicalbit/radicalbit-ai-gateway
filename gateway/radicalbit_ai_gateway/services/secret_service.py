@@ -44,7 +44,7 @@ class SecretService:
         backend_keys = set(provider.list_secret_keys())
         used_in = self._usage_by_key()
         keys = backend_keys | used_in.keys()
-        if search:
+        if search is not None and search != '':
             term = search.casefold()
             keys = {key for key in keys if term in key.casefold()}
         # Unavailable first, so unavailable keys always land on page one; by key
@@ -71,7 +71,7 @@ class SecretService:
         """
         references: list[tuple[str, ProjectRef]] = []
         for served in self._project_config_dao.list_served_with_project_name():
-            if not served.config_file:
+            if served.config_file is None or served.config_file == '':
                 logger.warning(
                     'Served config for project %s has no content — skipping '
                     'it for secret usage',

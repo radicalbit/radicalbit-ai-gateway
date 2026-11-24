@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 
@@ -30,6 +31,7 @@ def _validate_recipients(recipients: list[str] | None) -> list[str] | None:
 class _LenientEnum(str, Enum):
     """Accepts a value or a member name in any case, as older clients send either."""
 
+    @override
     @classmethod
     def _missing_(cls, value: object):
         if isinstance(value, str):
@@ -104,7 +106,9 @@ class AlertRuleIn(BaseModel):
             credential_uuid=self.credential,
             event=self.event,
             time_aggregation=self.time_aggregation.value,
-            window_size=self.window_size.value if self.window_size else None,
+            window_size=self.window_size.value
+            if self.window_size is not None
+            else None,
             channel=self.channel.value,
             recipients=json.dumps(self.recipients),
             enabled=self.enabled,
@@ -219,7 +223,7 @@ class AlertRuleOut(BaseModel):
             ),
             window_size=(
                 AlertRuleWindowSize(alert_rule.window_size)
-                if alert_rule.window_size
+                if alert_rule.window_size is not None and alert_rule.window_size != ''
                 else None
             ),
             channel=(

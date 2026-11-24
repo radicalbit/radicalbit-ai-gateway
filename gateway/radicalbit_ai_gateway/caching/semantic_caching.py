@@ -3,9 +3,11 @@ import logging
 
 import numpy as np
 from redis.asyncio import Redis
-from redis.commands.search.field import TagField, VectorField
+from redis.commands.search.field import Field, TagField, VectorField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
+from redis.typing import EncodableT, FieldT
+from typing_extensions import override
 
 from radicalbit_ai_gateway.caching.abstract_cache import AbstractCache
 from radicalbit_ai_gateway.metrics.define_metrics import semantic_cache_similarity
@@ -31,7 +33,7 @@ class SemanticCache(AbstractCache):
         self.distance_metric = distance_metric
         self.index_name = 'ai_gateway_idx'
 
-        self.schema = [
+        self.schema: list[Field] = [
             TagField('project_uuid'),
             TagField('route_name'),
             TagField('key_uuid'),
@@ -46,7 +48,7 @@ class SemanticCache(AbstractCache):
             ),
         ]
 
-        self._background_tasks: set[asyncio.Task] = set()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
         async def create_index() -> None:
             try:
@@ -107,15 +109,17 @@ class SemanticCache(AbstractCache):
             f'@key_uuid:{{{key_uuid}}}'
         )
 
+    @override
     @task(name='get_semantic_cache')
     async def get(self, cache_key: str, **kwargs) -> str | None:
         embeddings = kwargs.get('embeddings')
         if embeddings is None:
             raise ValueError('Embeddings param must be passed')
-        route_name = kwargs.get('route_name')
         k = kwargs.get('k', 1)
         query_vector = embeddings.astype(np.float32).tobytes()
         filter_conditions = self._build_filter_conditions(**kwargs)
+        # The filter requires a route name: it is set from here on.
+        route_name = str(kwargs['route_name'])
         vector_query = (
             f'({filter_conditions})=>[KNN {k} @embedding $query_vector AS score]'
         )
@@ -147,12 +151,17 @@ class SemanticCache(AbstractCache):
                 self._record_metric(
                     route_name=route_name, similarity_score=similarity, cache_hit=True
                 )
-                return best_match.response
+                response = best_match.response
+                # Bytes unless the client decodes responses.
+                if isinstance(response, bytes):
+                    return response.decode()
+                return response if isinstance(response, str) else None
             self._record_metric(
                 route_name=route_name, similarity_score=similarity, cache_hit=False
             )
         return None
 
+    @override
     @task(name='set_semantic_cache')
     async def set(
         self,
@@ -175,7 +184,7 @@ class SemanticCache(AbstractCache):
             raise ValueError('route_name param must be passed')
         if not key_uuid:
             raise ValueError('key_uuid param must be passed')
-        mapping = {
+        mapping: dict[FieldT, EncodableT] = {
             'response': response,
             'project_uuid': project_uuid,
             'route_name': route_name,
@@ -184,7 +193,7 @@ class SemanticCache(AbstractCache):
         }
 
         await self.redis_client.hset(cache_key, mapping=mapping)
-        if ttl:
+        if ttl is not None and ttl != 0:
             await self.redis_client.expire(cache_key, ttl)
 
     def _record_metric(self, route_name: str, similarity_score: float, cache_hit: bool):

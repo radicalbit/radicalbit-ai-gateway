@@ -7,7 +7,7 @@ parameters, ``max_tokens`` is sent as ``max_completion_tokens``, some models
 and parameters are routed to the Responses API, and so on.
 """
 
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 import os
 import re
 from typing import Any, ClassVar
@@ -23,6 +23,7 @@ from pydantic import (
     model_validator,
 )
 import tiktoken
+from typing_extensions import override
 
 from radicalbit_ai_gateway.llm.chat_model import ChatModel, StructuredChatModel
 from radicalbit_ai_gateway.llm.embeddings import Embeddings, _run_in_executor
@@ -80,7 +81,7 @@ def _secret_value(value: SecretStr | None) -> str | None:
 
 
 def _field_names(cls: type[BaseModel]) -> set[str]:
-    names = set()
+    names: set[str] = set()
     for name, field in cls.model_fields.items():
         names.add(name)
         if field.alias:
@@ -171,6 +172,7 @@ class _Structured(StructuredChatModel):
         self.parser = parser
         self.include_raw = include_raw
 
+    @override
     async def ainvoke(self, input, **kwargs: Any) -> Any:  # noqa: A002
         raw = await self.model.ainvoke(input, **kwargs)
         if not self.include_raw:
@@ -188,7 +190,8 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         populate_by_name=True, arbitrary_types_allowed=True, protected_namespaces=()
     )
 
-    model_name: str | None = Field(default='gpt-3.5-turbo', alias='model')
+    # Frozen: a model's name never changes, and a provider may require it.
+    model_name: str | None = Field(default='gpt-3.5-turbo', alias='model', frozen=True)
     temperature: float | None = None
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
     openai_api_key: SecretStr | None = Field(default=None, alias='api_key')
@@ -330,7 +333,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
             **self.model_kwargs,
         }
 
-    def _use_responses_api(self, payload: dict) -> bool:
+    def _use_responses_api(self, payload: dict[str, Any]) -> bool:
         if isinstance(self.use_responses_api, bool):
             return self.use_responses_api
         if (
@@ -345,12 +348,14 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
             return True
         return responses_api.payload_uses_responses_api(payload)
 
-    def _get_request_payload(self, messages: list[BaseMessage], **kwargs: Any) -> dict:
+    def _get_request_payload(
+        self, messages: list[BaseMessage], **kwargs: Any
+    ) -> dict[str, Any]:
         payload = {**self._default_params, **kwargs}
         if self._use_responses_api(payload):
             if self.use_previous_response_id:
                 messages, previous_id = _messages_after_last_response(messages)
-                if previous_id:
+                if previous_id is not None and previous_id != '':
                     payload['previous_response_id'] = previous_id
             return responses_api.build_payload(messages, payload)
         payload['messages'] = [
@@ -384,8 +389,8 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
     # ── Reply ────────────────────────────────────────────────────────────
 
     def _chat_result(
-        self, response: Any, generation_info: dict | None = None
-    ) -> tuple[list[tuple[AIMessage, dict]], dict]:
+        self, response: Any, generation_info: dict[str, Any] | None = None
+    ) -> tuple[list[tuple[AIMessage, dict[str, Any]]], dict[str, Any]]:
         """Messages (with their generation info) and the reply-level info."""
         if not isinstance(response, dict | openai.BaseModel):
             # A non-JSON body (e.g. an HTML error page) parses to a string.
@@ -459,7 +464,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         return generations, llm_output
 
     def _create_chat_result(
-        self, response: Any, generation_info: dict | None = None
+        self, response: Any, generation_info: dict[str, Any] | None = None
     ) -> AIMessage:
         generations, llm_output = self._chat_result(response, generation_info)
         message, info = generations[0]
@@ -469,8 +474,8 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         return message
 
     def _convert_chunk(
-        self, chunk: dict, base_generation_info: dict
-    ) -> tuple[AIMessageChunk, dict | None] | None:
+        self, chunk: dict[str, Any], base_generation_info: dict[str, Any]
+    ) -> tuple[AIMessageChunk, dict[str, Any] | None] | None:
         if chunk.get('type') == 'content.delta':
             return None
         token_usage = chunk.get('usage')
@@ -522,10 +527,11 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
 
     # ── Calls ────────────────────────────────────────────────────────────
 
+    @override
     async def _agenerate(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
         kwargs = self._call_kwargs(kwargs)
         payload = self._get_request_payload(messages, **kwargs)
-        generation_info: dict = {}
+        generation_info: dict[str, Any] = {}
         if 'response_format' in payload:
             payload.pop('stream')
             raw = await self._client.chat.completions.with_raw_response.parse(**payload)
@@ -548,9 +554,10 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
             generation_info = {'headers': dict(raw.headers)}
         return self._create_chat_result(raw.parse(), generation_info)
 
-    def _routes_stream_to_responses_api(self, kwargs: dict) -> bool:
+    def _routes_stream_to_responses_api(self, kwargs: dict[str, Any]) -> bool:
         return False
 
+    @override
     async def _astream(
         self, messages: list[BaseMessage], **kwargs: Any
     ) -> AsyncIterator[AIMessageChunk]:
@@ -564,7 +571,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         if stream_usage := self._should_stream_usage(stream_usage, **kwargs):
             kwargs['stream_options'] = {'include_usage': stream_usage}
         payload = self._get_request_payload(messages, **kwargs)
-        base_generation_info: dict = {}
+        base_generation_info: dict[str, Any] = {}
         if 'response_format' in payload:
             payload.pop('stream')
             context = self._client.beta.chat.completions.stream(**payload)
@@ -602,7 +609,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
     ) -> AsyncIterator[AIMessageChunk]:
         kwargs['stream'] = True
         payload = self._get_request_payload(messages, **kwargs)
-        headers: dict = {}
+        headers: dict[str, Any] = {}
         if self.include_response_headers:
             raw = await self._client.with_raw_response.responses.create(**payload)
             context = raw.parse()
@@ -625,12 +632,13 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
 
     # ── Native Responses API ─────────────────────────────────────────────
 
+    @override
     def supports_native_responses(self) -> bool:
         # Every endpoint on the OpenAI client is tried; one that does not serve
         # the Responses API answers with its own error.
         return True
 
-    def _native_responses_payload(self, body: dict) -> dict:
+    def _native_responses_payload(self, body: dict[str, Any]) -> dict[str, Any]:
         """Merge the model's configured settings into a client's Responses body.
 
         The client's values win; nested ``reasoning`` and ``text`` are merged
@@ -639,7 +647,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         reasoning = self.reasoning
         if reasoning is None and self.reasoning_effort is not None:
             reasoning = {'effort': self.reasoning_effort}
-        configured = {
+        configured: dict[str, Any] = {
             'temperature': self.temperature,
             'top_p': self.top_p,
             'max_output_tokens': self.max_tokens,
@@ -648,7 +656,9 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
             'store': self.store,
             'include': self.include,
             'reasoning': reasoning,
-            'text': {'verbosity': self.verbosity} if self.verbosity else None,
+            'text': {'verbosity': self.verbosity}
+            if self.verbosity is not None and self.verbosity != ''
+            else None,
             **self.model_kwargs,
         }
         payload = {k: v for k, v in configured.items() if v is not None}
@@ -661,15 +671,17 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         payload.pop('stream', None)
         return payload
 
-    async def _ainvoke_native_responses(self, body: dict) -> dict:
+    @override
+    async def _ainvoke_native_responses(self, body: dict[str, Any]) -> dict[str, Any]:
         response = await self._client.responses.with_raw_response.create(
             model=self.model_name,
             extra_body=self._native_responses_payload(body),
         )
         return response.http_response.json()
 
+    @override
     async def _astream_native_responses(
-        self, body: dict
+        self, body: dict[str, Any]
     ) -> AsyncIterator[tuple[str, str]]:
         async with self._client.responses.with_streaming_response.create(
             model=self.model_name,
@@ -685,10 +697,14 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
 
     # ── Tracing ──────────────────────────────────────────────────────────
 
+    @override
     def _server_url(self) -> str | None:
         return str(self._client.base_url)
 
-    def _invocation_params(self, stop: list[str] | None = None, **kwargs: Any) -> dict:
+    @override
+    def _invocation_params(
+        self, stop: list[str] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return {
             'model': self.model_name,
             'model_name': self.model_name,
@@ -698,7 +714,8 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
             **kwargs,
         }
 
-    def _llm_output(self, message: AIMessage) -> dict | None:
+    @override
+    def _llm_output(self, message: AIMessage) -> dict[str, Any] | None:
         metadata = message.response_metadata
         # Responses API replies had no llm_output.
         if 'token_usage' not in metadata:
@@ -709,9 +726,11 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
             'token_usage': metadata.get('token_usage'),
         }
 
-    def _generation_info(self, message: AIMessage) -> dict | None:
+    @override
+    def _generation_info(self, message: AIMessage) -> dict[str, Any] | None:
         return {'finish_reason': message.response_metadata.get('finish_reason')}
 
+    @override
     def _error_type(self, error: BaseException) -> str:
         return _langchain_error_type(error)
 
@@ -722,8 +741,9 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         bound._bound = {**self._bound, **kwargs}
         return bound
 
+    @override
     def bind_tools(
-        self, tools: list, tool_choice: Any = None, **kwargs: Any
+        self, tools: Sequence[Any], tool_choice: Any = None, **kwargs: Any
     ) -> '_BaseChatOpenAI':
         formatted = [to_openai_tool(tool) for tool in tools]
         if tool_choice:
@@ -731,7 +751,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         return self._bind(tools=formatted, **kwargs)
 
     def _filter_disabled_params(self, **kwargs: Any) -> dict[str, Any]:
-        if not self.disabled_params:
+        if self.disabled_params is None or len(self.disabled_params) == 0:
             return kwargs
         return {
             k: v
@@ -745,14 +765,19 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
     def _structured_method(self) -> str:
         """How structured output is requested: json_schema or function_calling."""
         # Older models do not support structured outputs.
-        if self.model_name and (
-            self.model_name.startswith('gpt-3')
-            or self.model_name.startswith('gpt-4-')
-            or self.model_name == 'gpt-4'
+        if (
+            self.model_name is not None
+            and self.model_name != ''
+            and (
+                self.model_name.startswith('gpt-3')
+                or self.model_name.startswith('gpt-4-')
+                or self.model_name == 'gpt-4'
+            )
         ):
             return 'function_calling'
         return 'json_schema'
 
+    @override
     def with_structured_output(
         self, schema: type[BaseModel], include_raw: bool = False
     ) -> StructuredChatModel:
@@ -782,7 +807,7 @@ def _messages_after_last_response(
         message = messages[i]
         if isinstance(message, AIMessage):
             response_id = message.response_metadata.get('id')
-            if response_id and response_id.startswith('resp_'):
+            if isinstance(response_id, str) and response_id.startswith('resp_'):
                 return messages[i + 1 :], response_id
     return messages, None
 
@@ -800,7 +825,7 @@ def is_openai_reasoning_blob(encrypted_content: Any) -> bool:
     return isinstance(encrypted_content, str) and encrypted_content.startswith('gAAAA')
 
 
-def _is_openai_reasoning(item: dict) -> bool:
+def _is_openai_reasoning(item: dict[str, Any]) -> bool:
     # DeepSeek's ``encrypted_content`` is a ``<response id>-<index>`` label, not
     # encrypted, so it fails both checks.
     return str(item.get('id', '')).startswith('rs_') or is_openai_reasoning_blob(
@@ -813,7 +838,7 @@ def _is_openai_reasoning(item: dict) -> bool:
 _FOREIGN_REASONING_FIELDS = frozenset({'status', 'format', 'signature'})
 
 
-def _has_foreign_id(item: dict) -> bool:
+def _has_foreign_id(item: dict[str, Any]) -> bool:
     prefix = _OPENAI_ITEM_ID_PREFIXES.get(item.get('type'))
     return bool(prefix and 'id' in item and not str(item['id']).startswith(prefix))
 
@@ -852,7 +877,7 @@ class ChatOpenAI(_BaseChatOpenAI):
             and 'OPENAI_BASE_URL' not in os.environ
         ):
             self.stream_usage = True
-        client_params: dict = {
+        client_params: dict[str, Any] = {
             'organization': self.openai_organization,
             'base_url': self.openai_api_base,
             'timeout': self.request_timeout,
@@ -861,14 +886,18 @@ class ChatOpenAI(_BaseChatOpenAI):
         }
         if self.max_retries is not None:
             client_params['max_retries'] = self.max_retries
-        if self.openai_proxy and self.http_async_client:
+        if (
+            self.openai_proxy is not None
+            and self.openai_proxy != ''
+            and self.http_async_client
+        ):
             raise ValueError(
                 "Cannot specify 'openai_proxy' if 'http_async_client' is already "
                 f'specified. Received:\nopenai_proxy={self.openai_proxy!r}\n'
                 f'http_async_client={self.http_async_client!r}'
             )
         http_client = self.http_async_client
-        if self.openai_proxy:
+        if self.openai_proxy is not None and self.openai_proxy != '':
             http_client = openai.DefaultAsyncHttpxClient(proxy=self.openai_proxy)
         self._client = openai.AsyncOpenAI(
             **client_params,
@@ -878,14 +907,16 @@ class ChatOpenAI(_BaseChatOpenAI):
         return self
 
     @property
+    @override
     def _default_params(self) -> dict[str, Any]:
         params = super()._default_params
         if 'max_tokens' in params:
             params['max_completion_tokens'] = params.pop('max_tokens')
         return params
 
-    def adapt_responses_input(self, items: list) -> list:
-        if self.openai_api_base:
+    @override
+    def adapt_responses_input(self, items: list[Any]) -> list[Any]:
+        if self.openai_api_base is not None and self.openai_api_base != '':
             # Another OpenAI-compatible endpoint, whose own items can't be told
             # apart: no reasoning, and no item ids, which each provider checks
             # its own way.
@@ -915,16 +946,24 @@ class ChatOpenAI(_BaseChatOpenAI):
                 adapted.append(item)
         return adapted
 
-    def _routes_stream_to_responses_api(self, kwargs: dict) -> bool:
+    @override
+    def _routes_stream_to_responses_api(self, kwargs: dict[str, Any]) -> bool:
         return self._use_responses_api({**kwargs, **self.model_kwargs})
 
-    def _get_request_payload(self, messages: list[BaseMessage], **kwargs: Any) -> dict:
+    @override
+    def _get_request_payload(
+        self, messages: list[BaseMessage], **kwargs: Any
+    ) -> dict[str, Any]:
         payload = super()._get_request_payload(messages, **kwargs)
         # max_tokens is deprecated in favour of max_completion_tokens.
         if 'max_tokens' in payload:
             payload['max_completion_tokens'] = payload.pop('max_tokens')
         # o-series models take the system prompt as a developer message.
-        if self.model_name and re.match(r'^o\d', self.model_name):
+        if (
+            self.model_name is not None
+            and self.model_name != ''
+            and re.match(r'^o\d', self.model_name)
+        ):
             for message in payload.get('messages', []):
                 if message['role'] == 'system':
                     message['role'] = 'developer'
@@ -936,7 +975,7 @@ class AzureChatOpenAI(_BaseChatOpenAI):
 
     _gen_ai_provider: ClassVar[str] = 'azure.ai.openai'
 
-    model_name: str | None = Field(default=None, alias='model')
+    model_name: str | None = Field(default=None, alias='model', frozen=True)
     max_tokens: int | None = Field(default=None, alias='max_completion_tokens')
     azure_endpoint: str | None = Field(default_factory=_env('AZURE_OPENAI_ENDPOINT'))
     deployment_name: str | None = Field(default=None, alias='azure_deployment')
@@ -985,14 +1024,18 @@ class AzureChatOpenAI(_BaseChatOpenAI):
             )
         ):
             self.stream_usage = True
-        if self.openai_api_base and self.validate_base_url:
+        if (
+            self.openai_api_base is not None
+            and self.openai_api_base != ''
+            and self.validate_base_url
+        ):
             if '/openai' not in self.openai_api_base:
                 raise ValueError(
                     'As of openai>=1.0.0, Azure endpoints should be specified via '
                     'the `azure_endpoint` param not `openai_api_base` '
                     '(or alias `base_url`).'
                 )
-            if self.deployment_name:
+            if self.deployment_name is not None and self.deployment_name != '':
                 raise ValueError(
                     'As of openai>=1.0.0, if `azure_deployment` (or alias '
                     '`deployment_name`) is specified then '
@@ -1005,11 +1048,13 @@ class AzureChatOpenAI(_BaseChatOpenAI):
             or self.azure_ad_token_provider
             or self.azure_ad_async_token_provider
         )
-        client_params: dict = {
+        client_params: dict[str, Any] = {
             'api_version': self.openai_api_version,
             'azure_endpoint': self.azure_endpoint,
             'azure_deployment': self.deployment_name,
-            'api_key': None if uses_ad_token else _secret_value(self.openai_api_key),
+            'api_key': None
+            if uses_ad_token is not None and uses_ad_token
+            else _secret_value(self.openai_api_key),
             'azure_ad_token': _secret_value(self.azure_ad_token),
             'azure_ad_token_provider': self.azure_ad_async_token_provider
             or self.azure_ad_token_provider,
@@ -1027,29 +1072,36 @@ class AzureChatOpenAI(_BaseChatOpenAI):
         return self
 
     @property
+    @override
     def _default_params(self) -> dict[str, Any]:
         params = super()._default_params
         if 'max_tokens' in params:
             params['max_completion_tokens'] = params.pop('max_tokens')
         return params
 
-    def _routes_stream_to_responses_api(self, kwargs: dict) -> bool:
+    @override
+    def _routes_stream_to_responses_api(self, kwargs: dict[str, Any]) -> bool:
         return self._use_responses_api({**kwargs, **self.model_kwargs})
 
-    def _get_request_payload(self, messages: list[BaseMessage], **kwargs: Any) -> dict:
+    @override
+    def _get_request_payload(
+        self, messages: list[BaseMessage], **kwargs: Any
+    ) -> dict[str, Any]:
         payload = super()._get_request_payload(messages, **kwargs)
         # The Responses API addresses the deployment through the model field.
         if (
             self._use_responses_api(payload)
             and not payload.get('model')
-            and self.deployment_name
+            and self.deployment_name is not None
+            and self.deployment_name != ''
         ):
             payload['model'] = self.deployment_name
         return payload
 
+    @override
     def _chat_result(
-        self, response: Any, generation_info: dict | None = None
-    ) -> tuple[list[tuple[AIMessage, dict]], dict]:
+        self, response: Any, generation_info: dict[str, Any] | None = None
+    ) -> tuple[list[tuple[AIMessage, dict[str, Any]]], dict[str, Any]]:
         generations, llm_output = super()._chat_result(response, generation_info)
         if not isinstance(response, dict):
             response = response.model_dump(warnings=False)
@@ -1168,13 +1220,17 @@ class OpenAIEmbeddings(Embeddings, BaseModel):
             raise ValueError(
                 'If you are using Azure, please use the `AzureOpenAIEmbeddings` class.'
             )
-        if self.openai_proxy and (self.http_client or self.http_async_client):
+        if (
+            self.openai_proxy is not None
+            and self.openai_proxy != ''
+            and (self.http_client or self.http_async_client)
+        ):
             raise ValueError(
                 "Cannot specify 'openai_proxy' if one of "
                 "'http_client'/'http_async_client' is already specified."
             )
         http_client = self.http_async_client
-        if self.openai_proxy:
+        if self.openai_proxy is not None and self.openai_proxy != '':
             http_client = openai.DefaultAsyncHttpxClient(proxy=self.openai_proxy)
         self._client = openai.AsyncOpenAI(
             **self._client_params(),
@@ -1204,7 +1260,7 @@ class OpenAIEmbeddings(Embeddings, BaseModel):
 
     @property
     def _invocation_params(self) -> dict[str, Any]:
-        params: dict = {'model': self.model, **self.model_kwargs}
+        params: dict[str, Any] = {'model': self.model, **self.model_kwargs}
         if self.dimensions is not None:
             params['dimensions'] = self.dimensions
         return params
@@ -1303,6 +1359,7 @@ class OpenAIEmbeddings(Embeddings, BaseModel):
             response = response.model_dump()
         return [r['embedding'] for r in response['data']]
 
+    @override
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         params = self._invocation_params
         if not self.check_embedding_ctx_length:
@@ -1332,9 +1389,11 @@ class OpenAIEmbeddings(Embeddings, BaseModel):
             result.append(embedding)
         return result
 
+    @override
     async def aembed_query(self, text: str) -> list[float]:
         return (await self.aembed_documents([text]))[0]
 
+    @override
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         client = self._sync_embeddings()
         params = self._invocation_params
@@ -1360,6 +1419,7 @@ class OpenAIEmbeddings(Embeddings, BaseModel):
             result.append(embedding)
         return result
 
+    @override
     def embed_query(self, text: str) -> list[float]:
         return self.embed_documents([text])[0]
 
@@ -1389,15 +1449,22 @@ class AzureOpenAIEmbeddings(OpenAIEmbeddings):
     chunk_size: int = 2048
 
     @model_validator(mode='after')
+    @override
     def _build_client(self) -> 'AzureOpenAIEmbeddings':
-        if self.openai_api_base and self.validate_base_url:
-            if not self.azure_endpoint and '/openai' not in self.openai_api_base:
+        if (
+            self.openai_api_base is not None
+            and self.openai_api_base != ''
+            and self.validate_base_url
+        ):
+            if (
+                self.azure_endpoint is None or self.azure_endpoint == ''
+            ) and '/openai' not in self.openai_api_base:
                 raise ValueError(
                     'As of openai>=1.0.0, Azure endpoints should be specified via '
                     'the `azure_endpoint` param not `openai_api_base` '
                     '(or alias `base_url`). '
                 )
-            if self.deployment:
+            if self.deployment is not None and self.deployment != '':
                 raise ValueError(
                     'As of openai>=1.0.0, if `deployment` (or alias '
                     '`azure_deployment`) is specified then '
@@ -1410,6 +1477,7 @@ class AzureOpenAIEmbeddings(OpenAIEmbeddings):
         ).embeddings
         return self
 
+    @override
     def _client_params(self) -> dict[str, Any]:
         uses_ad_token = (
             self.azure_ad_token
@@ -1420,7 +1488,9 @@ class AzureOpenAIEmbeddings(OpenAIEmbeddings):
             'api_version': self.openai_api_version,
             'azure_endpoint': self.azure_endpoint,
             'azure_deployment': self.deployment,
-            'api_key': None if uses_ad_token else _secret_value(self.openai_api_key),
+            'api_key': None
+            if uses_ad_token is not None and uses_ad_token
+            else _secret_value(self.openai_api_key),
             'azure_ad_token': _secret_value(self.azure_ad_token),
             'azure_ad_token_provider': self.azure_ad_async_token_provider
             or self.azure_ad_token_provider,
@@ -1432,6 +1502,7 @@ class AzureOpenAIEmbeddings(OpenAIEmbeddings):
             'default_query': self.default_query,
         }
 
+    @override
     def _sync_embeddings(self) -> Any:
         if self._sync_client is None:
             params = self._client_params()

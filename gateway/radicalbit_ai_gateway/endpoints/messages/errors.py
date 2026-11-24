@@ -7,16 +7,16 @@ from the HTTP status. An upstream's own refusal is relayed as it came.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from functools import wraps
-import inspect
 import json
-from typing import Any
+from typing import Any, TypeGuard
 
 from fastapi import status
 from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.types import HTTPExceptionHandler
 
 from radicalbit_ai_gateway.utils.exceptions import (
     ModelInvokerUpstreamError,
@@ -42,7 +42,7 @@ def error_type(status_code: int) -> str:
     return _ERROR_TYPES.get(status_code, 'invalid_request_error')
 
 
-def messages_error(status_code: int, message: str) -> dict:
+def messages_error(status_code: int, message: str) -> dict[str, Any]:
     """Return a Messages API error body."""
     return {
         'type': 'error',
@@ -70,14 +70,18 @@ def _message_of(response: Response) -> str:
         error = body.get('error')
         if isinstance(error, dict) and error.get('message'):
             return str(error['message'])
-        if isinstance(body.get('detail'), str):
-            return body['detail']
+        detail = body.get('detail')
+        if isinstance(detail, str):
+            return detail
     return 'Error'
 
 
-def is_messages_error_body(body: object) -> bool:
+def is_messages_error_body(body: object) -> TypeGuard[dict[str, Any]]:
     """Whether ``body`` is already an error in the Messages API shape."""
-    return isinstance(body, dict) and body.get('type') == 'error'
+    if not isinstance(body, dict):
+        return False
+    body_type: object = body.get('type')
+    return body_type == 'error'
 
 
 def _is_messages_error(response: Response) -> bool:
@@ -97,7 +101,9 @@ def _validation_error(exc: RequestValidationError) -> JSONResponse:
     )
 
 
-def with_messages_error_shape(handler: Callable[..., Any]) -> Callable[..., Any]:
+def with_messages_error_shape(
+    handler: HTTPExceptionHandler,
+) -> Callable[[Request, Exception], Awaitable[Response]]:
     """Wrap an exception handler so it answers ``/v1/messages`` in the Messages shape.
 
     The status and headers the handler chose are kept. A request validation
@@ -107,9 +113,8 @@ def with_messages_error_shape(handler: Callable[..., Any]) -> Callable[..., Any]
 
     @wraps(handler)
     async def wrapper(request: Request, exc: Exception) -> Response:
-        response = handler(request, exc)
-        if inspect.isawaitable(response):
-            response = await response
+        result = handler(request, exc)
+        response = result if isinstance(result, Response) else await result
         if not is_messages_request(request):
             return response
         if isinstance(exc, RequestValidationError):

@@ -13,8 +13,10 @@ the routes and send the requests) may change.
 from decimal import Decimal
 import json
 import logging
+from typing import Any
 
 import pytest
+from typing_extensions import override
 
 from tests.common import provider_responses as upstream
 from tests.common.gateway_harness import LOGGER, Gateway, build_routes, open_gateway
@@ -39,7 +41,7 @@ CREDENTIALS = {'api_key': 'sk-test'}
 TYPESAFE = {'api_key': 'ts-test'}
 
 
-def _chat(model_id: str, name: str, **extra) -> dict:
+def _chat(model_id: str, name: str, **extra) -> dict[str, Any]:
     return {
         'model_id': model_id,
         'model': name,
@@ -50,7 +52,7 @@ def _chat(model_id: str, name: str, **extra) -> dict:
     }
 
 
-def _decision(model_id: str, name: str, retries: int = 0) -> dict:
+def _decision(model_id: str, name: str, retries: int = 0) -> dict[str, Any]:
     return {
         'model_id': model_id,
         'model': f'typesafe/{name}',
@@ -60,7 +62,7 @@ def _decision(model_id: str, name: str, retries: int = 0) -> dict:
     }
 
 
-def _routing_options() -> list[dict]:
+def _routing_options() -> list[dict[str, Any]]:
     return [
         {'model_id': 'a', 'description': 'Questions about geography'},
         {'model_id': 'b', 'description': 'Questions about code'},
@@ -190,13 +192,23 @@ CONFIG = {
 class _Gateway(Gateway):
     embed_texts = ('one', 'two')
 
-    def chat(self, replies, route='chat', stream=False, text=None):
-        return super().chat(replies, route=route, text=text, stream=stream)
+    @override
+    def chat(
+        self, replies=None, route='chat', text=None, key=True, stream=False, **params
+    ):
+        return super().chat(
+            replies, route=route, text=text, key=key, stream=stream, **params
+        )
 
-    def responses(self, replies, stream=False):
-        return super().responses(replies, stream=stream)
+    @override
+    def responses(
+        self, replies=None, route='chat', text=None, key=True, stream=False, **params
+    ):
+        return super().responses(
+            replies, route=route, text=text, key=key, stream=stream, **params
+        )
 
-    def events(self) -> list[tuple]:
+    def events(self) -> list[tuple[Any, ...]]:
         """Return the model events: type, model, model type, target, fallback,
         value, cost, cached, cache type, judge, routing.
         """
@@ -280,7 +292,9 @@ def _stream(model: str) -> CannedResponse:
 
 def _broken_stream(model: str) -> CannedResponse:
     """Return a stream that fails after its first chunk."""
-    first = upstream.openai_stream(['Paris'], model=model).sse_events[1]
+    events = upstream.openai_stream(['Paris'], model=model).sse_events
+    assert events is not None
+    first = events[1]
     return CannedResponse(sse_events=[first, {'choices': 'broken'}])
 
 
@@ -318,7 +332,7 @@ def _transcription_stream(text: str = 'hello') -> CannedResponse:
     )
 
 
-def _typesafe(answers: dict, input_tokens: int = 40) -> CannedResponse:
+def _typesafe(answers: dict[str, Any], input_tokens: int = 40) -> CannedResponse:
     return CannedResponse(
         json_body={
             'answers': answers,
@@ -332,7 +346,7 @@ def _typesafe_error(status: int) -> CannedResponse:
     return CannedResponse(status=status, json_body={'error': f'typesafe {status}'})
 
 
-def _structured(model: str, content: dict) -> CannedResponse:
+def _structured(model: str, content: dict[str, Any]) -> CannedResponse:
     return upstream.openai_completion(
         json.dumps(content), model=model, prompt_tokens=30, completion_tokens=4
     )
@@ -416,7 +430,7 @@ def _mistral_error(status: int) -> CannedResponse:
     )
 
 
-def _snapshot(gateway: _Gateway, response) -> dict:
+def _snapshot(gateway: _Gateway, response) -> dict[str, Any]:
     try:
         body = response.json()
     except ValueError:

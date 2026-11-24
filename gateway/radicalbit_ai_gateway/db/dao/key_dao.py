@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import Select, asc, delete, or_, select, update
 
+from radicalbit_ai_gateway.db.dao.dml import rows_matched
 from radicalbit_ai_gateway.db.database import Database
 from radicalbit_ai_gateway.db.tables.key_table import Key
 
@@ -13,7 +14,7 @@ class KeyDAO:
         self.db = database
 
     @staticmethod
-    def _get_all_stmt() -> Select:
+    def _get_all_stmt() -> Select[Key]:
         return select(Key)
 
     def insert(self, key: Key) -> Key:
@@ -27,12 +28,12 @@ class KeyDAO:
             stmt = self._get_all_stmt()
             if only_unassigned:
                 stmt = stmt.where(Key.group_uuid.is_(None))
-            if owner:
+            if owner is not None and owner != '':
                 stmt = stmt.where(Key.owner == owner)
             stmt = stmt.order_by(asc(Key.name))
             return session.scalars(stmt).all()
 
-    def get_by_uuid(self, key_uuid: UUID) -> Key:
+    def get_by_uuid(self, key_uuid: UUID) -> Key | None:
         with self.db.begin_session() as session:
             return session.scalar(select(Key).where(Key.uuid == key_uuid))
 
@@ -45,14 +46,14 @@ class KeyDAO:
                 .where(Key.uuid == key_uuid)
                 .values(name=name, updated_at=now)
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)
 
     def delete_by_uuid(self, key_uuid: UUID) -> int:
         with self.db.begin_session() as session:
             query = delete(Key).where(Key.uuid == key_uuid)
-            return session.execute(query).rowcount
+            return rows_matched(session, query)
 
-    def get_key_by_hashed_key(self, hashed_api_key: str) -> Key:
+    def get_key_by_hashed_key(self, hashed_api_key: str) -> Key | None:
         """Find a credential by its current value or its previous one. Whether the
         previous value still authenticates is the caller's decision.
         """
@@ -134,7 +135,7 @@ class KeyDAO:
                 .where(Key.uuid == key_uuid, Key.group_uuid == group_uuid)
                 .values(group_uuid=None, updated_at=now)
             )
-            return session.execute(query).rowcount
+            return rows_matched(session, query)
 
     def get_names_by_uuids(self, uuids: list[UUID]) -> dict[UUID, str]:
         if not uuids:

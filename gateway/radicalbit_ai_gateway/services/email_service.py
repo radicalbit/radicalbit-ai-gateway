@@ -42,7 +42,12 @@ class EmailService:
             with smtplib.SMTP(
                 self.smtp_host, int(self.smtp_port), timeout=10
             ) as server:
-                if self.smtp_user and self.smtp_password:
+                if (
+                    self.smtp_user is not None
+                    and self.smtp_user != ''
+                    and self.smtp_password is not None
+                    and self.smtp_password != ''
+                ):
                     server.starttls()
                     server.login(self.smtp_user, self.smtp_password)
                 server.sendmail(self.from_email, recipients, msg.as_string())

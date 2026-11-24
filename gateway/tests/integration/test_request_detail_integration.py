@@ -8,6 +8,7 @@ import datetime
 import uuid
 
 import pytest
+from typing_extensions import override
 
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 from tests.common.db_mock import (
@@ -49,6 +50,7 @@ def _event(request_uuid, event_type, timestamp=T0, **kwargs):
 
 
 class TestRequestDetailIntegration(DatabaseIntegrationClickhouse):
+    @override
     @classmethod
     def setUpClass(cls):
         super().setUpClass()

@@ -48,7 +48,7 @@ class ChatEntry:
     messages: list[BaseMessage]
     tools: Any = None
     tool_choice: Any = None
-    params: dict = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
     #: Whether the reply is streamed: a stream replays a hit's text only.
     stream: bool = False
 
@@ -94,7 +94,11 @@ class ChatEntry:
             # a Responses API entry is a miss here.
             logger.debug('Cached entry is not a chat completion: cache miss')
             return None
-        if self.stream and completion.choices[0].message.tool_calls:
+        if (
+            self.stream
+            and completion.choices[0].message.tool_calls is not None
+            and len(completion.choices[0].message.tool_calls) > 0
+        ):
             # A stream hit replays the reply's text only.
             logger.debug('Cached reply has tool calls a stream cannot replay')
             return None

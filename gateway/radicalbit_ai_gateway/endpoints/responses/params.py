@@ -19,7 +19,7 @@ from typing_extensions import Required, TypedDict
 
 
 class ResponseCreateParamsCustom(TypedDict, total=False):
-    input: Union[str, list]
+    input: Union[str, list[Any]]
     """The input to the model — a string or a list of input items."""
 
     model: Required[Union[str, ChatModel]]
@@ -31,7 +31,7 @@ class ResponseCreateParamsCustom(TypedDict, total=False):
     stream: bool | None
     """Whether to stream the response."""
 
-    tools: list
+    tools: list[Any]
     """Function, custom and hosted tools (see the route's ``responses`` settings)."""
 
     tool_choice: Any

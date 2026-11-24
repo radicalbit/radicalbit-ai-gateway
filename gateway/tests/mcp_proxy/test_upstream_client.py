@@ -154,7 +154,7 @@ async def test_upstream_jsonrpc_error_preserves_code_and_message():
 
 async def test_tool_is_error_result_passed_through():
     result = types.CallToolResult(
-        content=[types.TextContent(type='text', text='tool blew up')], isError=True
+        content=[types.TextContent(type='text', text='tool blew up')], is_error=True
     )
     session = AsyncMock()
     session.call_tool.return_value = result

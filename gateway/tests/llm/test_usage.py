@@ -87,15 +87,13 @@ def test_messages_token_counts_include_the_cache(usage, expected):
 
 # 21 new input tokens, 4 read from the cache, 9 written: 5 for 5 minutes and
 # 4 for 1 hour.
+CACHE_CREATION = {'ephemeral_5m_input_tokens': 5, 'ephemeral_1h_input_tokens': 4}
 WITH_TTL_BREAKDOWN = {
     'input_tokens': 21,
     'output_tokens': 7,
     'cache_read_input_tokens': 4,
     'cache_creation_input_tokens': 9,
-    'cache_creation': {
-        'ephemeral_5m_input_tokens': 5,
-        'ephemeral_1h_input_tokens': 4,
-    },
+    'cache_creation': CACHE_CREATION,
 }
 
 
@@ -150,7 +148,7 @@ def test_messages_usage_reads_an_sdk_usage_object_as_it_reads_a_dict():
     as_object = SimpleNamespace(
         **{
             **WITH_TTL_BREAKDOWN,
-            'cache_creation': SimpleNamespace(**WITH_TTL_BREAKDOWN['cache_creation']),
+            'cache_creation': SimpleNamespace(**CACHE_CREATION),
         }
     )
 

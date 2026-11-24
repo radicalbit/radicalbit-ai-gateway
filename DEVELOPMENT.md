@@ -161,6 +161,22 @@ docker compose down -v
 
 ---
 
+## Lint and type check
+
+CI runs these from `gateway/` and fails on any finding:
+
+```bash
+uv run ruff check
+uv run ruff format --check
+uv run ty check
+```
+
+ty is pinned in the dev group and configured under `[tool.ty]` in `gateway/pyproject.toml`; it checks `radicalbit_ai_gateway/`, `tests/`, `alembic/` and `scripts/`, with every rule that ty leaves off by default turned on. Fix type errors rather than suppressing them: no `ty: ignore`, and no `cast` or `Any` just to silence the checker.
+
+One exception, in config: `unsound-assignment` is off for `radicalbit_ai_gateway/db/tables/`. SQLAlchemy types `mapped_column()` and `relationship()` as returning `Any`, so every `x: Mapped[T] = mapped_column(...)` breaks that rule, and neither SQLAlchemy nor ty offers a way around it. Drop the override if either adds one.
+
+---
+
 ## Python SDK
 
 `sdk/` is the Python SDK for the management API, generated from the gateway's routes. If you change a management route, regenerate it and commit the result with your change:

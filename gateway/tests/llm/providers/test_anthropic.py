@@ -27,19 +27,20 @@ from radicalbit_ai_gateway.llm.providers.anthropic import (
 
 URL = 'https://api.anthropic.com/v1/messages'
 MESSAGES = [HumanMessage('Hi')]
-WEATHER_TOOL = {
-    'type': 'function',
-    'function': {
-        'name': 'get_weather',
-        'description': 'Get the weather.',
-        'parameters': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
-    },
+WEATHER_PARAMETERS = {'type': 'object', 'properties': {'city': {'type': 'string'}}}
+WEATHER_FUNCTION = {
+    'name': 'get_weather',
+    'description': 'Get the weather.',
+    'parameters': WEATHER_PARAMETERS,
 }
+WEATHER_TOOL = {'type': 'function', 'function': WEATHER_FUNCTION}
 WEATHER_USE = canned.ANTHROPIC_WEATHER_TOOL_USE
 
 
 def model(name: str = 'claude-sonnet-4-5', **kwargs) -> ChatAnthropic:
-    return init_chat_model(f'anthropic:{name}', api_key='sk', **kwargs)
+    chat_model = init_chat_model(f'anthropic:{name}', api_key='sk', **kwargs)
+    assert isinstance(chat_model, ChatAnthropic)
+    return chat_model
 
 
 async def invoke(chat_model, responses, messages=MESSAGES, **kwargs):
@@ -212,6 +213,7 @@ def test_tool_round_trip_is_merged_into_user_turns():
         ]
     )
     normalized = _normalize_tool_call_id('a:b.c')
+    assert normalized is not None
     assert normalized.startswith('toolu_')
     assert payload['messages'] == [
         {'role': 'user', 'content': 'Weather?'},
@@ -345,7 +347,7 @@ def test_bind_tools(tool_choice, expected):
     assert payload['tools'] == [
         {
             'name': 'get_weather',
-            'input_schema': WEATHER_TOOL['function']['parameters'],
+            'input_schema': WEATHER_PARAMETERS,
             'description': 'Get the weather.',
         }
     ]
@@ -621,7 +623,7 @@ async def test_missing_credentials_raise_a_clear_error(monkeypatch):
     monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
     monkeypatch.delenv('ANTHROPIC_AUTH_TOKEN', raising=False)
     chat_model = ChatAnthropic('claude-sonnet-4-5')
-    chat_model.anthropic_api_key = None
+    monkeypatch.setattr(chat_model, 'anthropic_api_key', None)
     with pytest.raises(TypeError, match='Anthropic authentication failed'):
         await invoke(chat_model, [canned.anthropic_message()])
 
@@ -671,7 +673,7 @@ def test_inference_geo_container_and_user_profile_betas():
 def test_tool_betas_are_added_once():
     tools = [
         {'type': 'mcp_toolset', 'mcp_server_name': 'm'},
-        {**WEATHER_TOOL['function'], 'input_examples': [{'city': 'Rome'}]},
+        {**WEATHER_FUNCTION, 'input_examples': [{'city': 'Rome'}]},
         {
             'name': 'x',
             'description': 'Kept as is.',

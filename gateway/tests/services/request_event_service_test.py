@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import uuid
 
 import pytest
+from typing_extensions import override
 
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
 from radicalbit_ai_gateway.db.models.event import (
@@ -26,6 +27,7 @@ class RequestEventServiceTest(unittest.TestCase):
     TEST_PROJECT_UUID = uuid.UUID('12345678-1234-5678-1234-567812345678')
     TEST_PROJECT_NAME = 'rb-gateway'
 
+    @override
     def setUp(self):
         self.request_event_dao = MagicMock(spec_set=RequestEventDAO)
         self.gateway_config = MagicMock()
@@ -189,6 +191,7 @@ class RequestEventServiceTest(unittest.TestCase):
             base_time + datetime.timedelta(hours=2),
         )
 
+        assert res is not None
         assert res.name == 'route-a'
         # Gap filling creates [5, 10, 0], so last two are [10, 0] -> ((0-10)/10)*100 = -100
         assert res.increment_percentage == -100.0
@@ -249,6 +252,7 @@ class RequestEventServiceTest(unittest.TestCase):
             self.TEST_PROJECT_UUID, self.gateway_config, _from, _to
         )
 
+        assert res is not None
         assert res.name == 'route-a'
         assert res.chart.total == 0.6
         assert res.chart.data == [3, 2, 0]
@@ -272,6 +276,7 @@ class RequestEventServiceTest(unittest.TestCase):
             base_time + datetime.timedelta(hours=2),
         )
 
+        assert res is not None
         assert res.name == 'route-a'
         assert res.increment_percentage == 0.0
         assert res.chart.total == 0

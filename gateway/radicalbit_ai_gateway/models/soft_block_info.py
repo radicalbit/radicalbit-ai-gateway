@@ -7,21 +7,24 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from openai.types.create_embedding_response import CreateEmbeddingResponse, Usage
 
-from radicalbit_ai_gateway.models.guardrails import Guardrail, GuardrailWhereType
+from radicalbit_ai_gateway.models.guardrails import (
+    CheckClassGuardrail,
+    GuardrailWhereType,
+)
 
 
 @dataclass
 class SoftBlock:
     """Information about a triggered soft block guardrail."""
 
-    guardrail: Guardrail
+    guardrail: CheckClassGuardrail
     where: GuardrailWhereType
     message: str  # client-facing fallback
 
     def get_soft_block_message(self) -> str:
         custom_response_message = self.guardrail.response_message
 
-        if custom_response_message:
+        if custom_response_message is not None and custom_response_message != '':
             return custom_response_message
         if self.where == GuardrailWhereType.INPUT:
             return f'I cannot process this request as it violates content policy: {self.guardrail.name}'

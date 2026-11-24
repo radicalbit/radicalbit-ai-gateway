@@ -226,7 +226,9 @@ class AlertDispatcher:
                 aggregation = AlertRuleTimeAggregation(rule.time_aggregation)
             except ValueError:
                 aggregation = None
-            handler = self._handlers.get(aggregation) if aggregation else None
+            handler = (
+                self._handlers.get(aggregation) if aggregation is not None else None
+            )
             if handler is None:
                 logger.warning(
                     'Alert rule %s uses time aggregation "%s", which is not dispatched',
@@ -241,19 +243,19 @@ class AlertDispatcher:
     ) -> Sequence[AlertRule]:
         if scope is AlertRuleScope.ROUTE:
             if not event.project_uuid:
-                return []
+                return list[AlertRule]()
             return self._alert_rule_dao.get_enabled_route_rules(
                 event.project_uuid, event.route_name
             )
         if scope is AlertRuleScope.PROJECT:
             if not event.project_uuid:
-                return []
+                return list[AlertRule]()
             return self._alert_rule_dao.get_enabled_project_rules(event.project_uuid)
         # Credential limits name no route ('*'): the credential is the target.
         try:
             credential_uuid = UUID(event.api_key_uuid)
         except ValueError:
-            return []
+            return list[AlertRule]()
         return self._alert_rule_dao.get_enabled_credential_rules(credential_uuid)
 
     def close_windows(self) -> None:

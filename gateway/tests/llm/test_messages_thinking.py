@@ -1,7 +1,8 @@
 import copy
+from typing import Any
 
 import anthropic
-import httpx
+import httpx2
 
 from radicalbit_ai_gateway.llm.messages_thinking import (
     is_invalid_thinking_signature,
@@ -13,7 +14,7 @@ REDACTED = {'type': 'redacted_thinking', 'data': 'opaque'}
 TEXT = {'type': 'text', 'text': 'Hello'}
 
 
-def _body(*messages: dict) -> dict:
+def _body(*messages: dict[str, Any]) -> dict[str, Any]:
     return {'model': 'proj/assistant', 'max_tokens': 10, 'messages': list(messages)}
 
 
@@ -79,10 +80,11 @@ def test_a_body_without_messages_is_returned_as_it_is():
 
 def _bad_request(body: object, message: str) -> anthropic.APIStatusError:
     """Return the SDK's error for a 400 whose JSON body is ``body``."""
-    response = httpx.Response(
-        400,
-        request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
-        **({} if body is None else {'json': body}),
+    request = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
+    response = (
+        httpx2.Response(400, request=request)
+        if body is None
+        else httpx2.Response(400, request=request, json=body)
     )
     return anthropic.APIStatusError(message, response=response, body=body)
 

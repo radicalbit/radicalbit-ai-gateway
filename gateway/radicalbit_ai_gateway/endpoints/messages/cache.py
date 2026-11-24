@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from typing import Any
 
 from openai.types.completion_usage import CompletionUsage
 
@@ -20,7 +21,7 @@ _UNCACHED_FIELDS = ('stream', 'metadata')
 _COMPLETE_STOP_REASONS = ('end_turn', 'stop_sequence', 'tool_use')
 
 
-def is_complete(message: dict) -> bool:
+def is_complete(message: dict[str, Any]) -> bool:
     """Tell whether ``message`` is an answer the cache keeps."""
     return message.get('stop_reason') in _COMPLETE_STOP_REASONS
 
@@ -29,7 +30,7 @@ def is_complete(message: dict) -> bool:
 class MessagesEntry:
     """A Messages API request, keyed on its whole body as it goes upstream."""
 
-    body: dict
+    body: dict[str, Any]
 
     lookup_spans = ('lookup_messages_cache',)
     get_spans = ()
@@ -47,7 +48,7 @@ class MessagesEntry:
     def text(self) -> str:
         return last_user_text(self.body)
 
-    def parse(self, raw: str) -> dict | None:
+    def parse(self, raw: str) -> dict[str, Any] | None:
         """Return a cached message object; a chat completion or a Responses
         API response is a miss.
 
@@ -61,10 +62,10 @@ class MessagesEntry:
             return None
         return cached
 
-    def dump(self, value: dict) -> str:
+    def dump(self, value: dict[str, Any]) -> str:
         return json.dumps(value)
 
-    def hit(self, value: dict) -> Hit:
+    def hit(self, value: dict[str, Any]) -> Hit:
         input_tokens, output_tokens = messages_token_counts(value.get('usage'))
         return Hit(
             value.get('model', ''),
@@ -75,7 +76,7 @@ class MessagesEntry:
             ),
         )
 
-    def refresh(self, value: dict) -> dict:
+    def refresh(self, value: dict[str, Any]) -> dict[str, Any]:
         return value
 
     def store_spans(self, value) -> tuple[str, ...]:

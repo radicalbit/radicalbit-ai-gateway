@@ -7,7 +7,9 @@ from uuid import UUID
 from fastapi import FastAPI
 from fastapi_pagination import Page, Params
 from starlette.testclient import TestClient
+from typing_extensions import override
 
+from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.request_dto import (
     EventIcon,
     IconTone,
@@ -35,6 +37,7 @@ def _empty_page(page: int = 1, size: int = 50) -> Page:
 
 
 class TestRequestsRoute(unittest.TestCase):
+    @override
     def setUp(self):
         prefix = '/public/api/v1'
         self.requests_service = MagicMock(spec_set=RequestsService)
@@ -44,8 +47,8 @@ class TestRequestsRoute(unittest.TestCase):
             project_service=self.project_service,
         )
         app = FastAPI()
-        app.add_exception_handler(GatewayError, gateway_exception_handler)
-        app.add_exception_handler(AuthRegistryError, auth_registry_exception_handler)
+        add_exception_handler(app, GatewayError, gateway_exception_handler)
+        add_exception_handler(app, AuthRegistryError, auth_registry_exception_handler)
         app.include_router(router, prefix=prefix)
         self.client = TestClient(app)
         self.url = f'{prefix}/projects/{PROJECT_UUID}/requests'

@@ -6,6 +6,7 @@ import pytest
 from tests.common.mocked_gateway_config_openai import get_gateway_routing_semantic
 
 from radicalbit_ai_gateway.llm.messages import HumanMessage, SystemMessage
+from radicalbit_ai_gateway.models.routing import SemanticRoutingConfig
 from radicalbit_ai_gateway.routing.semantic_router import SemanticRouter
 
 
@@ -19,7 +20,9 @@ def _make_embeddings_mock(embed_fn):
 def _build_router(embeddings_mock):
     config = get_gateway_routing_semantic()
     routing_config = config.routing_by_name['semantic_routing']
+    assert isinstance(routing_config, SemanticRoutingConfig)
     route = config.routes['smart_route']
+    assert route.chat_models is not None
     models_by_id = {mid: config.chat_models_by_id[mid] for mid in route.chat_models}
     return SemanticRouter(
         config=routing_config,

@@ -22,8 +22,9 @@ async def iter_sse_events(lines: AsyncIterator[str]) -> AsyncIterator[tuple[str,
         elif not line and data:
             payload = '\n'.join(data)
             if payload != '[DONE]':
-                yield event or json.loads(payload).get('type', ''), payload
-            event, data = '', []
+                yield event or str(json.loads(payload).get('type', '')), payload
+            event = ''
+            data = []
     if data and data != ['[DONE]']:
         payload = '\n'.join(data)
-        yield event or json.loads(payload).get('type', ''), payload
+        yield event or str(json.loads(payload).get('type', '')), payload

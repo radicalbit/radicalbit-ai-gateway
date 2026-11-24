@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, select
@@ -78,7 +79,7 @@ class AlertRuleDAO:
                     AlertRule.deleted == False,  # noqa: E712
                 )
             )
-            if not rule:
+            if rule is None:
                 return None
             rule.deleted = True
             rule.updated_at = now
@@ -95,7 +96,7 @@ class AlertRuleDAO:
                     AlertRule.deleted == False,  # noqa: E712
                 )
             )
-            if not rule:
+            if rule is None:
                 return None
             rule.enabled = enabled
             rule.updated_at = now
@@ -103,7 +104,7 @@ class AlertRuleDAO:
             return rule
 
     def update_rule(
-        self, alert_rule_uuid: UUID, update_fields: dict
+        self, alert_rule_uuid: UUID, update_fields: dict[str, Any]
     ) -> AlertRule | None:
         UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
         now = datetime.datetime.now(tz=UTC)
@@ -114,7 +115,7 @@ class AlertRuleDAO:
                     AlertRule.deleted == False,  # noqa: E712
                 )
             )
-            if not rule:
+            if rule is None:
                 return None
             for field, value in update_fields.items():
                 if hasattr(rule, field):

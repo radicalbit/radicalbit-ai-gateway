@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from radicalbit_ai_gateway.services.alert_email_formatter import (
@@ -8,17 +9,25 @@ from radicalbit_ai_gateway.services.alert_email_formatter import (
 TIME = datetime(2026, 10, 13, 9, 30, 5, tzinfo=UTC)
 
 
-def body(**overrides) -> str:
-    args = {
-        'rule_name': 'PII watch',
-        'description': None,
-        'scope': 'route',
-        'target': 'acme / chat',
-        'event': 'guardrail-input-pii',
-        'time': TIME,
-        'details': [],
-    }
-    return build_alert_email_body(**{**args, **overrides})
+def body(
+    *,
+    rule_name: str = 'PII watch',
+    description: str | None = None,
+    scope: str = 'route',
+    target: str = 'acme / chat',
+    event: str = 'guardrail-input-pii',
+    time: datetime = TIME,
+    details: Sequence[tuple[str, str]] = (),
+) -> str:
+    return build_alert_email_body(
+        rule_name=rule_name,
+        description=description,
+        scope=scope,
+        target=target,
+        event=event,
+        time=time,
+        details=details,
+    )
 
 
 def test_the_subject_names_rule_event_and_target():

@@ -8,6 +8,7 @@ from radicalbit_ai_gateway.db.dao.otel_traces_dao import (
     OtelTracesDAO,
     request_type_of_root_span,
 )
+from radicalbit_ai_gateway.db.models.trace import SpanRecord
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
     ErrorEvents,
@@ -37,12 +38,12 @@ from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
 
 def _safe_parse_int(value: str | None) -> int:
     """Safely parse string to int, returning 0 if value is None or empty."""
-    return int(value) if value else 0
+    return int(value) if value is not None and value != '' else 0
 
 
 def _parse_uuid(value: str | None) -> UUID | None:
     """Parse a string UUID to UUID or None."""
-    if not value:
+    if value is None or value == '':
         return None
     try:
         return UUID(value)
@@ -52,7 +53,7 @@ def _parse_uuid(value: str | None) -> UUID | None:
 
 def _parse_request_type(value: str | None) -> RequestType | None:
     """Parse a request type string to RequestType or None."""
-    if not value:
+    if value is None or value == '':
         return None
     try:
         return RequestType(value)
@@ -250,7 +251,7 @@ class TracingService:
         if not spans:
             raise GatewayNotFoundError(f"Trace '{trace_id}' not found")
 
-        children_map: dict[str, list] = {}
+        children_map: dict[str, list[SpanRecord]] = {}
         root_span = None
         total_duration = 0  # Spans always have positive duration
         error_count = 0
@@ -261,7 +262,7 @@ class TracingService:
         for span in spans:
             # Build parent-child relationships
             parent_span_id = span.parent_span_id or None
-            if not parent_span_id:
+            if parent_span_id is None:
                 root_span = span
             else:
                 children_map.setdefault(parent_span_id, []).append(span)
@@ -380,7 +381,7 @@ class TracingService:
         )
 
         if not traces_page.items:
-            return Page.create([], params, total=traces_page.total)
+            return Page[TraceDTO].create([], params, total=traces_page.total)
 
         # Enrich with span stats
         trace_ids = [row.trace_id for row in traces_page.items]
@@ -455,7 +456,7 @@ class TracingService:
                 )
             )
 
-        return Page.create(items, params, total=traces_page.total)
+        return Page[TraceDTO].create(items, params, total=traces_page.total)
 
     def get_span_by_id(
         self, project_uuid: UUID, trace_id: str, span_id: str

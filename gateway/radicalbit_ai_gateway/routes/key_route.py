@@ -1,12 +1,12 @@
 import asyncio
+from collections.abc import AsyncIterator
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.sse import EventSourceResponse
-from starlette.responses import StreamingResponse
 
 from radicalbit_ai_gateway.models.auth_dto import (
     GroupFullOut,
@@ -82,7 +82,7 @@ class KeyRoute:
         )
         async def stream_limits_consumption(
             keys: Annotated[list[UUID] | None, Query()] = None,
-        ) -> StreamingResponse:
+        ) -> AsyncIterator[dict[str, dict[str, Any]]]:
             while True:
                 consumption = await key_service.get_limits_consumption(keys or [])
                 yield {

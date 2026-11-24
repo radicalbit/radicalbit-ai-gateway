@@ -262,11 +262,13 @@ class RequestLimits:
         for span, windows, cost in groups:
             counters = [next(values) for _ in windows]
             check = (
-                _ROUTE_CHECKS[span] if span and traced else RequestLimits._check_windows
+                _ROUTE_CHECKS[span]
+                if span is not None and span != '' and traced
+                else RequestLimits._check_windows
             )
             quiet = {} if traced else {'log': False}
             await check(self, windows, counters, cost, to_count, **quiet)
-        if to_count:
+        if to_count is not None and len(to_count) > 0:
             await self._add(to_count)
 
     def _demanded_groups(
@@ -290,10 +292,14 @@ class RequestLimits:
                     tokens = count_tokens(demand.input.text, demand.input.model)
                 cost = tokens
             elif category is Category.AUDIO_SECONDS:
-                if demand.audio_seconds == 'unknown':
+                seconds = demand.audio_seconds
+                if seconds == 'unknown':
                     log_unknown_audio_duration(self.identity)
                     continue
-                cost = round(demand.audio_seconds)
+                if seconds is None:
+                    # Not demanded: _demands skipped it already.
+                    continue
+                cost = round(seconds)
             else:
                 cost = 1
             span = _span_name(category, demand) if scope is ROUTE else None
@@ -317,7 +323,7 @@ class RequestLimits:
         for window, counter in zip(windows, counters, strict=True):
             if (counter or 0) + cost > window.config.limit:
                 # What the scopes before this one let through still counts.
-                if to_count:
+                if to_count is not None and len(to_count) > 0:
                     await self._add(to_count)
                     to_count.clear()
                 limiter = window.limiter(self._storage)

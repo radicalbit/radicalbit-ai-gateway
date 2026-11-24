@@ -12,12 +12,12 @@ from radicalbit_ai_gateway.llm.messages import HumanMessage
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
     CheckParameter,
-    Guardrail,
     GuardrailBehaviorType,
     GuardrailType,
     GuardrailWhereType,
     JudgeParameter,
     RedactParameter,
+    guardrail_adapter,
 )
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.prompt_manager import PromptManager
@@ -35,12 +35,14 @@ class _Judge:
 
 
 def _guardrail(kind, parameters):
-    return Guardrail(
-        name='gr',
-        type=kind,
-        where=GuardrailWhereType.INPUT,
-        behavior=GuardrailBehaviorType.BLOCK,
-        parameters=parameters,
+    return guardrail_adapter.validate_python(
+        {
+            'name': 'gr',
+            'type': kind,
+            'where': GuardrailWhereType.INPUT,
+            'behavior': GuardrailBehaviorType.BLOCK,
+            'parameters': parameters,
+        }
     )
 
 

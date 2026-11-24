@@ -4,6 +4,8 @@ This module provides functions for extracting text content from gateway
 messages based on the guardrail phase (input vs output).
 """
 
+from typing import Any
+
 from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.guardrails import GuardrailWhereType
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
@@ -56,7 +58,7 @@ def _extract_output_content(messages: list[BaseMessage]) -> str:
 
 
 def _extract_input_content(
-    messages: list[BaseMessage], message_roles: list | None
+    messages: list[BaseMessage], message_roles: list[str] | None
 ) -> str:
     """Extract content from provided messages for INPUT phase.
 
@@ -83,10 +85,13 @@ def _get_message_text(msg: BaseMessage) -> str:
 
 def _get_message_type(msg: BaseMessage) -> str:
     """Get the type of a message (human, ai, etc.)."""
-    return getattr(msg, 'type', '')
+    msg_type = getattr(msg, 'type', '')
+    return msg_type if isinstance(msg_type, str) else ''
 
 
-def extract_media_blocks_for_judge(messages: list[BaseMessage], **kwargs) -> list[dict]:
+def extract_media_blocks_for_judge(
+    messages: list[BaseMessage], **kwargs
+) -> list[dict[str, Any]]:
     """Extract image and file content blocks from messages based on guardrail phase.
 
     For INPUT phase: collects media blocks from messages (filtering by role is
@@ -119,14 +124,14 @@ def extract_media_blocks_for_judge(messages: list[BaseMessage], **kwargs) -> lis
 
 
 def _extract_input_media_blocks(
-    messages: list[BaseMessage], message_roles: list | None
-) -> list[dict]:
+    messages: list[BaseMessage], message_roles: list[str] | None
+) -> list[dict[str, Any]]:
     """Extract media blocks from provided messages for INPUT phase.
 
     If message_roles is None (not configured), falls back to original behavior
     of only scanning human (user) messages. Otherwise, scans all provided messages.
     """
-    blocks: list[dict] = []
+    blocks: list[dict[str, Any]] = []
     for m in messages:
         if message_roles is None and _get_message_type(m) != 'human':
             continue
@@ -134,7 +139,7 @@ def _extract_input_media_blocks(
     return blocks
 
 
-def _extract_output_media_blocks(messages: list[BaseMessage]) -> list[dict]:
+def _extract_output_media_blocks(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     for m in reversed(messages):
         if _get_message_type(m) == 'ai':
             blocks = _get_media_blocks(m)
@@ -143,7 +148,7 @@ def _extract_output_media_blocks(messages: list[BaseMessage]) -> list[dict]:
     return []
 
 
-def _get_media_blocks(msg: BaseMessage) -> list[dict]:
+def _get_media_blocks(msg: BaseMessage) -> list[dict[str, Any]]:
     content = getattr(msg, 'content', '')
     if not isinstance(content, list):
         return []

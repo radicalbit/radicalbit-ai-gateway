@@ -24,7 +24,7 @@ logging.config.dictConfig(logging_config_dict)
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 
-def parse_tool_calls(tool_calls: list):
+def parse_tool_calls(tool_calls: list[dict[str, Any]]):
     """Parse OpenAI tool calls into the gateway's tool-call format."""
     return [
         {
@@ -53,13 +53,11 @@ def _parse_content_maybe(content: Any) -> Any:
 
 def _parse_data_url(val: str) -> tuple[str | None, str | None]:
     """Split data URL into (mime, base64) or return (None, original) for raw base64."""
-    if isinstance(val, str) and val.startswith('data:') and ',' in val:
+    if val.startswith('data:') and ',' in val:
         header, b64 = val.split(',', 1)
         mime = header[5:].split(';')[0] or None
         return mime, b64
-    if isinstance(val, str):
-        return None, val
-    return None, None
+    return None, val
 
 
 def _remap_file_data(obj: Any) -> Any:
@@ -80,11 +78,13 @@ def _remap_file_data(obj: Any) -> Any:
     return obj
 
 
-def _to_image_or_file_part(data_str: str, filename: str | None = None) -> dict:
+def _to_image_or_file_part(
+    data_str: str, filename: str | None = None
+) -> dict[str, Any]:
     """Build a normalized image/file part from a data URL or raw base64."""
     mime, b64 = _parse_data_url(data_str)
 
-    if mime and mime.startswith('image/'):
+    if mime is not None and mime.startswith('image/'):
         return {
             'type': 'image',
             'source_type': 'base64',
@@ -97,11 +97,11 @@ def _to_image_or_file_part(data_str: str, filename: str | None = None) -> dict:
         'source_type': 'base64',
         'data': b64,
         'mime_type': mime or 'application/octet-stream',
-        **({'filename': filename} if filename else {}),
+        **({'filename': filename} if filename is not None and filename != '' else {}),
     }
 
 
-def to_target_multimodal_parts(parts: Any) -> list[dict]:
+def to_target_multimodal_parts(parts: Any) -> list[str | dict[str, Any]]:
     """Normalize incoming parts to the gateway's target multimodal format.
     - text -> {"type":"text","text": "..."}
     - image_url (data URL) -> {"type":"image", "source_type":"base64", ...}
@@ -109,7 +109,7 @@ def to_target_multimodal_parts(parts: Any) -> list[dict]:
     - image_url (http/https) -> keep {"type":"image_url","image_url":{"url":...}}
     """
     parts = _remap_file_data(_parse_content_maybe(parts))
-    out: list[dict] = []
+    out: list[str | dict[str, Any]] = []
 
     if not isinstance(parts, list):
         return [{'type': 'text', 'text': str(parts)}]
@@ -155,7 +155,11 @@ def _coerce_to_text(content: Any) -> str:
 
 
 def select_message_by_role(
-    role: str, content: list | str, tool_calls: list, tool_call_id: str | None
+    role: str | None,
+    content: list[Any] | str,
+    tool_calls: list[Any],
+    tool_call_id: str | None,
+    name: str | None = None,
 ) -> BaseMessage:
     match role:
         case 'system':
@@ -175,10 +179,12 @@ def select_message_by_role(
             return AIMessage(content=_coerce_to_text(content), tool_calls=tool_calls)
 
         case 'function':
-            return FunctionMessage(content=_coerce_to_text(content))
+            if name is None or name == '':
+                raise GatewayBadRequest('FunctionMessage must have name.')
+            return FunctionMessage(content=_coerce_to_text(content), name=name)
 
         case 'tool':
-            if not tool_call_id:
+            if tool_call_id is None or tool_call_id == '':
                 raise GatewayBadRequest('ToolMessage must have tool_call_id.')
             return ToolMessage(
                 content=_coerce_to_text(content), tool_call_id=tool_call_id
@@ -188,7 +194,7 @@ def select_message_by_role(
             raise GatewayBadRequest(f'Unsupported role: {role}')
 
 
-def convert_openai_messages(messages: list) -> list[BaseMessage]:
+def convert_openai_messages(messages: Iterable[Mapping[str, Any]]) -> list[BaseMessage]:
     """Convert OpenAI messages to gateway messages, tolerando tipi atipici."""
     openai_messages: list[BaseMessage] = []
     for m in messages:
@@ -204,6 +210,7 @@ def convert_openai_messages(messages: list) -> list[BaseMessage]:
             content=content,
             tool_calls=parse_tool_calls(list(m.get('tool_calls', []) or [])),
             tool_call_id=m.get('tool_call_id'),
+            name=m.get('name'),
         )
         reasoning_content = m.get('reasoning_content')
         if reasoning_content and isinstance(message, AIMessage):

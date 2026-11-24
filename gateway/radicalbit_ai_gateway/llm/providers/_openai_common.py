@@ -10,7 +10,7 @@ import contextlib
 import copy
 import json
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel
 
@@ -20,7 +20,9 @@ from radicalbit_ai_gateway.llm.messages import (
     BaseMessage,
     FunctionMessage,
     HumanMessage,
+    InvalidToolCall,
     SystemMessage,
+    ToolCall,
     ToolMessage,
     UsageMetadata,
     invalid_tool_call,
@@ -32,8 +34,14 @@ from radicalbit_ai_gateway.llm.providers._schema import (
     is_data_content_block,
     pydantic_to_function,
 )
+from radicalbit_ai_gateway.llm.usage import (
+    input_token_details as reported_input_details,
+    output_token_details as reported_output_details,
+)
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
 
 Api = Literal['chat/completions', 'responses']
 
@@ -89,7 +97,7 @@ class StreamChunkTimeoutError(TimeoutError):
 # ── Request messages ─────────────────────────────────────────────────────────
 
 
-def _image_block(block: dict) -> dict:
+def _image_block(block: dict[str, Any]) -> dict[str, Any]:
     if 'url' in block:
         return {'type': 'image_url', 'image_url': {'url': block['url']}}
     if 'base64' in block or block.get('source_type') == 'base64':
@@ -103,7 +111,9 @@ def _image_block(block: dict) -> dict:
     raise ValueError("Unsupported source type. Only 'url' and 'base64' are supported.")
 
 
-def convert_data_block(block: dict, api: Api = 'chat/completions') -> dict:
+def convert_data_block(
+    block: dict[str, Any], api: Api = 'chat/completions'
+) -> dict[str, Any]:
     """Format a standard (image, file or audio) data block for OpenAI."""
     if block['type'] == 'image':
         image = _image_block(block)
@@ -154,7 +164,9 @@ def convert_data_block(block: dict, api: Api = 'chat/completions') -> dict:
     raise ValueError(f'Block of type {block["type"]} is not supported.')
 
 
-def _with_cache_breakpoint(source: dict, formatted: dict) -> dict:
+def _with_cache_breakpoint(
+    source: dict[str, Any], formatted: dict[str, Any]
+) -> dict[str, Any]:
     if 'prompt_cache_breakpoint' in source:
         formatted['prompt_cache_breakpoint'] = source['prompt_cache_breakpoint']
     elif isinstance(extras := source.get('extras'), dict) and (
@@ -167,7 +179,7 @@ def _with_cache_breakpoint(source: dict, formatted: dict) -> dict:
 def _format_content(content: Any, api: Api, role: str) -> Any:
     if not (content and isinstance(content, list)):
         return content
-    formatted: list = []
+    formatted: list[Any] = []
     for block in content:
         if (
             isinstance(block, dict)
@@ -223,7 +235,7 @@ def _format_content(content: Any, api: Api, role: str) -> Any:
     return formatted
 
 
-def _tool_call_to_openai(tc: dict) -> dict:
+def _tool_call_to_openai(tc: ToolCall) -> dict[str, Any]:
     return {
         'type': 'function',
         'id': tc['id'],
@@ -234,7 +246,7 @@ def _tool_call_to_openai(tc: dict) -> dict:
     }
 
 
-def _invalid_tool_call_to_openai(tc: dict) -> dict:
+def _invalid_tool_call_to_openai(tc: InvalidToolCall) -> dict[str, Any]:
     return {
         'type': 'function',
         'id': tc['id'],
@@ -261,7 +273,7 @@ def strip_v1_blocks(message: AIMessage) -> AIMessage:
     """Drop the standard-format blocks Chat Completions does not accept."""
     if not isinstance(message.content, list):
         return message
-    content: list = []
+    content: list[Any] = []
     for block in message.content:
         if isinstance(block, dict):
             block_type = block.get('type')
@@ -276,7 +288,9 @@ def strip_v1_blocks(message: AIMessage) -> AIMessage:
     return message.model_copy(update={'content': content})
 
 
-def message_to_dict(message: BaseMessage, api: Api = 'chat/completions') -> dict:
+def message_to_dict(
+    message: BaseMessage, api: Api = 'chat/completions'
+) -> dict[str, Any]:
     """Convert a message to an OpenAI message dict."""
     message_dict: dict[str, Any] = {
         'content': _format_content(message.content, api, message.type)
@@ -304,7 +318,7 @@ def message_to_dict(message: BaseMessage, api: Api = 'chat/completions') -> dict
         if 'function_call' in message_dict or 'tool_calls' in message_dict:
             message_dict['content'] = message_dict['content'] or None
 
-        audio: dict | None = None
+        audio: dict[str, Any] | None = None
         for block in message.content:
             if (
                 isinstance(block, dict)
@@ -314,10 +328,10 @@ def message_to_dict(message: BaseMessage, api: Api = 'chat/completions') -> dict
             ):
                 # OpenAI only accepts the id of a previous audio reply.
                 audio = {'id': audio_id}
-        if not audio and 'audio' in message.additional_kwargs:
+        if (audio is None or len(audio) == 0) and 'audio' in message.additional_kwargs:
             raw_audio = message.additional_kwargs['audio']
             audio = {'id': raw_audio['id']} if 'id' in raw_audio else raw_audio
-        if audio:
+        if audio is not None and len(audio) > 0:
             message_dict['audio'] = audio
     elif isinstance(message, SystemMessage):
         message_dict['role'] = message.additional_kwargs.get(
@@ -364,8 +378,8 @@ def _set_additional_properties_false(schema: Any) -> Any:
     return schema
 
 
-def to_openai_function(function: Any, strict: bool | None = None) -> dict:
-    if strict and isinstance(function, dict):
+def to_openai_function(function: Any, strict: bool | None = None) -> dict[str, Any]:
+    if strict is not None and strict and isinstance(function, dict):
         function = copy.deepcopy(function)
     if isinstance(function, dict) and all(
         k in function for k in ('name', 'input_schema')
@@ -418,7 +432,7 @@ def to_openai_function(function: Any, strict: bool | None = None) -> dict:
     return oai_function
 
 
-def to_openai_tool(tool: Any, strict: bool | None = None) -> dict:
+def to_openai_tool(tool: Any, strict: bool | None = None) -> dict[str, Any]:
     """Convert a tool definition to the OpenAI tool format."""
     if isinstance(tool, dict):
         if tool.get('type') in WELL_KNOWN_TOOL_TYPES:
@@ -432,6 +446,7 @@ def to_response_format(schema: Any, strict: bool | None = None) -> Any:
     """Build the ``response_format`` for a pydantic class or a JSON schema dict."""
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         return schema
+    response_format: dict[str, Any]
     if (
         isinstance(schema, dict)
         and 'json_schema' in schema
@@ -442,10 +457,8 @@ def to_response_format(schema: Any, strict: bool | None = None) -> Any:
         response_format = {'type': 'json_schema', 'json_schema': schema}
     else:
         if strict is None:
-            if isinstance(schema, dict) and isinstance(schema.get('strict'), bool):
-                strict = schema['strict']
-            else:
-                strict = False
+            schema_strict = schema.get('strict') if isinstance(schema, dict) else None
+            strict = schema_strict if isinstance(schema_strict, bool) else False
         function = to_openai_function(schema, strict=strict)
         function['schema'] = function.pop('parameters')
         response_format = {'type': 'json_schema', 'json_schema': function}
@@ -464,7 +477,7 @@ def to_response_format(schema: Any, strict: bool | None = None) -> Any:
     return response_format
 
 
-def tool_choice_kwarg(tool_choice: Any, tools: list[dict]) -> Any:
+def tool_choice_kwarg(tool_choice: Any, tools: list[dict[str, Any]]) -> Any:
     """Normalize ``tool_choice`` against the bound tools."""
     tool_names = []
     for tool in tools:
@@ -522,7 +535,7 @@ def parse_first_tool_call(message: AIMessage, schema: type[BaseModel]) -> Any:
 # ── Replies ──────────────────────────────────────────────────────────────────
 
 
-def parse_raw_tool_call(raw: dict) -> dict | None:
+def parse_raw_tool_call(raw: dict[str, Any]) -> ToolCall | None:
     """Parse an OpenAI tool call; raises ``OutputParserError`` on invalid JSON."""
     if 'function' not in raw:
         return None
@@ -543,18 +556,38 @@ def parse_raw_tool_call(raw: dict) -> dict | None:
     )
 
 
-def dict_to_ai_message(data: dict) -> AIMessage:
+def unsupported_tool_call(raw: dict[str, Any]) -> InvalidToolCall:
+    """Record a tool call that is not a function call (e.g. a custom tool call).
+
+    Such a call has no JSON arguments to parse: it is kept, with the name and
+    free-form input it carries, as an invalid tool call.
+    """
+    kind = raw.get('type')
+    payload = raw.get(kind) if isinstance(kind, str) else None
+    if not isinstance(payload, dict):
+        payload = {}
+    name = payload.get('name')
+    args = payload.get('input')
+    return invalid_tool_call(
+        name=name if isinstance(name, str) else None,
+        args=args if isinstance(args, str) else None,
+        id=raw.get('id'),
+        error=f'Unsupported tool call type {kind!r}: only function calls are parsed.',
+    )
+
+
+def dict_to_ai_message(data: dict[str, Any]) -> AIMessage:
     """Build the assistant message of a Chat Completions choice."""
     # Azure and tool-calling replies may carry a null content.
     content = data.get('content', '') or ''
-    additional_kwargs: dict = {}
+    additional_kwargs: dict[str, Any] = {}
     if function_call := data.get('function_call'):
         additional_kwargs['function_call'] = dict(function_call)
-    tool_calls = []
-    invalid_tool_calls = []
+    tool_calls: list[ToolCall] = []
+    invalid_tool_calls: list[InvalidToolCall] = []
     for raw in data.get('tool_calls') or []:
         try:
-            tool_calls.append(parse_raw_tool_call(raw))
+            parsed = parse_raw_tool_call(raw)
         except Exception as e:
             invalid_tool_calls.append(
                 invalid_tool_call(
@@ -564,6 +597,11 @@ def dict_to_ai_message(data: dict) -> AIMessage:
                     error=str(e),
                 )
             )
+            continue
+        if parsed is None:
+            invalid_tool_calls.append(unsupported_tool_call(raw))
+        else:
+            tool_calls.append(parsed)
     if audio := data.get('audio'):
         additional_kwargs['audio'] = audio
     return AIMessage(
@@ -576,9 +614,9 @@ def dict_to_ai_message(data: dict) -> AIMessage:
     )
 
 
-def delta_to_chunk(delta: dict) -> AIMessageChunk:
+def delta_to_chunk(delta: dict[str, Any]) -> AIMessageChunk:
     """Build the message chunk of a streamed Chat Completions delta."""
-    additional_kwargs: dict = {}
+    additional_kwargs: dict[str, Any] = {}
     if delta.get('function_call'):
         function_call = dict(delta['function_call'])
         if 'name' in function_call and function_call['name'] is None:
@@ -606,7 +644,10 @@ def delta_to_chunk(delta: dict) -> AIMessageChunk:
 
 
 def usage_metadata(
-    usage: dict, service_tier: str | None = None, *, responses_api: bool = False
+    usage: dict[str, Any],
+    service_tier: str | None = None,
+    *,
+    responses_api: bool = False,
 ) -> UsageMetadata:
     """Translate OpenAI token usage into ``UsageMetadata``."""
     if responses_api:
@@ -627,8 +668,9 @@ def usage_metadata(
     if service_tier not in ('priority', 'flex'):
         service_tier = None
     prefix = f'{service_tier}_' if service_tier else ''
-    input_token_details: dict = {}
-    output_token_details: dict = {}
+    # None: a count the provider did not report, left out.
+    input_token_details: dict[str, int | None] = {}
+    output_token_details: dict[str, int | None] = {}
     if not responses_api:
         input_token_details['audio'] = input_details.get('audio_tokens')
     input_token_details[f'{prefix}cache_read'] = input_details.get('cached_tokens')
@@ -658,20 +700,16 @@ def usage_metadata(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
-        input_token_details={
-            k: v for k, v in input_token_details.items() if v is not None
-        },
-        output_token_details={
-            k: v for k, v in output_token_details.items() if v is not None
-        },
+        input_token_details=reported_input_details(input_token_details),
+        output_token_details=reported_output_details(output_token_details),
     )
 
 
 async def with_chunk_timeout(
-    source: AsyncIterator, timeout: float | None, model_name: str | None
-) -> AsyncIterator:
+    source: AsyncIterator[T], timeout: float | None, model_name: str | None
+) -> AsyncIterator[T]:
     """Yield from ``source``, failing when one chunk takes over ``timeout`` s."""
-    if not timeout or timeout <= 0:
+    if timeout is None or timeout <= 0:
         async for item in source:
             yield item
         return

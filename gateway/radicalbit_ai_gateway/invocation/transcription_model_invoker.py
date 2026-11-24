@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import logging
+from typing import Any
 
 import openai
 from openai import AsyncAzureOpenAI, AsyncOpenAI
@@ -8,6 +9,7 @@ from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from opentelemetry import trace
+from typing_extensions import Never, override
 
 from radicalbit_ai_gateway.invocation.errors import Surface, raising
 from radicalbit_ai_gateway.invocation.fallback_chain import (
@@ -19,7 +21,7 @@ from radicalbit_ai_gateway.invocation.fallback_chain import (
     Skip,
     candidates,
 )
-from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
+from radicalbit_ai_gateway.invocation.model_invoker import FallbackModels, ModelInvoker
 from radicalbit_ai_gateway.invocation.recorder import Call
 from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import Model
@@ -90,7 +92,7 @@ def _set_transcription_response_attributes(
         span.set_attribute(
             'transcription.response.text_length', len(response.text or '')
         )
-        if is_whisper:
+        if is_whisper and isinstance(response, TranscriptionVerbose):
             span.set_attribute(
                 'transcription.response.language', response.language or ''
             )
@@ -104,7 +106,13 @@ def _set_transcription_response_attributes(
         pass
 
 
-class TranscriptionModelInvoker(ModelInvoker):
+# The client a transcription model is called with.
+_Client = AsyncOpenAI | AsyncAzureOpenAI
+
+
+# Untyped: tests stand in a fake for the SDK client, and the SDK's overloaded
+# ``audio.transcriptions.create`` leaves no protocol both could match.
+class TranscriptionModelInvoker(ModelInvoker[Any]):
     def __init__(
         self,
         models: list[Model],
@@ -120,19 +128,28 @@ class TranscriptionModelInvoker(ModelInvoker):
         )
         self._initialize_models(self._build_model)
 
-    def _build_model(self, model: Model) -> AsyncOpenAI | AsyncAzureOpenAI:
+    @override
+    def _build_model(self, model: Model) -> _Client:
         """Build an openai SDK client: the transcription `usage` is needed for cost tracking."""
         provider, _ = parse_provider_and_model(model.model)
         credentials = (
             model.credentials.model_dump(exclude_none=True) if model.credentials else {}
         )
         if provider == 'azure':
+            endpoint = credentials.get('api_base') or credentials.get('base_url')
+            if endpoint is None:
+                # The SDK reads the endpoint from AZURE_OPENAI_ENDPOINT.
+                return AsyncAzureOpenAI(
+                    api_key=credentials.get('api_key'),
+                    azure_ad_token=credentials.get('azure_ad_token'),
+                    api_version=credentials.get('api_version'),
+                    http_client=self.httpx_client,
+                )
             return AsyncAzureOpenAI(
                 api_key=credentials.get('api_key'),
                 azure_ad_token=credentials.get('azure_ad_token'),
                 api_version=credentials.get('api_version'),
-                azure_endpoint=credentials.get('api_base')
-                or credentials.get('base_url'),
+                azure_endpoint=endpoint,
                 http_client=self.httpx_client,
             )
         return AsyncOpenAI(
@@ -144,7 +161,13 @@ class TranscriptionModelInvoker(ModelInvoker):
 
     def _resolve_model(
         self, model_id: str
-    ) -> tuple[Model, AsyncOpenAI | AsyncAzureOpenAI, bool, str, list]:
+    ) -> tuple[
+        Model,
+        _Client,
+        bool,
+        str,
+        FallbackModels[Any],
+    ]:
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Transcription model {model_id} not defined')
         model, client, fallbacks = self.model_map[model_id]
@@ -163,26 +186,24 @@ class TranscriptionModelInvoker(ModelInvoker):
         prompt: str | None,
         temperature: float | None,
         stream: bool = False,
-    ) -> dict:
-        create_kwargs: dict = {
+    ) -> dict[str, Any]:
+        create_kwargs: dict[str, Any] = {
             'model': model_name,
             'file': (filename, audio_bytes, content_type or 'application/octet-stream'),
             'response_format': response_format,
         }
         if stream:
             create_kwargs['stream'] = True
-        if language:
+        if language is not None and language != '':
             create_kwargs['language'] = language
-        if prompt:
+        if prompt is not None and prompt != '':
             create_kwargs['prompt'] = prompt
         if temperature is not None:
             create_kwargs['temperature'] = temperature
         return create_kwargs
 
     @staticmethod
-    async def _create_upstream(
-        client: AsyncOpenAI | AsyncAzureOpenAI, create_kwargs: dict
-    ):
+    async def _create_upstream(client: _Client, create_kwargs: dict[str, Any]):
         try:
             return await client.audio.transcriptions.create(**create_kwargs)
         except openai.APIStatusError as e:
@@ -198,7 +219,16 @@ class TranscriptionModelInvoker(ModelInvoker):
                 f'Transcription upstream call failed: {e}'
             ) from e
 
-    def _chain(self, model_id: str, identity: RequestIdentity, surface: Surface):
+    @classmethod
+    async def _create_upstream_stream(
+        cls, client: _Client, create_kwargs: dict[str, Any]
+    ) -> AsyncIterator[TranscriptionStreamEvent]:
+        """Open the upstream stream: ``create_kwargs`` carry ``stream=True``."""
+        return await cls._create_upstream(client, create_kwargs)
+
+    def _chain(
+        self, model_id: str, identity: RequestIdentity, surface: Surface
+    ) -> FallbackChain[Never, _Client]:
         """Return the chain of ``model_id``: a 4xx is final, it would fail
         identically on any fallback.
         """
@@ -265,7 +295,9 @@ class TranscriptionModelInvoker(ModelInvoker):
 
         chain = self._chain(model_id, identity, Surface.TRANSCRIPTION)
 
-        async def transcribe(candidate: Candidate) -> Reply:
+        async def transcribe(
+            candidate: Candidate[_Client],
+        ) -> Reply[tuple[Transcription | TranscriptionVerbose, bool]]:
             _, name = parse_provider_and_model(candidate.model.model)
             whisper = name.startswith(WHISPER_FAMILY_PREFIX)
             create_kwargs = self._build_create_kwargs(
@@ -329,7 +361,9 @@ class TranscriptionModelInvoker(ModelInvoker):
         chain = self._chain(model_id, identity, Surface.TRANSCRIPTION_STREAM)
         answered: list[tuple[Candidate, list[str]]] = []
 
-        async def stream(attempt: Attempt) -> AsyncIterator[TranscriptionStreamEvent]:
+        async def stream(
+            attempt: Attempt[_Client],
+        ) -> AsyncIterator[TranscriptionStreamEvent]:
             candidate = attempt.candidate
             _, name = parse_provider_and_model(candidate.model.model)
             if candidate.is_fallback and name.startswith(WHISPER_FAMILY_PREFIX):
@@ -340,7 +374,7 @@ class TranscriptionModelInvoker(ModelInvoker):
                 )
                 raise Skip
             text_parts: list[str] = []
-            upstream_stream = await self._create_upstream(
+            upstream_stream = await self._create_upstream_stream(
                 candidate.client,
                 self._build_create_kwargs(
                     name,
@@ -386,7 +420,7 @@ class _Usage:
     usage: object
 
 
-def _failure_logs(model_id: str, surface: Surface) -> dict:
+def _failure_logs(model_id: str, surface: Surface) -> dict[str, Any]:
     """Return the ``on_failure`` that logs a transcription model's failure."""
     if surface is Surface.TRANSCRIPTION_STREAM:
         primary = (

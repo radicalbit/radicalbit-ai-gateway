@@ -37,9 +37,10 @@ from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.llm.messages import BaseMessage, HumanMessage
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.guardrails import (
+    CheckClassGuardrail,
     Guardrail,
-    GuardrailClass,
     GuardrailWhereType,
+    PresidioAnonymizerGuardrail,
 )
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
@@ -112,11 +113,17 @@ class GuardrailFlags:
 
 
 class Payload(Protocol):
-    #: False on a call with no conversation: every guardrail reads every text.
-    windowed: bool
-    #: How many leading messages the gateway added (its system prompt). They
-    #: are not checked and do not count in the message indexes.
-    skip: int
+    @property
+    def windowed(self) -> bool:
+        """False on a call with no conversation: every guardrail reads every
+        text.
+        """
+
+    @property
+    def skip(self) -> int:
+        """How many leading messages the gateway added (its system prompt).
+        They are not checked and do not count in the message indexes.
+        """
 
     def messages(self) -> list[BaseMessage]: ...
 
@@ -206,26 +213,53 @@ class Guardrails:
     def for_route(self, config: GatewayRouteConfig) -> RouteGuardrails:
         """Return the guardrails of a route: its enabled ones, by phase and class."""
 
-        def pick(where: GuardrailWhereType, kind: GuardrailClass):
-            return tuple(
+        def pick(where: GuardrailWhereType) -> list[Guardrail]:
+            return [
                 g
                 for name in config.guardrails or []
                 if (g := self._by_name.get(name))
                 and g.enabled
-                and g.guardrail_class() == kind
                 and g.where in (where, GuardrailWhereType.IO)
+            ]
+
+        # presidio_anonymizer is the only REDACT guardrail; every other one
+        # is a CHECK.
+        def redact(where: GuardrailWhereType) -> RedactStage | None:
+            picked = tuple(
+                g for g in pick(where) if isinstance(g, PresidioAnonymizerGuardrail)
             )
+            return RedactStage(picked, self._redact) if picked else None
+
+        def check(where: GuardrailWhereType) -> CheckStage | None:
+            picked = tuple(
+                g for g in pick(where) if not isinstance(g, PresidioAnonymizerGuardrail)
+            )
+            return CheckStage(picked, self._check) if picked else None
 
         return RouteGuardrails(
             route_name=config.route_name,
-            input_redact=pick(INPUT, GuardrailClass.REDACT),
-            input_check=pick(INPUT, GuardrailClass.CHECK),
-            output_redact=pick(OUTPUT, GuardrailClass.REDACT),
-            output_check=pick(OUTPUT, GuardrailClass.CHECK),
+            input_redact=redact(INPUT),
+            input_check=check(INPUT),
+            output_redact=redact(OUTPUT),
+            output_check=check(OUTPUT),
             unknown=tuple(n for n in config.guardrails or [] if n not in self._by_name),
-            redact=self._redact,
-            check=self._check,
         )
+
+
+@dataclass(frozen=True)
+class RedactStage:
+    """A phase's REDACT guardrails, never empty, and what applies them."""
+
+    guardrails: tuple[PresidioAnonymizerGuardrail, ...]
+    engine: GuardrailRedact
+
+
+@dataclass(frozen=True)
+class CheckStage:
+    """A phase's CHECK guardrails, never empty, and what applies them."""
+
+    guardrails: tuple[CheckClassGuardrail, ...]
+    engine: GuardrailCheck
 
 
 @dataclass(frozen=True)
@@ -233,19 +267,18 @@ class RouteGuardrails:
     """A route's guardrails, built once when its configuration is loaded."""
 
     route_name: str = ''
-    input_redact: tuple[Guardrail, ...] = ()
-    input_check: tuple[Guardrail, ...] = ()
-    output_redact: tuple[Guardrail, ...] = ()
-    output_check: tuple[Guardrail, ...] = ()
+    #: Each phase's guardrails of a class; None when the route has none.
+    input_redact: RedactStage | None = None
+    input_check: CheckStage | None = None
+    output_redact: RedactStage | None = None
+    output_check: CheckStage | None = None
     #: Names the route lists that the project does not define.
     unknown: tuple[str, ...] = ()
-    redact: GuardrailRedact | None = None
-    check: GuardrailCheck | None = None
 
     @property
     def has_output(self) -> bool:
         """Whether the model's whole reply must be known before it is sent."""
-        return bool(self.output_redact or self.output_check)
+        return self.output_redact is not None or self.output_check is not None
 
     def for_request(
         self, identity: RequestIdentity, charge: JudgeUsageCounter
@@ -268,11 +301,12 @@ class RequestGuardrails:
 
     async def redact_input(self, payload: P) -> Screened[P]:
         """Apply the input REDACT guardrails. Runs before routing (ADR 0010)."""
-        if not self._route.input_redact:
+        stage = self._route.input_redact
+        if stage is None:
             return Screened(payload)
         set_operation_category(OperationCategory.GUARDRAIL_INPUT)
         before = payload.messages()
-        after = await self._redact(self._route.input_redact, payload, INPUT)
+        after = await self._redact(stage, payload, INPUT)
         return Screened(
             payload.with_messages(after),
             GuardrailFlags(input_warned=_changed(before, after)),
@@ -284,10 +318,11 @@ class RequestGuardrails:
         """Apply the input CHECK guardrails, after the system prompt is
         injected (ADR 0010). ``flags`` are those of the redaction.
         """
-        if not self._route.input_check:
+        stage = self._route.input_check
+        if stage is None:
             return Screened(payload, flags)
         set_operation_category(OperationCategory.GUARDRAIL_INPUT)
-        result = await self._check(self._route.input_check, payload, INPUT)
+        result = await self._check(stage, payload, INPUT)
         if result.soft_block:
             # A WARN that fired before the soft block is told too.
             blocked = GuardrailFlags(input_warned=result.warned, input_blocked=True)
@@ -308,12 +343,12 @@ class RequestGuardrails:
             return Screened(reply)
         set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
         warned = False
-        if route.output_redact and getattr(reply, 'redactable', True):
+        if route.output_redact is not None and getattr(reply, 'redactable', True):
             before = reply.messages()
             after = await self._redact(route.output_redact, reply, OUTPUT)
             warned = _changed(before, after)
             reply = reply.with_messages(after)
-        if route.output_check:
+        if route.output_check is not None:
             result = await self._check(route.output_check, reply, OUTPUT)
             if result.soft_block:
                 return Screened(
@@ -325,11 +360,11 @@ class RequestGuardrails:
         return Screened(reply, GuardrailFlags(output_warned=warned))
 
     async def _redact(
-        self, guardrails: tuple[Guardrail, ...], payload: Payload, where
+        self, stage: RedactStage, payload: Payload, where: GuardrailWhereType
     ) -> list[BaseMessage]:
-        return await self._route.redact.apply(
+        return await stage.engine.apply(
             identity=self._identity,
-            guardrails=guardrails,
+            guardrails=stage.guardrails,
             unknown=self._route.unknown,
             messages=payload.messages(),
             where=where,
@@ -337,12 +372,12 @@ class RequestGuardrails:
         )
 
     async def _check(
-        self, guardrails: tuple[Guardrail, ...], payload: Payload, where
+        self, stage: CheckStage, payload: Payload, where: GuardrailWhereType
     ) -> CheckResult:
         try:
-            return await self._route.check.apply(
+            return await stage.engine.apply(
                 identity=self._identity,
-                guardrails=guardrails,
+                guardrails=stage.guardrails,
                 unknown=self._route.unknown,
                 messages=payload.messages(),
                 where=where,

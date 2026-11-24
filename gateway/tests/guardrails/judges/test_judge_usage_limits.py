@@ -1,6 +1,7 @@
 """A judge call consumes the same limit counters as the main call (AG-1022)."""
 
 from decimal import Decimal
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pook
@@ -16,6 +17,7 @@ from tests.common.limits import (
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
+from tests.common.pook_activate import pook_activate
 from tests.common.resolve_route_models import resolve_route_models
 from tests.common.scope import scope_of
 
@@ -29,6 +31,7 @@ from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import RequestLimits, RouteLimits
 from radicalbit_ai_gateway.limiting.windows import (
     Category,
+    Window,
     credential_window,
     project_window,
 )
@@ -140,7 +143,7 @@ def _gateway(where: str, behavior: str = 'block') -> GatewayRoute:
     )
 
 
-def _caller() -> dict:
+def _caller() -> dict[str, Any]:
     return {
         'request_uuid': str(REQUEST_UUID),
         'api_key_uuid': str(API_KEY_UUID),
@@ -174,7 +177,9 @@ JUDGE_COST = int(JUDGE_IN * JUDGE_INPUT_PRICE * 1_000_000_000) + int(
 )
 
 
-def _limited_gateway(where: str, behavior: str = 'block', **route) -> GatewayRoute:
+def _limited_gateway(
+    where: str, route: dict[str, Any], behavior: str = 'block'
+) -> GatewayRoute:
     """Return a route with its own limits, as the route factory builds it."""
     gateway = _gateway(where, behavior)
     config = _config(where, behavior, **route).routes[ROUTE]
@@ -186,12 +191,18 @@ def _limits(gateway: GatewayRoute) -> RequestLimits:
     return request_limits(gateway, CREDENTIAL_LIMITS, PROJECT_LIMITS)
 
 
+def _route_window(gateway: GatewayRoute, category: Category) -> Window:
+    window = gateway.route_limits.window(category)
+    assert window is not None
+    return window
+
+
 async def _consumption(gateway: GatewayRoute) -> dict[str, int]:
     credential = str(API_KEY_UUID)
     windows = {
-        'route input': gateway.route_limits.window(Category.INPUT_TOKENS),
-        'route output': gateway.route_limits.window(Category.OUTPUT_TOKENS),
-        'route cost': gateway.route_limits.window(Category.COST),
+        'route input': _route_window(gateway, Category.INPUT_TOKENS),
+        'route output': _route_window(gateway, Category.OUTPUT_TOKENS),
+        'route cost': _route_window(gateway, Category.COST),
         'credential input': credential_window(credential, 'token_input', *HOUR),
         'credential output': credential_window(credential, 'token_output', *HOUR),
         'credential cost': credential_window(credential, 'budget', *HOUR),
@@ -226,7 +237,7 @@ def judge():
 
 
 @pytest.mark.parametrize('where', ['input', 'output'])
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_chat_judge_call_consumes_route_credential_and_project_limits(
     where, judge
@@ -237,7 +248,7 @@ async def test_chat_judge_call_consumes_route_credential_and_project_limits(
         reply=200,
         response_json=to_mock_openai_chat_completion('Paris').model_dump_json(),
     )
-    gateway = _limited_gateway(where, **ROUTE_LIMITS)
+    gateway = _limited_gateway(where, ROUTE_LIMITS)
 
     await chat_pipeline.complete(
         scope_of(gateway, _limits(gateway), **_caller()), _chat()
@@ -247,7 +258,7 @@ async def test_chat_judge_call_consumes_route_credential_and_project_limits(
 
 
 @pytest.mark.parametrize('where', ['input', 'output'])
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_warn_judge_is_called_and_charged_once(where, judge):
     pook.post(
@@ -256,7 +267,7 @@ async def test_warn_judge_is_called_and_charged_once(where, judge):
         response_json=to_mock_openai_chat_completion('Paris').model_dump_json(),
     )
     judge_llm = _judge_llm(triggered=True)
-    gateway = _limited_gateway(where, behavior='warn', **ROUTE_LIMITS)
+    gateway = _limited_gateway(where, ROUTE_LIMITS, behavior='warn')
 
     with patch(
         'radicalbit_ai_gateway.guardrails.judges.judge_engine.build_chat_model',
@@ -272,7 +283,7 @@ async def test_warn_judge_is_called_and_charged_once(where, judge):
     assert scope.headers()[f'X-RB-AIGATEWAY-GUARDRAILS-{where.upper()}-WARN'] == 'true'
 
 
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_embedding_call_and_its_judge_consume_route_credential_and_project_limits(
     judge,
@@ -290,7 +301,7 @@ async def test_embedding_call_and_its_judge_consume_route_credential_and_project
             },
         },
     )
-    gateway = _limited_gateway('input', **ROUTE_LIMITS)
+    gateway = _limited_gateway('input', ROUTE_LIMITS)
 
     await embeddings_pipeline.embed(
         scope_of(gateway, _limits(gateway), **_caller()), ['hello world']
@@ -330,7 +341,7 @@ def judge_calls():
         yield llm.with_structured_output.return_value.ainvoke.await_args_list
 
 
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_chat_judge_spend_is_charged_to_the_next_request(judge_calls):
     pook.post(
@@ -338,7 +349,7 @@ async def test_chat_judge_spend_is_charged_to_the_next_request(judge_calls):
         reply=200,
         response_json=to_mock_openai_chat_completion('Paris').model_dump_json(),
     )
-    gateway = _limited_gateway('input', token_limiting=INPUT_LIMIT)
+    gateway = _limited_gateway('input', {'token_limiting': INPUT_LIMIT})
 
     def scope():
         return scope_of(gateway, request_limits(gateway), **_caller())
@@ -350,7 +361,7 @@ async def test_chat_judge_spend_is_charged_to_the_next_request(judge_calls):
     assert len(judge_calls) == 1
 
 
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_embedding_judge_spend_is_charged_to_the_next_request(judge_calls):
     pook.post(
@@ -363,7 +374,7 @@ async def test_embedding_judge_spend_is_charged_to_the_next_request(judge_calls)
             'usage': {'prompt_tokens': 2, 'total_tokens': 2},
         },
     )
-    gateway = _limited_gateway('input', token_limiting=INPUT_LIMIT)
+    gateway = _limited_gateway('input', {'token_limiting': INPUT_LIMIT})
 
     def scope():
         return scope_of(gateway, request_limits(gateway), **_caller())

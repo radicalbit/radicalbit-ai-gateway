@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 import json
 import logging
+from typing import Any
 
 from fastapi import status
 
@@ -27,10 +28,14 @@ FORWARDED_HEADERS = ('anthropic-version', 'anthropic-beta')
 
 def anthropic_headers(headers: Mapping[str, str]) -> dict[str, str]:
     """Return the client's headers to forward upstream."""
-    return {name: headers[name] for name in FORWARDED_HEADERS if headers.get(name)}
+    return {
+        name: headers[name]
+        for name in FORWARDED_HEADERS
+        if headers.get(name) is not None and headers.get(name) != ''
+    }
 
 
-def _error_body(exc: Exception) -> tuple[dict, int]:
+def _error_body(exc: Exception) -> tuple[dict[str, Any], int]:
     """Return the error body and HTTP status of a failed stream."""
     if isinstance(exc, ModelInvokerUpstreamError):
         return exc.body, exc.status_code
@@ -43,7 +48,7 @@ def _error_body(exc: Exception) -> tuple[dict, int]:
 
 def serve_stream(
     frames: AsyncIterator[str],
-) -> AsyncIterator[str | tuple[str, int, dict[str, str]]]:
+) -> AsyncIterator[str]:
     """Send a Messages stream to the client (see ``streams.serve_stream``):
     an error after the first frame ends the stream with an ``error`` event.
     """
@@ -60,7 +65,7 @@ def _stream_error(exc: Exception) -> str:
     return sse('error', json.dumps(_error_event_body(exc)))
 
 
-def _error_event_body(exc: Exception) -> dict:
+def _error_event_body(exc: Exception) -> dict[str, Any]:
     """Return the body of the ``error`` event that ends a started stream.
 
     An upstream Messages API error keeps its own type and message. Any other

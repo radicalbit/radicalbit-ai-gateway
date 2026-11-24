@@ -1,6 +1,7 @@
 """A routing call is spend: it is costed and consumes the caller's limits (AG-1092)."""
 
 from decimal import Decimal
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pook
@@ -16,6 +17,7 @@ from tests.common.limits import (
 from tests.common.mocked_build_openai_chat_completion import (
     to_mock_openai_chat_completion,
 )
+from tests.common.pook_activate import pook_activate
 from tests.common.scope import scope_of
 
 from radicalbit_ai_gateway.endpoints.chat_completions import pipeline as chat_pipeline
@@ -32,6 +34,7 @@ from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
 from radicalbit_ai_gateway.limiting.limits import RequestLimits
 from radicalbit_ai_gateway.limiting.windows import (
     Category,
+    Window,
     credential_window,
     project_window,
 )
@@ -166,7 +169,9 @@ async def _route(config: GatewayConfig) -> GatewayRoute:
     return route
 
 
-def _scope(route: GatewayRoute, limits: RequestLimits | None = None) -> RequestScope:
+def _scope(
+    route: GatewayRoute, limits: RequestLimits | None = None
+) -> RequestScope[Any, Any]:
     return scope_of(
         route,
         limits or request_limits(route),
@@ -188,11 +193,11 @@ async def _complete(route: GatewayRoute, limits: RequestLimits | None = None):
     return await chat_pipeline.complete(_scope(route, limits), _chat())
 
 
-def _emitted(emit) -> list:
+def _emitted(emit) -> list[Any]:
     return [c.args[0] for c in emit.call_args_list]
 
 
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_semantic_routing_embedding_emits_a_routing_cost_event():
     _mock_providers()
@@ -221,15 +226,16 @@ async def _no_chunks(**_):
     yield
 
 
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_a_streamed_request_is_charged_for_routing_too():
     _mock_providers()
     with patch(MODEL_INVOKER_EMIT) as emit:
         route = await _route(_config())
-        route.chat_invoker.stream = _no_chunks
-        chunks = await chat_pipeline.stream(_scope(route), _chat(stream=True))
-        assert [chunk async for chunk in chunks] == []
+        assert route.chat_invoker is not None
+        with patch.object(route.chat_invoker, 'stream', _no_chunks):
+            chunks = await chat_pipeline.stream(_scope(route), _chat(stream=True))
+            assert [chunk async for chunk in chunks] == []
 
     assert [
         e.value
@@ -255,12 +261,18 @@ def _limited(route: GatewayRoute) -> RequestLimits:
     return request_limits(route, CREDENTIAL_LIMITS, PROJECT_LIMITS)
 
 
+def _route_window(route: GatewayRoute, category: Category) -> Window:
+    window = route.route_limits.window(category)
+    assert window is not None
+    return window
+
+
 async def _consumption(route: GatewayRoute) -> list[int]:
     """Return the route's, the credential's and the project's counters."""
     credential = str(API_KEY_UUID)
     return [
-        await consumed(route.route_limits.window(Category.INPUT_TOKENS)),
-        await consumed(route.route_limits.window(Category.COST)),
+        await consumed(_route_window(route, Category.INPUT_TOKENS)),
+        await consumed(_route_window(route, Category.COST)),
         await consumed(credential_window(credential, 'token_input', *HOUR)),
         await consumed(credential_window(credential, 'budget', *HOUR)),
         await consumed(project_window(PROJECT_UUID, *HOUR)),
@@ -270,7 +282,7 @@ async def _consumption(route: GatewayRoute) -> list[int]:
 HOUR = ('FIXED_WINDOW', '1 hour')
 
 
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_semantic_routing_embedding_consumes_route_credential_and_project_limits():
     _mock_providers()
@@ -287,7 +299,7 @@ async def test_semantic_routing_embedding_consumes_route_credential_and_project_
     ]
 
 
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_centroids_at_startup_emit_no_cost_event_and_count_nothing():
     mock = _mock_providers()
@@ -307,7 +319,7 @@ INPUT_LIMIT = {
 }  # question + routing > 10
 
 
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_semantic_routing_spend_is_charged_to_the_next_request():
     _mock_providers()
@@ -319,7 +331,7 @@ async def test_semantic_routing_spend_is_charged_to_the_next_request():
             await _complete(route)
 
 
-@pook.activate
+@pook_activate
 @pytest.mark.asyncio
 async def test_a_failing_routing_spend_count_does_not_fail_the_request():
     _mock_providers()

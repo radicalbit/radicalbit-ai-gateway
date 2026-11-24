@@ -1,6 +1,7 @@
 from decimal import Decimal
 import logging
 
+from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 app_config = get_app_config()
@@ -8,13 +9,18 @@ logging_config_dict = app_config.log_config.model_dump()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 
+# A model's prices: input, output, cached input, 5m and 1h cache creation per
+# token, input per second, input per audio token.
+_ModelPrices = tuple[Decimal, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]
+
+
 class CostService:
     def __init__(
         self,
-        chat_models_by_id: dict | None = None,
-        embedding_models_by_id: dict | None = None,
-        transcription_models_by_id: dict | None = None,
-        decision_models_by_id: dict | None = None,
+        chat_models_by_id: dict[str, Model] | None = None,
+        embedding_models_by_id: dict[str, Model] | None = None,
+        transcription_models_by_id: dict[str, Model] | None = None,
+        decision_models_by_id: dict[str, Model] | None = None,
     ):
         self.prices = self._extract_model_costs(
             chat_models_by_id or {},
@@ -25,12 +31,12 @@ class CostService:
 
     @staticmethod
     def _extract_model_costs(
-        chat_models_by_id: dict,
-        embedding_models_by_id: dict,
-        transcription_models_by_id: dict | None = None,
-        decision_models_by_id: dict | None = None,
-    ) -> dict:
-        results = {}
+        chat_models_by_id: dict[str, Model],
+        embedding_models_by_id: dict[str, Model],
+        transcription_models_by_id: dict[str, Model] | None = None,
+        decision_models_by_id: dict[str, Model] | None = None,
+    ) -> dict[str, _ModelPrices]:
+        results: dict[str, _ModelPrices] = {}
         for models_by_id in (
             chat_models_by_id,
             embedding_models_by_id,
@@ -51,7 +57,7 @@ class CostService:
 
     def compute_cost(
         self, token_processed: int | float, where: str, model_id: str
-    ) -> float:
+    ) -> Decimal:
         try:
             match where:
                 case 'input':

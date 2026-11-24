@@ -6,6 +6,7 @@ from radicalbit_ai_gateway.endpoints.chat_like.openai_messages import (
 )
 from radicalbit_ai_gateway.llm.messages import (
     AIMessage,
+    FunctionMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
@@ -70,6 +71,16 @@ def test_each_role_becomes_its_message_with_text_content(message, kind, content)
     assert result.content == content
 
 
+def test_a_legacy_function_message_keeps_its_name():
+    [result] = convert_openai_messages(
+        [{'role': 'function', 'name': 'get_weather', 'content': '{"t": "25C"}'}]
+    )
+
+    assert type(result) is FunctionMessage
+    assert result.name == 'get_weather'
+    assert result.content == '{"t": "25C"}'
+
+
 def test_an_assistant_message_keeps_its_tool_calls():
     [result] = convert_openai_messages(
         [
@@ -81,6 +92,7 @@ def test_an_assistant_message_keeps_its_tool_calls():
         ]
     )
 
+    assert isinstance(result, AIMessage)
     assert result.tool_calls == [
         {
             'name': 'get_weather',
@@ -95,9 +107,10 @@ def test_an_assistant_message_keeps_its_tool_calls():
     ('message', 'error'),
     [
         ({'role': 'tool', 'content': 'result'}, 'ToolMessage must have tool_call_id.'),
+        ({'role': 'function', 'content': 'result'}, 'FunctionMessage must have name.'),
         ({'role': 'robot', 'content': 'Test'}, 'Unsupported role: robot'),
     ],
-    ids=['tool_without_call_id', 'unsupported_role'],
+    ids=['tool_without_call_id', 'function_without_name', 'unsupported_role'],
 )
 def test_an_invalid_message_is_a_bad_request(message, error):
     with pytest.raises(GatewayBadRequest, match=error):
