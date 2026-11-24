@@ -1,7 +1,7 @@
 import Lucide from '@Components/lucide';
 import {
-  GroupsTabEnum, TAB_QP, filterByTab, parseTab,
-} from '@Container/pages/groups/list/helpers';
+  OwnershipTabEnum, TAB_QP, filterByTab, parseTab,
+} from '@Helpers/ownership-tabs';
 import { useGetGroupsQuery } from '@State/groups/api';
 import { Tabs } from '@radicalbit/radicalbit-design-system';
 import { ExternalLink, Layers } from 'lucide-react';
@@ -13,16 +13,16 @@ function OwnershipTabs() {
 
   const activeKey = parseTab(searchParams.get(TAB_QP));
 
-  const gatewayManagedCount = filterByTab(data, GroupsTabEnum.GATEWAY_MANAGED).length;
-  const externallyManagedCount = filterByTab(data, GroupsTabEnum.EXTERNALLY_MANAGED).length;
+  const gatewayManagedCount = filterByTab(data, OwnershipTabEnum.GATEWAY_MANAGED).length;
+  const externallyManagedCount = filterByTab(data, OwnershipTabEnum.EXTERNALLY_MANAGED).length;
 
   const items = [
     {
-      key: GroupsTabEnum.GATEWAY_MANAGED,
+      key: OwnershipTabEnum.GATEWAY_MANAGED,
       label: <TabLabel icon={Layers} text={`Gateway managed (${gatewayManagedCount})`} />,
     },
     {
-      key: GroupsTabEnum.EXTERNALLY_MANAGED,
+      key: OwnershipTabEnum.EXTERNALLY_MANAGED,
       label: <TabLabel icon={ExternalLink} text={`Externally managed (${externallyManagedCount})`} />,
     },
   ];

@@ -1,8 +1,8 @@
 import Lucide from '@Components/lucide';
 import { CollapsedTitle } from '@Container/layout';
 import {
-  GroupsTabEnum, TAB_QP, filterByTab, parseTab,
-} from '@Container/pages/groups/list/helpers';
+  OwnershipTabEnum, TAB_QP, filterByTab, parseTab,
+} from '@Helpers/ownership-tabs';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetGroupsQuery } from '@State/groups/api';
 import { Button, Helmet, NewHeader, SectionTitle, Tooltip } from '@radicalbit/radicalbit-design-system';
@@ -17,8 +17,8 @@ function GroupsListHeader() {
   const { data = [], isError } = useGetGroupsQuery();
 
   const tab = parseTab(searchParams.get(TAB_QP));
-  const isGatewayManagedTab = tab === GroupsTabEnum.GATEWAY_MANAGED;
-  const count = filterByTab(data, GroupsTabEnum.GATEWAY_MANAGED).length;
+  const isGatewayManagedTab = tab === OwnershipTabEnum.GATEWAY_MANAGED;
+  const count = filterByTab(data, OwnershipTabEnum.GATEWAY_MANAGED).length;
   const hasCreateButton = isGatewayManagedTab && (count !== 0 || isError);
 
   useOpenModalWithKeyboard();
