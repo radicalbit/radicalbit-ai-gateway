@@ -23,7 +23,6 @@ from typing import Any, Generic, Protocol, TypeVar
 
 import numpy as np
 from openai.types.create_embedding_response import CreateEmbeddingResponse
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.caching.abstract_cache import AbstractCache
 from radicalbit_ai_gateway.caching.gateway_cache import GatewayCache
@@ -41,6 +40,7 @@ from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,

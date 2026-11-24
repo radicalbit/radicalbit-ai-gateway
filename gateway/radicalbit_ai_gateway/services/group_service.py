@@ -2,7 +2,6 @@ from collections.abc import Mapping
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.db.dao.group_dao import GroupDAO
 from radicalbit_ai_gateway.db.dao.group_route_dao import GroupRouteDAO
@@ -24,6 +23,7 @@ from radicalbit_ai_gateway.models.group_limiting import (
 )
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
 from radicalbit_ai_gateway.services.key_service import KeyService
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.exceptions import (
     GroupAlreadyExistsError,
     GroupExternallyManagedError,

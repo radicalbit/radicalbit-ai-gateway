@@ -19,7 +19,6 @@ dependencies = [
     "tiktoken>=0.12.0",
     "celery>=5.6.2",
     "cachetools>=6.2.4",
-    "traceloop-sdk>=0.50.1",
     "presidio-analyzer>=2.2.360",
     "presidio-anonymizer>=2.2.360",
     "alembic>=1.18.1",
@@ -33,7 +32,11 @@ dependencies = [
     "opentelemetry-exporter-prometheus>=0.60b1",
     "pydantic>=2.12.5",
     "pydantic-yaml>=1.6.0",
+    "opentelemetry-api>=1.39.1",
     "opentelemetry-sdk>=1.39.1",
+    "opentelemetry-semantic-conventions>=0.60b1",
+    "opentelemetry-exporter-otlp-proto-http>=1.39.1",
+    "opentelemetry-instrumentation-threading>=0.60b1",
     "psutil>=7.2.1",
     "pip>=25.3",
     "psycopg2>=2.9.11",
@@ -104,7 +107,6 @@ filterwarnings = [
     "error::DeprecationWarning",
     "error::PendingDeprecationWarning",
     # Third-party code we cannot change.
-    "ignore:Support for class-based `config` is deprecated:pydantic.warnings.PydanticDeprecatedSince20:traceloop",
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette",
 ]
 

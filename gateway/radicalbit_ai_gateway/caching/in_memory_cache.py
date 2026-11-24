@@ -1,9 +1,9 @@
 import time
 
 from cachetools import LRUCache
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.caching.abstract_cache import AbstractCache
+from radicalbit_ai_gateway.telemetry.tracing import task
 
 
 class CacheToolsInMemory(AbstractCache):

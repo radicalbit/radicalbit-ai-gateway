@@ -3,8 +3,6 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 import logging
 from typing import Any
 
-from traceloop.sdk.decorators import task, workflow
-
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.guardrail_check import _select_messages
 from radicalbit_ai_gateway.guardrails.presidio import PresidioEngine
@@ -19,6 +17,7 @@ from radicalbit_ai_gateway.models.guardrails import (
     RedactParameter,
 )
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
+from radicalbit_ai_gateway.telemetry.tracing import task, workflow
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import GuardrailBadRequest
 

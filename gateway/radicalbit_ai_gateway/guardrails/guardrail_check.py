@@ -7,7 +7,6 @@ from typing import NamedTuple, Protocol
 
 import httpx
 from opentelemetry import trace
-from traceloop.sdk.decorators import task, workflow
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.guardrails.judges.decision_judge_engine import (
@@ -47,6 +46,7 @@ from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.models.soft_block_info import SoftBlock
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.telemetry.tracing import task, workflow
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
 from radicalbit_ai_gateway.utils.exceptions import (

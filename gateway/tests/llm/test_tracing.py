@@ -2,7 +2,7 @@
 
 The tests swap the module's tracer and histograms for ones backed by an
 in-memory exporter and metric reader (``monkeypatch`` restores them), so no
-global OpenTelemetry or Traceloop state is touched.
+global OpenTelemetry state is touched.
 """
 
 from collections.abc import AsyncIterator

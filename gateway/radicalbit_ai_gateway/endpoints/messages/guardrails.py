@@ -9,12 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from traceloop.sdk.decorators import workflow
-
 from radicalbit_ai_gateway.endpoints.messages.output import MessagesOutput, with_text
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import GuardrailFlags
 from radicalbit_ai_gateway.llm.messages import BaseMessage
+from radicalbit_ai_gateway.telemetry.tracing import workflow
 
 
 @dataclass(frozen=True)

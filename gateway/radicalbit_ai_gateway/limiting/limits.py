@@ -18,8 +18,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
-from traceloop.sdk.decorators import task
-
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.limiter import Consumption, Storage
 from radicalbit_ai_gateway.limiter.storage.shared import get_limit_storage
@@ -40,6 +38,7 @@ from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.event_payload import LimitEventPayload, LimitScope
 from radicalbit_ai_gateway.models.project_budget_limiting import ProjectBudgetLimitOut
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils import BUDGET_MULTIPLIER
 from radicalbit_ai_gateway.utils.token_encoding import count_tokens
 from radicalbit_ai_gateway.utils.trace_attributes import (

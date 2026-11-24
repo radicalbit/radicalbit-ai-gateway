@@ -3,7 +3,6 @@
 import logging
 
 from openai.types.create_embedding_response import CreateEmbeddingResponse
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.endpoints.common.limits import check_limits, checked_in_span
 from radicalbit_ai_gateway.endpoints.embeddings.cache import EmbeddingEntry
@@ -11,6 +10,7 @@ from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import Texts
 from radicalbit_ai_gateway.limiting.limits import Demand, InputEstimate, Usage
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.build_user_content import build_user_content_from_texts
 from radicalbit_ai_gateway.utils.exceptions import (

@@ -11,7 +11,6 @@ import time
 from fastapi import Request
 from opentelemetry import trace
 from pydantic import BaseModel
-from traceloop.sdk.decorators import workflow
 
 from radicalbit_ai_gateway.endpoints.common.streaming_response import (
     StreamingResponseWithStatusCode,
@@ -21,6 +20,7 @@ from radicalbit_ai_gateway.metrics.define_metrics import (
     request_latency_histogram,
     total_requests_counter,
 )
+from radicalbit_ai_gateway.telemetry.tracing import workflow
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import AppError, ModelInvokerUpstreamError
 from radicalbit_ai_gateway.utils.request_context import reset_route_context

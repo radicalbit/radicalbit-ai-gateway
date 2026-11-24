@@ -3,14 +3,12 @@ import logging.config
 
 from celery import Celery
 import fakeredis
-from opentelemetry import context as otel_context, trace
+from opentelemetry import context as otel_context
 from opentelemetry.sdk.trace import SpanProcessor
 import pytest
 import tiktoken
 import tldextract
 from tldextract import tldextract as tldextract_module
-from traceloop.sdk import Traceloop
-from traceloop.sdk.tracing.tracing import TracerWrapper
 
 import tests.common.pook_httpx2  # noqa: F401
 
@@ -19,6 +17,7 @@ from radicalbit_ai_gateway.events.alerts_processor import _alerts_buffer
 from radicalbit_ai_gateway.events.events_processor import _events_buffer
 from radicalbit_ai_gateway.events.request_events_processor import _request_events_buffer
 from radicalbit_ai_gateway.limiter.storage import shared as limit_storage
+from radicalbit_ai_gateway.telemetry.tracing import disable_tracing, init_tracing
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.secrets import (
     FileSecretProvider,
@@ -136,25 +135,11 @@ class SpanCollector(SpanProcessor):
 def span_collector():
     """Collect the gateway's trace spans while the collector is on."""
     collector = SpanCollector()
-    initialized = hasattr(TracerWrapper, 'instance')
-    if initialized:
-        trace.get_tracer_provider().add_span_processor(collector)
-    else:
-        Traceloop.init(
-            app_name='test-gateway',
-            telemetry_enabled=False,
-            disable_batch=True,
-            processor=collector,
-            instruments=set(),
-        )
-    TracerWrapper.set_disabled(False)
+    init_tracing([collector], service_name='test-gateway')
     yield collector
-    # Traceloop's provider cannot be uninstalled: switch the decorators off
-    # again, as the rest of the suite runs them, and let a later
-    # Traceloop.init add its own processor.
-    TracerWrapper.set_disabled(True)
-    if not initialized:
-        del TracerWrapper.instance
+    # The tracer provider cannot be uninstalled: switch the decorators off
+    # again, as the rest of the suite runs them.
+    disable_tracing()
 
 
 @pytest.fixture(autouse=True)

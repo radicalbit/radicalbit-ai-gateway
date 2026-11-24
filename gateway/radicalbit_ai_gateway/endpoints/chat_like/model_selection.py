@@ -4,8 +4,6 @@ the routing calls that select it.
 
 import logging
 
-from traceloop.sdk.decorators import task
-
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.invocation.model_invoker import ModelInvoker
@@ -15,6 +13,7 @@ from radicalbit_ai_gateway.llm.messages import BaseMessage
 from radicalbit_ai_gateway.models.event_payload import RoutingEventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,

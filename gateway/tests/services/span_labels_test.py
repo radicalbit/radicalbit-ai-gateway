@@ -20,8 +20,9 @@ _LITERAL_NAME = re.compile(
     r"""|checked_in_span\(\s*['"]([^'"]+)['"]"""
     r"""|@endpoint\(\s*['"]([^'"]+)['"]"""
 )
-# Any span made, whatever its name is.
-_ANY_SPAN = re.compile(r'\b(?:task|workflow)\(')
+# Any span made, whatever its name is. The decorators' own definitions in
+# telemetry/tracing.py make no span, so ``def`` is skipped.
+_ANY_SPAN = re.compile(r'(?<!def )\b(?:task|workflow)\(')
 
 # The modules that name a span at runtime. Their names are read below, one
 # by one: a module added here needs its names added too.

@@ -2,7 +2,6 @@ import logging
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.auth.request_auth import authenticate_anthropic_request
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
@@ -22,6 +21,7 @@ from radicalbit_ai_gateway.endpoints.messages.serving import (
 )
 from radicalbit_ai_gateway.gateway_route.route import GatewayRoute
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
 from radicalbit_ai_gateway.utils.trace_attributes import (
