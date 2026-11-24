@@ -296,6 +296,18 @@ class ProjectServiceTest(DatabaseIntegration):
         assert again.uuid != out.uuid
         assert again.name == 'reuse-me'
 
+    def test_validate_exists_passes_only_for_a_live_project(self):
+        out, _, _ = self._create(name='validate-exists')
+
+        self.svc.validate_exists(out.uuid)  # does not raise
+
+        asyncio.run(self.svc.delete_project(out.uuid))
+        with pytest.raises(ProjectNotFoundError, match=str(out.uuid)):
+            self.svc.validate_exists(out.uuid)
+        unknown = uuid.uuid4()
+        with pytest.raises(ProjectNotFoundError, match=str(unknown)):
+            self.svc.validate_exists(unknown)
+
     def test_get_config(self):
         out, a, _ = self._create()
         slot = self.svc.get_config(out.uuid, a)

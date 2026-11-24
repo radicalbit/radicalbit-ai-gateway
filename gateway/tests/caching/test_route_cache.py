@@ -92,6 +92,13 @@ def test_a_chat_key_reads_the_turn_from_the_last_user_message_on():
     assert ChatEntry([SystemMessage(content='Be brief.')]).signature() is None
 
 
+def test_an_entry_with_no_signature_has_no_cache_key():
+    entry = ChatEntry([SystemMessage(content='Be brief.')])
+
+    with pytest.raises(ValueError, match='no signature has no cache key'):
+        cache_key(PROJECT, 'rb-gateway', 'key-1', entry)
+
+
 def test_a_chat_key_leaves_the_stream_flags_out():
     plain = ChatEntry([HumanMessage(content='Hello')], [], 'auto', {'n': 1})
     streamed = ChatEntry(
@@ -149,6 +156,7 @@ async def test_a_route_without_a_cache_serves_nothing_and_stores_nothing():
     )
 
     assert not cached.hit
+    assert cached.value is None
     assert cached.headers() == {}
     await cached.store(to_mock_openai_chat_completion(content='x'))
 
@@ -163,6 +171,7 @@ async def test_a_miss_stores_and_the_next_lookup_hits(emit):
     hit = await _request(route).lookup(entry)
 
     assert not miss.hit
+    assert miss.value is None
     assert hit.hit
     assert hit.value.choices[0].message.content == 'Hello'
     assert hit.headers() == {CACHE_HIT_HEADER: 'true'}

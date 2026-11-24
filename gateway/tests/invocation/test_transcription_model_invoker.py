@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import httpx2
-from openai import APIConnectionError, APIStatusError
+from openai import APIConnectionError, APIStatusError, AsyncAzureOpenAI
 from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_text_delta_event import (
     TranscriptionTextDeltaEvent,
@@ -865,6 +865,26 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
 
         assert total_cost == Decimal(0)
         cost_service.compute_cost.assert_not_called()
+
+
+def test_an_azure_model_without_endpoint_takes_it_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://from-env.openai.azure.com')
+    model = Model(
+        model_id='azure-whisper',
+        model='azure/whisper-1',
+        credentials={'api_key': 'sk-test', 'api_version': '2024-06-01'},
+    )
+
+    invoker = TranscriptionModelInvoker(
+        models=[model], cost_service=MagicMock(spec_set=CostService)
+    )
+
+    _, client, _ = invoker.model_map['azure-whisper']
+    assert isinstance(client, AsyncAzureOpenAI)
+    assert str(client.base_url) == 'https://from-env.openai.azure.com/openai/'
+    assert client.api_key == 'sk-test'
 
 
 if __name__ == '__main__':

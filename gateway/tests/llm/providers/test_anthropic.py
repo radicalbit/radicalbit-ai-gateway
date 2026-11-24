@@ -957,6 +957,27 @@ def test_consecutive_user_turns_are_merged():
     assert payload['system'] == 'late system'
 
 
+def test_consecutive_string_turns_are_merged_into_text_blocks():
+    payload = model()._request_payload(
+        [
+            SystemMessage('be brief'),
+            SystemMessage('be kind'),
+            HumanMessage('a'),
+            HumanMessage('b'),
+        ]
+    )
+    assert payload['system'] == [
+        {'type': 'text', 'text': 'be brief'},
+        {'type': 'text', 'text': 'be kind'},
+    ]
+    assert payload['messages'] == [
+        {
+            'role': 'user',
+            'content': [{'type': 'text', 'text': 'a'}, {'type': 'text', 'text': 'b'}],
+        }
+    ]
+
+
 def test_system_content_list_of_strings_and_blocks():
     payload = model()._request_payload(
         [

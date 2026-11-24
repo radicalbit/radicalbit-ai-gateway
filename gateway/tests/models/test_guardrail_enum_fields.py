@@ -46,6 +46,13 @@ def test_non_string_enum_value_is_a_validation_error(field, value):
         assert any(error['loc'] == ('CHECK', field) for error in errors)
 
 
+def test_an_unknown_type_is_a_guardrail_type_error():
+    with pytest.raises(ValidationError) as exc_info:
+        _guardrail(type='not_a_guardrail')
+
+    assert [error['type'] for error in exc_info.value.errors()] == ['guardrail_type']
+
+
 def test_behavior_defaults_to_block():
     data = {'name': 'g', 'type': 'contains', 'parameters': {'values': ['x']}}
 

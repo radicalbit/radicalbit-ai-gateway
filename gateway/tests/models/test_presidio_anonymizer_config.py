@@ -11,6 +11,7 @@ from radicalbit_ai_gateway.models.gateway_config_out import (
 )
 from radicalbit_ai_gateway.models.guardrails import (
     GuardrailBehaviorType,
+    GuardrailClass,
     PresidioAnalyzerGuardrail,
     PresidioAnonymizerGuardrail,
     guardrail_adapter,
@@ -67,6 +68,23 @@ def test_an_anonymizer_dump_has_no_behavior():
     out = PresidioAnonymizerGuardrailOut.model_validate(dumped)
     assert 'behavior' not in out.model_dump(by_alias=True)
     assert 'responseMessage' not in out.model_dump(by_alias=True)
+
+
+def test_an_anonymizer_is_a_redaction():
+    guardrail = guardrail_adapter.validate_python(_anonymizer())
+
+    assert guardrail.guardrail_class() == GuardrailClass.REDACT
+
+
+def test_a_loaded_anonymizer_validates_as_itself():
+    guardrail = guardrail_adapter.validate_python(_anonymizer())
+
+    assert guardrail_adapter.validate_python(guardrail) == guardrail
+
+
+def test_an_anonymizer_from_neither_a_dict_nor_a_guardrail_is_rejected():
+    with pytest.raises(ValidationError, match='valid dictionary or instance'):
+        PresidioAnonymizerGuardrail.model_validate(['presidio_anonymizer'])
 
 
 def test_an_anonymizer_still_rejects_an_unknown_field():

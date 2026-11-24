@@ -829,6 +829,47 @@ async def test_stream_annotations_refusal_and_passthrough_items():
     }
 
 
+async def test_stream_tool_call_keeps_namespace_and_async_and_skips_other_items():
+    events = events_stream(
+        {
+            'type': 'response.output_item.added',
+            'output_index': 0,
+            'item': {
+                'type': 'function_call',
+                'id': 'fc_1',
+                'call_id': 'call_1',
+                'name': 'lookup',
+                'arguments': '',
+                'namespace': 'crm',
+                'async': True,
+            },
+        },
+        {
+            'type': 'response.output_item.added',
+            'output_index': 1,
+            'item': {'type': 'web_search_call', 'id': 'ws_1', 'status': 'in_progress'},
+        },
+    )
+    chunks, _ = await stream(model(), [events])
+    content = [block for chunk in chunks for block in chunk.content]
+    assert content == [
+        {
+            'type': 'function_call',
+            'name': 'lookup',
+            'arguments': '',
+            'call_id': 'call_1',
+            'id': 'fc_1',
+            'index': 0,
+            'namespace': 'crm',
+            'async': True,
+        }
+    ]
+    # The web search added gives no chunk: the created and completed events,
+    # and the call, do.
+    assert len(chunks) == 3
+    assert chunks[-1].chunk_position == 'last'
+
+
 async def test_stream_structured_output_is_parsed_on_completion():
     text = {
         'format': {

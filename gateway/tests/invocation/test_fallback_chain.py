@@ -242,6 +242,21 @@ async def test_a_spent_call_raises_its_cause_without_fallback():
     assert recorder.method_calls == []
 
 
+async def test_a_spent_call_without_cause_is_raised_as_is_without_fallback():
+    chain, recorder = _chain()
+    tried = []
+
+    async def fn(candidate):
+        tried.append(candidate.model.model_id)
+        raise Spent('recorded, no cause')
+
+    with pytest.raises(Spent, match='recorded, no cause') as raised:
+        await chain.call(fn)
+    assert raised.value.__cause__ is None
+    assert tried == ['a']
+    assert recorder.method_calls == []
+
+
 async def test_a_candidate_skipped_with_a_reason_is_a_failure_never_recorded():
     """A candidate that cannot be called (an undefined model) tells why, for
     on_exhausted, but no model call is recorded for it.

@@ -2,12 +2,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from radicalbit_ai_gateway.llm.messages import UsageMetadata
 from radicalbit_ai_gateway.llm.usage import (
     CacheTokens,
     MessagesUsage,
+    add_usage,
     cache_tokens,
     messages_token_counts,
     messages_usage,
+    subtract_usage,
 )
 
 LEGACY = {'token_usage': {'prompt_tokens_details': {'cached_tokens': 50}}}
@@ -157,3 +160,21 @@ def test_messages_usage_reads_an_sdk_usage_object_as_it_reads_a_dict():
 
 def test_messages_usage_tells_the_input_that_was_not_cached():
     assert messages_usage(WITH_TTL_BREAKDOWN).uncached_input == 21
+
+
+USAGE = UsageMetadata(input_tokens=3, output_tokens=2, total_tokens=5)
+ZERO = UsageMetadata(input_tokens=0, output_tokens=0, total_tokens=0)
+
+
+@pytest.mark.parametrize('combine', [add_usage, subtract_usage])
+def test_combining_with_a_missing_left_usage_gives_the_right_one(combine):
+    assert combine(None, USAGE) == USAGE
+
+
+@pytest.mark.parametrize('combine', [add_usage, subtract_usage])
+def test_combining_two_missing_usages_gives_a_fresh_zero(combine):
+    zero = combine(None, None)
+    assert zero == ZERO
+
+    zero['input_tokens'] = 9
+    assert combine(None, None) == ZERO

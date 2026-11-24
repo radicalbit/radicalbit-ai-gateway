@@ -174,6 +174,20 @@ class EventDAOCountersTest(DatabaseIntegrationClickhouse):
                 == expected
             )
 
+    def test_last_event_of_a_route_is_kept_only_for_guardrails_and_fallbacks(self):
+        # route-A has a rate limit event, but only guardrail and fallback
+        # events have a last-event model.
+        assert (
+            self.event_dao.get_last_event_route(
+                PROJECT,
+                event_type='RATE_LIMIT',
+                route_name='route-A',
+                _from=None,
+                _to=None,
+            )
+            is None
+        )
+
     def test_get_tokens_by_model(self):
         def counter(event_type, route, model, value):
             return TokensCounter(
@@ -257,6 +271,30 @@ class EventDAOTest(DatabaseIntegrationClickhouse):
     def setUpClass(cls):
         super().setUpClass()
         cls.event_dao = EventDAO(cls.db)
+
+    def test_routing_model_counters_count_the_choices_of_one_route_or_all(self):
+        self.insert(
+            [
+                _ev('ROUTING', 'route-A', selected_model_id='gpt'),
+                _ev('ROUTING', 'route-A', selected_model_id='gpt'),
+                _ev('ROUTING', 'route-A', selected_model_id='claude'),
+                _ev('ROUTING', 'route-B', selected_model_id='claude'),
+                _ev(INVOCATION, 'route-A', model_id='gpt'),
+            ]
+        )
+
+        def counts(route_name):
+            counters = self.event_dao.get_routing_model_counters(
+                PROJECT, None, None, route_name=route_name
+            )
+            return {c.model_id: c.value for c in counters}
+
+        assert counts('route-A') == {'gpt': 2, 'claude': 1}
+        assert counts('route-B') == {'claude': 1}
+        assert counts('route-idle') == {}
+        # No route, or an empty one, counts the choices of every route.
+        assert counts(None) == {'gpt': 2, 'claude': 2}
+        assert counts('') == {'gpt': 2, 'claude': 2}
 
     def test_get_latest_n_per_event_type_reads_limit_blocks(self):
         """A limit block carries the scope and category that blocked it; a

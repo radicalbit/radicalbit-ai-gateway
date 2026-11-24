@@ -208,6 +208,55 @@ def test_a_sync_generator_span_covers_its_iteration(spans):
     assert 'traceloop.entity.output' not in by_name['count.task'].attributes
 
 
+def test_a_sync_function_error_marks_the_span_and_is_raised(spans):
+    @task(name='divide')
+    def divide(a: int, b: int) -> float:
+        return a / b
+
+    with pytest.raises(ZeroDivisionError):
+        divide(1, 0)
+
+    (span,) = spans
+    assert span.name == 'divide.task'
+    assert span.status.status_code is StatusCode.ERROR
+    (event,) = span.events
+    assert event.attributes['exception.type'] == 'ZeroDivisionError'
+    assert 'traceloop.entity.output' not in span.attributes
+
+
+def test_a_sync_generator_that_cannot_be_called_marks_the_span(spans):
+    @task(name='count')
+    def count(n: int) -> Iterator[int]:
+        yield from range(n)
+
+    unknown: dict[str, int] = {'m': 1}
+    with pytest.raises(TypeError, match='unexpected keyword'):
+        count(**unknown)
+
+    (span,) = spans
+    assert span.name == 'count.task'
+    assert span.end_time is not None
+    assert span.status.status_code is StatusCode.ERROR
+    (event,) = span.events
+    assert event.attributes['exception.type'] == 'TypeError'
+    assert trace.get_current_span() is trace.INVALID_SPAN
+
+
+def test_a_sync_generator_only_runs_while_tracing_is_off(spans):
+    @task(name='count')
+    def count(n: int) -> Iterator[int]:
+        yield from range(n)
+
+    disable_tracing()
+    try:
+        items = list(count(3))
+    finally:
+        init_tracing([], service_name='test-gateway')
+
+    assert items == [0, 1, 2]
+    assert spans == []
+
+
 async def test_an_async_generator_span_covers_its_iteration(spans):
     @workflow(name='stream')
     async def stream(prefix: str) -> AsyncIterator[str]:

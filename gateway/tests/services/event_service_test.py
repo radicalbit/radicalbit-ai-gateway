@@ -2491,3 +2491,50 @@ class TestDecisionModelsUsage:
         assert by_route['chat'].decision_models is None
         # Decision spend is part of the grand total
         assert res.total == spend
+
+
+class TestRouteConfigOut:
+    """A route's configuration lists its own models resolved from the registry."""
+
+    @staticmethod
+    def _config() -> GatewayConfig:
+        return GatewayConfig.model_validate(
+            {
+                'transcription_models': [
+                    {'model_id': 'whisper', 'model': 'openai/whisper-1'}
+                ],
+                'decision_models': [
+                    {
+                        'model_id': 'jev',
+                        'model': 'typesafe/jev-latest',
+                        'credentials': {'api_key': 'ts-dummy'},
+                    }
+                ],
+                'routes': {
+                    'transcribe': {'transcription_models': ['whisper']},
+                    'decide': {'decision_models': ['jev']},
+                },
+            }
+        )
+
+    def test_transcription_models_are_resolved(self):
+        config = self._config()
+
+        out = EventService._build_route_config_out(config.routes['transcribe'], config)
+
+        assert out.transcription_models is not None
+        assert [(m.model_id, m.model) for m in out.transcription_models] == [
+            ('whisper', 'openai/whisper-1')
+        ]
+        assert out.decision_models is None
+
+    def test_decision_models_are_resolved(self):
+        config = self._config()
+
+        out = EventService._build_route_config_out(config.routes['decide'], config)
+
+        assert out.decision_models is not None
+        assert [(m.model_id, m.model) for m in out.decision_models] == [
+            ('jev', 'typesafe/jev-latest')
+        ]
+        assert out.transcription_models is None

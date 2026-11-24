@@ -210,6 +210,40 @@ class GroupDAOTest(DatabaseIntegration):
         result = self.group_dao.get_route_names_by_group_uuid(group_uuid)
         assert result == ['my-project/live-route']
 
+    def test_remove_project_route_removes_only_that_route(self):
+        group_uuid = uuid.uuid4()
+        self.group_dao.insert(
+            db_mock.get_sample_group(uuid=group_uuid, group_routes=[])
+        )
+        for route_name in ('route-A', 'route-B'):
+            self.group_dao.add_route(
+                GroupRoute(
+                    group_uuid=group_uuid,
+                    route_name=route_name,
+                    project_uuid=self.project_uuid,
+                )
+            )
+
+        removed = self.group_dao.remove_project_route(
+            group_uuid, self.project_uuid, 'route-A'
+        )
+
+        assert removed == 1
+        assert self.group_dao.get_route_names_by_group_uuid(group_uuid) == [
+            'my-project/route-B'
+        ]
+        # A route the group no longer has matches nothing.
+        assert (
+            self.group_dao.remove_project_route(
+                group_uuid, self.project_uuid, 'route-A'
+            )
+            == 0
+        )
+        assert (
+            self.group_dao.remove_project_route(group_uuid, uuid.uuid4(), 'route-B')
+            == 0
+        )
+
     def test_get_group_associated_with_multiple_routes(self):
         power_user_group_uuid = uuid.uuid4()
         user_group_uuid = uuid.uuid4()
