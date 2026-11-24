@@ -9,8 +9,6 @@ goes upstream.
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from traceloop.sdk.decorators import workflow
-
 from radicalbit_ai_gateway.endpoints.chat_like.limits import check_chat_limits
 from radicalbit_ai_gateway.endpoints.chat_like.model_selection import route_chat
 from radicalbit_ai_gateway.endpoints.chat_like.system_prompt import apply_config_prompt
@@ -34,6 +32,7 @@ from radicalbit_ai_gateway.limiting.limits import Usage
 from radicalbit_ai_gateway.llm.usage import responses_token_counts
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
+from radicalbit_ai_gateway.telemetry.tracing import workflow
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
 from radicalbit_ai_gateway.utils.trace_attributes import (
     OperationCategory,
@@ -211,13 +210,19 @@ async def _buffered(scope: RequestScope, prepared: _Prepared) -> list[str]:
     return frames
 
 
-@workflow(name='apply_responses_output_guardrails')
 async def _screen_output(scope: RequestScope, response: dict) -> dict:
     """Apply the output guardrails to the text of a response. A soft block
     replaces the reply.
+
+    A route with no output guardrails opens no span.
     """
     if not scope.route.guardrails.has_output:
         return response
+    return await _screen_output_in_span(scope, response)
+
+
+@workflow(name='apply_responses_output_guardrails')
+async def _screen_output_in_span(scope: RequestScope, response: dict) -> dict:
     screened = await scope.guardrails.screen_output(ResponsesReply.of(response))
     if screened.soft_block:
         scope.flags |= GuardrailFlags(output_warned=True, output_blocked=True)

@@ -8,7 +8,6 @@ from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
-from traceloop.sdk.decorators import workflow
 
 from radicalbit_ai_gateway.endpoints.chat_completions import streaming
 from radicalbit_ai_gateway.endpoints.chat_completions.cache import (
@@ -33,6 +32,7 @@ from radicalbit_ai_gateway.llm.messages import AIMessage, AIMessageChunk, BaseMe
 from radicalbit_ai_gateway.llm.tracing import merge_chunks
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.preprocessing import run_preprocessing
+from radicalbit_ai_gateway.telemetry.tracing import workflow
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.content_utils import ContentUtils
 from radicalbit_ai_gateway.utils.exceptions import (

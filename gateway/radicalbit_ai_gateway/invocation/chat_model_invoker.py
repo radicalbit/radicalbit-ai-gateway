@@ -6,7 +6,6 @@ from typing import NoReturn
 from openai.types.chat import ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.invocation.errors import (
     Surface,
@@ -44,6 +43,7 @@ from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.chat_utils import ChatUtils
 from radicalbit_ai_gateway.utils.exceptions import (

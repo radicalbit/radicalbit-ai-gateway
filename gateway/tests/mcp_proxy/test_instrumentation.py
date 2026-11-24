@@ -1,4 +1,4 @@
-"""Guards that every MCP handler carries a Traceloop span.
+"""Guards that every MCP handler carries a task span.
 
 This is the regression that already happened once: ``prompts/*`` and
 ``resources/*`` shipped after the first telemetry pass and went uninstrumented,
@@ -14,6 +14,7 @@ from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.services.mcp_service import McpService
+from radicalbit_ai_gateway.telemetry.tracing import entity_name
 
 # Every dispatch branch in McpService._dispatch that has its own handler
 # method. 'ping' is intentionally absent: it returns {} inline, and the
@@ -38,43 +39,18 @@ UPSTREAM_SPANS = {
 }
 
 
-def _span_name(func) -> str | None:
-    """Recover a Traceloop entity name from the decorator's closure.
-
-    Traceloop exposes no public accessor for it, so this reads the closed-over
-    name. ``traceloop-sdk`` is an open version range, so a future release
-    closing over a second string would make this ambiguous; it returns None
-    there, and callers must treat None as "can't tell" rather than as a
-    mismatch — otherwise an SDK bump reads as a missing decorator, which the
-    ``__wrapped__`` assertions check independently anyway.
-    """
-    names = [
-        cell.cell_contents
-        for cell in (func.__closure__ or ())
-        if isinstance(cell.cell_contents, str)
-    ]
-    return names[0] if len(names) == 1 else None
-
-
-def _assert_span_name(func, expected: str) -> None:
-    actual = _span_name(func)
-    assert actual in (expected, None), (
-        f'expected span name {expected!r}, found {actual!r}'
-    )
-
-
 @pytest.mark.parametrize(('method', 'span'), sorted(SERVICE_SPANS.items()))
 def test_service_handlers_are_instrumented(method, span):
     func = getattr(McpService, method)
     assert hasattr(func, '__wrapped__'), f'{method} is missing its @task decorator'
-    _assert_span_name(func, span)
+    assert entity_name(func) == span
 
 
 @pytest.mark.parametrize(('method', 'span'), sorted(UPSTREAM_SPANS.items()))
 def test_upstream_calls_are_instrumented(method, span):
     func = getattr(McpUpstreamClient, method)
     assert hasattr(func, '__wrapped__'), f'{method} is missing its @task decorator'
-    _assert_span_name(func, span)
+    assert entity_name(func) == span
 
 
 def test_the_endpoint_is_the_root_workflow():
@@ -90,7 +66,7 @@ def test_the_endpoint_is_the_root_workflow():
     )
     (route,) = router.routes
     assert hasattr(route.endpoint, '__wrapped__')
-    _assert_span_name(route.endpoint, 'mcp_request')
+    assert entity_name(route.endpoint) == 'mcp_request'
 
 
 def test_every_public_upstream_operation_is_covered():

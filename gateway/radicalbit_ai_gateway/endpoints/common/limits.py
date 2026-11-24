@@ -1,8 +1,7 @@
 """Checking a request's demand on its limits, as every endpoint does."""
 
-from traceloop.sdk.decorators import task
-
 from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits
+from radicalbit_ai_gateway.telemetry.tracing import task
 
 
 async def _check(limits: RequestLimits, demand: Demand) -> None:

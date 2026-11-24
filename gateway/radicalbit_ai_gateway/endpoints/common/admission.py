@@ -5,7 +5,6 @@ import logging
 from uuid import UUID
 
 from fastapi import Request
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.auth.request_auth import authenticate_bearer_request
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
@@ -21,6 +20,7 @@ from radicalbit_ai_gateway.middleware.request_event_context import RequestEventC
 from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.group_service import GroupService
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest, InvalidApiKey
 from radicalbit_ai_gateway.utils.request_context import (

@@ -176,7 +176,7 @@ class LogConfig(BaseSettings):
 
 
 class OtlpExporterConfig(BaseModel):
-    """Configuration settings for exporting telemetry via OpenLLMetry.
+    """Configuration settings for exporting telemetry over OTLP.
 
     Attributes:
         url (Optional[str]):

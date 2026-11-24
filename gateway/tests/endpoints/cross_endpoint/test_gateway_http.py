@@ -232,7 +232,7 @@ async def test_startup_loads_served_projects_and_wires_every_trace_exporter(capl
     ``/v1/traces``.
     """
     register = AsyncMock(side_effect=[None, RuntimeError('bad config')])
-    traceloop = MagicMock()
+    init_tracing = MagicMock()
     telemetry = TelemetryConfig(
         collector_base_url='http://collector:4318/',
         otlp_exporters=[
@@ -253,7 +253,7 @@ async def test_startup_loads_served_projects_and_wires_every_trace_exporter(capl
             (server, 'close_limit_storage', AsyncMock()),
             (server.httpx_aiohttp_client, 'aclose', AsyncMock()),
             (server.app_config, 'telemetry_config', telemetry),
-            (server, 'Traceloop', traceloop),
+            (server, 'init_tracing', init_tracing),
             (server, 'BatchSpanProcessor', MagicMock()),
         ]:
             stack.enter_context(patch.object(target, attribute, value))
@@ -282,7 +282,9 @@ async def test_startup_loads_served_projects_and_wires_every_trace_exporter(capl
             'headers': {'x': 'y', 'Authorization': 'Bearer k'},
         },
     ]
-    assert len(traceloop.init.call_args.kwargs['processor']) == 2
+    (processors,) = init_tracing.call_args.args
+    assert len(processors) == 2
+    assert init_tracing.call_args.kwargs == {'service_name': 'radicalbit-ai-gateway'}
 
 
 def test_a_live_stream_tags_the_rows_its_body_emits(gateway):

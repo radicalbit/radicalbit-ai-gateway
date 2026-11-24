@@ -7,7 +7,6 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from fastapi import Request
 from opentelemetry.trace import Status, StatusCode, get_current_span
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.events.events_processor import emit_event
 from radicalbit_ai_gateway.mcp_proxy import jsonrpc
@@ -30,6 +29,7 @@ from radicalbit_ai_gateway.models.mcp_authorized_request import McpAuthorizedReq
 from radicalbit_ai_gateway.models.mcp_dispatch_result import McpDispatchResult
 from radicalbit_ai_gateway.models.mcp_server import ALIAS_TOOL_SEPARATOR, AnyMcpServer
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import McpTransportError
 from radicalbit_ai_gateway.utils.request_context import get_current_request_tags

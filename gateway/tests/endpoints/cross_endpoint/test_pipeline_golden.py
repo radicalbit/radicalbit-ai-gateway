@@ -727,31 +727,31 @@ def _span_tree(spans: list) -> list[tuple[str, str | None]]:
 SPAN_CASES = [
     pytest.param(
         lambda g: g.chat([ROUTED, NOT_TRIGGERED, gpt_a_completion()]),
-        [('auth_api_key.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_complete.task'), ('llm_complete.task', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
+        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_complete.task'), ('llm_complete.task', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat',
     ),
     pytest.param(
         lambda g: g.chat(
             [ROUTED, NOT_TRIGGERED, gpt_a_stream()], stream=True
         ),
-        [('auth_api_key.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow')],
+        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow')],
         id='chat_live_stream',
     ),
     pytest.param(
         lambda g: g.chat([gpt_a_stream()], route='output', stream=True),
-        [('auth_api_key.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'stream_with_output_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'stream_with_output_guardrails.workflow'), ('stream_with_output_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
+        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'stream_with_output_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'stream_with_output_guardrails.workflow'), ('stream_with_output_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat_buffered_stream',
     ),
     pytest.param(
         lambda g: g.chat([gpt_a_completion()], route='output'),
-        [('auth_api_key.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_complete.task'), ('llm_complete.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'apply_output_guardrails.workflow'), ('apply_output_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
+        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_complete.task'), ('llm_complete.task', 'chat_completions.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'apply_output_guardrails.workflow'), ('apply_output_guardrails.workflow', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat_output',
     ),
     pytest.param(
         lambda g: g.responses(
             [ROUTED, NOT_TRIGGERED, upstream.openai_response('Paris', model='gpt-a')]
         ),
-        [('auth_api_key.task', 'responses.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'responses.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'responses.workflow'), ('ChatOpenAI.chat', 'llm_complete_responses.task'), ('llm_complete_responses.task', 'responses.workflow'), ('apply_responses_output_guardrails.workflow', 'responses.workflow'), ('responses.workflow', None)],
+        [('auth_api_key.task', 'responses.workflow'), ('load_project_limits.task', 'responses.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'responses.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'responses.workflow'), ('ChatOpenAI.chat', 'llm_complete_responses.task'), ('llm_complete_responses.task', 'responses.workflow'), ('responses.workflow', None)],
         id='responses',
     ),
     pytest.param(
@@ -763,67 +763,67 @@ SPAN_CASES = [
             ],
             stream=True,
         ),
-        [('auth_api_key.task', 'responses.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'responses.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'responses.workflow'), ('responses.workflow', None), ('ChatOpenAI.chat', 'llm_stream_responses.task'), ('llm_stream_responses.task', 'responses.workflow')],
+        [('auth_api_key.task', 'responses.workflow'), ('load_project_limits.task', 'responses.workflow'), ('ChatOpenAI.chat', 'select_model.task'), ('select_model.task', 'responses.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('ChatOpenAI.chat', 'check_judge.task'), ('check_judge.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'responses.workflow'), ('responses.workflow', None), ('ChatOpenAI.chat', 'llm_stream_responses.task'), ('llm_stream_responses.task', 'responses.workflow')],
         id='responses_stream',
     ),
     pytest.param(
         lambda g: g.embed([upstream.openai_embeddings(count=1)]),
-        [('auth_api_key.task', 'embeddings.workflow'), ('select_embedding_model.task', 'embeddings.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'embeddings.workflow'), ('llm_embed.task', 'embeddings.workflow'), ('embeddings.workflow', None)],
+        [('auth_api_key.task', 'embeddings.workflow'), ('load_project_limits.task', 'embeddings.workflow'), ('select_embedding_model.task', 'embeddings.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'embeddings.workflow'), ('llm_embed.task', 'embeddings.workflow'), ('embeddings.workflow', None)],
         id='embeddings',
     ),
     pytest.param(
         lambda g: g.transcribe([_transcription()]),
-        [('auth_api_key.task', 'audio_transcriptions.workflow'), ('select_transcription_model.task', 'audio_transcriptions.workflow'), ('llm_transcribe.task', 'audio_transcriptions.workflow'), ('audio_transcriptions.workflow', None)],
+        [('auth_api_key.task', 'audio_transcriptions.workflow'), ('load_project_limits.task', 'audio_transcriptions.workflow'), ('select_transcription_model.task', 'audio_transcriptions.workflow'), ('llm_transcribe.task', 'audio_transcriptions.workflow'), ('audio_transcriptions.workflow', None)],
         id='transcription',
     ),
     pytest.param(
         lambda g: g.decide([_typesafe()]),
-        [('auth_api_key.task', 'decision_model.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'decision_model.workflow'), ('decide.task', 'decision_model.workflow'), ('decision_model.workflow', None)],
+        [('auth_api_key.task', 'decision_model.workflow'), ('load_project_limits.task', 'decision_model.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('check_contains.task', 'apply_check_guardrails.workflow'), ('apply_check_guardrails.workflow', 'decision_model.workflow'), ('decide.task', 'decision_model.workflow'), ('decision_model.workflow', None)],
         id='decision',
     ),
     pytest.param(
         lambda g: g.chat([gpt_a_completion()], route='chat_metered'),
-        [('auth_api_key.task', 'chat_completions.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_complete.task'), ('llm_complete.task', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
+        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('ChatOpenAI.chat', 'llm_complete.task'), ('llm_complete.task', 'chat_completions.workflow'), ('chat_completions.workflow', None)],
         id='chat_metered',
     ),
     pytest.param(
         lambda g: g.chat(
             [gpt_a_stream()], route='chat_metered', stream=True
         ),
-        [('auth_api_key.task', 'chat_completions.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('chat_completions.workflow', None), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow')],
+        [('auth_api_key.task', 'chat_completions.workflow'), ('load_project_limits.task', 'chat_completions.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'chat_completions.workflow'), ('select_model.task', 'chat_completions.workflow'), ('chat_completions.workflow', None), ('ChatOpenAI.chat', 'llm_stream.task'), ('llm_stream.task', 'chat_completions.workflow')],
         id='chat_stream_metered',
     ),
     pytest.param(
         lambda g: g.responses(
             [upstream.openai_response('Paris', model='gpt-a')], route='chat_metered'
         ),
-        [('auth_api_key.task', 'responses.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'responses.workflow'), ('select_model.task', 'responses.workflow'), ('ChatOpenAI.chat', 'llm_complete_responses.task'), ('llm_complete_responses.task', 'responses.workflow'), ('apply_responses_output_guardrails.workflow', 'responses.workflow'), ('responses.workflow', None)],
+        [('auth_api_key.task', 'responses.workflow'), ('load_project_limits.task', 'responses.workflow'), ('check_token_input_limit.task', 'check_limiters.task'), ('check_limiters.task', 'responses.workflow'), ('select_model.task', 'responses.workflow'), ('ChatOpenAI.chat', 'llm_complete_responses.task'), ('llm_complete_responses.task', 'responses.workflow'), ('responses.workflow', None)],
         id='responses_metered',
     ),
     pytest.param(
         lambda g: g.embed(
             [upstream.openai_embeddings(count=1)], route='embed_metered'
         ),
-        [('auth_api_key.task', 'embeddings.workflow'), ('select_embedding_model.task', 'embeddings.workflow'), ('check_token_input_limit.task', 'check_embedding_limiters.task'), ('check_embedding_limiters.task', 'embeddings.workflow'), ('llm_embed.task', 'embeddings.workflow'), ('embeddings.workflow', None)],
+        [('auth_api_key.task', 'embeddings.workflow'), ('load_project_limits.task', 'embeddings.workflow'), ('select_embedding_model.task', 'embeddings.workflow'), ('check_token_input_limit.task', 'check_embedding_limiters.task'), ('check_embedding_limiters.task', 'embeddings.workflow'), ('llm_embed.task', 'embeddings.workflow'), ('embeddings.workflow', None)],
         id='embeddings_metered',
     ),
     pytest.param(
         lambda g: g.transcribe(
             [_transcription()], route='audio_metered'
         ),
-        [('auth_api_key.task', 'audio_transcriptions.workflow'), ('select_transcription_model.task', 'audio_transcriptions.workflow'), ('check_audio_duration_limit.task', 'audio_transcriptions.workflow'), ('llm_transcribe.task', 'audio_transcriptions.workflow'), ('audio_transcriptions.workflow', None)],
+        [('auth_api_key.task', 'audio_transcriptions.workflow'), ('load_project_limits.task', 'audio_transcriptions.workflow'), ('select_transcription_model.task', 'audio_transcriptions.workflow'), ('check_audio_duration_limit.task', 'audio_transcriptions.workflow'), ('llm_transcribe.task', 'audio_transcriptions.workflow'), ('audio_transcriptions.workflow', None)],
         id='transcription_metered',
     ),
     pytest.param(
         lambda g: g.transcribe(
             [_transcription_stream()], route='audio_metered', stream=True
         ),
-        [('auth_api_key.task', 'audio_transcriptions.workflow'), ('select_transcription_model.task', 'audio_transcriptions.workflow'), ('check_audio_duration_limit.task', 'audio_transcriptions.workflow'), ('audio_transcriptions.workflow', None), ('llm_transcribe_stream.task', 'audio_transcriptions.workflow')],
+        [('auth_api_key.task', 'audio_transcriptions.workflow'), ('load_project_limits.task', 'audio_transcriptions.workflow'), ('select_transcription_model.task', 'audio_transcriptions.workflow'), ('check_audio_duration_limit.task', 'audio_transcriptions.workflow'), ('audio_transcriptions.workflow', None), ('llm_transcribe_stream.task', 'audio_transcriptions.workflow')],
         id='transcription_stream_metered',
     ),
     pytest.param(
         lambda g: g.decide([_typesafe()], route='agent_metered'),
-        [('auth_api_key.task', 'decision_model.workflow'), ('check_token_input_room.task', 'decision_model.workflow'), ('decide.task', 'decision_model.workflow'), ('decision_model.workflow', None)],
+        [('auth_api_key.task', 'decision_model.workflow'), ('load_project_limits.task', 'decision_model.workflow'), ('check_token_input_room.task', 'decision_model.workflow'), ('decide.task', 'decision_model.workflow'), ('decision_model.workflow', None)],
         id='decision_metered',
     ),
 ]
@@ -853,7 +853,8 @@ SCOPED_SPANS = {
     'transcription': 'select_transcription_model.task',
     'chat_output': 'apply_output_guardrails.workflow',
     'chat_buffered_stream': 'stream_with_output_guardrails.workflow',
-    'responses': 'apply_responses_output_guardrails.workflow',
+    # This route has no output guardrails, so no output guardrail span.
+    'responses': 'select_model.task',
 }
 
 

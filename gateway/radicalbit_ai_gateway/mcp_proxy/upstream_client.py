@@ -12,7 +12,6 @@ from mcp.client.stdio import (
 )
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.shared.exceptions import MCPError as SdkMcpError
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.mcp_proxy.errors import McpUpstreamError
 from radicalbit_ai_gateway.mcp_proxy.headers import build_upstream_headers
@@ -21,6 +20,7 @@ from radicalbit_ai_gateway.models.mcp_server import (
     McpHttpServer,
     McpStdioServer,
 )
+from radicalbit_ai_gateway.telemetry.tracing import task
 
 logger = logging.getLogger(__name__)
 

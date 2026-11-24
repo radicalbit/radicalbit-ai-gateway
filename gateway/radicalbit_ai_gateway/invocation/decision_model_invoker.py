@@ -9,8 +9,6 @@ from opentelemetry import trace
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAIAttributes,
 )
-from opentelemetry.semconv_ai import SpanAttributes
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.invocation.errors import Surface, exhausted
 from radicalbit_ai_gateway.invocation.fallback_chain import (
@@ -29,6 +27,8 @@ from radicalbit_ai_gateway.models.fallback import Fallback
 from radicalbit_ai_gateway.models.model import Model
 from radicalbit_ai_gateway.models.request_identity import RequestIdentity
 from radicalbit_ai_gateway.services.cost_service import CostService
+from radicalbit_ai_gateway.telemetry.attributes import USAGE_TOTAL_TOKENS
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import ModelInvokerBadRequest
 from radicalbit_ai_gateway.utils.parse_provider_and_model import (
@@ -133,9 +133,7 @@ def _set_decision_response_attributes(payload: dict, input_tokens: int) -> None:
             span.set_attribute(
                 GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens
             )
-            span.set_attribute(
-                SpanAttributes.GEN_AI_USAGE_TOTAL_TOKENS, input_tokens + output_tokens
-            )
+            span.set_attribute(USAGE_TOTAL_TOKENS, input_tokens + output_tokens)
     except Exception:
         pass
 

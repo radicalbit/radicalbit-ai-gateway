@@ -9,12 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from traceloop.sdk.decorators import workflow
-
 from radicalbit_ai_gateway.endpoints.messages.output import MessagesOutput, with_text
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.guardrails.guardrails import GuardrailFlags
 from radicalbit_ai_gateway.llm.messages import BaseMessage
+from radicalbit_ai_gateway.telemetry.tracing import workflow
 
 
 @dataclass(frozen=True)
@@ -44,14 +43,20 @@ class MessagesReply:
         return self.output.message
 
 
-@workflow(name='apply_messages_output_guardrails')
 async def screen_output(scope: RequestScope, message: dict) -> dict:
     """Apply the output guardrails to the text of an answer and return the
     answer to send. A soft block replaces the reply. The flags go on the
     scope.
+
+    A route with no output guardrails opens no span.
     """
     if not scope.route.guardrails.has_output:
         return message
+    return await _screen_output(scope, message)
+
+
+@workflow(name='apply_messages_output_guardrails')
+async def _screen_output(scope: RequestScope, message: dict) -> dict:
     screened = await scope.guardrails.screen_output(MessagesReply.of(message))
     if screened.soft_block:
         scope.flags |= GuardrailFlags(output_warned=True, output_blocked=True)

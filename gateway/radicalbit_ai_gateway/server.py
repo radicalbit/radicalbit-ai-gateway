@@ -19,7 +19,6 @@ from prometheus_client import start_http_server
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
-from traceloop.sdk import Traceloop
 
 from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
 from radicalbit_ai_gateway.alerting.alert_store import build_alert_store
@@ -53,7 +52,6 @@ from radicalbit_ai_gateway.endpoints.transcriptions.route import TranscriptionsR
 from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
 from radicalbit_ai_gateway.gateway_route.factory import build_project_route_registrar
 from radicalbit_ai_gateway.limiter.storage.shared import close_limit_storage
-from radicalbit_ai_gateway.llm.tracing import TRACELOOP_INSTRUMENTS
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
 from radicalbit_ai_gateway.middleware.request_event_middleware import (
     RequestEventMiddleware,
@@ -88,6 +86,7 @@ from radicalbit_ai_gateway.services.request_event_service import RequestEventSer
 from radicalbit_ai_gateway.services.requests_service import RequestsService
 from radicalbit_ai_gateway.services.secret_service import SecretService
 from radicalbit_ai_gateway.services.tracing_service import TracingService
+from radicalbit_ai_gateway.telemetry.tracing import init_tracing
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleInternalError,
@@ -316,12 +315,7 @@ async def lifespan(app: FastAPI):
         logger.info('Configured extra processor for url: %s', endpoint)
 
     if processors:
-        Traceloop.init(
-            app_name='radicalbit-ai-gateway',
-            telemetry_enabled=False,
-            processor=processors,
-            instruments=TRACELOOP_INSTRUMENTS,
-        )
+        init_tracing(processors, service_name='radicalbit-ai-gateway')
     logger.info('AI Gateway initialized successfully')
     yield
     logger.info('Shutting down AI Gateway')

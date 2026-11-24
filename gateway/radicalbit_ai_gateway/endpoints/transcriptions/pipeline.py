@@ -9,7 +9,6 @@ import logging
 from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.endpoints.common.limits import check_limits
 from radicalbit_ai_gateway.endpoints.transcriptions.audio_duration import (
@@ -19,6 +18,7 @@ from radicalbit_ai_gateway.endpoints.transcriptions.cache import TranscriptionEn
 from radicalbit_ai_gateway.gateway_route.scope import RequestScope
 from radicalbit_ai_gateway.limiting.limits import Demand, Usage
 from radicalbit_ai_gateway.models.model import Model
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 from radicalbit_ai_gateway.utils.exceptions import GatewayBadRequest
 from radicalbit_ai_gateway.utils.trace_attributes import (

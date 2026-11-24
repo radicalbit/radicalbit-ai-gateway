@@ -1,7 +1,7 @@
 from redis.asyncio import Redis
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.caching.abstract_cache import AbstractCache
+from radicalbit_ai_gateway.telemetry.tracing import task
 
 
 class RedisCache(AbstractCache):

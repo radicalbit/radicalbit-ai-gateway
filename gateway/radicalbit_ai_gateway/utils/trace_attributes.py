@@ -3,8 +3,9 @@ from enum import Enum
 from functools import wraps
 from typing import TypeVar
 
-from opentelemetry.context import attach, detach, get_current, get_value, set_value
-from traceloop.sdk import Traceloop
+from opentelemetry.context import attach, detach, get_current, get_value
+
+from radicalbit_ai_gateway.telemetry.tracing import set_association_properties
 
 T = TypeVar('T')
 
@@ -23,14 +24,12 @@ class OperationCategory(str, Enum):
 
 def _merge_association_properties(new_properties: dict) -> None:
     """Merge new properties into existing association_properties without losing
-    previously-set values. Traceloop.set_association_properties replaces the
-    entire dict, so we must read-merge-write.
+    previously-set values. set_association_properties replaces the entire
+    dict, so we must read-merge-write.
     """
     existing = get_value('association_properties') or {}
     merged = {**existing, **new_properties}
-    attach(set_value('association_properties', merged))
-    # Also apply to current span if it's a workflow/task
-    Traceloop.set_association_properties(merged)
+    set_association_properties(merged)
 
 
 def set_operation_category(category: OperationCategory) -> None:

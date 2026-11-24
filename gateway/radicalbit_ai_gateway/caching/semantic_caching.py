@@ -6,10 +6,10 @@ from redis.asyncio import Redis
 from redis.commands.search.field import TagField, VectorField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
-from traceloop.sdk.decorators import task
 
 from radicalbit_ai_gateway.caching.abstract_cache import AbstractCache
 from radicalbit_ai_gateway.metrics.define_metrics import semantic_cache_similarity
+from radicalbit_ai_gateway.telemetry.tracing import task
 from radicalbit_ai_gateway.utils.app_config import get_app_config
 
 app_config = get_app_config()
