@@ -22,7 +22,7 @@ def add_tags_filter(
     Values for the same key are OR-ed together (`hasAny`); different keys end
     up as separate entries in `conditions`, which `.where(*conditions)` ANDs.
     """
-    if tags is None or len(tags) == 0:
+    if not tags:
         return
     by_key: dict[str, list[str]] = defaultdict(list)
     for tag in tags:

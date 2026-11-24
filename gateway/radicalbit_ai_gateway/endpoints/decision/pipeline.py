@@ -42,7 +42,7 @@ async def decide(scope: DecisionScope, body: dict[str, Any]) -> DecisionResponse
     await check_limits(scope.limits, Demand(input='room', cost_room=True))
 
     screened = {f: body[f] for f in SCREENED_FIELDS if f in body}
-    if config.guardrails is not None and len(config.guardrails) > 0 and screened:
+    if config.guardrails and screened:
         body = {**body, **await _screen_fields(scope.guardrails, screened)}
 
     scope.cached = await scope.cache.lookup(

@@ -204,12 +204,7 @@ class ProjectRoute:
                 (c for c in project.configs if c.uuid == project.served_config_uuid),
                 None,
             )
-            if (
-                register_project_routes
-                and served
-                and served.config_file is not None
-                and served.config_file != ''
-            ):
+            if register_project_routes and served and served.config_file:
                 await register_project_routes(
                     project_uuid, project.name, served.config_file
                 )

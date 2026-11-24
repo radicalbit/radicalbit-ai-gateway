@@ -207,7 +207,7 @@ class Limiting(BaseModel):
 class RateLimiting(Limiting):
     @model_validator(mode='after')
     def max_requests_set(self):
-        if self.max_requests is None:
+        if not self.max_requests:
             raise ValueError('max_requests must be set for rate limiting.')
         return self
 
@@ -230,7 +230,7 @@ class TokenLimiting(BaseModel, Generic[LimitingT]):
     @model_validator(mode='after')
     def max_tokens_set(self):
         for side, limiting in (('input', self.input), ('output', self.output)):
-            if limiting is not None and limiting.max_tokens is None:
+            if limiting is not None and not limiting.max_tokens:
                 raise ValueError(f'{side}.max_tokens must be set for token limiting.')
         return self
 
@@ -247,6 +247,6 @@ class BudgetLimiting(Limiting):
 class AudioDurationLimiting(Limiting):
     @model_validator(mode='after')
     def max_duration_seconds_set(self):
-        if self.max_duration_seconds is None:
+        if not self.max_duration_seconds:
             raise ValueError('max_duration_seconds must be set for duration limiting.')
         return self

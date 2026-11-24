@@ -57,7 +57,7 @@ class DeterministicRouter:
         self, config: KeywordRoutingConfig, messages: list[BaseMessage]
     ) -> Model:
         last_text = last_human_text(messages)
-        if last_text is None or last_text == '':
+        if not last_text:
             logger.debug('No human message found, selecting default model')
             return self._default_model()
         lowered_text = last_text.lower()
@@ -78,7 +78,7 @@ class DeterministicRouter:
         self, config: TokenLengthRoutingConfig, messages: list[BaseMessage]
     ) -> Model:
         last_text = last_human_text(messages)
-        if last_text is None or last_text == '':
+        if not last_text:
             logger.debug('No human message found, selecting default model')
             return self._default_model()
         return self._apply_conditions_rule(config, last_text, 'Token count')

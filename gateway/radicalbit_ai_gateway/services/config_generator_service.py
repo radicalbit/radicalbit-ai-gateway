@@ -29,10 +29,7 @@ def _load_system_prompt() -> str:
 class ConfigGeneratorService:
     async def generate_config(self, description: str, current_draft: str | None) -> str:
         config = app_config.config_generator_config
-        if (
-            config.config_generator_openai_api_key is None
-            or len(config.config_generator_openai_api_key) == 0
-        ):
+        if not config.config_generator_openai_api_key:
             raise ProjectInternalError(
                 'Config generator is not configured (missing API key)'
             )
@@ -41,10 +38,7 @@ class ConfigGeneratorService:
             'api_key': config.config_generator_openai_api_key.get_secret_value(),
             'model': config.config_generator_openai_model,
         }
-        if (
-            config.config_generator_openai_base_url is not None
-            and config.config_generator_openai_base_url != ''
-        ):
+        if config.config_generator_openai_base_url:
             llm_kwargs['base_url'] = config.config_generator_openai_base_url
         llm = ChatOpenAI(**llm_kwargs)
         structured_llm = llm.with_structured_output(YamlOut)
@@ -52,7 +46,7 @@ class ConfigGeneratorService:
         system_prompt = _load_system_prompt()
 
         user_content = f'User description: {description}'
-        if current_draft is not None and current_draft != '':
+        if current_draft:
             user_content += (
                 f'\n\nCurrent draft config (use as starting point):\n{current_draft}'
             )
@@ -64,7 +58,7 @@ class ConfigGeneratorService:
 
         last_error: str | None = None
         for attempt in range(config.config_generator_max_retries):
-            if last_error is not None and last_error != '':
+            if last_error:
                 messages.append(
                     HumanMessage(
                         content=(

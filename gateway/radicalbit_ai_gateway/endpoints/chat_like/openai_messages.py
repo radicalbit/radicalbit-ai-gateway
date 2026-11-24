@@ -84,7 +84,7 @@ def _to_image_or_file_part(
     """Build a normalized image/file part from a data URL or raw base64."""
     mime, b64 = _parse_data_url(data_str)
 
-    if mime is not None and mime.startswith('image/'):
+    if mime and mime.startswith('image/'):
         return {
             'type': 'image',
             'source_type': 'base64',
@@ -97,7 +97,7 @@ def _to_image_or_file_part(
         'source_type': 'base64',
         'data': b64,
         'mime_type': mime or 'application/octet-stream',
-        **({'filename': filename} if filename is not None and filename != '' else {}),
+        **({'filename': filename} if filename else {}),
     }
 
 
@@ -184,7 +184,7 @@ def select_message_by_role(
             return FunctionMessage(content=_coerce_to_text(content), name=name)
 
         case 'tool':
-            if tool_call_id is None or tool_call_id == '':
+            if not tool_call_id:
                 raise GatewayBadRequest('ToolMessage must have tool_call_id.')
             return ToolMessage(
                 content=_coerce_to_text(content), tool_call_id=tool_call_id

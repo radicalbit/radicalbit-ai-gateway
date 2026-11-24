@@ -43,12 +43,8 @@ class UsageRoute:
             return event_service.get_all_routes_costs(
                 project_uuid=project_uuid,
                 config=project_entry.config,
-                _from=datetime.fromtimestamp(_from, timezone.utc)
-                if _from is not None and _from != 0
-                else None,
-                _to=datetime.fromtimestamp(_to, timezone.utc)
-                if _to is not None and _to != 0
-                else None,
+                _from=datetime.fromtimestamp(_from, timezone.utc) if _from else None,
+                _to=datetime.fromtimestamp(_to, timezone.utc) if _to else None,
                 _with_saved_tokens=_with_saved_tokens,
                 tags=tags,
             )
@@ -72,12 +68,8 @@ class UsageRoute:
             return mcp_usage_service.get_mcp_key_usage(
                 project_uuid=project_uuid,
                 route_names=routes,
-                _from=datetime.fromtimestamp(_from, timezone.utc)
-                if _from is not None and _from != 0
-                else None,
-                _to=datetime.fromtimestamp(_to, timezone.utc)
-                if _to is not None and _to != 0
-                else None,
+                _from=datetime.fromtimestamp(_from, timezone.utc) if _from else None,
+                _to=datetime.fromtimestamp(_to, timezone.utc) if _to else None,
                 params=Params(page=_page, size=_limit),
                 tags=tags,
             )

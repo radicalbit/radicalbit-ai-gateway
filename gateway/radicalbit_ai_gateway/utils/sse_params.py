@@ -40,14 +40,6 @@ def compute_sse_time_range(
     """
     if _gte is not None:
         return datetime.now(timezone.utc) - timedelta(seconds=_gte), None
-    from_datetime = (
-        datetime.fromtimestamp(_from, timezone.utc)
-        if _from is not None and _from != 0
-        else None
-    )
-    to_datetime = (
-        datetime.fromtimestamp(_to, timezone.utc)
-        if _to is not None and _to != 0
-        else None
-    )
+    from_datetime = datetime.fromtimestamp(_from, timezone.utc) if _from else None
+    to_datetime = datetime.fromtimestamp(_to, timezone.utc) if _to else None
     return from_datetime, to_datetime

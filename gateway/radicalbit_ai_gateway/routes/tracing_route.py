@@ -42,16 +42,8 @@ class TracingRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project_service.validate_exists(project_uuid)
-            from_dt = (
-                datetime.fromtimestamp(_from, timezone.utc)
-                if _from is not None and _from != 0
-                else None
-            )
-            to_dt = (
-                datetime.fromtimestamp(_to, timezone.utc)
-                if _to is not None and _to != 0
-                else None
-            )
+            from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
+            to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             granularity = determine_granularity(from_dt, to_dt)
             return tracing_service.get_traces_chart_data(
                 project_uuid=project_uuid,
@@ -76,16 +68,8 @@ class TracingRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project_service.validate_exists(project_uuid)
-            from_dt = (
-                datetime.fromtimestamp(_from, timezone.utc)
-                if _from is not None and _from != 0
-                else None
-            )
-            to_dt = (
-                datetime.fromtimestamp(_to, timezone.utc)
-                if _to is not None and _to != 0
-                else None
-            )
+            from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
+            to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             return tracing_service.get_latencies(
                 project_uuid=project_uuid,
                 route_names=routes,
@@ -110,16 +94,8 @@ class TracingRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project_service.validate_exists(project_uuid)
-            from_dt = (
-                datetime.fromtimestamp(_from, timezone.utc)
-                if _from is not None and _from != 0
-                else None
-            )
-            to_dt = (
-                datetime.fromtimestamp(_to, timezone.utc)
-                if _to is not None and _to != 0
-                else None
-            )
+            from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
+            to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             if grouped:
                 return tracing_service.get_grouped_span_latencies(
                     project_uuid=project_uuid,
@@ -158,16 +134,8 @@ class TracingRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project_service.validate_exists(project_uuid)
-            from_dt = (
-                datetime.fromtimestamp(_from, timezone.utc)
-                if _from is not None and _from != 0
-                else None
-            )
-            to_dt = (
-                datetime.fromtimestamp(_to, timezone.utc)
-                if _to is not None and _to != 0
-                else None
-            )
+            from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
+            to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             params = Params(page=_page, size=_limit)
             return tracing_service.get_traces(
                 project_uuid=project_uuid,

@@ -204,11 +204,7 @@ class LLMRouter:
             )
 
         parsed = await routing_chain(
-            [
-                self._router_models[mid].model
-                for mid in (model_id, fallback_id)
-                if mid is not None and mid != ''
-            ],
+            [self._router_models[mid].model for mid in (model_id, fallback_id) if mid],
             ROUTER_MODEL_TYPE,
             record_spend,
             no_answer=_NoAnswer,

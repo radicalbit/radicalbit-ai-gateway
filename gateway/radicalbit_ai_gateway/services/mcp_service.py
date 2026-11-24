@@ -80,7 +80,7 @@ def _warn_unadvertised(
     kind: str, alias: str, allowlist: list[str] | None, advertised: set[str]
 ) -> None:
     """Warn once about allowlist entries this upstream does not advertise."""
-    if allowlist is None or len(allowlist) == 0:
+    if not allowlist:
         return
     missing = sorted(set(allowlist) - advertised)
     if not missing:
@@ -164,7 +164,7 @@ def strip_uri_credentials(uri: str) -> str:
     try:
         split = urlsplit(uri)
         authority = split.hostname or ''
-        if authority and split.port is not None and split.port != 0:
+        if authority and split.port:
             authority = f'{authority}:{split.port}'
         if not split.query and not split.fragment and authority == split.netloc:
             return uri

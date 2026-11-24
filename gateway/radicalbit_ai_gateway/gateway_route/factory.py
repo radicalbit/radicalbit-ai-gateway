@@ -101,14 +101,12 @@ def build_gateway_routes_from_config(
     for route_name, route_config in gateway_config.routes.items():
         chat_models = (
             [chat_by_id[mid] for mid in (route_config.chat_models or [])]
-            if route_config.chat_models is not None
-            and len(route_config.chat_models) > 0
+            if route_config.chat_models
             else None
         )
         embedding_models = (
             [emb_by_id[mid] for mid in (route_config.embedding_models or [])]
-            if route_config.embedding_models is not None
-            and len(route_config.embedding_models) > 0
+            if route_config.embedding_models
             else None
         )
         transcription_models = (
@@ -116,26 +114,19 @@ def build_gateway_routes_from_config(
                 transcription_by_id[mid]
                 for mid in (route_config.transcription_models or [])
             ]
-            if route_config.transcription_models is not None
-            and len(route_config.transcription_models) > 0
+            if route_config.transcription_models
             else None
         )
         decision_models = (
             [decision_by_id[mid] for mid in route_config.decision_models]
-            if route_config.decision_models is not None
-            and len(route_config.decision_models) > 0
+            if route_config.decision_models
             else None
         )
         cache_client = get_proper_cache(route_config, redis_client)
         gateway_cache = GatewayCache(cache_client) if cache_client is not None else None
         route_limits = RouteLimits.from_config(route_config, project_uuid)
         router = None
-        if (
-            route_config.routing is not None
-            and route_config.routing != ''
-            and gateway_config.routing is not None
-            and len(gateway_config.routing) > 0
-        ):
+        if route_config.routing and gateway_config.routing:
             routing_config = gateway_config.routing_by_name.get(route_config.routing)
             if routing_config:
                 route_models_by_id = {m.model_id: m for m in (chat_models or [])}

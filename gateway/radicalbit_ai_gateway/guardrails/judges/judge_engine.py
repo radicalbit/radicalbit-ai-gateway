@@ -272,7 +272,7 @@ class JudgeEngine:
         structured_model = self._get_or_create_model(judge_runtime_config, model)
 
         start_time = time.monotonic()
-        if media_blocks is not None and len(media_blocks) > 0:
+        if media_blocks:
             judge_text = prompt_template.format(content=content)
             human_content: list[str | dict[str, Any]] = [
                 {'type': 'text', 'text': judge_text},
@@ -395,10 +395,7 @@ class JudgeEngine:
             {'route_name': route_name, 'model_name': model.model_id},
         )
 
-        if (
-            invocation.cached_token_count is not None
-            and invocation.cached_token_count > 0
-        ):
+        if invocation.cached_token_count and invocation.cached_token_count > 0:
             cost = cost_service.compute_cost(
                 model_id=model.model_id,
                 token_processed=invocation.cached_token_count,
@@ -432,10 +429,7 @@ class JudgeEngine:
                 {'route_name': route_name, 'model_name': model.model_id},
             )
 
-        if (
-            invocation.token_input_count is not None
-            and invocation.token_input_count != 0
-        ):
+        if invocation.token_input_count:
             cost = cost_service.compute_cost(
                 token_processed=invocation.token_input_count
                 - (invocation.cached_token_count or 0),
@@ -469,10 +463,7 @@ class JudgeEngine:
                 {'route_name': route_name, 'model_name': model.model_id},
             )
 
-        if (
-            invocation.token_output_count is not None
-            and invocation.token_output_count != 0
-        ):
+        if invocation.token_output_count:
             cost = cost_service.compute_cost(
                 token_processed=invocation.token_output_count,
                 model_id=model.model_id,

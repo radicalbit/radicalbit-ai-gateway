@@ -227,7 +227,7 @@ class ChatMistralAI(ChatModel):
         stop = kwargs.pop('stop', None)
         params = self._default_params()
         stop = stop if stop is not None else self.stop
-        if stop is not None and stop:
+        if stop:
             params['stop'] = stop
         return {
             'messages': [_to_mistral_message(m) for m in messages],

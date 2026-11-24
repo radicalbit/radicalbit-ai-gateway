@@ -78,12 +78,8 @@ class ChatUtils:
             )
         return ChatCompletion(
             id=request_id
-            if request_id is not None and request_id != ''
-            else (
-                ai_message.id
-                if ai_message.id is not None and ai_message.id != ''
-                else f'chatcmpl-{uuid.uuid4()}'
-            ),
+            if request_id
+            else (ai_message.id if ai_message.id else f'chatcmpl-{uuid.uuid4()}'),
             object='chat.completion',
             created=int(time()),
             model=model_id_invoked,

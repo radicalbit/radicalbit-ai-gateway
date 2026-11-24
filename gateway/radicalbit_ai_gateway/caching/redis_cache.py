@@ -27,6 +27,6 @@ class RedisCache(AbstractCache):
     ):
         pipeline = self.redis_client.pipeline()
         await pipeline.hset(name=cache_key, key='response', value=response)
-        if ttl is not None and ttl != 0:
+        if ttl:
             await pipeline.expire(cache_key, ttl)
         await pipeline.execute()

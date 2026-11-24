@@ -780,7 +780,7 @@ class TestKeyRouteRotation(unittest.TestCase):
         return 1
 
     def _lookup(self, hashed_api_key):
-        if self.key is not None and hashed_api_key in (
+        if self.key and hashed_api_key in (
             self.key.hashed_key,
             self.key.previous_hashed_key,
         ):

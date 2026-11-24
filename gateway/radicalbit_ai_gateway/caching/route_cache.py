@@ -302,9 +302,7 @@ class RouteCache:
                 cost_service=cost_service,
                 ttl=config.caching.ttl if config.caching else None,
                 embedder=embedder,
-                embedding_model=embedding_models[0]
-                if embedding_models is not None and len(embedding_models) > 0
-                else None,
+                embedding_model=embedding_models[0] if embedding_models else None,
             )
         )
 
@@ -394,9 +392,9 @@ class RequestCache:
             # A cache that is down costs the request its cache, not its reply.
             logger.error('Cache lookup failed: %s, continuing without cache', e)
             return None
-        if raw is None or raw == '':
+        if not raw:
             return None
-        if entry.hit_log is not None and entry.hit_log != '':
+        if entry.hit_log:
             logger.debug(entry.hit_log, key)
         value = entry.parse(raw)
         if value is None:

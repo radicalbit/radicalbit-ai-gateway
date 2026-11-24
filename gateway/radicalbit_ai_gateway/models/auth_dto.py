@@ -401,9 +401,7 @@ class GroupsRouteOut(BaseModel):
         return GroupsRouteOut(
             route_name=route_name,
             project_name=project_name,
-            groups=[GroupOut.from_group(i) for i in groups]
-            if groups is not None and len(groups) > 0
-            else None,
+            groups=[GroupOut.from_group(i) for i in groups] if groups else None,
         )
 
 

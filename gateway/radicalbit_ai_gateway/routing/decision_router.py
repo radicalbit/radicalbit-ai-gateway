@@ -167,11 +167,7 @@ class DecisionRouter:
             )
 
         payload = await routing_chain(
-            [
-                self._model(mid)
-                for mid in (model_id, fallback_id)
-                if mid is not None and mid != ''
-            ],
+            [self._model(mid) for mid in (model_id, fallback_id) if mid],
             DECISION_MODEL_TYPE,
             record_spend,
             no_answer=_NoAnswer,

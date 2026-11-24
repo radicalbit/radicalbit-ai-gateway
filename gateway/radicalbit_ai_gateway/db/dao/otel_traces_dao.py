@@ -171,7 +171,7 @@ def _convert_events_to_dicts(
 
     This zips them into dicts with lowercase keys matching SpanRecord model.
     """
-    if timestamps is None or len(timestamps) == 0:
+    if not timestamps:
         return []
     return [
         {'timestamp': ts, 'name': n, 'attributes': a}
@@ -204,7 +204,7 @@ class OtelTracesDAO:
             conditions.append(T.c['Timestamp'] >= _from)
         if _to is not None:
             conditions.append(T.c['Timestamp'] <= _to)
-        if route_names is not None and len(route_names) > 0:
+        if route_names:
             conditions.append(_ROUTE_NAME.in_(route_names))
         self._add_tags_filter(conditions, tags=tags)
 
@@ -237,7 +237,7 @@ class OtelTracesDAO:
             conditions.append(T.c['Timestamp'] >= _from)
         if _to is not None:
             conditions.append(T.c['Timestamp'] <= _to)
-        if route_names is not None and len(route_names) > 0:
+        if route_names:
             conditions.append(_ROUTE_NAME.in_(route_names))
         self._add_tags_filter(conditions, tags=tags)
         return conditions
@@ -544,7 +544,7 @@ class OtelTracesDAO:
         outer_conditions: list[ColumnElement[Any]] = [
             trace_agg.c.root_timestamp.isnot(None)
         ]
-        if route_names is not None and len(route_names) > 0:
+        if route_names:
             outer_conditions.append(trace_agg.c.route_name.in_(route_names))
         add_tags_filter(
             outer_conditions, F.splitByChar(',', trace_agg.c.tags_str), tags=tags
@@ -645,7 +645,7 @@ class OtelTracesDAO:
             T.c['ParentSpanId'] == '',
             _in_project(project_uuid),
         ]
-        if route_names is not None and len(route_names) > 0:
+        if route_names:
             conditions.append(_ROUTE_NAME.in_(route_names))
         if _from is not None:
             conditions.append(T.c['Timestamp'] >= _from)
@@ -701,9 +701,9 @@ class OtelTracesDAO:
             .order_by(T.c['Timestamp'].desc())
         )
 
-        if route_names is not None and len(route_names) > 0:
+        if route_names:
             stmt = stmt.where(_ROUTE_NAME.in_(route_names))
-        if request_types is not None and len(request_types) > 0:
+        if request_types:
             # Filter on SpanName, not on the derived label, so ClickHouse
             # compares a plain column.
             stmt = stmt.where(
@@ -715,9 +715,9 @@ class OtelTracesDAO:
                     ]
                 )
             )
-        if group_uuids is not None and len(group_uuids) > 0:
+        if group_uuids:
             stmt = stmt.where(_GROUP_UUID.in_([str(g) for g in group_uuids]))
-        if key_uuids is not None and len(key_uuids) > 0:
+        if key_uuids:
             stmt = stmt.where(_API_KEY_UUID.in_([str(k) for k in key_uuids]))
         if _from is not None:
             stmt = stmt.where(T.c['Timestamp'] >= _from)

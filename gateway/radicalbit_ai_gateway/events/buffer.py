@@ -49,7 +49,7 @@ class CeleryBuffer:
             elif self._timer is None:
                 self._start_timer_unlocked()
 
-        if items_to_send is not None and len(items_to_send) > 0:
+        if items_to_send:
             self._send_batch(items_to_send)
 
     def _take_all_unlocked(self) -> list[dict[str, Any]]:

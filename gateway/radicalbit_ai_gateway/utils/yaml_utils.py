@@ -69,11 +69,11 @@ def _format_validation_error(err: ErrorDetails, yaml_str: str) -> str:
     msg = err['msg']
     if err['type'] == 'extra_forbidden' and err['loc']:
         suggestion = _suggest_field(str(err['loc'][-1]))
-        if suggestion is not None and suggestion != '':
+        if suggestion:
             msg = f"{msg} (did you mean '{suggestion}'?)"
     string_keys = [p for p in err['loc'] if isinstance(p, str)]
     line = _find_key_line(yaml_str, string_keys[-1]) if string_keys else None
-    location = f' (line {line})' if line is not None else ''
+    location = f' (line {line})' if line else ''
     return f"'{loc}'{location}: {msg}"
 
 
@@ -135,7 +135,7 @@ def check_no_literal_secrets_in_mcp_servers(
                 if value == SECRET_PLACEHOLDER:
                     continue
                 line = _find_key_line(yaml_str, key)
-                loc = f' (line {line})' if line is not None else ''
+                loc = f' (line {line})' if line else ''
                 violations.append(
                     f'mcp_servers[{alias}].{block_name}.{key}{loc}: '
                     'literal value for a sensitive key; use a !secret reference'
@@ -194,8 +194,8 @@ def check_secret_references(
     try:
         for key, line in refs:
             error = provider.validate_secret(key)
-            if error is not None and error != '':
-                loc = f'line {line}: ' if line is not None else ''
+            if error:
+                loc = f'line {line}: ' if line else ''
                 violations.append(f'{loc}!secret {key} - {error}')
     except OSError as e:
         return [f'Cannot read secrets file: {e}']

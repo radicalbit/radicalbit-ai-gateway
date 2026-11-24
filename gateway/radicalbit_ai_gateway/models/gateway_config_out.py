@@ -76,7 +76,7 @@ class ModelOut(Model[CredentialsOut]):
     @model_validator(mode='after')
     def camelize_dict(self):
         params = self.params
-        if params is not None and len(params) > 0:
+        if params:
             self.params = {to_camel(k): v for k, v in params.items()}
         return self
 

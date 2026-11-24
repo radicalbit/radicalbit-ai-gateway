@@ -98,18 +98,14 @@ def _config(caching: dict[str, Any] | None = None) -> GatewayConfig:
             ],
             **(
                 {'cache': {'redis_host': 'localhost', 'redis_port': 6379}}
-                if caching is not None and len(caching) > 0
+                if caching
                 else {}
             ),
             'routes': {
                 'my-route': {
                     'chat_models': ['m1'],
                     'mcp_servers': ['github', 'jira'],
-                    **(
-                        {'caching': caching}
-                        if caching is not None and len(caching) > 0
-                        else {}
-                    ),
+                    **({'caching': caching} if caching else {}),
                 }
             },
             'mcp_servers': [

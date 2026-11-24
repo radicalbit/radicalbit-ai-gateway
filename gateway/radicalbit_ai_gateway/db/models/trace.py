@@ -102,8 +102,8 @@ class SpanRecord(BaseModel):
     fallback_triggered: bool = False
     gen_ai_provider: str = ''
     # Additional fields for span detail
-    span_attributes: dict[Any, Any] = Field(default_factory=dict)
+    span_attributes: dict[str, Any] = Field(default_factory=dict)
     status_message: str | None = None
-    events: list[dict[Any, Any]] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)

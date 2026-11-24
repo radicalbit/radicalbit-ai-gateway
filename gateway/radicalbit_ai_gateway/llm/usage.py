@@ -31,7 +31,7 @@ class CacheTokens(NamedTuple):
 
 def legacy_cached_tokens(response_metadata: Mapping[str, Any] | None) -> int | None:
     """Return the cached tokens of the raw OpenAI usage in ``response_metadata``."""
-    if response_metadata is None or len(response_metadata) == 0:
+    if not response_metadata:
         return None
     token_usage = response_metadata.get('token_usage')
     if not token_usage:
@@ -99,7 +99,7 @@ class StreamUsage:
         response_metadata: Mapping[str, Any] | None,
     ) -> None:
         """Count a chunk's usage."""
-        if usage_metadata is None or len(usage_metadata) == 0:
+        if not usage_metadata:
             return
         input_tokens = usage_metadata.get('input_tokens') or 0
         self.output += usage_metadata.get('output_tokens') or 0
@@ -131,7 +131,7 @@ class StreamUsage:
 
 def responses_token_counts(usage: dict[str, Any] | None) -> tuple[int, int, int]:
     """Return ``(input, cached input, output)`` tokens of a Responses usage."""
-    if usage is None or len(usage) == 0:
+    if not usage:
         return 0, 0, 0
     cached = _token_count(usage.get('input_tokens_details'), 'cached_tokens')
     return (

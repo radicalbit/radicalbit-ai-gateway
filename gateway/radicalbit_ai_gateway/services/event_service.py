@@ -144,7 +144,7 @@ class EventService:
         tokens_counter_dto = TokensCounterDTO()
 
         def _filter_by_type(event_type: str) -> list[TokensCounter]:
-            if route_name is not None and route_name != '':
+            if route_name:
                 return [
                     i
                     for i in tokens_counter
@@ -552,12 +552,7 @@ class EventService:
         route_dict = route_config.model_dump()
 
         guardrail_names = route_config.guardrails
-        if (
-            guardrail_names is not None
-            and len(guardrail_names) > 0
-            and config.guardrails is not None
-            and len(config.guardrails) > 0
-        ):
+        if guardrail_names and config.guardrails:
             by_name = {g.name: g for g in config.guardrails}
             resolved_guardrails: list[dict[str, Any]] = []
             for name in guardrail_names:
@@ -650,7 +645,7 @@ class EventService:
             route_dict['decision_models'] = resolved_decision
 
         routing_name = route_config.routing
-        if routing_name is not None and routing_name != '':
+        if routing_name:
             routing_config = config.routing_by_name.get(routing_name)
             route_dict['routing'] = (
                 routing_config.model_dump() if routing_config else None

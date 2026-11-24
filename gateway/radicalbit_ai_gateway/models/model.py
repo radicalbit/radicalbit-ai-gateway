@@ -72,7 +72,7 @@ class Model(BaseModel, Generic[CredentialsT]):
         default=None,
         description='Credentials for accessing the model API.',
     )
-    params: dict[Any, Any] | None = Field(
+    params: dict[str, Any] | None = Field(
         default=None,
         description='Parameters for the model, such as temperature and max tokens.',
     )
@@ -173,7 +173,7 @@ class Model(BaseModel, Generic[CredentialsT]):
     @computed_field
     @property
     def effective_prompt(self) -> str | None:
-        if self.prompt_ref is not None and self.prompt_ref != '':
+        if self.prompt_ref:
             pm = PromptManager.get_global() or PromptManager(
                 conf=app_config.prompt_manager_config
             )
@@ -275,17 +275,13 @@ class Model(BaseModel, Generic[CredentialsT]):
         # is already there.
         if credentials is None or isinstance(credentials, CredentialsOut):
             return self
-        if (
-            credentials.base_url is not None
-            and credentials.base_url != ''
-            and (credentials.api_key is None or credentials.api_key == '')
-        ):
+        if credentials.base_url and not credentials.api_key:
             credentials.api_key = 'dummy-api-key'
         return self
 
     @model_validator(mode='after')
     def resolve_prompt_ref(self) -> Self:
-        if self.prompt_ref is None or self.prompt_ref == '':
+        if not self.prompt_ref:
             return self
 
         prompt_manager = PromptManager.get_global() or PromptManager(

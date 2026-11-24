@@ -568,8 +568,7 @@ class GuardrailCheck:
                     route_name=route,
                     model_id=params.fallback_model_id,
                 )
-                if params.fallback_model_id is not None
-                and params.fallback_model_id != ''
+                if params.fallback_model_id
                 else None
             )
 
@@ -1012,7 +1011,7 @@ class GuardrailCheck:
                 )
 
                 # Expose specific match reason details (value/pattern) to tracing attributes
-                if reason_payload is not None and len(reason_payload) > 0:
+                if reason_payload:
                     if 'value' in reason_payload and reason_payload['value']:
                         span.set_attribute(
                             'guardrail.triggered.value', str(reason_payload['value'])
@@ -1054,7 +1053,7 @@ class GuardrailCheck:
             f'[GUARDRAIL TRIGGERED] [route={route_name}] '
             f'[name={guardrail.name}] [type={guardrail.type.name}] '
             f'[where={where.name}] [behavior={guardrail.behavior.name}]'
-            + (f' [reason={reason}]' if reason is not None and reason != '' else '')
+            + (f' [reason={reason}]' if reason else '')
         )
 
         client_message = (

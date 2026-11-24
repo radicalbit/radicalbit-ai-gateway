@@ -172,10 +172,7 @@ def build_usage_chunk(
                     'audio', 0
                 ),
             }
-            if (
-                final_usage.get('input_token_details') is not None
-                and len(final_usage['input_token_details']) > 0
-            )
+            if final_usage.get('input_token_details')
             else None,
             completion_tokens_details={
                 'reasoning_tokens': final_usage.get('output_token_details', {}).get(
@@ -191,10 +188,7 @@ def build_usage_chunk(
                     'output_token_details', {}
                 ).get('rejected_prediction', 0),
             }
-            if (
-                final_usage.get('output_token_details') is not None
-                and len(final_usage['output_token_details']) > 0
-            )
+            if final_usage.get('output_token_details')
             else None,
         ),
     )
@@ -272,10 +266,7 @@ def to_openai_chat_completion_chunk(
                     'audio', 0
                 ),
             }
-            if (
-                chunk.usage_metadata.get('input_token_details') is not None
-                and len(chunk.usage_metadata['input_token_details']) > 0
-            )
+            if chunk.usage_metadata.get('input_token_details')
             else None,
             completion_tokens_details={
                 'reasoning_tokens': chunk.usage_metadata.get(
@@ -291,10 +282,7 @@ def to_openai_chat_completion_chunk(
                     'output_token_details', {}
                 ).get('rejected_prediction', 0),
             }
-            if (
-                chunk.usage_metadata.get('output_token_details') is not None
-                and len(chunk.usage_metadata['output_token_details']) > 0
-            )
+            if chunk.usage_metadata.get('output_token_details')
             else None,
         )
 

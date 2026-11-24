@@ -355,7 +355,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         if self._use_responses_api(payload):
             if self.use_previous_response_id:
                 messages, previous_id = _messages_after_last_response(messages)
-                if previous_id is not None and previous_id != '':
+                if previous_id:
                     payload['previous_response_id'] = previous_id
             return responses_api.build_payload(messages, payload)
         payload['messages'] = [
@@ -656,9 +656,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
             'store': self.store,
             'include': self.include,
             'reasoning': reasoning,
-            'text': {'verbosity': self.verbosity}
-            if self.verbosity is not None and self.verbosity != ''
-            else None,
+            'text': {'verbosity': self.verbosity} if self.verbosity else None,
             **self.model_kwargs,
         }
         payload = {k: v for k, v in configured.items() if v is not None}
@@ -751,7 +749,7 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
         return self._bind(tools=formatted, **kwargs)
 
     def _filter_disabled_params(self, **kwargs: Any) -> dict[str, Any]:
-        if self.disabled_params is None or len(self.disabled_params) == 0:
+        if not self.disabled_params:
             return kwargs
         return {
             k: v
@@ -765,14 +763,10 @@ class _BaseChatOpenAI(ChatModel, BaseModel):
     def _structured_method(self) -> str:
         """How structured output is requested: json_schema or function_calling."""
         # Older models do not support structured outputs.
-        if (
-            self.model_name is not None
-            and self.model_name != ''
-            and (
-                self.model_name.startswith('gpt-3')
-                or self.model_name.startswith('gpt-4-')
-                or self.model_name == 'gpt-4'
-            )
+        if self.model_name and (
+            self.model_name.startswith('gpt-3')
+            or self.model_name.startswith('gpt-4-')
+            or self.model_name == 'gpt-4'
         ):
             return 'function_calling'
         return 'json_schema'
@@ -886,18 +880,14 @@ class ChatOpenAI(_BaseChatOpenAI):
         }
         if self.max_retries is not None:
             client_params['max_retries'] = self.max_retries
-        if (
-            self.openai_proxy is not None
-            and self.openai_proxy != ''
-            and self.http_async_client
-        ):
+        if self.openai_proxy and self.http_async_client:
             raise ValueError(
                 "Cannot specify 'openai_proxy' if 'http_async_client' is already "
                 f'specified. Received:\nopenai_proxy={self.openai_proxy!r}\n'
                 f'http_async_client={self.http_async_client!r}'
             )
         http_client = self.http_async_client
-        if self.openai_proxy is not None and self.openai_proxy != '':
+        if self.openai_proxy:
             http_client = openai.DefaultAsyncHttpxClient(proxy=self.openai_proxy)
         self._client = openai.AsyncOpenAI(
             **client_params,
@@ -916,7 +906,7 @@ class ChatOpenAI(_BaseChatOpenAI):
 
     @override
     def adapt_responses_input(self, items: list[Any]) -> list[Any]:
-        if self.openai_api_base is not None and self.openai_api_base != '':
+        if self.openai_api_base:
             # Another OpenAI-compatible endpoint, whose own items can't be told
             # apart: no reasoning, and no item ids, which each provider checks
             # its own way.
@@ -959,11 +949,7 @@ class ChatOpenAI(_BaseChatOpenAI):
         if 'max_tokens' in payload:
             payload['max_completion_tokens'] = payload.pop('max_tokens')
         # o-series models take the system prompt as a developer message.
-        if (
-            self.model_name is not None
-            and self.model_name != ''
-            and re.match(r'^o\d', self.model_name)
-        ):
+        if self.model_name and re.match(r'^o\d', self.model_name):
             for message in payload.get('messages', []):
                 if message['role'] == 'system':
                     message['role'] = 'developer'
@@ -1024,18 +1010,14 @@ class AzureChatOpenAI(_BaseChatOpenAI):
             )
         ):
             self.stream_usage = True
-        if (
-            self.openai_api_base is not None
-            and self.openai_api_base != ''
-            and self.validate_base_url
-        ):
+        if self.openai_api_base and self.validate_base_url:
             if '/openai' not in self.openai_api_base:
                 raise ValueError(
                     'As of openai>=1.0.0, Azure endpoints should be specified via '
                     'the `azure_endpoint` param not `openai_api_base` '
                     '(or alias `base_url`).'
                 )
-            if self.deployment_name is not None and self.deployment_name != '':
+            if self.deployment_name:
                 raise ValueError(
                     'As of openai>=1.0.0, if `azure_deployment` (or alias '
                     '`deployment_name`) is specified then '
@@ -1052,9 +1034,7 @@ class AzureChatOpenAI(_BaseChatOpenAI):
             'api_version': self.openai_api_version,
             'azure_endpoint': self.azure_endpoint,
             'azure_deployment': self.deployment_name,
-            'api_key': None
-            if uses_ad_token is not None and uses_ad_token
-            else _secret_value(self.openai_api_key),
+            'api_key': None if uses_ad_token else _secret_value(self.openai_api_key),
             'azure_ad_token': _secret_value(self.azure_ad_token),
             'azure_ad_token_provider': self.azure_ad_async_token_provider
             or self.azure_ad_token_provider,
@@ -1092,8 +1072,7 @@ class AzureChatOpenAI(_BaseChatOpenAI):
         if (
             self._use_responses_api(payload)
             and not payload.get('model')
-            and self.deployment_name is not None
-            and self.deployment_name != ''
+            and self.deployment_name
         ):
             payload['model'] = self.deployment_name
         return payload
@@ -1220,17 +1199,13 @@ class OpenAIEmbeddings(Embeddings, BaseModel):
             raise ValueError(
                 'If you are using Azure, please use the `AzureOpenAIEmbeddings` class.'
             )
-        if (
-            self.openai_proxy is not None
-            and self.openai_proxy != ''
-            and (self.http_client or self.http_async_client)
-        ):
+        if self.openai_proxy and (self.http_client or self.http_async_client):
             raise ValueError(
                 "Cannot specify 'openai_proxy' if one of "
                 "'http_client'/'http_async_client' is already specified."
             )
         http_client = self.http_async_client
-        if self.openai_proxy is not None and self.openai_proxy != '':
+        if self.openai_proxy:
             http_client = openai.DefaultAsyncHttpxClient(proxy=self.openai_proxy)
         self._client = openai.AsyncOpenAI(
             **self._client_params(),
@@ -1451,20 +1426,14 @@ class AzureOpenAIEmbeddings(OpenAIEmbeddings):
     @model_validator(mode='after')
     @override
     def _build_client(self) -> 'AzureOpenAIEmbeddings':
-        if (
-            self.openai_api_base is not None
-            and self.openai_api_base != ''
-            and self.validate_base_url
-        ):
-            if (
-                self.azure_endpoint is None or self.azure_endpoint == ''
-            ) and '/openai' not in self.openai_api_base:
+        if self.openai_api_base and self.validate_base_url:
+            if not self.azure_endpoint and '/openai' not in self.openai_api_base:
                 raise ValueError(
                     'As of openai>=1.0.0, Azure endpoints should be specified via '
                     'the `azure_endpoint` param not `openai_api_base` '
                     '(or alias `base_url`). '
                 )
-            if self.deployment is not None and self.deployment != '':
+            if self.deployment:
                 raise ValueError(
                     'As of openai>=1.0.0, if `deployment` (or alias '
                     '`azure_deployment`) is specified then '
@@ -1488,9 +1457,7 @@ class AzureOpenAIEmbeddings(OpenAIEmbeddings):
             'api_version': self.openai_api_version,
             'azure_endpoint': self.azure_endpoint,
             'azure_deployment': self.deployment,
-            'api_key': None
-            if uses_ad_token is not None and uses_ad_token
-            else _secret_value(self.openai_api_key),
+            'api_key': None if uses_ad_token else _secret_value(self.openai_api_key),
             'azure_ad_token': _secret_value(self.azure_ad_token),
             'azure_ad_token_provider': self.azure_ad_async_token_provider
             or self.azure_ad_token_provider,

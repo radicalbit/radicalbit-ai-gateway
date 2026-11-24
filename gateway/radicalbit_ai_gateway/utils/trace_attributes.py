@@ -64,7 +64,7 @@ def set_trace_attributes(
         'group_name': group_name,
         'project_uuid': project_uuid,
         'project_name': project_name,
-        'tags': ','.join(tags) if tags is not None and len(tags) > 0 else None,
+        'tags': ','.join(tags) if tags else None,
     }
     properties = {k: v for k, v in properties.items() if v is not None}
     if properties:

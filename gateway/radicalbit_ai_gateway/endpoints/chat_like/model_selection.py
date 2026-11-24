@@ -107,7 +107,7 @@ async def route_chat(
     model_selected = await _select_chat_model(scope, messages)
 
     config = scope.route.gateway_route_config
-    if scope.route.router and config.routing is not None and config.routing != '':
+    if scope.route.router and config.routing:
         emit_event(
             RoutingEventPayload(
                 value=1.0,

@@ -81,11 +81,7 @@ async def stream(
     gets an HTTP error.
     """
     prepared = await _prepare(scope, body, headers)
-    if (
-        (prepared.soft_block is not None and len(prepared.soft_block) > 0)
-        or scope.cached.hit
-        or scope.route.guardrails.has_output
-    ):
+    if prepared.soft_block or scope.cached.hit or scope.route.guardrails.has_output:
         return stream_of(await _buffered(scope, prepared))
     return _live(scope, prepared)
 
@@ -149,7 +145,7 @@ async def _prepare(
 
 
 async def _respond(scope: MessagesScope, prepared: _Prepared) -> dict[str, Any]:
-    if prepared.soft_block is not None and len(prepared.soft_block) > 0:
+    if prepared.soft_block:
         return prepared.soft_block
     if scope.cached.hit:
         # A hit is screened as a model's answer is. No model was called, so
@@ -223,12 +219,7 @@ async def _live(scope: MessagesScope, prepared: _Prepared) -> AsyncIterator[str]
         yield relay_frame(event, data, route_name)
     await _count(scope, answering.model, builder.usage)
     message = builder.message()
-    if (
-        message is not None
-        and len(message) > 0
-        and _is_cacheable(builder)
-        and is_complete(message)
-    ):
+    if message and _is_cacheable(builder) and is_complete(message):
         await _store(scope, answering.model, message)
 
 
@@ -240,9 +231,7 @@ async def _buffered(scope: MessagesScope, prepared: _Prepared) -> list[str]:
     streams it, each block in one delta.
     """
     set_streaming()
-    if (
-        prepared.soft_block is not None and len(prepared.soft_block) > 0
-    ) or scope.cached.hit:
+    if prepared.soft_block or scope.cached.hit:
         return message_events(await _respond(scope, prepared))
 
     set_operation_category(OperationCategory.INVOCATION)
@@ -284,7 +273,7 @@ async def _count(
     output guardrails: the model was paid for even when they refuse the
     reply (ADR 0006).
     """
-    if usage is None or len(usage) == 0:
+    if not usage:
         return
     input_tokens, output_tokens = messages_token_counts(usage)
     await scope.limits.count(Usage.priced(answering, input_tokens, output_tokens))

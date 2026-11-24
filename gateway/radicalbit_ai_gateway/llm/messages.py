@@ -14,9 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # pydantic needs typing_extensions.TypedDict before Python 3.12.
 from typing_extensions import NotRequired, TypedDict
 
-MessageContent = str | list[str | dict[Any, Any]]
+MessageContent = str | list[str | dict[str, Any]]
 # What a constructor takes as content: any sequence of blocks validates to a list.
-MessageContentInput = str | Sequence[str | dict[Any, Any]]
+MessageContentInput = str | Sequence[str | dict[str, Any]]
 
 
 class InputTokenDetails(TypedDict, total=False, extra_items=int):
@@ -97,8 +97,8 @@ def invalid_tool_call(
 class _MessageKwargs(TypedDict, total=False):
     """Optional fields every message accepts as keyword arguments."""
 
-    additional_kwargs: dict[Any, Any]
-    response_metadata: dict[Any, Any]
+    additional_kwargs: dict[str, Any]
+    response_metadata: dict[str, Any]
     id: str | None
 
 
@@ -143,8 +143,8 @@ class BaseMessage(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     content: MessageContent
-    additional_kwargs: dict[Any, Any] = Field(default_factory=dict)
-    response_metadata: dict[Any, Any] = Field(default_factory=dict)
+    additional_kwargs: dict[str, Any] = Field(default_factory=dict)
+    response_metadata: dict[str, Any] = Field(default_factory=dict)
     type: str = Field(frozen=True)
     name: str | None = Field(default=None, frozen=True)
     id: str | None = Field(default=None, coerce_numbers_to_str=True)
@@ -318,11 +318,7 @@ class AIMessageChunk(AIMessage):
         invalid: list[InvalidToolCall] = []
         for chunk in self.tool_call_chunks:
             try:
-                args = (
-                    parse_partial_json(chunk['args'])
-                    if chunk['args'] is not None and chunk['args'] != ''
-                    else {}
-                )
+                args = parse_partial_json(chunk['args']) if chunk['args'] else {}
             except Exception:
                 args = None
             if isinstance(args, dict):

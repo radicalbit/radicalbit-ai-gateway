@@ -76,7 +76,7 @@ def extract_judge_result(
     parsing_error: Exception | None = None
     if isinstance(error, Exception):
         parsing_error = error
-    elif error is not None and error:
+    elif error:
         parsing_error = ValueError(str(error))
 
     if isinstance(raw_response, AIMessage):

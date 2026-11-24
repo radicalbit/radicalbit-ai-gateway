@@ -79,7 +79,7 @@ class AlertRuleDAO:
                     AlertRule.deleted == False,  # noqa: E712
                 )
             )
-            if rule is None:
+            if not rule:
                 return None
             rule.deleted = True
             rule.updated_at = now
@@ -96,7 +96,7 @@ class AlertRuleDAO:
                     AlertRule.deleted == False,  # noqa: E712
                 )
             )
-            if rule is None:
+            if not rule:
                 return None
             rule.enabled = enabled
             rule.updated_at = now
@@ -115,7 +115,7 @@ class AlertRuleDAO:
                     AlertRule.deleted == False,  # noqa: E712
                 )
             )
-            if rule is None:
+            if not rule:
                 return None
             for field, value in update_fields.items():
                 if hasattr(rule, field):

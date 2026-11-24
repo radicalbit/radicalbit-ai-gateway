@@ -76,11 +76,7 @@ async def stream(scope: ResponsesScope, body: dict[str, Any]) -> AsyncIterator[s
     guardrails must pass. Then the frames are known when this returns.
     """
     prepared = await _prepare(scope, body)
-    if (
-        (prepared.soft_block is not None and len(prepared.soft_block) > 0)
-        or scope.cached.hit
-        or scope.route.guardrails.has_output
-    ):
+    if prepared.soft_block or scope.cached.hit or scope.route.guardrails.has_output:
         return stream_of(await _buffered(scope, prepared))
     return _live(scope, prepared)
 
@@ -133,7 +129,7 @@ async def _prepare(scope: ResponsesScope, body: dict[str, Any]) -> _Prepared:
             ),
         )
 
-    if model.effective_prompt is not None and model.effective_prompt != '':
+    if model.effective_prompt:
         request.write_back(messages[1:])
         request.insert_prompt(messages[0], model.role)
     else:
@@ -145,7 +141,7 @@ async def _prepare(scope: ResponsesScope, body: dict[str, Any]) -> _Prepared:
 
 async def _respond(scope: ResponsesScope, prepared: _Prepared) -> dict[str, Any]:
     route_name = scope.route.gateway_route_config.route_name
-    if prepared.soft_block is not None and len(prepared.soft_block) > 0:
+    if prepared.soft_block:
         return prepared.soft_block
 
     if scope.cached.hit:
@@ -185,7 +181,7 @@ async def _live(scope: ResponsesScope, prepared: _Prepared) -> AsyncIterator[str
             final_response = event.response
         yield event.to_sse(route_name)
 
-    if final_response is not None and len(final_response) > 0:
+    if final_response:
         await _count(scope, prepared, final_response)
         await _store(scope, prepared, final_response)
 
@@ -197,9 +193,7 @@ async def _buffered(scope: ResponsesScope, prepared: _Prepared) -> list[str]:
     each text in one delta; an unchanged one as the upstream sent it.
     """
     set_streaming()
-    if (
-        prepared.soft_block is not None and len(prepared.soft_block) > 0
-    ) or scope.cached.hit:
+    if prepared.soft_block or scope.cached.hit:
         return response_events(await _respond(scope, prepared))
 
     route_name = scope.route.gateway_route_config.route_name

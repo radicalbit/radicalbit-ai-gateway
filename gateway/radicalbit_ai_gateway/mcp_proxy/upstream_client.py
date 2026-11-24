@@ -31,11 +31,7 @@ T = TypeVar('T')
 
 def _page(cursor: str | None) -> types.PaginatedRequestParams | None:
     """Wrap an opaque cursor in the SDK's paginated-request params."""
-    return (
-        types.PaginatedRequestParams(cursor=cursor)
-        if cursor is not None and cursor != ''
-        else None
-    )
+    return types.PaginatedRequestParams(cursor=cursor) if cursor else None
 
 
 class McpUpstreamClient:

@@ -111,7 +111,7 @@ class ProjectService:
 
     def _get_project_or_raise(self, project_uuid: UUID) -> Project:
         project = self.project_dao.get_by_uuid(project_uuid)
-        if project is None:
+        if not project:
             raise ProjectNotFoundError(f'Project with UUID {project_uuid} not found')
         return project
 
@@ -119,7 +119,7 @@ class ProjectService:
         self, project_uuid: UUID, config_uuid: UUID
     ) -> ProjectConfig:
         config = self.project_config_dao.get_by_uuid(config_uuid)
-        if config is None or config.project_uuid != project_uuid:
+        if not config or config.project_uuid != project_uuid:
             raise ProjectNotFoundError(
                 f'Config {config_uuid} not found for project {project_uuid}'
             )
@@ -144,7 +144,7 @@ class ProjectService:
         self, project_uuid: UUID, include_limits: bool = False
     ) -> ProjectOut:
         project = self.project_dao.get_by_uuid(project_uuid)
-        if project is None:
+        if not project:
             raise ProjectInternalError(
                 f'Failed to fetch updated project {project_uuid}'
             )
@@ -387,9 +387,7 @@ class ProjectService:
         served = self.project_config_dao.get_served_by_project(project_uuid)
         routes = (
             find_route_budgets(served.config_file).budget_limiting
-            if served is not None
-            and served.config_file is not None
-            and served.config_file != ''
+            if served and served.config_file
             else []
         )
         if routes:
@@ -464,7 +462,7 @@ class ProjectService:
     ) -> ProjectBudgetLimitUpdatedOut:
         self._get_project_or_raise(project_uuid)
         limit = self.project_budget_limit_dao.get_by_uuid(limit_uuid)
-        if limit is None or limit.project_uuid != project_uuid:
+        if not limit or limit.project_uuid != project_uuid:
             raise ProjectBudgetLimitNotFoundError(
                 f'Budget limit {limit_uuid} not found for project {project_uuid}'
             )
@@ -493,7 +491,7 @@ class ProjectService:
     ) -> ProjectBudgetLimitOut:
         self._get_project_or_raise(project_uuid)
         limit = self.project_budget_limit_dao.get_by_uuid(limit_uuid)
-        if limit is None or limit.project_uuid != project_uuid:
+        if not limit or limit.project_uuid != project_uuid:
             raise ProjectBudgetLimitNotFoundError(
                 f'Budget limit {limit_uuid} not found for project {project_uuid}'
             )
@@ -522,7 +520,7 @@ class ProjectService:
                 )
 
     def validate_exists(self, project_uuid: UUID) -> None:
-        if self.project_dao.get_by_uuid(project_uuid) is None:
+        if not self.project_dao.get_by_uuid(project_uuid):
             raise ProjectNotFoundError(f'Project with UUID {project_uuid} not found')
 
     def get_all(self) -> list[ProjectOut]:
@@ -539,7 +537,7 @@ class ProjectService:
     def get_configs(
         self, config_filter: ConfigListFilter | None = None
     ) -> list[ProjectOut]:
-        status = config_filter.to_config_status() if config_filter is not None else None
+        status = config_filter.to_config_status() if config_filter else None
         # "Draft" must exclude EMPTY slots (freshly seeded template with a NULL
         # updated_at), otherwise it would match every project since a DRAFT slot
         # always exists.

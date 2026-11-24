@@ -533,7 +533,7 @@ class EventDAO:
     ) -> list[ModelInvocationCounter]:
         T = self.T
         conditions = [T.c['EVENT_TYPE'] == 'ROUTING']
-        if route_name is not None and route_name != '':
+        if route_name:
             conditions.append(T.c['ROUTE_NAME'] == route_name)
         self._add_project_filter(conditions, project_uuid)
         self._add_tags_filter(conditions, tags=tags)

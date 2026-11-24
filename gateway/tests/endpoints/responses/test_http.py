@@ -177,19 +177,17 @@ def _routes(
     """
     model_ids = [model['model_id'] for model in models]
     chat_models = [
-        {**model, 'prompt': prompt}
-        if prompt is not None and prompt != '' and index == 0
-        else model
+        {**model, 'prompt': prompt} if prompt and index == 0 else model
         for index, model in enumerate(models)
     ]
     route: dict[str, Any] = {'chat_models': model_ids}
     if len(model_ids) > 1:
         route['fallback'] = [{'target': model_ids[0], 'fallbacks': model_ids[1:]}]
-    if guardrails is not None and len(guardrails) > 0:
+    if guardrails:
         route['guardrails'] = guardrails
     if cache:
         route['caching'] = {'type': 'exact'}
-    if responses is not None and len(responses) > 0:
+    if responses:
         route['responses'] = responses
     config = {
         'chat_models': chat_models,

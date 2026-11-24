@@ -193,7 +193,7 @@ class SemanticCache(AbstractCache):
         }
 
         await self.redis_client.hset(cache_key, mapping=mapping)
-        if ttl is not None and ttl != 0:
+        if ttl:
             await self.redis_client.expire(cache_key, ttl)
 
     def _record_metric(self, route_name: str, similarity_score: float, cache_hit: bool):

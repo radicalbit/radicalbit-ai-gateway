@@ -6,7 +6,7 @@ from pydantic import BaseModel
 class JudgeInvocationResult(BaseModel):
     """Container for raw judge invocation data before metrics recording."""
 
-    result: dict[Any, Any]
+    result: dict[str, Any]
     latency_ms: float
     token_input_count: int | None = None
     token_output_count: int | None = None

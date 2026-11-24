@@ -161,9 +161,7 @@ class RedactParameter(BaseModel):
                 f"Language '{self.language}' is not supported, use one of: "
                 f'{", ".join(PRESIDIO_LANGUAGES)}.'
             )
-        if self.backend == 'ahds' and not (
-            self.ahds and self.ahds.endpoint is not None and self.ahds.endpoint != ''
-        ):
+        if self.backend == 'ahds' and not (self.ahds and self.ahds.endpoint):
             raise ValueError("ahds.endpoint must be set when backend is 'ahds'.")
         return self
 
@@ -218,7 +216,7 @@ class JudgeParameter(BaseModel):
 
     @model_validator(mode='after')
     def resolve_prompt_ref(self) -> 'JudgeParameter':
-        if self.prompt_ref is None or self.prompt_ref == '':
+        if not self.prompt_ref:
             return self
 
         prompt_manager = PromptManager.get_global() or PromptManager(

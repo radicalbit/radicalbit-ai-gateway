@@ -262,13 +262,11 @@ class RequestLimits:
         for span, windows, cost in groups:
             counters = [next(values) for _ in windows]
             check = (
-                _ROUTE_CHECKS[span]
-                if span is not None and span != '' and traced
-                else RequestLimits._check_windows
+                _ROUTE_CHECKS[span] if span and traced else RequestLimits._check_windows
             )
             quiet = {} if traced else {'log': False}
             await check(self, windows, counters, cost, to_count, **quiet)
-        if to_count is not None and len(to_count) > 0:
+        if to_count:
             await self._add(to_count)
 
     def _demanded_groups(
@@ -323,7 +321,7 @@ class RequestLimits:
         for window, counter in zip(windows, counters, strict=True):
             if (counter or 0) + cost > window.config.limit:
                 # What the scopes before this one let through still counts.
-                if to_count is not None and len(to_count) > 0:
+                if to_count:
                     await self._add(to_count)
                     to_count.clear()
                 limiter = window.limiter(self._storage)

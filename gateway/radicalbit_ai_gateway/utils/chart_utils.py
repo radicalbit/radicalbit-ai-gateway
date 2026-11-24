@@ -81,7 +81,7 @@ def prepare_chart_time_range(
     _to_utc = _to.astimezone(timezone.utc) if _to else None
 
     offset = _from.utcoffset() if _from else None
-    timezone_offset_seconds = int(offset.total_seconds()) if offset is not None else 0
+    timezone_offset_seconds = int(offset.total_seconds()) if offset else 0
 
     return _from_utc, _to_utc, timezone_offset_seconds
 

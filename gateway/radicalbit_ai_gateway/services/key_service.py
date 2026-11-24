@@ -644,7 +644,7 @@ class KeyService:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         _ensure_not_expired(key)
         limit = self.key_limit_dao.get_by_uuid(limit_uuid)
-        if limit is None or limit.key_uuid != key_uuid:
+        if not limit or limit.key_uuid != key_uuid:
             raise CredentialLimitNotFoundError(
                 f'Limit {limit_uuid} not found for key "{key.name}"'
             )
@@ -695,7 +695,7 @@ class KeyService:
             raise KeyNotFoundError(f'Key with UUID {key_uuid} not exists')
         _ensure_not_expired(key)
         limit = self.key_limit_dao.get_by_uuid(limit_uuid)
-        if limit is None or limit.key_uuid != key_uuid:
+        if not limit or limit.key_uuid != key_uuid:
             raise CredentialLimitNotFoundError(
                 f'Limit {limit_uuid} not found for key "{key.name}"'
             )

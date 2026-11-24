@@ -578,7 +578,7 @@ def get_sample_event(
         group_uuid=group_uuid if group_uuid else uuid.uuid4(),
         group_name=group_name,
         cost=cost,
-        tags=tags if tags is not None and len(tags) > 0 else [],
+        tags=tags if tags else [],
         attributes=kwargs,
         model_id=model_id,
         model_type=model_type,
@@ -658,7 +658,7 @@ def get_sample_request_event(
         date=timestamp.date(),
         route_name=route_name,
         project_uuid=project_uuid,
-        tags=tags if tags is not None and len(tags) > 0 else [],
+        tags=tags if tags else [],
         api_key_uuid=api_key_uuid if api_key_uuid else uuid.uuid4(),
         api_key_name=api_key_name,
         group_uuid=group_uuid if group_uuid else uuid.uuid4(),
@@ -695,7 +695,7 @@ def get_sample_otel_span(
 ):
     """Create a sample OtelTraces instance for testing."""
     attrs = {_TEST_PROJECT_UUID_KEY: str(TEST_PROJECT_UUID)}
-    if span_attributes is not None and len(span_attributes) > 0:
+    if span_attributes:
         attrs.update(span_attributes)
     return OtelTraces(
         timestamp=timestamp,

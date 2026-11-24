@@ -27,7 +27,7 @@ RouteBudgetLimiting = Annotated[
     ),
 ]
 RoutePlugins = Annotated[
-    dict[Any, Any] | None,
+    dict[str, Any] | None,
     Field(description=('Plugins configuration for the route.')),
 ]
 RouteResponses = Annotated[

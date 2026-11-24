@@ -168,6 +168,6 @@ class InProcessAlertStore(AlertStore):
 
 def build_alert_store(redis_url: str | None, clock: Clock = utc_now) -> AlertStore:
     """Build the store on Redis when it is configured, in process otherwise."""
-    if redis_url is not None and redis_url != '':
+    if redis_url:
         return RedisAlertStore(Redis.from_url(redis_url), clock=clock)
     return InProcessAlertStore(clock=clock)

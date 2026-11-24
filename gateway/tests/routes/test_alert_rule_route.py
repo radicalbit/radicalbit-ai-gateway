@@ -65,7 +65,7 @@ def route_config(
     """
     raw = yaml.safe_load(MODELS)
     route: dict[str, Any] = {'chat_models': ['gpt-4', 'gpt-3.5']}
-    if guardrails is not None and len(guardrails) > 0:
+    if guardrails:
         raw['guardrails'] = [
             {
                 'name': name,
@@ -125,7 +125,7 @@ class FakeProjects:
 
     def get_by_uuid(self, project_uuid):
         name = self.names.get(str(project_uuid))
-        return SimpleNamespace(name=name) if name is not None and name != '' else None
+        return SimpleNamespace(name=name) if name else None
 
 
 LIMIT_LABELS = {
@@ -589,7 +589,7 @@ class TestAlertRuleRoute(DatabaseIntegration):
                 self.setUp()
                 if config:
                     self.publish(config)
-                if budget_window is not None and budget_window != '':
+                if budget_window:
                     self.project_budgets.add(PROJECT_UUID, budget_window)
 
                 response = self.create(event, **overrides)

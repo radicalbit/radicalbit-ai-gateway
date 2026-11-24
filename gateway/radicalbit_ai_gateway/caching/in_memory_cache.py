@@ -40,6 +40,6 @@ class CacheToolsInMemory(AbstractCache):
         ttl: int | None,
         **kwargs,
     ):
-        expiration_time = (time.time() + ttl) if ttl is not None and ttl != 0 else None
+        expiration_time = (time.time() + ttl) if ttl else None
         value_to_store: _StoredValue = {'response': response, 'exp': expiration_time}
         self._cache[cache_key] = (value_to_store, expiration_time)

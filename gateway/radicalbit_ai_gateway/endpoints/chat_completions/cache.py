@@ -94,11 +94,7 @@ class ChatEntry:
             # a Responses API entry is a miss here.
             logger.debug('Cached entry is not a chat completion: cache miss')
             return None
-        if (
-            self.stream
-            and completion.choices[0].message.tool_calls is not None
-            and len(completion.choices[0].message.tool_calls) > 0
-        ):
+        if self.stream and completion.choices[0].message.tool_calls:
             # A stream hit replays the reply's text only.
             logger.debug('Cached reply has tool calls a stream cannot replay')
             return None

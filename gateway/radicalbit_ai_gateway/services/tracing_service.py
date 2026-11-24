@@ -38,12 +38,12 @@ from radicalbit_ai_gateway.utils.exceptions import GatewayNotFoundError
 
 def _safe_parse_int(value: str | None) -> int:
     """Safely parse string to int, returning 0 if value is None or empty."""
-    return int(value) if value is not None and value != '' else 0
+    return int(value) if value else 0
 
 
 def _parse_uuid(value: str | None) -> UUID | None:
     """Parse a string UUID to UUID or None."""
-    if value is None or value == '':
+    if not value:
         return None
     try:
         return UUID(value)
@@ -53,7 +53,7 @@ def _parse_uuid(value: str | None) -> UUID | None:
 
 def _parse_request_type(value: str | None) -> RequestType | None:
     """Parse a request type string to RequestType or None."""
-    if value is None or value == '':
+    if not value:
         return None
     try:
         return RequestType(value)
@@ -262,7 +262,7 @@ class TracingService:
         for span in spans:
             # Build parent-child relationships
             parent_span_id = span.parent_span_id or None
-            if parent_span_id is None:
+            if not parent_span_id:
                 root_span = span
             else:
                 children_map.setdefault(parent_span_id, []).append(span)

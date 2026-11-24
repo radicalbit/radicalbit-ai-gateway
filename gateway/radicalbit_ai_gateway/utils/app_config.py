@@ -168,11 +168,11 @@ class LogConfig(BaseSettings):
     version: int = 1
     disable_existing_loggers: bool = True
 
-    formatters: dict[Any, Any] = Field(default_factory=dict)
-    handlers: dict[Any, Any] = Field(default_factory=dict)
-    loggers: dict[Any, Any] = Field(default_factory=dict)
+    formatters: dict[str, Any] = Field(default_factory=dict)
+    handlers: dict[str, Any] = Field(default_factory=dict)
+    loggers: dict[str, Any] = Field(default_factory=dict)
 
-    filters: dict[Any, Any] = {
+    filters: dict[str, Any] = {
         'healthcheck_filter': {'()': HealthCheckFilter},
     }
 
@@ -199,7 +199,7 @@ class OtlpExporterConfig(BaseModel):
 
     url: str
     api_key: str | None = None
-    headers: dict[Any, Any] | None = Field(default_factory=dict)
+    headers: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class TelemetryConfig(BaseSettings):

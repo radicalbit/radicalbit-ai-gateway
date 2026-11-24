@@ -82,7 +82,7 @@ class PresidioEngine:
     def _resolve_ahds_settings(self, ahds: AhdsParams | None):
         """Resolve AHDS connection settings from the per-guardrail AhdsParams."""
         endpoint = ahds.endpoint if ahds else None
-        if endpoint is None or endpoint == '':
+        if not endpoint:
             raise ValueError(
                 'AHDS endpoint must be set when backend="ahds" is used '
                 '(guardrail parameters.ahds.endpoint)'
@@ -92,7 +92,7 @@ class PresidioEngine:
         client_id = ahds.client_id if ahds else None
         client_secret = (
             ahds.client_secret.get_secret_value()
-            if ahds and ahds.client_secret is not None and len(ahds.client_secret) > 0
+            if ahds and ahds.client_secret
             else None
         )
         return endpoint, api_version, tenant_id, client_id, client_secret

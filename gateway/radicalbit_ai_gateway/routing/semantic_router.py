@@ -74,7 +74,7 @@ class SemanticRouter:
             return self._models_by_id[self._config.default_model_id]
 
         last_text = last_human_text(messages)
-        if last_text is None or last_text == '':
+        if not last_text:
             return self._models_by_id[self._config.default_model_id]
 
         start = time.monotonic()

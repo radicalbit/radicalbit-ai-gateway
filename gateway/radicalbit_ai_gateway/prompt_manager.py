@@ -14,19 +14,13 @@ class PromptManager:
 
     def __init__(self, conf: PromptManagerConfig):
         self.prompts_dir = conf.prompts_dir
-        self.model_prompts_dir = (
-            Path(self.prompts_dir)
-            if self.prompts_dir is not None and self.prompts_dir != ''
-            else None
-        )
+        self.model_prompts_dir = Path(self.prompts_dir) if self.prompts_dir else None
         if self.model_prompts_dir:
             self.model_prompts_dir.mkdir(parents=True, exist_ok=True)
 
         self.judge_prompts_dir = conf.judge_prompts_dir
         self.judge_custom_prompts_dir = (
-            Path(self.judge_prompts_dir)
-            if self.judge_prompts_dir is not None and self.judge_prompts_dir != ''
-            else None
+            Path(self.judge_prompts_dir) if self.judge_prompts_dir else None
         )
         if self.judge_custom_prompts_dir:
             self.judge_custom_prompts_dir.mkdir(parents=True, exist_ok=True)

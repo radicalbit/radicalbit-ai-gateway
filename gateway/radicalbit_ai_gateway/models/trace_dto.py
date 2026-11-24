@@ -158,7 +158,7 @@ class GroupedSpanLatenciesDTO(BaseModel):
 class ErrorEvents(BaseModel):
     timestamp: datetime | None = None
     name: str | None = None
-    attributes: dict[Any, Any] | None = None
+    attributes: dict[str, Any] | None = None
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, protected_namespaces=()
@@ -180,7 +180,7 @@ class SpanDTO(BaseModel):
     api_key_name: str | None = None
     group_uuid: UUID | None = None
     group_name: str | None = None
-    attributes: dict[Any, Any]
+    attributes: dict[str, Any]
     status_message: str | None = None
     error_count: int = 0
     error_events: list[ErrorEvents]

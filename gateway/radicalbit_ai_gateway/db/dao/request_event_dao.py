@@ -233,7 +233,7 @@ class RequestEventDAO:
 
         with self.db.begin_session() as session:
             res = session.execute(stmt).first()
-            if res is None:
+            if not res:
                 return None
             route_name = res.route_name
             return route_name if isinstance(route_name, str) else None
@@ -488,13 +488,13 @@ class RequestEventDAO:
         conditions: list[ColumnElement[Any]] = []
         self._add_time_filters(project_uuid, conditions, _from, _to)
         self._add_tags_filter(conditions, tags=tags)
-        if route_names is not None and len(route_names) > 0:
+        if route_names:
             conditions.append(T.c['ROUTE_NAME'].in_(route_names))
-        if group_uuids is not None and len(group_uuids) > 0:
+        if group_uuids:
             conditions.append(T.c['GROUP_UUID'].in_([str(g) for g in group_uuids]))
-        if key_uuids is not None and len(key_uuids) > 0:
+        if key_uuids:
             conditions.append(T.c['API_KEY_UUID'].in_([str(k) for k in key_uuids]))
-        if request_types is not None and len(request_types) > 0:
+        if request_types:
             conditions.append(T.c['REQUEST_TYPE'].in_([r.value for r in request_types]))
 
         # Requests per hour, newest hour first. It costs what a plain count

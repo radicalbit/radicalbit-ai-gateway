@@ -36,7 +36,7 @@ def build_alert_email_body(
     rows the rule's aggregation adds. Request content never reaches them.
     """
     rows = [_row('Rule', rule_name)]
-    if description is not None and description != '':
+    if description:
         rows.append(_row('Description', description))
     rows += [
         _row('Scope', scope),

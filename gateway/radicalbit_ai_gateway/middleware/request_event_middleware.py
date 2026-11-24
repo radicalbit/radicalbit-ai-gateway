@@ -209,17 +209,12 @@ class RequestEventMiddleware:
         # status code alone would report every failed tools/call as a success.
         # Scoped to MCP: on the /v1/* endpoints an error always carries a 4xx/5xx,
         # and widening this would reclassify anything that recovered to a 2xx.
-        if (
-            request_type is RequestType.MCP
-            and http_code < 400
-            and ctx.error_type is not None
-            and ctx.error_type != ''
-        ):
+        if request_type is RequestType.MCP and http_code < 400 and ctx.error_type:
             return RequestStatus.HANDLED_ERROR
         if http_code < 400:
             return RequestStatus.SUCCESS
         if ctx.is_unhandled_error:
             return RequestStatus.UNHANDLED_ERROR
-        if ctx.error_type is not None and ctx.error_type != '':
+        if ctx.error_type:
             return RequestStatus.HANDLED_ERROR
         return RequestStatus.UNHANDLED_ERROR

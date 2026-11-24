@@ -21,7 +21,7 @@ def openai_completion(
     extra_message: dict[str, Any] | None = None,
 ) -> CannedResponse:
     message = {'role': 'assistant', 'content': content, 'refusal': None}
-    if tool_calls is not None and len(tool_calls) > 0:
+    if tool_calls:
         message['tool_calls'] = tool_calls
     message.update(extra_message or {})
     return CannedResponse(
@@ -133,12 +133,7 @@ def openai_stream(
     events.append(
         _openai_chunk(
             {},
-            finish_reason=finish_reason
-            or (
-                'tool_calls'
-                if tool_calls is not None and len(tool_calls) > 0
-                else 'stop'
-            ),
+            finish_reason=finish_reason or ('tool_calls' if tool_calls else 'stop'),
             model=model,
         )
     )
@@ -226,9 +221,7 @@ def anthropic_message(
             'role': 'assistant',
             'model': _ANTHROPIC_MODEL,
             'content': content,
-            'stop_reason': 'tool_use'
-            if tool_use is not None and len(tool_use) > 0
-            else 'end_turn',
+            'stop_reason': 'tool_use' if tool_use else 'end_turn',
             'stop_sequence': None,
             'usage': _anthropic_usage(
                 input_tokens, output_tokens, cache_read, cache_5m, cache_1h
@@ -311,9 +304,7 @@ def anthropic_stream(
         {
             'type': 'message_delta',
             'delta': {
-                'stop_reason': 'tool_use'
-                if tool_use is not None and len(tool_use) > 0
-                else 'end_turn',
+                'stop_reason': 'tool_use' if tool_use else 'end_turn',
                 'stop_sequence': None,
             },
             'usage': {'output_tokens': output_tokens},
@@ -398,7 +389,7 @@ def gemini_stream(
         )
         for i, p in enumerate(parts)
     ]
-    if function_calls is not None and len(function_calls) > 0:
+    if function_calls:
         events.append(
             _gemini_payload(
                 [{'functionCall': fc} for fc in function_calls],
@@ -449,9 +440,7 @@ def mistral_completion(
                         'content': content or '',
                         'tool_calls': tool_calls,
                     },
-                    'finish_reason': 'tool_calls'
-                    if tool_calls is not None and len(tool_calls) > 0
-                    else 'stop',
+                    'finish_reason': 'tool_calls' if tool_calls else 'stop',
                 }
             ],
             'usage': {
@@ -484,14 +473,12 @@ def mistral_stream(
 
     events = [chunk({'role': 'assistant', 'content': ''})]
     events += [chunk({'content': p}) for p in parts]
-    if tool_calls is not None and len(tool_calls) > 0:
+    if tool_calls:
         events.append(chunk({'tool_calls': tool_calls}))
     events.append(
         chunk(
             {'content': ''},
-            finish_reason='tool_calls'
-            if tool_calls is not None and len(tool_calls) > 0
-            else 'stop',
+            finish_reason='tool_calls' if tool_calls else 'stop',
             usage={
                 'prompt_tokens': prompt_tokens,
                 'completion_tokens': completion_tokens,

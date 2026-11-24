@@ -226,9 +226,7 @@ class AlertDispatcher:
                 aggregation = AlertRuleTimeAggregation(rule.time_aggregation)
             except ValueError:
                 aggregation = None
-            handler = (
-                self._handlers.get(aggregation) if aggregation is not None else None
-            )
+            handler = self._handlers.get(aggregation) if aggregation else None
             if handler is None:
                 logger.warning(
                     'Alert rule %s uses time aggregation "%s", which is not dispatched',

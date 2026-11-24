@@ -36,7 +36,7 @@ class ModelInvoker(Generic[ClientT]):
         models_lookup: dict[str, Model] = {m.model_id: m for m in self.models}
 
         fallback_lookup: dict[str, list[str]] = {}
-        if self.fallbacks is not None and len(self.fallbacks) > 0:
+        if self.fallbacks:
             for f in self.fallbacks:
                 fallback_lookup.setdefault(f.target, []).extend(f.fallbacks)
 

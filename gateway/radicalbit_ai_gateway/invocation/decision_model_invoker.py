@@ -287,9 +287,7 @@ class DecisionModelInvoker(ModelInvoker[DecisionUpstream]):
         # The configured upstream model and credential replace the client's.
         forwarded_body = {**body, 'model': upstream.model_name}
         headers = (
-            {'Authorization': f'Bearer {upstream.api_key}'}
-            if upstream.api_key is not None and upstream.api_key != ''
-            else {}
+            {'Authorization': f'Bearer {upstream.api_key}'} if upstream.api_key else {}
         )
         last_response: httpx.Response | None = None
         for attempt in range((model.retry_attempts or 0) + 1):

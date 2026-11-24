@@ -287,7 +287,7 @@ def _input_attributes(messages: Sequence[BaseMessage]) -> dict[str, str]:
                 if isinstance(message, AIMessage)
                 else message.additional_kwargs.get('tool_calls')
             )
-            if tool_calls is not None and tool_calls:
+            if tool_calls:
                 parts.extend(_tool_calls_to_parts(tool_calls))
         input_messages.append({'role': role, 'parts': parts})
     attributes = {}
@@ -408,11 +408,11 @@ def _merge_content(first: Any, *contents: Any) -> Any:
             )
         elif isinstance(content, list):
             merged = _merge_lists(merged, content)
-        elif merged is not None and merged and isinstance(merged[-1], str):
+        elif merged and isinstance(merged[-1], str):
             merged[-1] += content
         elif content == '':
             pass
-        elif merged is not None and merged:
+        elif merged:
             merged.append(content)
     return merged
 
@@ -531,11 +531,7 @@ class ChatTrace:
             span, GenAIAttributes.GEN_AI_REQUEST_TEMPERATURE, params.get('temperature')
         )
         _set(span, GenAIAttributes.GEN_AI_REQUEST_TOP_P, params.get('top_p'))
-        if (
-            invocation_params is not None
-            and len(invocation_params) > 0
-            and (tools := invocation_params.get('tools'))
-        ):
+        if invocation_params and (tools := invocation_params.get('tools')):
             span.set_attribute(
                 GenAIAttributes.GEN_AI_TOOL_DEFINITIONS,
                 _dumps([_tool_definition(t.get('function', t), t) for t in tools]),
@@ -553,9 +549,7 @@ class ChatTrace:
         if not self.span.is_recording():
             self.span.end()
             return
-        infos = [
-            info for info in self._chunk_infos[1:] if info is not None and len(info) > 0
-        ]
+        infos = [info for info in self._chunk_infos[1:] if info]
         generation_info = (
             _merge_dicts(self._chunk_infos[0] or {}, *infos) or None
             if len(chunks) > 1
@@ -651,9 +645,7 @@ class ChatTrace:
                 usage.get('output_tokens') or usage.get('completion_tokens') or 0
             )
             total_tokens = input_tokens + output_tokens
-            if (details := usage.get('input_token_details')) is not None and len(
-                details
-            ) > 0:
+            if details := usage.get('input_token_details'):
                 if isinstance(value := details.get('cache_read'), int | float):
                     cache_read = value
                 if isinstance(value := details.get('cache_creation'), int | float):
@@ -684,11 +676,7 @@ class ChatTrace:
     ) -> None:
         span = self.span
         finish_reason = None
-        if (
-            generation_info is not None
-            and len(generation_info) > 0
-            and (raw := generation_info.get('finish_reason'))
-        ):
+        if generation_info and (raw := generation_info.get('finish_reason')):
             finish_reason = _FINISH_REASONS.get(raw, raw)
             span.set_attribute(
                 GenAIAttributes.GEN_AI_RESPONSE_FINISH_REASONS, [finish_reason]
@@ -742,7 +730,7 @@ def _start_span(model: 'ChatModel', stream: bool) -> Span:
         span.set_attribute(GenAIAttributes.GEN_AI_REQUEST_STREAM, True)
     try:
         url = urlparse(model._server_url() or '')
-        if url.hostname is not None and url.hostname != '':
+        if url.hostname:
             span.set_attribute(SERVER_ADDRESS, url.hostname)
             _set(span, SERVER_PORT, url.port or _DEFAULT_PORTS.get(url.scheme))
     except Exception:
@@ -996,7 +984,7 @@ class ResponsesTrace:
         _set(span, GenAIAttributes.GEN_AI_RESPONSE_ID, response.get('id'))
         self._set_usage(response.get('usage'), model_name)
         finish_reason = _responses_finish_reason(response)
-        if finish_reason is not None and finish_reason != '':
+        if finish_reason:
             span.set_attribute(
                 GenAIAttributes.GEN_AI_RESPONSE_FINISH_REASONS, [finish_reason]
             )
@@ -1028,7 +1016,7 @@ class ResponsesTrace:
         span.end()
 
     def _set_usage(self, usage: dict[str, Any] | None, model_name: str) -> None:
-        if usage is None or len(usage) == 0:
+        if not usage:
             return
         span = self.span
         input_tokens = usage.get('input_tokens') or 0
@@ -1257,7 +1245,7 @@ class MessagesTrace:
         span.end()
 
     def _set_usage(self, usage: dict[str, Any] | None, model_name: str) -> None:
-        if usage is None or len(usage) == 0:
+        if not usage:
             return
         span = self.span
         counts = messages_usage(usage)

@@ -149,12 +149,8 @@ class DashboardRoute:
             return event_service.get_total_counter(
                 project_uuid=project_uuid,
                 config=project_entry.config,
-                _from=datetime.fromtimestamp(_from)
-                if _from is not None and _from != 0
-                else None,
-                _to=datetime.fromtimestamp(_to)
-                if _to is not None and _to != 0
-                else None,
+                _from=datetime.fromtimestamp(_from) if _from else None,
+                _to=datetime.fromtimestamp(_to) if _to else None,
                 tags=tags,
             )
 
@@ -181,12 +177,8 @@ class DashboardRoute:
                 project_name=project.name,
                 config=project_entry.config,
                 include_groups=include_groups,
-                _from=datetime.fromtimestamp(_from)
-                if _from is not None and _from != 0
-                else None,
-                _to=datetime.fromtimestamp(_to)
-                if _to is not None and _to != 0
-                else None,
+                _from=datetime.fromtimestamp(_from) if _from else None,
+                _to=datetime.fromtimestamp(_to) if _to else None,
                 tags=tags,
             )
 
@@ -221,12 +213,8 @@ class DashboardRoute:
                 config=project_entry.config,
                 route_name=route_name,
                 include_groups=include_groups,
-                _from=datetime.fromtimestamp(_from)
-                if _from is not None and _from != 0
-                else None,
-                _to=datetime.fromtimestamp(_to)
-                if _to is not None and _to != 0
-                else None,
+                _from=datetime.fromtimestamp(_from) if _from else None,
+                _to=datetime.fromtimestamp(_to) if _to else None,
                 tags=tags,
             )
 
@@ -260,12 +248,8 @@ class DashboardRoute:
                 config=project_entry.config,
                 route_name=route_name,
                 n=n,
-                _from=datetime.fromtimestamp(_from)
-                if _from is not None and _from != 0
-                else None,
-                _to=datetime.fromtimestamp(_to)
-                if _to is not None and _to != 0
-                else None,
+                _from=datetime.fromtimestamp(_from) if _from else None,
+                _to=datetime.fromtimestamp(_to) if _to else None,
                 tags=tags,
             )
 
@@ -332,12 +316,8 @@ class DashboardRoute:
                 project_uuid=project_uuid,
                 config=project_entry.config,
                 route_names=[route_name],
-                _from=datetime.fromtimestamp(_from, timezone.utc)
-                if _from is not None and _from != 0
-                else None,
-                _to=datetime.fromtimestamp(_to, timezone.utc)
-                if _to is not None and _to != 0
-                else None,
+                _from=datetime.fromtimestamp(_from, timezone.utc) if _from else None,
+                _to=datetime.fromtimestamp(_to, timezone.utc) if _to else None,
                 _with_saved_tokens=_with_saved_tokens,
                 tags=tags,
             )

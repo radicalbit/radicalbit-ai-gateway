@@ -328,10 +328,10 @@ def message_to_dict(
             ):
                 # OpenAI only accepts the id of a previous audio reply.
                 audio = {'id': audio_id}
-        if (audio is None or len(audio) == 0) and 'audio' in message.additional_kwargs:
+        if not audio and 'audio' in message.additional_kwargs:
             raw_audio = message.additional_kwargs['audio']
             audio = {'id': raw_audio['id']} if 'id' in raw_audio else raw_audio
-        if audio is not None and len(audio) > 0:
+        if audio:
             message_dict['audio'] = audio
     elif isinstance(message, SystemMessage):
         message_dict['role'] = message.additional_kwargs.get(
@@ -379,7 +379,7 @@ def _set_additional_properties_false(schema: Any) -> Any:
 
 
 def to_openai_function(function: Any, strict: bool | None = None) -> dict[str, Any]:
-    if strict is not None and strict and isinstance(function, dict):
+    if strict and isinstance(function, dict):
         function = copy.deepcopy(function)
     if isinstance(function, dict) and all(
         k in function for k in ('name', 'input_schema')
@@ -709,7 +709,7 @@ async def with_chunk_timeout(
     source: AsyncIterator[T], timeout: float | None, model_name: str | None
 ) -> AsyncIterator[T]:
     """Yield from ``source``, failing when one chunk takes over ``timeout`` s."""
-    if timeout is None or timeout <= 0:
+    if not timeout or timeout <= 0:
         async for item in source:
             yield item
         return

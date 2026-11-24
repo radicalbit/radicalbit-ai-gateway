@@ -40,16 +40,8 @@ class RequestsRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
             project_service.validate_exists(project_uuid)
-            from_dt = (
-                datetime.fromtimestamp(_from, timezone.utc)
-                if _from is not None and _from != 0
-                else None
-            )
-            to_dt = (
-                datetime.fromtimestamp(_to, timezone.utc)
-                if _to is not None and _to != 0
-                else None
-            )
+            from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
+            to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             return requests_service.get_requests(
                 project_uuid=project_uuid,
                 route_names=routes,

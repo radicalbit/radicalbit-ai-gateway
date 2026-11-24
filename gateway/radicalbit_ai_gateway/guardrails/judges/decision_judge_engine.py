@@ -126,7 +126,7 @@ class DecisionJudgeEngine:
                 cost_service=cost_service,
                 httpx_client=httpx_client,
             )
-            if decision_models is not None and len(decision_models) > 0
+            if decision_models
             else None
         )
 
@@ -167,7 +167,7 @@ class DecisionJudgeEngine:
         target = self._model(invoker, params.model_id)
         fallback = (
             [(self._model(invoker, params.fallback_model_id), None)]
-            if params.fallback_model_id is not None and params.fallback_model_id != ''
+            if params.fallback_model_id
             else []
         )
 

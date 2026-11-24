@@ -34,7 +34,7 @@ class TextClassificationRouter:
                 if text:
                     user_text = text
                     break
-        if user_text is None:
+        if not user_text:
             logger.warning('No human message found, selecting default model')
             return self._default_model()
         try:

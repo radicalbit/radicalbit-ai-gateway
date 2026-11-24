@@ -110,14 +110,14 @@ def messages_routes(
     """
     route_models = route_models or [models[0]['model_id']]
     config_route: dict[str, Any] = {'chat_models': route_models, **route}
-    if fallbacks is not None and len(fallbacks) > 0:
+    if fallbacks:
         config_route['fallback'] = [{'target': route_models[0], 'fallbacks': fallbacks}]
-    if routing is not None and len(routing) > 0:
+    if routing:
         config_route['routing'] = routing['name']
     return build_routes(
         {
             'chat_models': list(models),
-            'routing': [routing] if routing is not None and len(routing) > 0 else None,
+            'routing': [routing] if routing else None,
             'routes': {'assistant': config_route},
             **(config or {}),
         },

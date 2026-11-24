@@ -424,7 +424,7 @@ def _thinking_stream(text: str | None) -> str:
     """Return a stream of a thinking block, ``text`` and a tool use."""
     events = _sse_events(
         canned.anthropic_stream(
-            [text] if text is not None and text != '' else [],
+            [text] if text else [],
             tool_use=[canned.ANTHROPIC_WEATHER_TOOL_USE],
         )
     )

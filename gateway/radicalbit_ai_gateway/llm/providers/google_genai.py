@@ -135,7 +135,7 @@ def _build_client(
     params: dict[str, Any], http_async_client: httpx.AsyncClient | None
 ) -> Client:
     api_key = _api_key(params)
-    if api_key is None or api_key == '':
+    if not api_key:
         msg = (
             'API key required for Gemini Developer API. Provide api_key '
             'parameter or set GOOGLE_API_KEY/GEMINI_API_KEY environment '
@@ -423,9 +423,7 @@ class ChatGoogleGenerativeAI(ChatModel):
                     request_params.pop(p, None)
 
         config = types.GenerateContentConfig(
-            tools=list(formatted_tools)
-            if formatted_tools is not None and len(formatted_tools) > 0
-            else None,
+            tools=list(formatted_tools) if formatted_tools else None,
             tool_config=formatted_tool_config,
             safety_settings=formatted_safety_settings,
             cached_content=cached_content or self.cached_content,
@@ -464,7 +462,7 @@ class ChatGoogleGenerativeAI(ChatModel):
         if thinking_config is not None:
             config['thinking_config'] = thinking_config
         config = {k: v for k, v in config.items() if v is not None}
-        if generation_config is not None and len(generation_config) > 0:
+        if generation_config:
             config = {**config, **generation_config}
 
         response_mime_type = kwargs.get('response_mime_type', self.response_mime_type)
@@ -678,7 +676,7 @@ def _parse_structured(message: AIMessage, schema: type[BaseModel]) -> BaseModel:
 
 
 def _format_tools(tools: Sequence[Any] | None) -> list[types.Tool] | None:
-    if tools is None or len(tools) == 0:
+    if not tools:
         return None
     result: list[types.Tool] = []
     declarations: list[types.FunctionDeclaration] = []
@@ -735,12 +733,8 @@ def _function_declaration(tool: dict[str, Any]) -> types.FunctionDeclaration:
 def _tool_names(tools: list[types.Tool]) -> list[str]:
     names: list[str] = []
     for t in tools:
-        if t.function_declarations is not None and len(t.function_declarations) > 0:
-            names.extend(
-                f.name
-                for f in t.function_declarations
-                if f.name is not None and f.name != ''
-            )
+        if t.function_declarations:
+            names.extend(f.name for f in t.function_declarations if f.name)
     return names
 
 
@@ -750,9 +744,7 @@ def _process_tool_config(
     formatted_tools: list[types.Tool] | None,
 ) -> types.ToolConfig | None:
     normalized = None
-    if isinstance(tool_config, types.ToolConfig) or (
-        tool_config is not None and len(tool_config) > 0
-    ):
+    if tool_config:
         normalized = (
             types.ToolConfig.model_validate(tool_config)
             if isinstance(tool_config, dict)
@@ -767,7 +759,7 @@ def _process_tool_config(
         raise ValueError(msg)
     if not tool_choice:
         return normalized
-    if formatted_tools is None or len(formatted_tools) == 0:
+    if not formatted_tools:
         msg = (
             f'Received {tool_choice=} but no {formatted_tools=}. '
             "'tool_choice' can only be specified if 'tools' is specified."
@@ -1248,7 +1240,7 @@ async def _url_part(url: str, http_client: httpx.AsyncClient | None) -> types.Pa
             raise ValueError(msg)
         data = await _download(url, http_client)
     mime_type, _ = mimetypes.guess_type(url)
-    if (mime_type is None or mime_type == '') and (kind := filetype.guess(data)):
+    if not mime_type and (kind := filetype.guess(data)):
         mime_type = kind.mime
     return types.Part(inline_data=types.Blob(data=data, mime_type=mime_type))
 
@@ -1283,12 +1275,10 @@ async def _data_block_part(
         if not mime_type:
             source = part.get('url') or part.get('base64') or part.get('data')
             mime_type = mimetypes.guess_type(source)[0] if source else None
-            if (mime_type is None or mime_type == '') and (
-                kind := filetype.guess(data)
-            ):
+            if not mime_type and (kind := filetype.guess(data)):
                 mime_type = kind.mime
         blob: dict[str, Any] = {'data': data}
-        if mime_type is not None and mime_type:
+        if mime_type:
             blob['mime_type'] = mime_type
         kwargs['inline_data'] = types.Blob(**blob)
     _media_resolution(part, model, kwargs)
@@ -1716,7 +1706,7 @@ def _patch_missing_thought_signatures(contents: list[types.Content]) -> None:
             continue
         for part in content.parts or []:
             if part.function_call:
-                if part.thought_signature is None or part.thought_signature == b'':
+                if not part.thought_signature:
                     part.thought_signature = _SKIP_THOUGHT_SIGNATURE
                 break
 
@@ -1782,7 +1772,7 @@ def _parse_candidate(
     content: str | list[Any] | None = None
     additional_kwargs: dict[str, Any] = {}
     response_metadata: dict[str, Any] = {'model_provider': 'google_genai'}
-    if model_name is not None and model_name != '':
+    if model_name:
         response_metadata['model_name'] = model_name
     tool_calls = []
     tool_call_chunks = []
@@ -1800,19 +1790,17 @@ def _parse_candidate(
             else None
         )
 
-        if part.thought is True:
+        if part.thought:
             thinking: dict[str, Any] = {'type': 'thinking', 'thinking': part.text}
-            if thought_sig is not None:
+            if thought_sig:
                 thinking['signature'] = thought_sig
             content = _append(content, thinking)
-        elif (text is not None and text != '') or (
-            part.text is not None and thought_sig is not None
-        ):
+        elif text or (part.text is not None and thought_sig):
             block: dict[str, Any] = {'type': 'text', 'text': text or ''}
-            if thought_sig is not None:
+            if thought_sig:
                 block['extras'] = {'signature': thought_sig}
             if (
-                thought_sig is not None
+                thought_sig
                 or gemini_3
                 or (
                     isinstance(content, list)
@@ -1827,12 +1815,7 @@ def _parse_candidate(
                 content = _append(content, text or '')
 
         code = part.executable_code
-        if (
-            code is not None
-            and code.code is not None
-            and code.code != ''
-            and code.language is not None
-        ):
+        if code is not None and code.code and code.language:
             content = _append(
                 content,
                 {
@@ -1843,7 +1826,7 @@ def _parse_candidate(
                 },
             )
         result = part.code_execution_result
-        if result is not None and result.output is not None and result.output != '':
+        if result is not None and result.output:
             outcome = 1 if result.outcome in (None, types.Outcome.OUTCOME_OK) else 2
             content = _append(
                 content,
@@ -1863,7 +1846,7 @@ def _parse_candidate(
                 'id': media_call.id or str(uuid.uuid4()),
                 'args': dict(media_call.args or {}),
             }
-            if thought_sig is not None:
+            if thought_sig:
                 call_block['extras'] = {'signature': thought_sig}
             content = _append(content, call_block)
         media_result = getattr(part, 'tool_response', None)
@@ -1875,18 +1858,12 @@ def _parse_candidate(
                 'output': dict(media_result.response or {}),
                 'extras': {'block_type': _server_tool_name(media_result.tool_type)},
             }
-            if thought_sig is not None:
+            if thought_sig:
                 result_block['extras']['signature'] = thought_sig
             content = _append(content, result_block)
 
         inline = part.inline_data
-        if (
-            inline
-            and inline.data is not None
-            and inline.data != b''
-            and inline.mime_type is not None
-            and inline.mime_type != ''
-        ):
+        if inline and inline.data and inline.mime_type:
             if inline.mime_type.startswith('audio/'):
                 buffer = io.BytesIO()
                 with wave.open(buffer, 'wb') as wf:
@@ -1903,16 +1880,13 @@ def _parse_candidate(
                         'url': f'data:image/{inline.mime_type[6:]};base64,{encoded}'
                     },
                 }
-                if thought_sig is not None:
+                if thought_sig:
                     image['extras'] = {'signature': thought_sig}
                 content = _append(content, image)
 
         if part.function_call:
             args = _integer_like_floats(
-                dict(part.function_call.args)
-                if part.function_call.args is not None
-                and len(part.function_call.args) > 0
-                else {}
+                dict(part.function_call.args) if part.function_call.args else {}
             )
             arguments = json.dumps(args)
             additional_kwargs['function_call'] = {
@@ -1920,11 +1894,7 @@ def _parse_candidate(
                 'arguments': arguments,
             }
             raw_id = part.function_call.id
-            call_id = (
-                str(raw_id)
-                if raw_id is not None and raw_id != ''
-                else str(uuid.uuid4())
-            )
+            call_id = str(raw_id) if raw_id else str(uuid.uuid4())
             if streaming:
                 tool_call_chunks.append(
                     tool_call_chunk(
@@ -1940,7 +1910,7 @@ def _parse_candidate(
                         id=call_id,
                     )
                 )
-            if thought_sig is not None:
+            if thought_sig:
                 additional_kwargs.setdefault(_FUNCTION_CALL_SIGNATURES_KEY, {})[
                     call_id
                 ] = thought_sig
@@ -2022,7 +1992,7 @@ def _response_to_result(
     for candidate in response.candidates or []:
         generation_info: dict[str, Any] = {}
         model_name = None
-        if candidate.finish_reason is not None:
+        if candidate.finish_reason:
             if hasattr(candidate.finish_reason, 'name'):
                 generation_info['finish_reason'] = candidate.finish_reason.name
             elif isinstance(candidate.finish_reason, int):
@@ -2053,7 +2023,7 @@ def _response_to_result(
             message.response_metadata['grounding_metadata'] = grounding
         message.usage_metadata = usage
         results.append((message, generation_info))
-    if response.candidates is None or len(response.candidates) == 0:
+    if not response.candidates:
         # Likely a prompt feedback block: answer empty, like other providers.
         logger.warning(
             'Gemini produced an empty response. Continuing with empty message\n'

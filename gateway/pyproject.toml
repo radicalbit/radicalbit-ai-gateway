@@ -140,6 +140,8 @@ extra-paths = ["../sdk/src"]
 
 [tool.ty.rules]
 # Off by default in ty; free to enable on this codebase.
+# Except truthiness-test-of-none-union: `if x:` on an optional deliberately treats
+# None and empty alike here, and spelling it out as `is not None and x != ''` adds nothing.
 blanket-ignore-comment = "error"
 unused-ignore-comment = "error"
 division-by-zero = "error"
@@ -152,7 +154,6 @@ redundant-condition-strict = "error"
 unsound-yield = "error"
 unsound-return = "error"
 dynamic-function-decorator-return = "error"
-truthiness-test-of-none-union = "error"
 missing-type-argument = "error"
 unsound-assignment = "error"
 disjoint-cast = "error"

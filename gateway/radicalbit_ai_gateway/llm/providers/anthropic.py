@@ -320,7 +320,7 @@ class ChatAnthropic(ChatModel):
             if self.default_request_timeout is None or self.default_request_timeout > 0:
                 params['timeout'] = self.default_request_timeout
                 http_params['timeout'] = self.default_request_timeout
-            if self.anthropic_proxy is not None and self.anthropic_proxy != '':
+            if self.anthropic_proxy:
                 http_params['proxy'] = self.anthropic_proxy
             params['http_client'] = _default_http_client(**http_params)
             self._client = anthropic.AsyncAnthropic(**params)
@@ -529,7 +529,7 @@ class ChatAnthropic(ChatModel):
             'anthropic-version': headers.get('anthropic-version')
             or _DEFAULT_ANTHROPIC_VERSION
         }
-        if (beta := headers.get('anthropic-beta')) is not None and beta != '':
+        if beta := headers.get('anthropic-beta'):
             forwarded['anthropic-beta'] = beta
         return {
             # Required by the SDK's signature; the raw body below wins.
@@ -614,7 +614,7 @@ class ChatAnthropic(ChatModel):
         # > configured reasoning_effort > configured output_config.
         output_config: dict[str, Any] = dict(self.output_config or {})
         effort_applied = False
-        if self.reasoning_effort is not None and self.reasoning_effort != '':
+        if self.reasoning_effort:
             output_config['effort'] = self.reasoning_effort
             effort_applied = True
         if isinstance(payload_config := payload.get('output_config'), dict):
@@ -653,11 +653,7 @@ class ChatAnthropic(ChatModel):
         self, payload: dict[str, Any], messages: Sequence[BaseMessage]
     ) -> None:
         container = payload.get('container')
-        if (
-            self.reuse_last_container is None
-            or not self.reuse_last_container
-            or _has_container_id(container)
-        ):
+        if not self.reuse_last_container or _has_container_id(container):
             return
         # Reuse the container of the most recent reply (code execution).
         for message in reversed(messages):
@@ -680,7 +676,7 @@ class ChatAnthropic(ChatModel):
             self.thinking if self.thinking is not None else config.get('thinking')
         )
         output_config = dict(self.output_config or {})
-        if self.reasoning_effort is not None and self.reasoning_effort != '':
+        if self.reasoning_effort:
             output_config['effort'] = self.reasoning_effort
         if isinstance(config.get('output_config'), dict):
             output_config.update(config['output_config'])
@@ -805,7 +801,7 @@ def _default_http_client(
 
 def _first_env(*names: str) -> str | None:
     for name in names:
-        if (value := os.getenv(name)) is not None and value != '':
+        if value := os.getenv(name):
             return value
     return None
 
@@ -999,11 +995,7 @@ def _drop_unsupported_root_composition_tools(
 
 def _normalize_tool_call_id(tool_call_id: str | None) -> str | None:
     """Map an id other providers minted to one Anthropic accepts, deterministically."""
-    if (
-        tool_call_id is None
-        or tool_call_id == ''
-        or _TOOL_CALL_ID_PATTERN.match(tool_call_id)
-    ):
+    if not tool_call_id or _TOOL_CALL_ID_PATTERN.match(tool_call_id):
         return tool_call_id
     digest = hashlib.sha256(tool_call_id.encode()).hexdigest()
     return f'toolu_{digest[:24]}'

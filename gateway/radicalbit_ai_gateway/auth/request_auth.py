@@ -25,7 +25,7 @@ async def authenticate_bearer_request(
     ``/v1/chat/completions`` auth step.
     """
     auth = request.headers.get('authorization')
-    if auth is None or not auth.startswith('Bearer '):
+    if not auth or not auth.startswith('Bearer '):
         raise MissingApiKey('Missing API key')
     token = auth.split(' ')[1]
     return await _authenticate_token(request, token, project_uuid, project_name)
@@ -38,7 +38,7 @@ async def authenticate_anthropic_request(
     send their key (``x-api-key``) or as an ``Authorization: Bearer`` token.
     """
     token = request.headers.get('x-api-key')
-    if token is not None and token != '':
+    if token:
         return await _authenticate_token(request, token, project_uuid, project_name)
     return await authenticate_bearer_request(request, project_uuid, project_name)
 

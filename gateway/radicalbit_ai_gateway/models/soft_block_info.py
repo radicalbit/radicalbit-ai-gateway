@@ -24,7 +24,7 @@ class SoftBlock:
     def get_soft_block_message(self) -> str:
         custom_response_message = self.guardrail.response_message
 
-        if custom_response_message is not None and custom_response_message != '':
+        if custom_response_message:
             return custom_response_message
         if self.where == GuardrailWhereType.INPUT:
             return f'I cannot process this request as it violates content policy: {self.guardrail.name}'

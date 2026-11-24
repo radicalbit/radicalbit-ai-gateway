@@ -73,7 +73,7 @@ def servers_signature(servers: list[AnyMcpServer]) -> str:
 
 def _digest(values: dict[str, str] | None) -> str:
     """Hash a credential-bearing mapping for inclusion in the signature."""
-    if values is None or len(values) == 0:
+    if not values:
         return ''
     canonical = json.dumps(values, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
@@ -90,7 +90,7 @@ class McpListCache:
         signature: str,
     ):
         self._cache = gateway_cache
-        self._ttl = ttl if ttl is not None and ttl > 0 else DEFAULT_LIST_TTL_SECONDS
+        self._ttl = ttl if ttl and ttl > 0 else DEFAULT_LIST_TTL_SECONDS
         self._authorized = authorized
         self._signature = signature
 
@@ -160,7 +160,7 @@ class McpListCache:
         except Exception:
             logger.warning('MCP %s cache lookup failed', method, exc_info=True)
             return None
-        if raw is None or raw == '':
+        if not raw:
             return None
         try:
             cached = json.loads(raw)

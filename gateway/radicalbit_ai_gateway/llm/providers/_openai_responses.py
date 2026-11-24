@@ -72,7 +72,7 @@ _AUTO_ID_PREFIX = 'lc_'
 
 
 def model_prefers_responses_api(model_name: str | None) -> bool:
-    if model_name is None or model_name == '':
+    if not model_name:
         return False
     return model_name.startswith(_RESPONSES_ONLY_PREFIXES) or 'codex' in model_name
 
@@ -307,9 +307,9 @@ def build_input(
         if isinstance(message, ToolMessage):
             computer_output = _computer_call_output(message)
             custom_output = _custom_tool_output(message)
-            if computer_output is not None and len(computer_output) > 0:
+            if computer_output:
                 items.append(computer_output)
-            elif custom_output is not None and len(custom_output) > 0:
+            elif custom_output:
                 items.append(custom_output)
             else:
                 items.append(
@@ -476,7 +476,7 @@ def response_to_message(
             'service_tier',
         )
     }
-    if metadata is not None and len(metadata) > 0:
+    if metadata:
         response_metadata.update(metadata)
     response_metadata['model_provider'] = 'openai'
     response_metadata['model_name'] = response_metadata.get('model')

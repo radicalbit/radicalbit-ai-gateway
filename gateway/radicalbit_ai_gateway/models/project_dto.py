@@ -162,10 +162,8 @@ class ProjectOut(BaseModel):
             uuid=project.uuid,
             name=project.name,
             description=project.description,
-            project_status=ProjectStatus.PROD
-            if served is not None
-            else ProjectStatus.DEV,
-            served_config_uuid=served.uuid if served is not None else None,
+            project_status=ProjectStatus.PROD if served else ProjectStatus.DEV,
+            served_config_uuid=served.uuid if served else None,
             configs=[ConfigSlotOut.from_config(c) for c in ordered],
             limits=limits,
             route_budgets=route_budgets,

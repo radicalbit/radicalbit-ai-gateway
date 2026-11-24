@@ -192,9 +192,9 @@ class TranscriptionModelInvoker(ModelInvoker[_Client]):
         }
         if stream:
             create_kwargs['stream'] = True
-        if language is not None and language != '':
+        if language:
             create_kwargs['language'] = language
-        if prompt is not None and prompt != '':
+        if prompt:
             create_kwargs['prompt'] = prompt
         if temperature is not None:
             create_kwargs['temperature'] = temperature

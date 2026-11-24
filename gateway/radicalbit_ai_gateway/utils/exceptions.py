@@ -71,11 +71,7 @@ def set_request_error_info(request: Request, error: AppError) -> None:
     """Set error info in the request context for exception handlers."""
     ctx = RequestEventContext.get_or_create(request)
     ctx.error_type = type(error).__name__
-    ctx.error_code = (
-        str(error.code)
-        if error.code is not None and error.code not in ('', 0)
-        else None
-    )
+    ctx.error_code = str(error.code) if error.code else None
 
 
 class GatewayError(AppError):
@@ -292,7 +288,7 @@ class JudgeParsingError(JudgeInternalError):
         self.original_error = original_error
         content_preview = (
             (raw_content[:100] + '...')
-            if raw_content is not None and len(raw_content) > 100
+            if raw_content and len(raw_content) > 100
             else raw_content
         )
         message = 'Failed to parse judge output. The model did not return valid JSON.'

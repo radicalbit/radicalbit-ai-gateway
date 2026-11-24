@@ -28,7 +28,7 @@ class TestClickHouseMigrations(DatabaseIntegrationClickhouse):
     def migrate(self, until: str | None = None):
         """Apply the migrations in order, stopping before the one named `until`."""
         for migration in sorted(MIGRATIONS_DIR.glob('*.sql')):
-            if until is not None and until != '' and migration.name.startswith(until):
+            if until and migration.name.startswith(until):
                 return
             for stmt in _up_statements(migration):
                 self.execute(stmt)

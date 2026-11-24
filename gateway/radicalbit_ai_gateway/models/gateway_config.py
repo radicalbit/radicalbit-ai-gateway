@@ -126,7 +126,7 @@ class GatewayConfig(BaseModel):
     def get_route_mcp_servers(self, route_name: str) -> list[AnyMcpServer]:
         """Resolve a route's MCP server aliases to their top-level definitions."""
         route = self.routes.get(route_name)
-        if route is None or route.mcp_servers is None or len(route.mcp_servers) == 0:
+        if route is None or not route.mcp_servers:
             return []
         servers_by_alias = self.mcp_servers_by_alias
         return [servers_by_alias[alias] for alias in route.mcp_servers]
@@ -140,12 +140,7 @@ class GatewayConfig(BaseModel):
 
     def has_judge_guardrail(self, route_config: GatewayRouteConfig) -> bool:
         """Check if the route has any guardrails with type JUDGE."""
-        if (
-            self.guardrails is None
-            or len(self.guardrails) == 0
-            or route_config.guardrails is None
-            or len(route_config.guardrails) == 0
-        ):
+        if not self.guardrails or not route_config.guardrails:
             return False
         guardrail_names = set(route_config.guardrails)
         return any(
@@ -178,7 +173,7 @@ class GatewayConfig(BaseModel):
 
         routing = (
             self.routing_by_name.get(route_config.routing)
-            if route_config.routing is not None and route_config.routing != ''
+            if route_config.routing
             else None
         )
         if isinstance(routing, LLMRoutingConfig):
@@ -310,7 +305,7 @@ class GatewayConfig(BaseModel):
             )
 
             # Fallback validation
-            if route.fallback is not None and len(route.fallback) > 0:
+            if route.fallback:
                 for fb in route.fallback:
                     if fb.type == FallbackModelType.CHAT:
                         valid_ids = set(route_chat_ids)
@@ -417,7 +412,7 @@ class GatewayConfig(BaseModel):
     @model_validator(mode='after')
     def validate_guardrail_names_unique(self) -> Self:
         """Ensure global guardrail names are unique (case-insensitive, trimmed)"""
-        if self.guardrails is None or len(self.guardrails) == 0:
+        if not self.guardrails:
             return self
 
         norm = lambda s: s.strip().casefold()
@@ -469,7 +464,7 @@ class GatewayConfig(BaseModel):
                 )
 
             # Only chat requests have an output phase. An io guardrail still runs on input.
-            if route.chat_models is None or len(route.chat_models) == 0:
+            if not route.chat_models:
                 for g in self.guardrails or []:
                     if g.name in names and g.where == GuardrailWhereType.OUTPUT:
                         raise ValueError(
@@ -522,7 +517,7 @@ class GatewayConfig(BaseModel):
     @model_validator(mode='after')
     def validate_routing(self) -> Self:
         """Validate routing configurations and their references."""
-        if self.routing is None or len(self.routing) == 0:
+        if not self.routing:
             return self
 
         # Routing names must be unique
@@ -542,7 +537,7 @@ class GatewayConfig(BaseModel):
                 self._validate_llm_routing_models(routing_config)
 
         for route_name, route in self.routes.items():
-            if route.routing is None or route.routing == '':
+            if not route.routing:
                 continue
 
             if route.routing not in routing_by_name:
@@ -675,7 +670,7 @@ class GatewayConfig(BaseModel):
         # gate against, so those keep validating the dict themselves.
         plugins_model = build_route_plugins_model(known_keys) if known_keys else None
         for route_name, route in self.routes.items():
-            if route.plugins is None or len(route.plugins) == 0:
+            if not route.plugins:
                 continue
             if plugins_model is not None:
                 try:

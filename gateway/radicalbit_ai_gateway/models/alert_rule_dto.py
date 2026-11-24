@@ -106,9 +106,7 @@ class AlertRuleIn(BaseModel):
             credential_uuid=self.credential,
             event=self.event,
             time_aggregation=self.time_aggregation.value,
-            window_size=self.window_size.value
-            if self.window_size is not None
-            else None,
+            window_size=self.window_size.value if self.window_size else None,
             channel=self.channel.value,
             recipients=json.dumps(self.recipients),
             enabled=self.enabled,

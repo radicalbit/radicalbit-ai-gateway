@@ -112,7 +112,7 @@ class ChatModelInvoker(ModelInvoker[ChatModel]):
         if model_id not in self.model_map:
             raise ModelInvokerBadRequest(f'Chat model {model_id} not defined')
         model, chat_model, fallbacks = self.model_map[model_id]
-        if tools is not None and len(tools) > 0 and tool_choice:
+        if tools and tool_choice:
             chat_model = chat_model.bind_tools(tools=tools, tool_choice=tool_choice)
         return FallbackChain(
             candidates((model, chat_model), fallbacks),

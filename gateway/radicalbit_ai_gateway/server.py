@@ -260,7 +260,7 @@ async def lifespan(app: FastAPI):
                 ),
                 None,
             )
-            if served and served.config_file is not None and served.config_file != '':
+            if served and served.config_file:
                 await register_fn(
                     project_out.uuid,
                     project_out.name,
@@ -305,17 +305,14 @@ async def lifespan(app: FastAPI):
             exporter = wrap(exporter)
         return BatchSpanProcessor(exporter)
 
-    if (
-        app_config.telemetry_config.collector_base_url is not None
-        and app_config.telemetry_config.collector_base_url != ''
-    ):
+    if app_config.telemetry_config.collector_base_url:
         endpoint = _otlp_endpoint(app_config.telemetry_config.collector_base_url)
         processors.append(_build_processor(OTLPSpanExporter(endpoint=endpoint)))
         logger.info('Configured otel-collector for url: %s', endpoint)
 
     for exp_cfg in app_config.telemetry_config.otlp_exporters:
         headers = dict(exp_cfg.headers or {})
-        if exp_cfg.api_key is not None and exp_cfg.api_key != '':
+        if exp_cfg.api_key:
             headers['Authorization'] = f'Bearer {exp_cfg.api_key}'
         endpoint = _otlp_endpoint(exp_cfg.url)
         processors.append(
@@ -520,7 +517,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             content={
                 'error': {
                     'message': f'Invalid value for {param}: {first.get("msg")}'
-                    if param is not None
+                    if param
                     else 'Invalid request body',
                     'type': 'invalid_request_error',
                     'param': param,

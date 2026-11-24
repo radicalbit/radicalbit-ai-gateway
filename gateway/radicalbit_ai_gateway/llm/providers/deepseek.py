@@ -80,15 +80,13 @@ class GatewayDeepSeekChatModel(_BaseChatOpenAI):
     @model_validator(mode='after')
     def _build_client(self) -> 'GatewayDeepSeekChatModel':
         if self.api_base == DEFAULT_API_BASE and not (
-            self.api_key is not None and self.api_key.get_secret_value()
+            self.api_key and self.api_key.get_secret_value()
         ):
             raise ValueError('If using default api base, DEEPSEEK_API_KEY must be set.')
         client_params: dict[str, Any] = {
             k: v
             for k, v in {
-                'api_key': self.api_key.get_secret_value()
-                if self.api_key is not None and len(self.api_key) > 0
-                else None,
+                'api_key': self.api_key.get_secret_value() if self.api_key else None,
                 'base_url': self.api_base,
                 'timeout': self.request_timeout,
                 'max_retries': self.max_retries,

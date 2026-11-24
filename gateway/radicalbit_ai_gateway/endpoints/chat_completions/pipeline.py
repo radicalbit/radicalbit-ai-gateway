@@ -474,7 +474,7 @@ def _streamed_reply(
     reply has neither text nor tool calls: it would answer with nothing.
     """
     merged = merge_chunks(chunks) if chunks else AIMessageChunk(content='')
-    if (text is None or text == '') and not merged.tool_calls:
+    if not text and not merged.tool_calls:
         return None
     # The last finish reason wins: merging the chunks would join repeated ones.
     finish_reason = next(

@@ -28,7 +28,7 @@ class KeyDAO:
             stmt = self._get_all_stmt()
             if only_unassigned:
                 stmt = stmt.where(Key.group_uuid.is_(None))
-            if owner is not None and owner != '':
+            if owner:
                 stmt = stmt.where(Key.owner == owner)
             stmt = stmt.order_by(asc(Key.name))
             return session.scalars(stmt).all()

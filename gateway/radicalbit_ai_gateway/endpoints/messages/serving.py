@@ -28,11 +28,7 @@ FORWARDED_HEADERS = ('anthropic-version', 'anthropic-beta')
 
 def anthropic_headers(headers: Mapping[str, str]) -> dict[str, str]:
     """Return the client's headers to forward upstream."""
-    return {
-        name: headers[name]
-        for name in FORWARDED_HEADERS
-        if headers.get(name) is not None and headers.get(name) != ''
-    }
+    return {name: headers[name] for name in FORWARDED_HEADERS if headers.get(name)}
 
 
 def _error_body(exc: Exception) -> tuple[dict[str, Any], int]:

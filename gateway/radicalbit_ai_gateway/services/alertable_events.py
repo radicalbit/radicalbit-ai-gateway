@@ -99,7 +99,7 @@ def _route_events(
                 aggregation=AlertableEventAggregation.SELECTABLE,
             )
         ]
-        if route.fallback is not None and len(route.fallback) > 0
+        if route.fallback
         else []
     )
     limit, threshold = _limit_groups(_route_limits(route, with_budget).items())

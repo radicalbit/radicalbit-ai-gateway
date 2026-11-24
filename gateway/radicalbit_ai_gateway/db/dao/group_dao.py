@@ -41,7 +41,7 @@ class GroupDAO:
         with self.db.begin_session() as session:
             query = select(Group).where(Group.uuid == group_uuid)
             group_to_delete = session.execute(query).scalar_one_or_none()
-            if group_to_delete is None:
+            if not group_to_delete:
                 return None
             session.delete(group_to_delete)
             return group_to_delete

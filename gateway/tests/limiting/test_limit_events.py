@@ -112,7 +112,7 @@ def _assert_live_window(event: LimitEventPayload, window_seconds: int) -> None:
     now = int(time.time())
     assert event.window_seconds == window_seconds
     assert now < event.reset_time <= now + window_seconds
-    assert event.window_id is not None and event.window_id != ''
+    assert event.window_id
     assert event.threshold_percentage is None
 
 
@@ -480,7 +480,7 @@ class TestThresholdEvents:
         now = int(time.time())
         assert event.window_seconds == 60
         assert now < event.reset_time <= now + 60
-        assert event.window_id is not None and event.window_id != ''
+        assert event.window_id
 
     @pytest.mark.asyncio
     async def test_one_hit_crossing_both_percentages_emits_both(
