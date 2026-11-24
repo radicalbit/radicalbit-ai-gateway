@@ -157,6 +157,8 @@ missing-type-argument = "error"
 unsound-assignment = "error"
 disjoint-cast = "error"
 invalid-legacy-positional-parameter = "error"
+mismatched-enum-name = "error"
+mismatched-namedtuple-name = "error"
 mismatched-sentinel-name = "error"
 unsupported-dynamic-base = "error"
 

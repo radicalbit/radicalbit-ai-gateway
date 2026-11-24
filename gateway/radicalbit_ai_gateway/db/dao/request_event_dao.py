@@ -482,7 +482,7 @@ class RequestEventDAO:
         params: Params,
         tags: list[str] | None = None,
         request_types: list[RequestType] | None = None,
-    ) -> Page[Row[Any]]:
+    ) -> Page[Row[*tuple[Any, ...]]]:
         """One page of the project's requests, newest first."""
         T = self.T
         conditions: list[ColumnElement[Any]] = []
@@ -556,7 +556,9 @@ class RequestEventDAO:
             res = session.execute(stmt).all()
             return {str(row.request_uuid): row.http_status_code for row in res}
 
-    def get_request(self, project_uuid: UUID, request_uuid: UUID) -> Row[Any] | None:
+    def get_request(
+        self, project_uuid: UUID, request_uuid: UUID
+    ) -> Row[*tuple[Any, ...]] | None:
         """One request of the project by its UUID, or None if there is none."""
         T = self.T
         stmt = (

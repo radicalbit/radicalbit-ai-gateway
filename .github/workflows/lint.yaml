@@ -64,4 +64,4 @@ jobs:
 
       - name: ty Check
         run: |
-          uv run ty check
+          uv run ty check --output-format github

@@ -16,3 +16,9 @@ def route_meta(**kwargs: Any) -> Callable[[F], F]:
         return func
 
     return decorator
+
+
+def read_route_meta(func: Callable[..., Any]) -> dict[str, Any] | None:
+    """Return the metadata ``route_meta`` attached to ``func``, or None."""
+    meta = getattr(func, '_route_meta', None)
+    return meta if isinstance(meta, dict) else None

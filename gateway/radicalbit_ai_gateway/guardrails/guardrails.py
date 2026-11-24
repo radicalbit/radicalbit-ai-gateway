@@ -133,6 +133,15 @@ class Payload(Protocol):
 P = TypeVar('P', bound=Payload)
 
 
+class ReplyPayload(Payload, Protocol):
+    @property
+    def redactable(self) -> bool:
+        """False when the reply has no text to redact (a tool call)."""
+
+
+R = TypeVar('R', bound=ReplyPayload)
+
+
 @dataclass(frozen=True)
 class Conversation:
     """The messages of a chat or Responses request."""
@@ -334,7 +343,7 @@ class RequestGuardrails:
         redacted = await self.redact_input(payload)
         return await self.check_input(redacted.payload, redacted.flags)
 
-    async def screen_output(self, reply: P) -> Screened[P]:
+    async def screen_output(self, reply: R) -> Screened[R]:
         """Redact, then check, a model's reply. A soft block flags the
         output as both blocked and warned.
         """
@@ -343,7 +352,7 @@ class RequestGuardrails:
             return Screened(reply)
         set_operation_category(OperationCategory.GUARDRAIL_OUTPUT)
         warned = False
-        if route.output_redact is not None and getattr(reply, 'redactable', True):
+        if route.output_redact is not None and reply.redactable:
             before = reply.messages()
             after = await self._redact(route.output_redact, reply, OUTPUT)
             warned = _changed(before, after)

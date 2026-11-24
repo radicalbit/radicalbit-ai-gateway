@@ -1,6 +1,6 @@
 from decimal import Decimal
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx2
 from openai import APIConnectionError, APIStatusError
@@ -685,10 +685,7 @@ class TestTranscriptionModelInvoker(unittest.IsolatedAsyncioTestCase):
             yield delta
             raise RuntimeError('connection reset')
 
-        primary_client = MagicMock()
-        primary_client.audio.transcriptions.create = AsyncMock(
-            return_value=broken_stream()
-        )
+        primary_client = MockTranscriptionClient(stream=broken_stream())
         fallback_client = MockTranscriptionClient(stream_events=[delta])
         invoker.model_map['gpt4o-transcribe'] = (
             GPT4O_TRANSCRIBE_MODEL,

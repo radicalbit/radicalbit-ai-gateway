@@ -163,7 +163,7 @@ docker compose down -v
 
 ## Lint and type check
 
-CI runs these from `gateway/` and fails on any finding:
+CI runs these from `gateway/` and fails on any finding (pre-commit runs them too):
 
 ```bash
 uv run ruff check

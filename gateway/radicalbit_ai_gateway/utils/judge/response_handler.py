@@ -19,14 +19,14 @@ app_config = get_app_config()
 logger = logging.getLogger(app_config.log_config.logger_name)
 
 
-def validate_response_completeness(response: object, model_id: str) -> None:
+def validate_response_completeness(response: AIMessage, model_id: str) -> None:
     """Check if the response was truncated due to token limits.
 
     This function inspects the response metadata to determine if the LLM
     stopped generating due to reaching the max_tokens limit (finish_reason='length').
 
     Args:
-        response: The raw response from the LLM. Only an AIMessage is checked.
+        response: The raw response from the LLM.
         model_id: The identifier of the model that generated the response.
 
     Raises:
@@ -34,7 +34,7 @@ def validate_response_completeness(response: object, model_id: str) -> None:
 
     """
     finish_reason = None
-    if isinstance(response, AIMessage) and response.response_metadata:
+    if response.response_metadata:
         finish_reason = response.response_metadata.get('finish_reason')
 
         if not finish_reason:
@@ -79,7 +79,7 @@ def extract_judge_result(
     elif error is not None and error:
         parsing_error = ValueError(str(error))
 
-    if raw_response:
+    if isinstance(raw_response, AIMessage):
         validate_response_completeness(raw_response, model_id)
 
     if parsing_error is not None:

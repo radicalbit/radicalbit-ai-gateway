@@ -79,14 +79,13 @@ def _extract_input_content(
 
 def _get_message_text(msg: BaseMessage) -> str:
     """Extract text content from a message."""
-    content = getattr(msg, 'content', '')
+    content = msg.content
     return ContentUtils.extract_text_content(content, strip=True)
 
 
 def _get_message_type(msg: BaseMessage) -> str:
     """Get the type of a message (human, ai, etc.)."""
-    msg_type = getattr(msg, 'type', '')
-    return msg_type if isinstance(msg_type, str) else ''
+    return msg.type
 
 
 def extract_media_blocks_for_judge(
@@ -149,7 +148,7 @@ def _extract_output_media_blocks(messages: list[BaseMessage]) -> list[dict[str, 
 
 
 def _get_media_blocks(msg: BaseMessage) -> list[dict[str, Any]]:
-    content = getattr(msg, 'content', '')
+    content = msg.content
     if not isinstance(content, list):
         return []
     return [

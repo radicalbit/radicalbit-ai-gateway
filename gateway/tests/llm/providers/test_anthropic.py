@@ -623,7 +623,6 @@ async def test_missing_credentials_raise_a_clear_error(monkeypatch):
     monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
     monkeypatch.delenv('ANTHROPIC_AUTH_TOKEN', raising=False)
     chat_model = ChatAnthropic('claude-sonnet-4-5')
-    monkeypatch.setattr(chat_model, 'anthropic_api_key', None)
     with pytest.raises(TypeError, match='Anthropic authentication failed'):
         await invoke(chat_model, [canned.anthropic_message()])
 

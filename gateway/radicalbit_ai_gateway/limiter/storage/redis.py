@@ -40,6 +40,11 @@ end
 """
 
 
+def _text(value: object) -> str:
+    """Return a Redis reply as text: bytes, unless the client decodes responses."""
+    return value.decode('utf-8') if isinstance(value, bytes) else str(value)
+
+
 class RedisStorage(Storage):
     """Redis-based distributed storage for limiting.
 
@@ -80,10 +85,7 @@ class RedisStorage(Storage):
         window_id = await self._client.hget(key, 'window_id')
         if window_id is None:
             return None
-        # Bytes unless the client decodes responses.
-        if isinstance(window_id, bytes):
-            return window_id.decode('utf-8')
-        return window_id
+        return _text(window_id)
 
     @override
     async def increment(
@@ -100,10 +102,7 @@ class RedisStorage(Storage):
             args=[amount, ttl_seconds, window_id, window_start],
         )
         new_value = int(result[0])
-        returned_window_id = result[1]
-        if isinstance(returned_window_id, bytes):
-            return new_value, returned_window_id.decode('utf-8')
-        return new_value, str(returned_window_id)
+        return new_value, _text(result[1])
 
     @override
     async def get_many(self, keys: list[str]) -> list[int | None]:
@@ -130,7 +129,7 @@ class RedisStorage(Storage):
                     client=pipe,
                 )
             results = await pipe.execute()
-        return [(int(value), window_id.decode('utf-8')) for value, window_id in results]
+        return [(int(value), _text(window_id)) for value, window_id in results]
 
     @override
     async def delete(self, key: str) -> None:

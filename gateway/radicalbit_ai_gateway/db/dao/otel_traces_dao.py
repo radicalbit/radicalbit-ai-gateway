@@ -675,7 +675,7 @@ class OtelTracesDAO:
         params: Params,
         tags: list[str] | None = None,
         request_types: list[RequestType] | None = None,
-    ) -> Page[Row[Any]]:
+    ) -> Page[Row[*tuple[Any, ...]]]:
         """Get paginated root spans with metadata."""
         T = self.T
 

@@ -1,14 +1,14 @@
 from collections.abc import AsyncIterator, Callable, Sequence
 from decimal import Decimal
 import logging
-from typing import Any, NoReturn
+from typing import Any, Never, NoReturn
 
 from openai.types.chat import (
     ChatCompletionToolChoiceOptionParam,
     ChatCompletionToolUnionParam,
 )
 from openai.types.chat.chat_completion import ChatCompletion
-from typing_extensions import Never, override
+from typing_extensions import override
 
 from radicalbit_ai_gateway.invocation.errors import (
     Surface,

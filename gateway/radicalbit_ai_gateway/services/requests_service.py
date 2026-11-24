@@ -166,7 +166,7 @@ def _icons(summary: EventsSummary) -> RequestIcons:
     )
 
 
-def _request_fields(row: Row[Any]) -> dict[str, Any]:
+def _request_fields(row: Row[*tuple[Any, ...]]) -> dict[str, Any]:
     """Return the fields a request_event row gives the Requests list and detail."""
     return {
         'request_uuid': row.request_uuid,

@@ -38,6 +38,7 @@ from radicalbit_ai_gateway.models.credential_limiting import (
 from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
 from radicalbit_ai_gateway.models.gateway_route_config import GatewayRouteConfig
 from radicalbit_ai_gateway.models.limiting import LimitingAlgorithmType, RateLimiting
+from radicalbit_ai_gateway.route_meta import read_route_meta
 from radicalbit_ai_gateway.routes.key_route import KeyRoute
 from radicalbit_ai_gateway.server import validation_exception_handler
 from radicalbit_ai_gateway.services.api_key_security import ApiKeySecurity
@@ -471,7 +472,7 @@ def test_update_limit_value_is_audited_on_the_key(client):
 
     endpoint = find_endpoint(client.app.routes)
 
-    assert endpoint.__dict__['_route_meta'] == {
+    assert read_route_meta(endpoint) == {
         'entity_type': 'KEY',
         'entity_uuid_param': 'key_uuid',
     }

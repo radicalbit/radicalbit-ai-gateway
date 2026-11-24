@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, Never
 
 import openai
 from openai import AsyncAzureOpenAI, AsyncOpenAI
@@ -9,7 +9,7 @@ from openai.types.audio.transcription import Transcription
 from openai.types.audio.transcription_stream_event import TranscriptionStreamEvent
 from openai.types.audio.transcription_verbose import TranscriptionVerbose
 from opentelemetry import trace
-from typing_extensions import Never, override
+from typing_extensions import override
 
 from radicalbit_ai_gateway.invocation.errors import Surface, raising
 from radicalbit_ai_gateway.invocation.fallback_chain import (
@@ -110,9 +110,7 @@ def _set_transcription_response_attributes(
 _Client = AsyncOpenAI | AsyncAzureOpenAI
 
 
-# Untyped: tests stand in a fake for the SDK client, and the SDK's overloaded
-# ``audio.transcriptions.create`` leaves no protocol both could match.
-class TranscriptionModelInvoker(ModelInvoker[Any]):
+class TranscriptionModelInvoker(ModelInvoker[_Client]):
     def __init__(
         self,
         models: list[Model],

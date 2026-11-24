@@ -1,63 +1,96 @@
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from functools import cached_property
 from typing import Any
+
+from openai import AsyncOpenAI
+from openai.resources.audio import AsyncAudio, AsyncTranscriptions
+from typing_extensions import override
 
 
 class _MockTranscriptionStream:
     """Mimics `AsyncStream[TranscriptionStreamEvent]` for a fixed list of events."""
 
-    def __init__(self, events):
+    def __init__(self, events: Sequence[object]):
         self._events = events
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncIterator[object]:
         return self._agen()
 
-    async def _agen(self):
+    async def _agen(self) -> AsyncIterator[object]:
         for event in self._events:
             yield event
 
 
-class _MockTranscriptions:
+class _MockTranscriptions(AsyncTranscriptions):
     def __init__(
         self,
-        response=None,
-        exception=None,
-        captured_kwargs=None,
-        stream_events=None,
+        client: AsyncOpenAI,
+        response: object,
+        exception: Exception | None,
+        captured_kwargs: dict[str, Any],
+        stream: AsyncIterable[object],
     ):
+        super().__init__(client)
         self._response = response
         self._exception = exception
         self._captured_kwargs = captured_kwargs
-        self._stream_events = stream_events
+        self._stream = stream
 
-    async def create(self, **kwargs):
-        if self._captured_kwargs is not None:
-            self._captured_kwargs.update(kwargs)
+    @override
+    async def create(self, **kwargs: Any) -> Any:
+        self._captured_kwargs.update(kwargs)
         if self._exception is not None:
             raise self._exception
         if kwargs.get('stream'):
-            return _MockTranscriptionStream(self._stream_events or [])
+            return self._stream
         return self._response
 
 
-class _MockAudio:
-    def __init__(self, transcriptions: _MockTranscriptions):
-        self.transcriptions = transcriptions
+class _MockAudio(AsyncAudio):
+    def __init__(self, client: AsyncOpenAI, transcriptions: _MockTranscriptions):
+        super().__init__(client)
+        self._transcriptions = transcriptions
+
+    @cached_property
+    @override
+    def transcriptions(self) -> AsyncTranscriptions:
+        return self._transcriptions
 
 
-class MockTranscriptionClient:
-    """Mimics the subset of the OpenAI SDK client surface that
-    `TranscriptionModelInvoker` uses, without hitting the network.
+class MockTranscriptionClient(AsyncOpenAI):
+    """An OpenAI SDK client whose `audio.transcriptions.create(...)` answers
+    from the test, without hitting the network.
 
     `captured_kwargs` is populated with the kwargs passed to
     `audio.transcriptions.create(...)`, so tests can assert on the upstream
-    `response_format` policy. `stream_events`, if provided, is what a
-    `stream=True` call returns (an async-iterable of stream events); a
-    `response`/`exception` still control the non-streaming call.
+    `response_format` policy. A `stream=True` call returns `stream`, or else
+    an async-iterable of `stream_events`; a `response`/`exception` still
+    control the non-streaming call.
     """
 
-    def __init__(self, response=None, exception=None, stream_events=None):
+    def __init__(
+        self,
+        response: object = None,
+        exception: Exception | None = None,
+        stream_events: Sequence[object] = (),
+        stream: AsyncIterable[object] | None = None,
+    ):
+        super().__init__(api_key='test-key')
         self.captured_kwargs: dict[str, Any] = {}
-        self.audio = _MockAudio(
+        self._mock_audio = _MockAudio(
+            self,
             _MockTranscriptions(
-                response, exception, self.captured_kwargs, stream_events
-            )
+                self,
+                response,
+                exception,
+                self.captured_kwargs,
+                stream
+                if stream is not None
+                else _MockTranscriptionStream(stream_events),
+            ),
         )
+
+    @cached_property
+    @override
+    def audio(self) -> AsyncAudio:
+        return self._mock_audio

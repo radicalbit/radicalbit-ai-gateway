@@ -1615,7 +1615,7 @@ class EventDAO:
         _to: datetime | None,
         params: Params,
         tags: list[str] | None = None,
-    ) -> Page[Row[Any]]:
+    ) -> Page[Row[*tuple[Any, ...]]]:
         """Rank the keys that made MCP invocations in a project.
 
         Membership comes from the event type alone: the emission side already

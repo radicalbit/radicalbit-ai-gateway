@@ -1,4 +1,6 @@
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 import uuid
 
@@ -22,6 +24,7 @@ from radicalbit_ai_gateway.models.project_budget_limiting import (
     ProjectBudgetLimitValueIn,
 )
 from radicalbit_ai_gateway.models.project_dto import ProjectFilter
+from radicalbit_ai_gateway.route_meta import read_route_meta
 from radicalbit_ai_gateway.routes.project_route import ProjectRoute, ProjectRouteConfig
 from radicalbit_ai_gateway.services.config_generator_service import (
     ConfigGeneratorService,
@@ -603,7 +606,7 @@ def test_a_service_error_becomes_its_error_response(
 # --- route_meta ---
 
 
-def _get_endpoint(app, path_suffix: str, method: str = 'PATCH') -> object:
+def _get_endpoint(app, path_suffix: str, method: str = 'PATCH') -> Callable[..., Any]:
     """Return the endpoint function for a given path suffix and method."""
 
     def _find_route(routes):
@@ -633,7 +636,7 @@ def _get_endpoint(app, path_suffix: str, method: str = 'PATCH') -> object:
 def test_update_budget_limit_value_is_audited_on_the_project(client):
     endpoint = _get_endpoint(client.app, 'budget-limits/{limit_uuid}', 'PATCH')
 
-    assert endpoint.__dict__['_route_meta'] == {
+    assert read_route_meta(endpoint) == {
         'entity_type': 'PROJECT',
         'entity_uuid_param': 'project_uuid',
     }
@@ -652,7 +655,7 @@ def test_config_mutation_routes_have_entity_uuid_param(deps):
     ]
     for path_suffix, method in config_routes:
         endpoint = _get_endpoint(client.app, path_suffix, method)
-        meta = getattr(endpoint, '_route_meta', None)
+        meta = read_route_meta(endpoint)
         assert meta is not None, f'{path_suffix} missing _route_meta'
         assert meta.get('entity_uuid_param') == 'project_uuid', (
             f'{path_suffix} missing entity_uuid_param'

@@ -1,4 +1,4 @@
-from radicalbit_ai_gateway.route_meta import route_meta
+from radicalbit_ai_gateway.route_meta import read_route_meta, route_meta
 
 
 def test_attaches_meta_dict():
@@ -6,7 +6,7 @@ def test_attaches_meta_dict():
     def handler():
         pass
 
-    assert handler.__dict__['_route_meta'] == {
+    assert read_route_meta(handler) == {
         'entity_type': 'PROJECT',
         'response_uuid_field': 'uuid',
     }
@@ -29,7 +29,7 @@ def test_entity_uuid_param():
     def handler():
         pass
 
-    assert handler.__dict__['_route_meta'] == {
+    assert read_route_meta(handler) == {
         'entity_type': 'PROJECT',
         'entity_uuid_param': 'project_uuid',
     }
@@ -40,4 +40,4 @@ def test_empty_kwargs():
     def handler():
         pass
 
-    assert handler.__dict__['_route_meta'] == {}
+    assert read_route_meta(handler) == {}

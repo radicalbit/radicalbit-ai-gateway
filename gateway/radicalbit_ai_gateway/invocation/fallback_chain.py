@@ -15,9 +15,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 import time
-from typing import Any, Generic, NoReturn
+from typing import Any, Generic, Never, NoReturn
 
-from typing_extensions import Never, TypeVar
+from typing_extensions import TypeVar
 
 from radicalbit_ai_gateway.invocation.recorder import Call, Recorder, Tokens
 from radicalbit_ai_gateway.models.model import Model
