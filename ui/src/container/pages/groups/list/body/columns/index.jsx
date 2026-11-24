@@ -32,11 +32,6 @@ const columns = [
     ),
   },
   {
-    title: 'Owner',
-    dataIndex: 'owner',
-    key: 'owner',
-  },
-  {
     title: 'Routes',
     dataIndex: 'routes',
     key: 'routes',
