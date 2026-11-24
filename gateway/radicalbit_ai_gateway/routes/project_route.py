@@ -81,7 +81,7 @@ class ProjectRoute:
         async def _get_project(_, project_uuid, include_limits):
             if include_limits:
                 return await project_service.get_by_uuid_with_limits(project_uuid)
-            return project_service.get_by_uuid(project_uuid)
+            return await project_service.get_by_uuid(project_uuid)
 
         get_projects_fn = config.get_projects_fn or _get_projects
         get_project_fn = config.get_project_fn or _get_project
@@ -101,9 +101,9 @@ class ProjectRoute:
             responses=error_responses(409),
         )
         @route_meta(entity_type='PROJECT', response_uuid_field='uuid')
-        def create_project(project_in: ProjectIn):
+        async def create_project(project_in: ProjectIn):
             """Create a project, with two draft config slots (A and B)."""
-            project = project_service.create_project(project_in)
+            project = await project_service.create_project(project_in)
             logger.info('Created project %s', project.uuid)
             return project
 
@@ -181,9 +181,9 @@ class ProjectRoute:
             responses=error_responses(404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def cancel_approval(project_uuid: UUID, config_uuid: UUID):
+        async def cancel_approval(project_uuid: UUID, config_uuid: UUID):
             """Cancel a request to publish: the config goes back to draft."""
-            project = project_service.cancel_approval(project_uuid, config_uuid)
+            project = await project_service.cancel_approval(project_uuid, config_uuid)
             logger.info(
                 'Cancelled approval for config %s of project %s',
                 config_uuid,
@@ -238,7 +238,7 @@ class ProjectRoute:
         async def generate_config(
             project_uuid: UUID, config_uuid: UUID, gen_in: GenerateConfigIn
         ):
-            config_slot = project_service.get_config(project_uuid, config_uuid)
+            config_slot = await project_service.get_config(project_uuid, config_uuid)
             # A served slot is read-only: generating against it is pointless
             # since the result could not be saved back (see update_config).
             if config_slot.config_status == ConfigStatus.SERVED:
@@ -257,8 +257,10 @@ class ProjectRoute:
             status_code=200,
             tags=configs,
         )
-        def export_config(project_uuid: UUID, config_uuid: UUID):
-            content, filename = project_service.export_config(project_uuid, config_uuid)
+        async def export_config(project_uuid: UUID, config_uuid: UUID):
+            content, filename = await project_service.export_config(
+                project_uuid, config_uuid
+            )
             logger.info('Exported config %s for project %s', config_uuid, project_uuid)
             return Response(
                 content=content,
@@ -271,8 +273,8 @@ class ProjectRoute:
             status_code=200,
             tags=configs,
         )
-        def export_all_configs(project_uuid: UUID):
-            content, filename = project_service.export_all_configs(project_uuid)
+        async def export_all_configs(project_uuid: UUID):
+            content, filename = await project_service.export_all_configs(project_uuid)
             logger.info('Exported all configs for project %s', project_uuid)
             return Response(
                 content=content,
@@ -323,7 +325,7 @@ class ProjectRoute:
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def unserve_config(project_uuid: UUID, config_uuid: UUID):
             """Stop serving the served config: the project serves no routes."""
-            project = project_service.unserve_config(project_uuid, config_uuid)
+            project = await project_service.unserve_config(project_uuid, config_uuid)
             if deregister_project_routes:
                 await deregister_project_routes(project_uuid)
             logger.info('Unserved config %s for project %s', config_uuid, project_uuid)
@@ -361,7 +363,7 @@ class ProjectRoute:
             route_groups_in: RouteGroupsIn,
             include_groups: bool = Query(False),
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = await project_service.get_by_uuid(project_uuid)
             return await group_service.add_groups_to_project_route(
                 project_uuid, project.name, route_name, route_groups_in, include_groups
             )
@@ -378,7 +380,7 @@ class ProjectRoute:
             include_routes: bool = Query(False),
             include_keys: bool = Query(False),
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = await project_service.get_by_uuid(project_uuid)
             return await group_service.get_associable_groups_for_project_route(
                 project.name, route_name, include_routes, include_keys
             )
@@ -443,8 +445,8 @@ class ProjectRoute:
             response_model=ProjectBudgetLimitConflictsOut,
             tags=projects,
         )
-        def get_budget_limit_conflicts(project_uuid: UUID):
-            return project_service.get_budget_limit_conflicts(project_uuid)
+        async def get_budget_limit_conflicts(project_uuid: UUID):
+            return await project_service.get_budget_limit_conflicts(project_uuid)
 
         @router.patch(
             '/projects/{project_uuid}/budget-limits/{limit_uuid}',

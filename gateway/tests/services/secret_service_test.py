@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import update
 
 from tests.common import db_mock
-from tests.common.db_integration import DatabaseIntegration
+from tests.common.db_integration import AsyncDatabaseIntegration
 from tests.common.fake_secret_provider import FakeSecretProvider
 
 from radicalbit_ai_gateway.db.dao.project_config_dao import (
@@ -155,23 +155,26 @@ def _unavailable(key: str) -> SecretOut:
         ),
     ],
 )
-def test_get_secrets(secrets, referenced, search, expected):
+async def test_get_secrets(secrets, referenced, search, expected):
     service = _service(lambda: FakeSecretProvider(secrets), *referenced)
 
-    assert service.get_secrets(search=search) == expected
+    assert await service.get_secrets(search=search) == expected
 
 
-def test_get_secrets_reads_the_backend_on_every_call():
+async def test_get_secrets_reads_the_backend_on_every_call():
     # The page must never show a stale snapshot, so the provider is built per
     # call: a key added between calls shows up, and a referenced key that is
     # back in the backend is no longer unavailable.
     secrets = {'ALPHA': 'a'}
     service = _service(lambda: FakeSecretProvider(dict(secrets)), 'DEAD_TOKEN')
-    assert service.get_secrets() == [_unavailable('DEAD_TOKEN'), _available('ALPHA')]
+    assert await service.get_secrets() == [
+        _unavailable('DEAD_TOKEN'),
+        _available('ALPHA'),
+    ]
 
     secrets |= {'BRAVO': 'b', 'DEAD_TOKEN': 'restored'}
 
-    assert service.get_secrets() == [
+    assert await service.get_secrets() == [
         _available('ALPHA'),
         _available('BRAVO'),
         _available('DEAD_TOKEN', PROJECT),
@@ -199,18 +202,18 @@ def _failing_factory():
         (_failing_factory, 'authentication failed'),
     ],
 )
-def test_backend_failure_propagates(factory, message):
+async def test_backend_failure_propagates(factory, message):
     # Not an empty list, and not every referenced key reported unavailable.
     service = _service(factory, 'OPENAI_API_KEY')
 
     with pytest.raises(SecretsBackendError, match=message):
-        service.get_secrets()
+        await service.get_secrets()
 
 
 _OPENAI_CONFIG = 'chat_models:\n  - model_id: m\n    api_key: !secret OPENAI_API_KEY\n'
 
 
-class SecretServiceUsedInTest(DatabaseIntegration):
+class SecretServiceUsedInTest(AsyncDatabaseIntegration):
     """Derived per-key project usage — needs real served configs."""
 
     @classmethod
@@ -218,38 +221,40 @@ class SecretServiceUsedInTest(DatabaseIntegration):
         super().setUpClass()
         cls.dao = ProjectConfigDAO(cls.db)
 
-    def _secrets(self, secrets: dict[str, str]) -> list[SecretOut]:
-        return SecretService(
+    async def _secrets(self, secrets: dict[str, str]) -> list[SecretOut]:
+        return await SecretService(
             project_config_dao=self.dao,
             secret_provider_factory=lambda: FakeSecretProvider(secrets),
         ).get_secrets()
 
-    def _project(self, name: str):
-        return self.insert(db_mock.get_sample_project(uuid=uuid.uuid4(), name=name))
+    async def _project(self, name: str):
+        return await self.insert(
+            db_mock.get_sample_project(uuid=uuid.uuid4(), name=name)
+        )
 
-    def _config(self, project, config_file: str, status=ConfigStatus.SERVED):
-        return self.insert(
+    async def _config(self, project, config_file: str, status=ConfigStatus.SERVED):
+        return await self.insert(
             db_mock.get_sample_project_config(
                 project_uuid=project.uuid, config_file=config_file, config_status=status
             )
         )
 
-    def test_published_configurations_make_a_key_used(self):
-        zebra = self._project('Zebra')
-        apple = self._project('apple')
-        mcp = self._project('project-mcp')
+    async def test_published_configurations_make_a_key_used(self):
+        zebra = await self._project('Zebra')
+        apple = await self._project('apple')
+        mcp = await self._project('project-mcp')
         # A served row that fails to parse must never take the whole endpoint
         # down for every other key and project.
-        broken = self._project('broken-project')
-        self._config(zebra, _OPENAI_CONFIG)
-        self._config(
+        broken = await self._project('broken-project')
+        await self._config(zebra, _OPENAI_CONFIG)
+        await self._config(
             apple,
             'chat_models:\n  - model_id: m2\n    api_key: !secret OPENAI_API_KEY\n',
         )
-        self._config(mcp, _MCP_CONFIG_WITH_SECRET)
-        self._config(broken, 'chat_models: [\n  unterminated')
+        await self._config(mcp, _MCP_CONFIG_WITH_SECRET)
+        await self._config(broken, 'chat_models: [\n  unterminated')
 
-        secrets = self._secrets({'OPENAI_API_KEY': 'sk', 'GITHUB_TOKEN': 'ghp'})
+        secrets = await self._secrets({'OPENAI_API_KEY': 'sk', 'GITHUB_TOKEN': 'ghp'})
 
         assert secrets == [
             _available('GITHUB_TOKEN', ProjectRef(uuid=mcp.uuid, name='project-mcp')),
@@ -261,24 +266,26 @@ class SecretServiceUsedInTest(DatabaseIntegration):
             ),
         ]
 
-    def test_drafts_and_deleted_configurations_use_no_key(self):
-        draft = self._project('draft-project')
+    async def test_drafts_and_deleted_configurations_use_no_key(self):
+        draft = await self._project('draft-project')
         # A key absent from the backend and referenced only by a draft is not a row
-        self._config(
+        await self._config(
             draft,
             _config_referencing('OPENAI_API_KEY', 'DRAFT_ONLY_KEY'),
             status=ConfigStatus.DRAFT,
         )
-        deleted_project = self._project('deleted-project')
-        self._config(deleted_project, _OPENAI_CONFIG)
-        with self.db.begin_session() as session:
-            session.execute(
+        deleted_project = await self._project('deleted-project')
+        await self._config(deleted_project, _OPENAI_CONFIG)
+        async with self.db.begin_session() as session:
+            await session.execute(
                 update(Project)
                 .where(Project.uuid == deleted_project.uuid)
                 .values(deleted_at=datetime.datetime.now(tz=_UTC))
             )
-        deleted_config = self._project('deleted-config')
-        self._config(deleted_config, _OPENAI_CONFIG)
-        self.dao.soft_delete_by_project(deleted_config.uuid)
+        deleted_config = await self._project('deleted-config')
+        await self._config(deleted_config, _OPENAI_CONFIG)
+        await self.dao.soft_delete_by_project(deleted_config.uuid)
 
-        assert self._secrets({'OPENAI_API_KEY': 'sk'}) == [_available('OPENAI_API_KEY')]
+        assert await self._secrets({'OPENAI_API_KEY': 'sk'}) == [
+            _available('OPENAI_API_KEY')
+        ]

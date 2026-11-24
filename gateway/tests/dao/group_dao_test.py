@@ -20,8 +20,8 @@ class GroupDAOTest(AsyncDatabaseIntegration):
         cls.project_dao = ProjectDAO(cls.db)
         cls.project_uuid = uuid.uuid4()
 
-    def setUp(self):
-        self.project_dao.insert(
+    async def asyncSetUp(self):
+        await self.insert(
             db_mock.get_sample_project(uuid=self.project_uuid, name='my-project')
         )
 
@@ -174,7 +174,7 @@ class GroupDAOTest(AsyncDatabaseIntegration):
         group_uuid = uuid.uuid4()
         live_project_uuid = self.project_uuid
         deleted_project_uuid = uuid.uuid4()
-        self.project_dao.insert(
+        await self.insert(
             db_mock.get_sample_project(
                 uuid=deleted_project_uuid, name='deleted-project'
             )
@@ -196,7 +196,7 @@ class GroupDAOTest(AsyncDatabaseIntegration):
                 project_uuid=deleted_project_uuid,
             )
         )
-        self.project_dao.soft_delete(deleted_project_uuid)
+        await self.project_dao.soft_delete(deleted_project_uuid)
         result = await self.group_dao.get_route_names_by_group_uuid(group_uuid)
         assert result == ['my-project/live-route']
 

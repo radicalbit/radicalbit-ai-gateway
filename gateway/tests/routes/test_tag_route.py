@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -28,7 +28,7 @@ class TestTagRoute(unittest.TestCase):
 
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
-        self.project_service.get_by_uuid = MagicMock(return_value=project_mock)
+        self.project_service.get_by_uuid = AsyncMock(return_value=project_mock)
 
         router = TagRoute.get_tag_router(
             request_event_service=self.request_event_service,
@@ -57,7 +57,7 @@ class TestTagRoute(unittest.TestCase):
 
     def test_get_tag_keys_project_not_found(self):
         self.request_event_service.get_tag_keys = MagicMock()
-        self.project_service.get_by_uuid = MagicMock(
+        self.project_service.get_by_uuid = AsyncMock(
             side_effect=ProjectNotFoundError('nope')
         )
         response = self.client.get(f'{self.project_path}/tags/keys')
@@ -84,7 +84,7 @@ class TestTagRoute(unittest.TestCase):
 
     def test_get_tag_key_values_project_not_found(self):
         self.request_event_service.get_tag_key_values = MagicMock()
-        self.project_service.get_by_uuid = MagicMock(
+        self.project_service.get_by_uuid = AsyncMock(
             side_effect=ProjectNotFoundError('nope')
         )
         response = self.client.get(f'{self.project_path}/tags/keys/env/values')

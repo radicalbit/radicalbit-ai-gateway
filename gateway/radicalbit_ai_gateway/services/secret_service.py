@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict
 from collections.abc import Callable
 import logging
@@ -23,7 +24,7 @@ class SecretService:
         self._project_config_dao = project_config_dao
         self._secret_provider_factory = secret_provider_factory
 
-    def get_secrets(self, search: str | None = None) -> list[SecretOut]:
+    async def get_secrets(self, search: str | None = None) -> list[SecretOut]:
         """Return a row per secret key the page lists, unavailable first.
 
         ``search`` keeps only the rows whose secret key contains it, ignoring
@@ -40,9 +41,9 @@ class SecretService:
         is derived the same way, by parsing the configurations currently
         served.
         """
-        provider = self._secret_provider_factory()
-        backend_keys = set(provider.list_secret_keys())
-        used_in = self._usage_by_key()
+        # The backend may be remote, so it is read off the event loop.
+        backend_keys = await asyncio.to_thread(self._backend_keys)
+        used_in = await self._usage_by_key()
         keys = backend_keys | used_in.keys()
         if search:
             term = search.casefold()
@@ -58,7 +59,10 @@ class SecretService:
             for key in sorted(keys, key=lambda k: (k in backend_keys, k))
         ]
 
-    def _usage_by_key(self) -> dict[str, list[ProjectRef]]:
+    def _backend_keys(self) -> set[str]:
+        return set(self._secret_provider_factory().list_secret_keys())
+
+    async def _usage_by_key(self) -> dict[str, list[ProjectRef]]:
         """Map secret key -> projects referencing it in their served config.
 
         No stored mapping: every served configuration is parsed on read with
@@ -70,7 +74,7 @@ class SecretService:
         whole Secrets page down.
         """
         references: list[tuple[str, ProjectRef]] = []
-        for served in self._project_config_dao.list_served_with_project_name():
+        for served in await self._project_config_dao.list_served_with_project_name():
             if not served.config_file:
                 logger.warning(
                     'Served config for project %s has no content — skipping '

@@ -2,7 +2,7 @@ import copy
 import datetime
 import os
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import uuid
 from uuid import UUID
 
@@ -108,7 +108,7 @@ class TestDashboardRoute(unittest.TestCase):
     def setUp(self):
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
-        self.project_service.get_by_uuid = MagicMock(return_value=project_mock)
+        self.project_service.get_by_uuid = AsyncMock(return_value=project_mock)
         self.project_entry_mock.config = self.gateway_config
 
     def test_metrics_endpoint(self):
@@ -724,7 +724,7 @@ class TestDashboardRouteNoActiveConfig(unittest.TestCase):
     def setUp(self):
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
-        self.project_service.get_by_uuid = MagicMock(return_value=project_mock)
+        self.project_service.get_by_uuid = AsyncMock(return_value=project_mock)
 
     def test_routes_returns_empty_list_when_no_active_config(self):
         response = self.client.get(f'{self.project_path}/routes')

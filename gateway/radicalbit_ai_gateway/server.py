@@ -271,7 +271,7 @@ async def lifespan(app: FastAPI):
                 project_out.name,
             )
 
-    for project in project_service.get_all_active():
+    for project in await project_service.get_all_active():
         await _safe_register(project)
 
     server, _ = start_http_server(int(app_config.prometheus_metrics_port))

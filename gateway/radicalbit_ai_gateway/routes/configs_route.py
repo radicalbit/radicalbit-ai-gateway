@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import logging
 from typing import Any
@@ -24,7 +24,9 @@ logger = logging.getLogger(app_config.log_config.logger_name)
 
 @dataclass
 class ConfigsRouteConfig:
-    get_configs_fn: Callable[[Request, ConfigListFilter | None], Any] | None = None
+    get_configs_fn: (
+        Callable[[Request, ConfigListFilter | None], Awaitable[Any]] | None
+    ) = None
     list_response_model: type = field(default_factory=lambda: list[ProjectOut])
 
 
@@ -60,10 +62,10 @@ class ConfigsRoute:
             response_model=config.list_response_model,
             tags=runtime_configs,
         )
-        def get_configs(
+        async def get_configs(
             request: Request, status: ConfigListFilter | None = Query(None)
         ):
-            return get_configs_fn(request, status)
+            return await get_configs_fn(request, status)
 
         @router.post(
             '/configs/validate',

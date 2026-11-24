@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from fastapi_pagination import Page, Params
 
+from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.models.request_dto import RequestDetailDTO, RequestDTO
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.services.project_service import ProjectService
@@ -39,7 +40,7 @@ class RequestsRoute:
             _limit: Annotated[int, Query(ge=1, le=100)] = 50,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
             to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             return requests_service.get_requests(
@@ -61,7 +62,7 @@ class RequestsRoute:
             response_model=RequestDetailDTO,
         )
         def get_request(project_uuid: UUID, request_uuid: UUID):
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             return requests_service.get_request(
                 project_uuid=project_uuid, request_uuid=request_uuid
             )

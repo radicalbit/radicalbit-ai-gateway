@@ -19,18 +19,18 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         cls.project_dao = ProjectDAO(cls.db)
         cls.project_budget_limit_dao = ProjectBudgetLimitDAO(cls.db)
 
-    def _insert_project(self, name='rb-project'):
+    async def _insert_project(self, name='rb-project'):
         project = db_mock.get_sample_project(uuid=uuid.uuid4(), name=name)
-        return self.project_dao.insert(project)
+        return await self.insert(project)
 
     async def test_insert(self):
-        project = self._insert_project()
+        project = await self._insert_project()
         limit = db_mock.get_sample_project_budget_limit(project_uuid=project.uuid)
         inserted = await self.project_budget_limit_dao.insert(limit)
         assert inserted.uuid == limit.uuid
 
     async def test_updating_the_max_keeps_the_same_row_and_window(self):
-        project = self._insert_project()
+        project = await self._insert_project()
         limit = db_mock.get_sample_project_budget_limit(
             uuid=uuid.uuid4(),
             project_uuid=project.uuid,
@@ -49,7 +49,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         assert res.updated_at > limit.updated_at
 
     async def test_get_by_uuid(self):
-        project = self._insert_project()
+        project = await self._insert_project()
         limit = db_mock.get_sample_project_budget_limit(
             uuid=uuid.uuid4(), project_uuid=project.uuid
         )
@@ -58,7 +58,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         assert res.uuid == limit.uuid
 
     async def test_get_by_project_uuid(self):
-        project = self._insert_project()
+        project = await self._insert_project()
         limits = [
             db_mock.get_sample_project_budget_limit(
                 uuid=uuid.uuid4(), project_uuid=project.uuid, window_size='1 day'
@@ -72,7 +72,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         assert len(res) == 2
 
     async def test_get_all_by_project_uuids_returns_only_the_requested_projects(self):
-        projects = [self._insert_project(name=name) for name in ('a', 'b', 'c')]
+        projects = [await self._insert_project(name=name) for name in ('a', 'b', 'c')]
         limits = [
             await self.project_budget_limit_dao.insert(
                 db_mock.get_sample_project_budget_limit(
@@ -95,7 +95,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         assert await self.project_budget_limit_dao.get_all_by_project_uuids([]) == []
 
     async def test_duplicate_window_raises_integrity_error(self):
-        project = self._insert_project()
+        project = await self._insert_project()
         limit_one = db_mock.get_sample_project_budget_limit(
             uuid=uuid.uuid4(), project_uuid=project.uuid
         )
@@ -107,7 +107,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
             await self.project_budget_limit_dao.insert(limit_two)
 
     async def test_insert_many(self):
-        project = self._insert_project()
+        project = await self._insert_project()
         limits = [
             db_mock.get_sample_project_budget_limit(
                 uuid=uuid.uuid4(), project_uuid=project.uuid, window_size='1 day'
@@ -124,7 +124,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         )
 
     async def test_insert_many_is_atomic_on_conflict(self):
-        project = self._insert_project()
+        project = await self._insert_project()
         limits = [
             db_mock.get_sample_project_budget_limit(
                 uuid=uuid.uuid4(), project_uuid=project.uuid, window_size='1 day'
@@ -142,7 +142,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         )
 
     async def test_delete_by_uuid(self):
-        project = self._insert_project()
+        project = await self._insert_project()
         limit = db_mock.get_sample_project_budget_limit(
             uuid=uuid.uuid4(), project_uuid=project.uuid
         )
@@ -156,8 +156,8 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         assert rowcount == 0
 
     async def test_delete_by_project_uuid(self):
-        project = self._insert_project()
-        other_project = self._insert_project(name='rb-project-other')
+        project = await self._insert_project()
+        other_project = await self._insert_project(name='rb-project-other')
         limits = [
             db_mock.get_sample_project_budget_limit(
                 uuid=uuid.uuid4(), project_uuid=project.uuid, window_size='1 day'
@@ -193,7 +193,7 @@ class ProjectBudgetLimitDAOTest(AsyncDatabaseIntegration):
         assert rowcount == 0
 
     async def test_cascade_delete_on_project_delete(self):
-        project = self._insert_project()
+        project = await self._insert_project()
         await self.project_budget_limit_dao.insert(
             db_mock.get_sample_project_budget_limit(
                 uuid=uuid.uuid4(), project_uuid=project.uuid
