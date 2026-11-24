@@ -138,16 +138,19 @@ def test_get_all(client, project_service, params, args):
 )
 def test_get_by_uuid(client, project_service, params, include_limits):
     limits = [_limit_out()] if include_limits else []
-    project_service.get_by_uuid.return_value = db_mock.get_sample_project_out(
-        uuid=PID, limits=limits
-    )
+    project = db_mock.get_sample_project_out(uuid=PID, limits=limits)
+    project_service.get_by_uuid.return_value = project
+    project_service.get_by_uuid_with_limits.return_value = project
 
     res = client.get(PROJECT, params=params)
 
     assert res.status_code == 200
     if include_limits:
         assert res.json()['limits'] == jsonable_encoder(limits)
-    project_service.get_by_uuid.assert_called_once_with(PID, include_limits)
+        project_service.get_by_uuid_with_limits.assert_called_once_with(PID)
+        project_service.get_by_uuid.assert_not_called()
+    else:
+        project_service.get_by_uuid.assert_called_once_with(PID)
 
 
 # --- config mutations ---

@@ -1,5 +1,5 @@
-import asyncio
 from decimal import Decimal
+import inspect
 import io
 from unittest.mock import AsyncMock, MagicMock, call, patch
 import uuid
@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from tests.common import db_mock
-from tests.common.db_integration import DatabaseIntegration
+from tests.common.db_integration import AsyncDatabaseIntegration
 
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_config_dao import ProjectConfigDAO
@@ -72,7 +72,12 @@ routes:
 _ROUTE_BUDGET = ProjectConfigFileIn(config_file=_VALID_WITH_ROUTE_BUDGET_LIMITING)
 
 
-class ProjectServiceTest(DatabaseIntegration):
+async def _settle(result):
+    """Await what an operation returns when it is async."""
+    return await result if inspect.isawaitable(result) else result
+
+
+class ProjectServiceTest(AsyncDatabaseIntegration):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -86,18 +91,18 @@ class ProjectServiceTest(DatabaseIntegration):
         out = self.svc.create_project(ProjectIn(name=name))
         return out, out.configs[0].uuid, out.configs[1].uuid
 
-    def _approve(self, project_uuid, config_uuid, config=None):
-        self.svc.update_config(
+    async def _approve(self, project_uuid, config_uuid, config=None):
+        await self.svc.update_config(
             project_uuid, config_uuid, config or ProjectConfigFileIn(config_file=_VALID)
         )
-        return self.svc.approve_config(project_uuid, config_uuid)
+        return await self.svc.approve_config(project_uuid, config_uuid)
 
-    def _serve(self, project_uuid, config_uuid, config=None):
-        self._approve(project_uuid, config_uuid, config)
-        return self.svc.serve_config(project_uuid, config_uuid)
+    async def _serve(self, project_uuid, config_uuid, config=None):
+        await self._approve(project_uuid, config_uuid, config)
+        return await self.svc.serve_config(project_uuid, config_uuid)
 
-    def _add_limit(self, project_uuid):
-        return self.svc.add_budget_limits_to_project(
+    async def _add_limit(self, project_uuid):
+        return await self.svc.add_budget_limits_to_project(
             project_uuid, db_mock.get_sample_project_budget_limits_in()
         )
 
@@ -107,7 +112,7 @@ class ProjectServiceTest(DatabaseIntegration):
 
     # --- create / update ---
 
-    def test_create_project_seeds_two_empty_draft_slots(self):
+    async def test_create_project_seeds_two_empty_draft_slots(self):
         out, _, _ = self._create()
 
         assert [c.slot for c in out.configs] == ['A', 'B']
@@ -117,7 +122,7 @@ class ProjectServiceTest(DatabaseIntegration):
         assert out.project_status == ProjectStatus.DEV
         assert out.served_config_uuid is None
 
-    def test_create_project_already_exists(self):
+    async def test_create_project_already_exists(self):
         # IntegrityError -> ProjectAlreadyExistsError mapping is a unit concern,
         # tested with a mocked DAO to stay independent of create_all metadata.
         svc = ProjectService(MagicMock(), MagicMock(), MagicMock())
@@ -127,10 +132,10 @@ class ProjectServiceTest(DatabaseIntegration):
         with pytest.raises(ProjectAlreadyExistsError):
             svc.create_project(ProjectIn(name='dup'))
 
-    def test_update_config_ok(self):
+    async def test_update_config_ok(self):
         out, a, _ = self._create()
 
-        res = self.svc.update_config(
+        res = await self.svc.update_config(
             out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
         )
 
@@ -139,9 +144,9 @@ class ProjectServiceTest(DatabaseIntegration):
         assert ca.config_status == ConfigStatus.DRAFT
         assert ca.updated_at is not None
 
-    def test_invalid_operations_raise(self):
+    async def test_invalid_operations_raise(self):
         out, a, b = self._create()
-        self._serve(out.uuid, a)
+        await self._serve(out.uuid, a)
         missing = uuid.uuid4()
         valid = ProjectConfigFileIn(config_file=_VALID)
         svc = self.svc
@@ -237,38 +242,36 @@ class ProjectServiceTest(DatabaseIntegration):
             ),
             (
                 'delete budget limit project not found',
-                lambda: asyncio.run(
-                    svc.delete_budget_limit_from_project(missing, uuid.uuid4())
-                ),
+                lambda: svc.delete_budget_limit_from_project(missing, uuid.uuid4()),
                 ProjectNotFoundError,
             ),
         ]
         for case, operation, error in cases:
             with self.subTest(case), pytest.raises(error):
-                operation()
+                await _settle(operation())
 
     # --- lifecycle ---
 
-    def test_approve_then_cancel(self):
+    async def test_approve_then_cancel(self):
         out, a, _ = self._create()
 
-        res = self._approve(out.uuid, a)
+        res = await self._approve(out.uuid, a)
         assert self._slot(res, a).config_status == ConfigStatus.READY_TO_SERVE
 
         res = self.svc.cancel_approval(out.uuid, a)
         assert self._slot(res, a).config_status == ConfigStatus.DRAFT
 
-    def test_serve_swap_and_unserve(self):
+    async def test_serve_swap_and_unserve(self):
         out, a, b = self._create()
-        self._approve(out.uuid, b)
+        await self._approve(out.uuid, b)
 
-        res = self._serve(out.uuid, a)
+        res = await self._serve(out.uuid, a)
         assert res.project_status == ProjectStatus.PROD
         assert res.served_config_uuid == a
         assert self._slot(res, a).config_status == ConfigStatus.SERVED
 
         # Serving the other slot swaps the displaced one back to draft
-        res = self.svc.serve_config(out.uuid, b)
+        res = await self.svc.serve_config(out.uuid, b)
         st = {c.uuid: c.config_status for c in res.configs}
         assert st == {a: ConfigStatus.DRAFT, b: ConfigStatus.SERVED}
         assert res.served_config_uuid == b
@@ -277,31 +280,33 @@ class ProjectServiceTest(DatabaseIntegration):
         assert res.project_status == ProjectStatus.DEV
         assert res.served_config_uuid is None
 
-    def test_delete_project(self):
+    async def test_delete_project(self):
         out, _, _ = self._create(name='reuse-me')
-        self._add_limit(out.uuid)
+        await self._add_limit(out.uuid)
         with pytest.raises(ProjectAlreadyExistsError):
             self.svc.create_project(ProjectIn(name='reuse-me'))
 
-        deleted = asyncio.run(self.svc.delete_project(out.uuid))
+        deleted = await self.svc.delete_project(out.uuid)
 
         assert deleted.uuid == out.uuid
         with pytest.raises(ProjectNotFoundError):
             self.svc.get_by_uuid(out.uuid)
-        assert self.svc.project_budget_limit_dao.get_by_project_uuid(out.uuid) == []
+        assert (
+            await self.svc.project_budget_limit_dao.get_by_project_uuid(out.uuid) == []
+        )
         # The name of a deleted project can be reused
         again = self.svc.create_project(ProjectIn(name='reuse-me'))
         assert again.uuid != out.uuid
         assert again.name == 'reuse-me'
 
-    def test_get_config(self):
+    async def test_get_config(self):
         out, a, _ = self._create()
         slot = self.svc.get_config(out.uuid, a)
         assert slot.uuid == a and slot.slot == 'A'
 
     # --- export / import ---
 
-    def test_export_config_names_the_file_by_status(self):
+    async def test_export_config_names_the_file_by_status(self):
         out, a, _ = self._create()
 
         content, filename = self.svc.export_config(out.uuid, a)
@@ -312,14 +317,14 @@ class ProjectServiceTest(DatabaseIntegration):
                 out.configs[0].config_file
             )
 
-        self._serve(out.uuid, a)
+        await self._serve(out.uuid, a)
 
         content, filename = self.svc.export_config(out.uuid, a)
         assert filename == 'proj_config.zip'
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             assert archive.namelist() == ['proj_config_A_served.yaml']
 
-    def test_export_all_configs_returns_zip_with_both_slots(self):
+    async def test_export_all_configs_returns_zip_with_both_slots(self):
         out, _, _ = self._create()
         content, filename = self.svc.export_all_configs(out.uuid)
         assert filename == 'proj_config.zip'
@@ -329,16 +334,16 @@ class ProjectServiceTest(DatabaseIntegration):
                 'proj_config_B_draft.yaml',
             ]
 
-    def test_export_all_configs_skips_empty_slots(self):
-        project = self.insert(
+    async def test_export_all_configs_skips_empty_slots(self):
+        project = await self.insert(
             db_mock.get_sample_project(uuid=uuid.uuid4(), name='partial')
         )
-        self.insert(
+        await self.insert(
             db_mock.get_sample_project_config(
                 project_uuid=project.uuid, slot=Slot.A, config_file=_VALID
             )
         )
-        self.insert(
+        await self.insert(
             db_mock.get_sample_project_config(
                 project_uuid=project.uuid, slot=Slot.B, config_file=None
             )
@@ -347,11 +352,11 @@ class ProjectServiceTest(DatabaseIntegration):
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             assert archive.namelist() == ['partial_config_A_draft.yaml']
 
-    def test_export_of_empty_configs_raises(self):
-        project = self.insert(
+    async def test_export_of_empty_configs_raises(self):
+        project = await self.insert(
             db_mock.get_sample_project(uuid=uuid.uuid4(), name='all-empty')
         )
-        config = self.insert(
+        config = await self.insert(
             db_mock.get_sample_project_config(
                 project_uuid=project.uuid, slot=Slot.A, config_file=None
             )
@@ -361,17 +366,19 @@ class ProjectServiceTest(DatabaseIntegration):
         with pytest.raises(ProjectConfigValidationError):
             self.svc.export_config(project.uuid, config.uuid)
 
-    def test_import_config_writes_draft(self):
+    async def test_import_config_writes_draft(self):
         out, a, _ = self._create()
-        res = self.svc.import_config(out.uuid, a, _VALID.encode())
+        res = await self.svc.import_config(out.uuid, a, _VALID.encode())
         ca = self._slot(res, a)
         assert ca.config_file == _VALID
         assert ca.config_status == ConfigStatus.DRAFT
         assert ca.updated_at is not None
 
-    def test_state_errors_are_409_with_their_code(self):
+    async def test_state_errors_are_409_with_their_code(self):
         out, a, _ = self._create()
-        self.svc.update_config(out.uuid, a, ProjectConfigFileIn(config_file=_VALID))
+        await self.svc.update_config(
+            out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
+        )
         cases = [
             (lambda: self.svc.serve_config(out.uuid, a), 'config_not_approved'),
             (
@@ -382,15 +389,15 @@ class ProjectServiceTest(DatabaseIntegration):
         ]
         for action, code in cases:
             with pytest.raises(ProjectConfigStateError) as exc_info:
-                action()
+                await _settle(action())
             assert (exc_info.value.status_code, exc_info.value.code) == (409, code)
 
-        self.svc.approve_config(out.uuid, a)
+        await self.svc.approve_config(out.uuid, a)
         with pytest.raises(ProjectConfigStateError) as exc_info:
-            self.svc.approve_config(out.uuid, a)
+            await self.svc.approve_config(out.uuid, a)
         assert exc_info.value.code == 'config_no_draft_to_approve'
 
-        self.svc.serve_config(out.uuid, a)
+        await self.svc.serve_config(out.uuid, a)
         for action, code in [
             (
                 lambda: self.svc.update_config(
@@ -404,32 +411,32 @@ class ProjectServiceTest(DatabaseIntegration):
             ),
         ]:
             with pytest.raises(ProjectConfigStateError) as exc_info:
-                action()
+                await _settle(action())
             assert (exc_info.value.status_code, exc_info.value.code) == (409, code)
 
     # --- listing / filters ---
 
-    def test_get_all_and_filters(self):
+    async def test_get_all_and_filters(self):
         served, a, _ = self._create(name='served')
-        self._serve(served.uuid, a)
+        await self._serve(served.uuid, a)
         self._create(name='dev')
 
         assert len(self.svc.get_all()) == 2
-        prod = self.svc.get_all_filtered(ProjectFilter.PROD)
+        prod = await self.svc.get_all_filtered(ProjectFilter.PROD)
         assert [p.uuid for p in prod] == [served.uuid]
-        dev = self.svc.get_all_filtered(ProjectFilter.DEV)
+        dev = await self.svc.get_all_filtered(ProjectFilter.DEV)
         assert served.uuid not in [p.uuid for p in dev]
         active = self.svc.get_all_active()
         assert [p.uuid for p in active] == [served.uuid]
 
-    def test_get_configs_filters_by_status(self):
+    async def test_get_configs_filters_by_status(self):
         # served-only: slot A served, slot B left as the untouched seed.
         served, a, _ = self._create(name='served')
-        self._serve(served.uuid, a)
+        await self._serve(served.uuid, a)
 
         # draft-only: slot A saved (still DRAFT), never approved/served.
         draft_proj, da, _ = self._create(name='draft')
-        self.svc.update_config(
+        await self.svc.update_config(
             draft_proj.uuid, da, ProjectConfigFileIn(config_file=_VALID)
         )
 
@@ -448,29 +455,29 @@ class ProjectServiceTest(DatabaseIntegration):
 
         assert self.svc.get_configs(ConfigListFilter.REQUEST_TO_PUBLISH) == []
 
-    def test_limits_are_included_only_when_asked(self):
+    async def test_limits_are_included_only_when_asked(self):
         out, _, _ = self._create(name='with-limits')
-        self._add_limit(out.uuid)
+        await self._add_limit(out.uuid)
 
         assert self.svc.get_by_uuid(out.uuid).limits is None
         assert [
             limit.window_size
-            for limit in self.svc.get_by_uuid(out.uuid, include_limits=True).limits
+            for limit in (await self.svc.get_by_uuid_with_limits(out.uuid)).limits
         ] == ['1 day']
-        [found] = [p for p in self.svc.get_all_filtered() if p.uuid == out.uuid]
+        [found] = [p for p in await self.svc.get_all_filtered() if p.uuid == out.uuid]
         assert found.limits is None
         [found] = [
             p
-            for p in self.svc.get_all_filtered(include_limits=True)
+            for p in await self.svc.get_all_filtered(include_limits=True)
             if p.uuid == out.uuid
         ]
         assert [limit.window_size for limit in found.limits] == ['1 day']
 
     # --- project budget limits ---
 
-    def test_add_budget_limits_then_update_a_value(self):
+    async def test_add_budget_limits_then_update_a_value(self):
         out, _, _ = self._create(name='budget-ok')
-        limits = self.svc.add_budget_limits_to_project(
+        limits = await self.svc.add_budget_limits_to_project(
             out.uuid,
             db_mock.get_sample_project_budget_limits_in(
                 limits=[
@@ -482,11 +489,11 @@ class ProjectServiceTest(DatabaseIntegration):
             ),
         )
         assert {limit.window_size for limit in limits} == {'1 day', '1 month'}
-        fetched = self.svc.get_budget_limits_for_project(out.uuid)
+        fetched = await self.svc.get_budget_limits_for_project(out.uuid)
         assert {limit.window_size for limit in fetched} == {'1 day', '1 month'}
         limit = next(lim for lim in limits if lim.window_size == '1 day')
 
-        updated = self.svc.update_budget_limit_value(
+        updated = await self.svc.update_budget_limit_value(
             out.uuid, limit.uuid, ProjectBudgetLimitValueIn(value=42.5)
         )
 
@@ -497,26 +504,28 @@ class ProjectServiceTest(DatabaseIntegration):
         assert updated.window_size == limit.window_size
         saved = {
             lim.uuid: lim.value
-            for lim in self.svc.get_budget_limits_for_project(out.uuid)
+            for lim in await self.svc.get_budget_limits_for_project(out.uuid)
         }
         assert saved[limit.uuid] == 42.5
 
-    def test_add_budget_limits_to_project_duplicate_window_raises(self):
+    async def test_add_budget_limits_to_project_duplicate_window_raises(self):
         out, _, _ = self._create(name='budget-dup')
-        self._add_limit(out.uuid)
+        await self._add_limit(out.uuid)
         with pytest.raises(ProjectBudgetLimitAlreadyExistsError):
-            self._add_limit(out.uuid)
+            await self._add_limit(out.uuid)
 
-    def test_add_budget_limits_conflict_names_the_published_routes(self):
+    async def test_add_budget_limits_conflict_names_the_published_routes(self):
         out, a, _ = self._create(name='budget-conflict-routes')
-        self._serve(out.uuid, a, _ROUTE_BUDGET)
+        await self._serve(out.uuid, a, _ROUTE_BUDGET)
         with pytest.raises(ProjectBudgetLimitConflictError) as exc_info:
-            self._add_limit(out.uuid)
+            await self._add_limit(out.uuid)
         assert exc_info.value.routes == ['test-route']
 
-    def test_budget_limits_with_the_same_window_and_another_algorithm_coexist(self):
+    async def test_budget_limits_with_the_same_window_and_another_algorithm_coexist(
+        self,
+    ):
         out, _, _ = self._create(name='budget-same-window')
-        added = self.svc.add_budget_limits_to_project(
+        added = await self.svc.add_budget_limits_to_project(
             out.uuid,
             ProjectBudgetLimitsIn(
                 limits=[
@@ -531,7 +540,7 @@ class ProjectServiceTest(DatabaseIntegration):
         )
         assert len(added) == 2
 
-    def test_budget_limit_conflicts_of_the_published_config(self):
+    async def test_budget_limit_conflicts_of_the_published_config(self):
         out, a, _ = self._create(name='budget-conflicts-published-only')
         conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
         assert (conflicts.published, conflicts.draft, conflicts.budget_routing) == (
@@ -540,30 +549,32 @@ class ProjectServiceTest(DatabaseIntegration):
             [],
         )
 
-        self._serve(out.uuid, a, _ROUTE_BUDGET)
+        await self._serve(out.uuid, a, _ROUTE_BUDGET)
 
         conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
         assert conflicts.published == ['test-route']
         assert conflicts.draft_configs == []
-        project = self.svc.get_by_uuid(out.uuid, include_limits=True)
+        project = await self.svc.get_by_uuid_with_limits(out.uuid)
         assert project.route_budgets.published == ['test-route']
         assert project.route_budgets.draft == []
         assert project.route_budgets.draft_configs == []
         assert self.svc.get_by_uuid(out.uuid).route_budgets is None
 
-    def test_budget_limit_conflicts_lists_published_and_draft_routes(self):
+    async def test_budget_limit_conflicts_lists_published_and_draft_routes(self):
         out, a, b = self._create(name='budget-conflicts')
-        self._serve(out.uuid, a, _ROUTE_BUDGET)
-        self.svc.update_config(out.uuid, b, _ROUTE_BUDGET)
+        await self._serve(out.uuid, a, _ROUTE_BUDGET)
+        await self.svc.update_config(out.uuid, b, _ROUTE_BUDGET)
         conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
         assert conflicts.published == ['test-route']
         assert conflicts.draft == ['test-route']
         assert conflicts.budget_routing == []
 
-    def test_budget_limit_conflicts_names_each_draft_slot_with_route_budgets(self):
+    async def test_budget_limit_conflicts_names_each_draft_slot_with_route_budgets(
+        self,
+    ):
         out, a, b = self._create(name='budget-conflicts-draft-slots')
-        self.svc.update_config(out.uuid, a, _ROUTE_BUDGET)
-        self.svc.update_config(
+        await self.svc.update_config(out.uuid, a, _ROUTE_BUDGET)
+        await self.svc.update_config(
             out.uuid,
             b,
             ProjectConfigFileIn(
@@ -580,70 +591,68 @@ class ProjectServiceTest(DatabaseIntegration):
         assert sorted(conflicts.draft) == ['other-route', 'test-route']
 
         # A draft without route budgets is skipped
-        self.svc.update_config(out.uuid, b, ProjectConfigFileIn(config_file=_VALID))
+        await self.svc.update_config(
+            out.uuid, b, ProjectConfigFileIn(config_file=_VALID)
+        )
 
         conflicts = self.svc.get_budget_limit_conflicts(out.uuid)
         assert [(c.config_uuid, c.slot) for c in conflicts.draft_configs] == [(a, 'A')]
 
-    def test_delete_budget_limit_from_project_ok(self):
+    async def test_delete_budget_limit_from_project_ok(self):
         out, _, _ = self._create(name='budget-delete-ok')
-        [limit] = self._add_limit(out.uuid)
-        deleted = asyncio.run(
-            self.svc.delete_budget_limit_from_project(out.uuid, limit.uuid)
-        )
+        [limit] = await self._add_limit(out.uuid)
+        deleted = await self.svc.delete_budget_limit_from_project(out.uuid, limit.uuid)
         assert deleted.uuid == limit.uuid
-        assert self.svc.get_budget_limits_for_project(out.uuid) == []
+        assert await self.svc.get_budget_limits_for_project(out.uuid) == []
 
-    def test_a_budget_limit_of_another_project_is_not_found(self):
+    async def test_a_budget_limit_of_another_project_is_not_found(self):
         owner, _, _ = self._create(name='budget-owner')
         other, _, _ = self._create(name='budget-other')
-        [limit] = self._add_limit(owner.uuid)
+        [limit] = await self._add_limit(owner.uuid)
 
         for limit_uuid in (limit.uuid, uuid.uuid4()):
             with self.subTest(limit_uuid=limit_uuid):
                 with pytest.raises(ProjectBudgetLimitNotFoundError):
-                    asyncio.run(
-                        self.svc.delete_budget_limit_from_project(
-                            other.uuid, limit_uuid
-                        )
+                    await self.svc.delete_budget_limit_from_project(
+                        other.uuid, limit_uuid
                     )
                 with pytest.raises(ProjectBudgetLimitNotFoundError):
-                    self.svc.update_budget_limit_value(
+                    await self.svc.update_budget_limit_value(
                         other.uuid, limit_uuid, ProjectBudgetLimitValueIn(value=1)
                     )
 
     # --- reverse validation: route config vs. existing project budget limit ---
 
-    def test_saving_a_route_budget_is_rejected_once_the_project_has_one(self):
+    async def test_saving_a_route_budget_is_rejected_once_the_project_has_one(self):
         out, a, _ = self._create(name='route-conflict-update')
-        self._add_limit(out.uuid)
+        await self._add_limit(out.uuid)
 
         with pytest.raises(ProjectConfigValidationError) as exc_info:
-            self.svc.update_config(out.uuid, a, _ROUTE_BUDGET)
+            await self.svc.update_config(out.uuid, a, _ROUTE_BUDGET)
         assert exc_info.value.routes == ['test-route']
         with pytest.raises(ProjectConfigValidationError):
-            self.svc.import_config(
+            await self.svc.import_config(
                 out.uuid, a, _VALID_WITH_ROUTE_BUDGET_LIMITING.encode()
             )
         # Guards against over-rejection: a project budget limit alone (no route
         # budget_limiting in the submitted config) must not block saving.
-        res = self.svc.update_config(
+        res = await self.svc.update_config(
             out.uuid, a, ProjectConfigFileIn(config_file=_VALID)
         )
         assert self._slot(res, a).config_file == _VALID
 
-    def test_publishing_a_route_budget_is_rejected_once_the_project_has_one(self):
+    async def test_publishing_a_route_budget_is_rejected_once_the_project_has_one(self):
         out, a, b = self._create(name='route-conflict-publish')
-        self.svc.update_config(out.uuid, a, _ROUTE_BUDGET)
-        self._approve(out.uuid, b, _ROUTE_BUDGET)
+        await self.svc.update_config(out.uuid, a, _ROUTE_BUDGET)
+        await self._approve(out.uuid, b, _ROUTE_BUDGET)
 
         # Allowed while only unpublished configs set a route budget
-        assert len(self._add_limit(out.uuid)) == 1
+        assert len(await self._add_limit(out.uuid)) == 1
 
         with pytest.raises(ProjectConfigValidationError):
-            self.svc.approve_config(out.uuid, a)
+            await self.svc.approve_config(out.uuid, a)
         with pytest.raises(ProjectConfigValidationError):
-            self.svc.serve_config(out.uuid, b)
+            await self.svc.serve_config(out.uuid, b)
 
 
 class TestBudgetLimitRedisClear:
@@ -669,14 +678,14 @@ class TestBudgetLimitRedisClear:
             )
             for window in limits
         ]
-        project_budget_limit_dao.get_by_project_uuid = MagicMock(return_value=limits)
-        project_budget_limit_dao.delete_by_project_uuid = MagicMock(
+        project_budget_limit_dao.get_by_project_uuid = AsyncMock(return_value=limits)
+        project_budget_limit_dao.delete_by_project_uuid = AsyncMock(
             return_value=len(limits)
         )
-        project_budget_limit_dao.get_by_uuid = MagicMock(
+        project_budget_limit_dao.get_by_uuid = AsyncMock(
             return_value=limits[0] if limits else None
         )
-        project_budget_limit_dao.delete_by_uuid = MagicMock(return_value=1)
+        project_budget_limit_dao.delete_by_uuid = AsyncMock(return_value=1)
         service = ProjectService(
             project_dao, project_config_dao, project_budget_limit_dao
         )

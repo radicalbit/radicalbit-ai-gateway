@@ -11,6 +11,7 @@ import pytest
 
 from tests.common.db_integration_ch import DatabaseIntegrationClickhouse
 from tests.common.db_mock import get_sample_event, get_sample_request_event
+from tests.common.worker import in_worker
 
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
@@ -128,7 +129,7 @@ class TestChartTimezoneIntegration(DatabaseIntegrationClickhouse):
                     [_token_event(route_name, ts, 'INPUT', 1000, c) for ts, c in events]
                 )
 
-                result = self.event_service.get_costs_chart_data(
+                result = in_worker(self.event_service.get_costs_chart_data)(
                     None,
                     route_names=[route_name],
                     _from=_iso(_from),

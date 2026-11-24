@@ -14,6 +14,7 @@ from tests.common.mocked_gateway_config import (
     get_gateway_with_routing,
     get_global_guardrails,
 )
+from tests.common.worker import in_worker
 
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
@@ -92,6 +93,9 @@ class EventServiceTest(unittest.TestCase):
         self.request_event_dao: RequestEventDAO = MagicMock(spec_set=RequestEventDAO)
         self.key_service: KeyService = MagicMock(spec_set=KeyService)
         self.group_service: GroupService = MagicMock(spec_set=GroupService)
+        # No credential or group is named unless a test says so
+        self.key_service.get_names_by_uuids.return_value = {}
+        self.group_service.get_names_by_uuids.return_value = {}
 
         global_guardrails = get_global_guardrails()
 
@@ -249,7 +253,7 @@ class EventServiceTest(unittest.TestCase):
         self.request_event_dao.get_request_stats_global = MagicMock(
             return_value=RequestStats()
         )
-        res = self.event_service.get_total_counter(
+        res = in_worker(self.event_service.get_total_counter)(
             _from=None,
             _to=None,
             project_uuid=self.TEST_PROJECT_UUID,
@@ -315,7 +319,7 @@ class EventServiceTest(unittest.TestCase):
                 successful_requests=10, error_requests=1, total_requests=11
             ),
         )
-        res = self.event_service.get_total_counter_per_route(
+        res = in_worker(self.event_service.get_total_counter_per_route)(
             config=self.gateway_config,
             include_groups=False,
             _from=None,
@@ -368,7 +372,7 @@ class EventServiceTest(unittest.TestCase):
                 successful_requests=10, error_requests=1, total_requests=11
             ),
         )
-        res = self.event_service.get_counter_per_route(
+        res = in_worker(self.event_service.get_counter_per_route)(
             route_name='route-A',
             config=self.gateway_config,
             include_groups=False,
@@ -457,12 +461,12 @@ class EventServiceTest(unittest.TestCase):
         self.event_dao.get_latest_n_per_event_type = MagicMock(
             return_value=mocked_events
         )
-        self.key_service.get_names_by_uuids = MagicMock(
+        self.key_service.get_names_by_uuids = AsyncMock(
             return_value={
                 uuid.UUID('00000000-0000-0000-0000-000000000000'): 'fake-name',
             }
         )
-        res = self.event_service.get_latest_n_per_event_type(
+        res = in_worker(self.event_service.get_latest_n_per_event_type)(
             self.TEST_PROJECT_UUID,
             self.gateway_config,
             'route-A',
@@ -603,9 +607,9 @@ class EventServiceTest(unittest.TestCase):
                 ),
             ]
         )
-        self.key_service.get_names_by_uuids = MagicMock(return_value={key: 'alice'})
+        self.key_service.get_names_by_uuids = AsyncMock(return_value={key: 'alice'})
 
-        res = self.event_service.get_latest_n_per_event_type(
+        res = in_worker(self.event_service.get_latest_n_per_event_type)(
             self.TEST_PROJECT_UUID, self.gateway_config, 'route-A', 3, None, None
         )
 
@@ -642,9 +646,9 @@ class EventServiceTest(unittest.TestCase):
         says, so `limits` is a list even when the route limits nothing.
         """
         self.event_dao.get_latest_n_per_event_type = MagicMock(return_value=[])
-        self.key_service.get_names_by_uuids = MagicMock(return_value={})
+        self.key_service.get_names_by_uuids = AsyncMock(return_value={})
 
-        res = self.event_service.get_latest_n_per_event_type(
+        res = in_worker(self.event_service.get_latest_n_per_event_type)(
             self.TEST_PROJECT_UUID, self.gateway_config, 'route-A', 10, None, None
         )
 
@@ -685,11 +689,11 @@ class EventServiceTest(unittest.TestCase):
         self.event_dao.get_latest_n_per_event_type = MagicMock(
             return_value=mocked_events
         )
-        self.key_service.get_names_by_uuids = MagicMock(
+        self.key_service.get_names_by_uuids = AsyncMock(
             return_value={api_key_uuid: 'fake-name'}
         )
 
-        res = self.event_service.get_latest_n_per_event_type(
+        res = in_worker(self.event_service.get_latest_n_per_event_type)(
             self.TEST_PROJECT_UUID,
             config,
             'route-duration',
@@ -738,14 +742,14 @@ class EventServiceTest(unittest.TestCase):
         ]
 
         self.event_dao.get_costs_chart_data = MagicMock(return_value=mocked_chart_data)
-        self.group_service.get_names_by_uuids = MagicMock(
+        self.group_service.get_names_by_uuids = AsyncMock(
             return_value={
                 UUID(uuid_1): 'group-1',
                 UUID(uuid_2): 'group-2',
             }
         )
 
-        res = self.event_service.get_costs_chart_data(
+        res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=base_time - datetime.timedelta(hours=1),
             _to=base_time + datetime.timedelta(hours=11),
@@ -827,14 +831,14 @@ class EventServiceTest(unittest.TestCase):
         ]
 
         self.event_dao.get_costs_chart_data = MagicMock(return_value=mocked_chart_data)
-        self.key_service.get_names_by_uuids = MagicMock(
+        self.key_service.get_names_by_uuids = AsyncMock(
             return_value={
                 UUID(uuid_1): 'key-1',
                 UUID(uuid_2): 'key-2',
             }
         )
 
-        res = self.event_service.get_costs_chart_data(
+        res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=base_time,
             _to=base_time + datetime.timedelta(hours=3),
@@ -877,13 +881,13 @@ class EventServiceTest(unittest.TestCase):
         ]
 
         self.event_dao.get_costs_chart_data = MagicMock(return_value=mocked_chart_data)
-        self.key_service.get_names_by_uuids = MagicMock(
+        self.key_service.get_names_by_uuids = AsyncMock(
             return_value={
                 UUID(uuid_1): 'api-key-1',
             }
         )
 
-        res = self.event_service.get_costs_chart_data(
+        res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=base_time,
             _to=base_time + datetime.timedelta(days=3),
@@ -910,7 +914,7 @@ class EventServiceTest(unittest.TestCase):
 
         self.event_dao.get_costs_chart_data = MagicMock(return_value=[])
 
-        res = self.event_service.get_costs_chart_data(
+        res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=base_time,
             _to=base_time + datetime.timedelta(days=7),
@@ -929,7 +933,7 @@ class EventServiceTest(unittest.TestCase):
 
         self.event_dao.get_costs_chart_data = MagicMock(return_value=[])
 
-        res = self.event_service.get_costs_chart_data(
+        res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=None,
             _to=base_time + datetime.timedelta(days=7),
@@ -964,14 +968,14 @@ class EventServiceTest(unittest.TestCase):
             ),
         ]
         self.event_dao.get_costs_chart_data = MagicMock(return_value=mocked_chart_data)
-        self.key_service.get_names_by_uuids = MagicMock(
+        self.key_service.get_names_by_uuids = AsyncMock(
             return_value={
                 UUID(uuid_1): 'api-key-1',
                 UUID(uuid_2): 'api-key-2',
             }
         )
 
-        res = self.event_service.get_costs_chart_data(
+        res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=None,
             _to=base_time + datetime.timedelta(days=7),
@@ -1019,7 +1023,7 @@ class EventServiceTest(unittest.TestCase):
             return_value=mocked_chart_data
         )
 
-        res = self.event_service.get_costs_chart_data_by_route(
+        res = in_worker(self.event_service.get_costs_chart_data_by_route)(
             entity_column='API_KEY_UUID',
             entity_value=key_uuid,
             route_names=['route-A', 'route-B'],
@@ -1053,7 +1057,7 @@ class EventServiceTest(unittest.TestCase):
     def test_get_costs_chart_data_by_route_empty(self):
         self.event_dao.get_costs_chart_data_by_route = MagicMock(return_value=[])
 
-        res = self.event_service.get_costs_chart_data_by_route(
+        res = in_worker(self.event_service.get_costs_chart_data_by_route)(
             entity_column='GROUP_UUID',
             entity_value='550e8400-e29b-41d4-a716-446655440001',
             route_names=None,
@@ -1092,7 +1096,7 @@ class EventServiceTest(unittest.TestCase):
 
         self.event_dao.get_costs_chart_data = MagicMock(return_value=mocked_chart_data)
 
-        res = self.event_service.get_costs_chart_data(
+        res = in_worker(self.event_service.get_costs_chart_data)(
             route_names=['rb-gateway'],
             _from=base_time - datetime.timedelta(hours=1),
             _to=base_time + datetime.timedelta(hours=11),
@@ -1366,7 +1370,7 @@ class EventServiceTest(unittest.TestCase):
         self.request_event_dao.get_error_breakdown = MagicMock(return_value=[])
 
         tags = ['env=prod', 'cost_center=retail']
-        self.event_service.get_total_counter(
+        in_worker(self.event_service.get_total_counter)(
             project_uuid=self.TEST_PROJECT_UUID,
             config=self.gateway_config,
             _from=None,

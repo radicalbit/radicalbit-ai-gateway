@@ -1,6 +1,8 @@
+from collections.abc import Awaitable, Callable
 import logging
 from typing import TypeVar
 
+import anyio
 from sqlalchemy import ColumnElement, Delete, MetaData, Select, Update, create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.declarative import DeferredReflection
@@ -20,6 +22,21 @@ def filter_if(stmt: Stmt, condition: bool, *clauses: ColumnElement[bool]) -> Stm
     The 2.0 ``select()`` twin of ``CustomQuery.filter_if``.
     """
     return stmt.where(*clauses) if condition else stmt
+
+
+R = TypeVar('R')
+
+
+def run_from_worker(async_fn: Callable[..., Awaitable[R]], *args) -> R:
+    """Run an async DB call on the event loop from sync code in a worker thread,
+    and wait for its result.
+
+    For sync routes that stay sync (their ClickHouse or not yet migrated work
+    runs in FastAPI's thread pool) but read a migrated DAO: the pooled
+    connections belong to the event loop, so the query must run there.
+    Raises RuntimeError when called from the event loop itself.
+    """
+    return anyio.from_thread.run(async_fn, *args)
 
 
 # Same pool for the async and the sync engine.

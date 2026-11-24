@@ -14,51 +14,55 @@ class ProjectBudgetLimitDAO:
     def __init__(self, database: Database):
         self.db = database
 
-    def insert(self, project_budget_limit: ProjectBudgetLimit) -> ProjectBudgetLimit:
-        with self.db.begin_session() as session:
+    async def insert(
+        self, project_budget_limit: ProjectBudgetLimit
+    ) -> ProjectBudgetLimit:
+        async with self.db.begin_session() as session:
             session.add(project_budget_limit)
-            session.flush()
+            await session.flush()
             return project_budget_limit
 
-    def insert_many(
+    async def insert_many(
         self, project_budget_limits: list[ProjectBudgetLimit]
     ) -> list[ProjectBudgetLimit]:
         """Insert all limits in a single transaction: either all succeed, or
         none do (e.g. if one duplicates an existing or another batch entry).
         """
-        with self.db.begin_session() as session:
+        async with self.db.begin_session() as session:
             session.add_all(project_budget_limits)
-            session.flush()
+            await session.flush()
             return project_budget_limits
 
-    def get_by_uuid(self, limit_uuid: UUID) -> ProjectBudgetLimit | None:
-        with self.db.begin_session() as session:
+    async def get_by_uuid(self, limit_uuid: UUID) -> ProjectBudgetLimit | None:
+        async with self.db.begin_session() as session:
             stmt = select(ProjectBudgetLimit).where(
                 ProjectBudgetLimit.uuid == limit_uuid
             )
-            return session.scalar(stmt)
+            return await session.scalar(stmt)
 
-    def get_by_project_uuid(self, project_uuid: UUID) -> Sequence[ProjectBudgetLimit]:
-        with self.db.begin_session() as session:
+    async def get_by_project_uuid(
+        self, project_uuid: UUID
+    ) -> Sequence[ProjectBudgetLimit]:
+        async with self.db.begin_session() as session:
             stmt = select(ProjectBudgetLimit).where(
                 ProjectBudgetLimit.project_uuid == project_uuid
             )
-            return session.scalars(stmt).all()
+            return (await session.scalars(stmt)).all()
 
-    def get_all_by_project_uuids(
+    async def get_all_by_project_uuids(
         self, project_uuids: list[UUID]
     ) -> Sequence[ProjectBudgetLimit]:
         if not project_uuids:
             return []
-        with self.db.begin_session() as session:
+        async with self.db.begin_session() as session:
             stmt = select(ProjectBudgetLimit).where(
                 ProjectBudgetLimit.project_uuid.in_(project_uuids)
             )
-            return session.scalars(stmt).all()
+            return (await session.scalars(stmt)).all()
 
-    def update_max_value(self, limit_uuid: UUID, max_value: float) -> None:
-        with self.db.begin_session() as session:
-            session.execute(
+    async def update_max_value(self, limit_uuid: UUID, max_value: float) -> None:
+        async with self.db.begin_session() as session:
+            await session.execute(
                 update(ProjectBudgetLimit)
                 .where(ProjectBudgetLimit.uuid == limit_uuid)
                 .values(
@@ -67,16 +71,16 @@ class ProjectBudgetLimitDAO:
                 )
             )
 
-    def delete_by_uuid(self, limit_uuid: UUID) -> int:
-        with self.db.begin_session() as session:
+    async def delete_by_uuid(self, limit_uuid: UUID) -> int:
+        async with self.db.begin_session() as session:
             query = delete(ProjectBudgetLimit).where(
                 ProjectBudgetLimit.uuid == limit_uuid
             )
-            return session.execute(query).rowcount
+            return (await session.execute(query)).rowcount
 
-    def delete_by_project_uuid(self, project_uuid: UUID) -> int:
-        with self.db.begin_session() as session:
+    async def delete_by_project_uuid(self, project_uuid: UUID) -> int:
+        async with self.db.begin_session() as session:
             query = delete(ProjectBudgetLimit).where(
                 ProjectBudgetLimit.project_uuid == project_uuid
             )
-            return session.execute(query).rowcount
+            return (await session.execute(query)).rowcount

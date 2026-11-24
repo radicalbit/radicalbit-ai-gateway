@@ -1,10 +1,12 @@
 import datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 from fastapi_pagination import Page, Params
 import pytest
+
+from tests.common.worker import in_worker
 
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.models.event import InvocationChartDataPoint
@@ -73,7 +75,7 @@ def chart(service, method, points, **kwargs):
         **(entity if method == BY_ENTITY else {}),
         **kwargs,
     }
-    return getattr(service, method)(**args)
+    return in_worker(getattr(service, method))(**args)
 
 
 def test_key_usage_rows_become_dtos_in_the_dao_page_envelope():
@@ -240,7 +242,7 @@ def test_a_key_or_group_is_named_and_carries_its_uuid(
 ):
     service = _service()
     lookup = service.key_service if group_by == 'keys' else service.group_service
-    lookup.get_names_by_uuids = MagicMock(return_value=names)
+    lookup.get_names_by_uuids = AsyncMock(return_value=names)
     extra = {'entity_value': str(uuid)} if method == BY_ENTITY else {}
 
     res = chart(
@@ -259,7 +261,7 @@ def test_a_key_or_group_is_named_and_carries_its_uuid(
 def test_two_groups_sharing_a_name_stay_two_series():
     service = _service()
     other = UUID('550e8400-e29b-41d4-a716-446655440009')
-    service.group_service.get_names_by_uuids = MagicMock(
+    service.group_service.get_names_by_uuids = AsyncMock(
         return_value={GROUP_UUID: 'retail', other: 'retail'}
     )
 
