@@ -755,6 +755,10 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
                 (r.span_name, r.p50) for r in dao.get_span_latencies(**filters)
             ],
             'latencies': dao.get_latencies(**filters).p50,
+            'category_latencies': [
+                (r.category, r.p50)
+                for r in dao.get_category_latencies(**filters, include_others=True)
+            ],
             'chart': sum(
                 p.total_requests
                 for p in dao.get_traces_chart_data(**filters, granularity='hours')
@@ -778,6 +782,7 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
         assert empty['span_latencies'] == []
         # ClickHouse returns nan for empty quantile results
         assert empty['latencies'] is None or math.isnan(empty['latencies'])
+        assert empty['category_latencies'] == []
         assert empty['chart'] == 0
         assert empty['traces'] == []
 
@@ -813,6 +818,9 @@ class OtelTracesDAOTest(DatabaseIntegrationClickhouse):
                     ('invoke', pytest.approx(100.0, abs=1.0))
                 ]
                 assert res['latencies'] == pytest.approx(100.0, abs=1.0)
+                assert res['category_latencies'] == [
+                    ('other', pytest.approx(100.0, abs=1.0))
+                ]
                 assert res['chart'] == 1
                 assert res['traces'] == ['kept']
                 self.clean()
