@@ -1,14 +1,15 @@
 import uuid
 
-from clickhouse_sqlalchemy.engines import MergeTree
-from clickhouse_sqlalchemy.types import (
+from clickhouse_connect.cc_sqlalchemy.engines import MergeTree
+from clickhouse_connect.cc_sqlalchemy.types import (
     UUID,
     DateTime64,
     LowCardinality,
     Nullable,
+    String,
     UInt64,
 )
-from sqlalchemy import Column, Date, String, func
+from sqlalchemy import Column, Date, func
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseBaseTable
 
@@ -39,6 +40,6 @@ class Alert(ClickHouseBaseTable):
                 Column('TIMESTAMP', DateTime64(9, timezone='UTC'))
             ),
             order_by=('RULE_UUID', 'TIMESTAMP'),
-            index_granularity=8192,
+            settings={'index_granularity': 8192},
         ),
     )

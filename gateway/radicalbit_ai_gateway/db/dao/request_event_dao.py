@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi_pagination import Page, Params
 from pydantic import BaseModel
-from sqlalchemy import Float, Row, func as F, select, text
+from sqlalchemy import Float, Row, desc, func as F, select
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseDatabase
 from radicalbit_ai_gateway.db.dao.tags_filter import add_tags_filter
@@ -78,7 +78,7 @@ class RequestEventDAO:
             ),
             F.count().label('total_requests'),
             # nullIf converts epoch (returned by MAX on empty result sets) to NULL
-            F.nullIf(F.max(T.c['TIMESTAMP']), text('toDateTime(0)')).label(
+            F.nullIf(F.max(T.c['TIMESTAMP']), F.toDateTime(0)).label(
                 'last_request_timestamp'
             ),
         ]
@@ -138,8 +138,8 @@ class RequestEventDAO:
             )
             .select_from(RequestEvent)
             .where(*conditions)
-            .group_by(text('bucket'))
-            .order_by(text('bucket'))
+            .group_by('bucket')
+            .order_by('bucket')
         )
 
         with self.db.begin_session() as session:
@@ -184,8 +184,8 @@ class RequestEventDAO:
             )
             .select_from(RequestEvent)
             .where(*conditions)
-            .group_by(text('bucket'))
-            .order_by(text('bucket'))
+            .group_by('bucket')
+            .order_by('bucket')
         )
 
         with self.db.begin_session() as session:
@@ -218,7 +218,7 @@ class RequestEventDAO:
             .select_from(RequestEvent)
             .where(*conditions)
             .group_by(T.c['ROUTE_NAME'])
-            .order_by(text('total_requests DESC'))
+            .order_by(desc('total_requests'))
             .limit(1)
         )
 
@@ -255,7 +255,7 @@ class RequestEventDAO:
             .where(*conditions)
             .group_by(T.c['ROUTE_NAME'])
             .having(non_succeeded_condition > 0)
-            .order_by(text('error_perc DESC'))
+            .order_by(desc('error_perc'))
             .limit(1)
         )
 
@@ -298,8 +298,8 @@ class RequestEventDAO:
             )
             .select_from(RequestEvent)
             .where(*bucket_conditions)
-            .group_by(text('bucket'))
-            .order_by(text('bucket'))
+            .group_by('bucket')
+            .order_by('bucket')
         )
 
         with self.db.begin_session() as session:
@@ -377,7 +377,7 @@ class RequestEventDAO:
             .where(*conditions)
             .group_by(T.c['ROUTE_NAME'], T.c['ERROR_TYPE'])
             # ERROR_TYPE breaks ties, so equal counts always list the same way.
-            .order_by(text('count DESC'), T.c['ERROR_TYPE'])
+            .order_by(desc('count'), T.c['ERROR_TYPE'])
         )
         errors: dict[str, list[ErrorDetail]] = {}
         with self.db.begin_session() as session:
@@ -431,7 +431,7 @@ class RequestEventDAO:
             .where(*conditions)
             .group_by(T.c['ERROR_TYPE'])
             # ERROR_TYPE breaks ties, so equal counts always list the same way.
-            .order_by(text('count DESC'), T.c['ERROR_TYPE'])
+            .order_by(desc('count'), T.c['ERROR_TYPE'])
         )
 
         with self.db.begin_session() as session:
@@ -492,8 +492,8 @@ class RequestEventDAO:
             select(hour.label('hour'), F.count().label('requests'))
             .select_from(RequestEvent)
             .where(*conditions)
-            .group_by(text('hour'))
-            .order_by(text('hour DESC'))
+            .group_by('hour')
+            .order_by(desc('hour'))
         )
         with self.db.begin_session() as session:
             rows = session.execute(hours_stmt).all()

@@ -142,8 +142,8 @@ spec:
                   {{- end }}
             - name: CLICKHOUSE_DB_HOST
               value: {{ .Values.clickhouse.host }}
-            - name: CLICKHOUSE_DB_PORT
-              value: {{ .Values.clickhouse.port | quote }}
+            - name: CLICKHOUSE_DB_HTTP_PORT
+              value: {{ .Values.clickhouse.nativeProtocolPort | quote }}
             - name: CLICKHOUSE_DB_USER
               valueFrom:
                 secretKeyRef:

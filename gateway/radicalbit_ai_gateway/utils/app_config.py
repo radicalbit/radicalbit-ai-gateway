@@ -23,7 +23,7 @@ class HealthCheckFilter(logging.Filter):
 
 class ClickHouseConfig(BaseSettings):
     clickhouse_db_host: str = 'localhost'
-    clickhouse_db_port: int = 9002
+    clickhouse_db_http_port: int = 8123
     clickhouse_db_user: str = 'default'
     clickhouse_db_pwd: str = 'default'
     clickhouse_db_name: str = 'default'

@@ -1,17 +1,18 @@
 import uuid
 
-from clickhouse_sqlalchemy.engines import MergeTree
-from clickhouse_sqlalchemy.types import (
+from clickhouse_connect.cc_sqlalchemy.engines import MergeTree
+from clickhouse_connect.cc_sqlalchemy.types import (
     UUID,
     Array,
     DateTime64,
     Decimal,
-    Float,
+    Float64,
     LowCardinality,
     Map,
     Nullable,
+    String,
 )
-from sqlalchemy import Boolean, Column, Date, String, func
+from sqlalchemy import Boolean, Column, Date, func
 
 from radicalbit_ai_gateway.db.clickhouse_database import ClickHouseBaseTable
 
@@ -50,7 +51,7 @@ class Event(ClickHouseBaseTable):
         'ROUTING_SELECTED_MODEL_ID', LowCardinality(String), default=''
     )
     tags = Column('TAGS', Array(String), default=[])
-    value = Column('VALUE', Float, default=1.0)
+    value = Column('VALUE', Float64, default=1.0)
     cost = Column('COST', Decimal(64, 9), default=0.0)
     mcp_method = Column('MCP_METHOD', LowCardinality(String), default='')
     mcp_alias = Column('MCP_ALIAS', LowCardinality(String), default='')
@@ -67,6 +68,6 @@ class Event(ClickHouseBaseTable):
                 'API_KEY_UUID',
                 'GROUP_UUID',
             ),
-            index_granularity=8192,
+            settings={'index_granularity': 8192},
         ),
     )
