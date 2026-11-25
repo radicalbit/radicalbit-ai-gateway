@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi_pagination import Page, Params
 
+from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.models.event_dto import UsageCostsDTO
 from radicalbit_ai_gateway.models.mcp_usage_dto import McpKeyUsageDTO
 from radicalbit_ai_gateway.services.event_service import EventService
@@ -36,7 +37,7 @@ class UsageRoute:
             _with_saved_tokens: bool = Query(False),
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 return UsageCostsDTO(total=0.0, routes=[])
@@ -64,7 +65,7 @@ class UsageRoute:
             _limit: Annotated[int, Query(ge=1, le=100)] = 50,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             return mcp_usage_service.get_mcp_key_usage(
                 project_uuid=project_uuid,
                 route_names=routes,

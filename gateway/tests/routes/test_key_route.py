@@ -496,7 +496,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
         key_out = KeyFullOut.from_key_obscured(
             db_mock.get_sample_key(expires_on=expires_on)
         )
-        self.key_service.create_key = MagicMock(return_value=key_out)
+        self.key_service.create_key = AsyncMock(return_value=key_out)
         return key_out
 
     @freeze_time('2026-11-01 12:00:00')
@@ -546,8 +546,8 @@ class TestKeyRouteExpiry(unittest.TestCase):
         expired = KeyFullOut.from_key_obscured(
             db_mock.get_sample_key(expires_on=datetime.date(2026, 11, 10))
         )
-        self.key_service.get_key_by_uuid = MagicMock(return_value=expired)
-        self.key_service.get_all = MagicMock(return_value=[expired])
+        self.key_service.get_key_by_uuid = AsyncMock(return_value=expired)
+        self.key_service.get_all = AsyncMock(return_value=[expired])
 
         one = self.client.get(f'{self.prefix}/keys/{expired.uuid}').json()
         assert one['expiresOn'] == '2026-11-10'
@@ -559,7 +559,7 @@ class TestKeyRouteExpiry(unittest.TestCase):
 
     def test_update_cannot_change_the_expiry_date(self):
         key = db_mock.get_sample_key()
-        self.key_service.update_key_name = MagicMock()
+        self.key_service.update_key_name = AsyncMock()
         res = self.client.patch(
             f'{self.prefix}/keys/{key.uuid}',
             json={'name': 'renamed', 'expiresOn': '2099-01-01'},
@@ -588,18 +588,18 @@ class TestKeyRouteExpiredIsDeleteOrUnassignOnly(unittest.TestCase):
         self.key = db_mock.get_sample_key(uuid=self.key_uuid, expires_on=EXPIRES_ON)
 
         self.key_dao = MagicMock(spec_set=KeyDAO)
-        self.key_dao.get_by_uuid = MagicMock(side_effect=lambda _: self.key)
-        self.key_dao.update_key_name = MagicMock(return_value=1)
-        self.key_dao.assign_group = MagicMock(side_effect=lambda **_: self.key)
-        self.key_dao.remove_group = MagicMock(return_value=1)
-        self.key_dao.delete_by_uuid = MagicMock(return_value=1)
+        self.key_dao.get_by_uuid = AsyncMock(side_effect=lambda _: self.key)
+        self.key_dao.update_key_name = AsyncMock(return_value=1)
+        self.key_dao.assign_group = AsyncMock(side_effect=lambda **_: self.key)
+        self.key_dao.remove_group = AsyncMock(return_value=1)
+        self.key_dao.delete_by_uuid = AsyncMock(return_value=1)
         group_dao = MagicMock(spec_set=GroupDAO)
-        group_dao.get_by_uuid = MagicMock(return_value=self.group)
+        group_dao.get_by_uuid = AsyncMock(return_value=self.group)
         self.key_limit_dao = MagicMock(spec_set=KeyLimitDAO)
-        self.key_limit_dao.get_by_key_uuid = MagicMock(return_value=[])
-        self.key_limit_dao.insert_many = MagicMock(return_value=[])
-        self.key_limit_dao.get_by_uuid = MagicMock(return_value=self.limit)
-        self.key_limit_dao.delete_by_uuid = MagicMock(return_value=1)
+        self.key_limit_dao.get_by_key_uuid = AsyncMock(return_value=[])
+        self.key_limit_dao.insert_many = AsyncMock(return_value=[])
+        self.key_limit_dao.get_by_uuid = AsyncMock(return_value=self.limit)
+        self.key_limit_dao.delete_by_uuid = AsyncMock(return_value=1)
 
         self.key_service = KeyService(
             key_dao=self.key_dao,
@@ -710,11 +710,11 @@ class TestKeyRouteRotation(unittest.TestCase):
         ]
 
         self.key_dao = MagicMock(spec_set=KeyDAO)
-        self.key_dao.get_by_uuid = MagicMock(side_effect=lambda _: self.key)
-        self.key_dao.rotate = MagicMock(side_effect=self._apply_rotation)
-        self.key_dao.end_grace_period = MagicMock(side_effect=self._apply_end_grace)
-        self.key_dao.delete_by_uuid = MagicMock(side_effect=self._apply_delete)
-        self.key_dao.get_key_by_hashed_key = MagicMock(side_effect=self._lookup)
+        self.key_dao.get_by_uuid = AsyncMock(side_effect=lambda _: self.key)
+        self.key_dao.rotate = AsyncMock(side_effect=self._apply_rotation)
+        self.key_dao.end_grace_period = AsyncMock(side_effect=self._apply_end_grace)
+        self.key_dao.delete_by_uuid = AsyncMock(side_effect=self._apply_delete)
+        self.key_dao.get_key_by_hashed_key = AsyncMock(side_effect=self._lookup)
 
         # A known new value, so the tests never hash what the response returns
         api_key_security = MagicMock(spec_set=ApiKeySecurity)
@@ -881,7 +881,7 @@ class TestKeyRouteRotation(unittest.TestCase):
         self.key_dao.rotate.assert_not_called()
 
     def test_a_rotation_lost_to_a_concurrent_one_is_a_conflict(self):
-        self.key_dao.rotate = MagicMock(return_value=None)
+        self.key_dao.rotate = AsyncMock(return_value=None)
         assert self._rotate(None).status_code == 409
 
     def test_rotate_is_refused_on_an_expired_credential(self):

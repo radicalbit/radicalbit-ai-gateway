@@ -14,6 +14,7 @@ from radicalbit_ai_gateway.db.dao.key_dao import KeyDAO
 from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
+from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
 from radicalbit_ai_gateway.limiter.window_config import parse_window
 from radicalbit_ai_gateway.models.alert_rule_dto import (
@@ -157,8 +158,8 @@ class AlertRuleService:
         if self.project_budget_limit_dao is None:
             return []
         try:
-            limits = self.project_budget_limit_dao.get_by_project_uuid(
-                UUID(project_uuid)
+            limits = run_from_worker(
+                self.project_budget_limit_dao.get_by_project_uuid, UUID(project_uuid)
             )
         except ValueError:  # a rule still holding a project name
             return []
@@ -184,10 +185,10 @@ class AlertRuleService:
             key_uuid = UUID(credential_uuid)
         except ValueError:
             return None
-        if self.key_dao.get_by_uuid(key_uuid) is None:
+        if run_from_worker(self.key_dao.get_by_uuid, key_uuid) is None:
             return None
         limits = []
-        for limit in self.key_limit_dao.get_by_key_uuid(key_uuid):
+        for limit in run_from_worker(self.key_limit_dao.get_by_key_uuid, key_uuid):
             category = CATEGORY_BY_SCENARIO.get(limit.category)
             try:
                 seconds = _window_seconds(limit.window_size)
@@ -208,7 +209,10 @@ class AlertRuleService:
         if self.project_dao is None:
             return False
         try:
-            return self.project_dao.get_by_uuid(UUID(project_uuid)) is not None
+            return (
+                run_from_worker(self.project_dao.get_by_uuid, UUID(project_uuid))
+                is not None
+            )
         except ValueError:  # a rule still holding a project name
             return False
 
@@ -220,7 +224,7 @@ class AlertRuleService:
                 return p_name
         if self.project_dao is not None:
             try:
-                proj = self.project_dao.get_by_uuid(UUID(project_uuid))
+                proj = run_from_worker(self.project_dao.get_by_uuid, UUID(project_uuid))
                 if proj and proj.name:
                     return proj.name
             except Exception:
@@ -231,7 +235,7 @@ class AlertRuleService:
         uuids = [r.credential_uuid for r in rules if r.credential_uuid]
         if not uuids or self.key_dao is None:
             return {}
-        return self.key_dao.get_names_by_uuids(uuids)
+        return run_from_worker(self.key_dao.get_names_by_uuids, uuids)
 
     def _stale_reason(self, rule: AlertRule) -> str | None:
         scope = AlertRuleScope(rule.scope)

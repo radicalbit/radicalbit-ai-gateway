@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 
 from tests.common.gateway_harness import build_routes
 
+from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.endpoints.common.admission import Admission
 from radicalbit_ai_gateway.endpoints.mcp.route import McpRoute
 from radicalbit_ai_gateway.limiting.limits import Demand, RequestLimits
@@ -24,6 +25,7 @@ from radicalbit_ai_gateway.models.auth_dto import KeyDetails
 from radicalbit_ai_gateway.models.event_type import EventType
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
 from radicalbit_ai_gateway.models.project_entry import ProjectEntry
+from radicalbit_ai_gateway.services.group_service import GroupService
 from radicalbit_ai_gateway.services.mcp_service import McpService
 from radicalbit_ai_gateway.utils.exceptions import (
     ApiKeyError,
@@ -119,10 +121,10 @@ def _make_client(
     # Its own app, not open_gateway: the McpService under test takes a mocked
     # upstream client and Origin allowlist the server builds at import.
     app = FastAPI(title='AI Gateway', debug=True)
-    group_service = MagicMock()
+    group_service = MagicMock(spec_set=GroupService)
     group_service.check_key_uuid_for_route.return_value = key_bound
     if project_budget_limit_dao is None:
-        project_budget_limit_dao = MagicMock()
+        project_budget_limit_dao = MagicMock(spec_set=ProjectBudgetLimitDAO)
         project_budget_limit_dao.get_by_project_uuid.return_value = []
     service = McpService(
         upstream_client=upstream_client or MagicMock(spec_set=McpUpstreamClient),
@@ -778,8 +780,7 @@ def test_an_mcp_request_reads_no_project_budget():
     admission resolves the route's and the credential's limits only, with no
     read of the project's budget limits.
     """
-    dao = MagicMock()
-    dao.get_by_project_uuid.return_value = []
+    dao = MagicMock(spec_set=ProjectBudgetLimitDAO)
     client, _ = _make_client(project_budget_limit_dao=dao)
 
     with patch.object(RequestLimits, 'check', autospec=True) as check:

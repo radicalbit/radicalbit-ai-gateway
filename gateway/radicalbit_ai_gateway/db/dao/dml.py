@@ -1,11 +1,11 @@
 from sqlalchemy import CursorResult, Delete, Update
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
-def rows_matched(session: Session, statement: Update | Delete) -> int:
+async def rows_matched(session: AsyncSession, statement: Update | Delete) -> int:
     """Run an UPDATE or DELETE in the session and return the rows it matched."""
-    result = session.execute(statement)
-    # Session.execute is typed for the result of a SELECT; an UPDATE or a
+    result = await session.execute(statement)
+    # AsyncSession.execute is typed for the result of a SELECT; an UPDATE or a
     # DELETE returns a CursorResult, which carries the row count.
     if not isinstance(result, CursorResult):
         raise TypeError(

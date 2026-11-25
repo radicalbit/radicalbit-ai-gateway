@@ -6,7 +6,7 @@ import json
 from types import SimpleNamespace
 from typing import Any, TypedDict
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pook
@@ -361,7 +361,7 @@ class TestDecisionModelEndpoint(unittest.TestCase):
             limits=[CredentialLimitOut.from_key_limit(limit)],
             expires_on=None,
         )
-        key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
+        key_service.get_key_by_hashed_key = AsyncMock(return_value=key_record)
 
     # 312 tokens at 1000 per million cost 0.312, over a 0.1 budget.
     PRICEY_JEV = {**JEV, 'input_cost_per_million_tokens': 1000}
@@ -673,7 +673,7 @@ def test_usage_counts_against_the_limits_and_blocks_when_full(decision_case, lim
         budgets = patch.object(
             project_budget_limit_dao,
             'get_by_project_uuid',
-            MagicMock(return_value=[budget]),
+            AsyncMock(return_value=[budget]),
         )
 
     with budgets:
@@ -689,14 +689,14 @@ def _reject_missing_credential():
 
 
 def _reject_wrong_credential():
-    key_service.get_key_by_hashed_key = MagicMock(
+    key_service.get_key_by_hashed_key = AsyncMock(
         side_effect=KeyNotFoundError('no such key')
     )
     return {}
 
 
 def _reject_foreign_credential():
-    group_service.check_key_uuid_for_route = MagicMock(return_value=False)
+    group_service.check_key_uuid_for_route = AsyncMock(return_value=False)
     return {}
 
 

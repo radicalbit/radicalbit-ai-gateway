@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -45,7 +45,7 @@ class TestUsageRoute(unittest.TestCase):
 
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
-        cls.project_service.get_by_uuid = MagicMock(return_value=project_mock)
+        cls.project_service.get_by_uuid = AsyncMock(return_value=project_mock)
 
         project_entry_mock = MagicMock()
         project_entry_mock.config.routes = {
@@ -296,14 +296,14 @@ class TestUsageRoute(unittest.TestCase):
         assert response.json()['total'] == 0
 
     def test_mcp_key_usage_unknown_project_returns_404(self):
-        self.project_service.validate_exists = MagicMock(
+        self.project_service.validate_exists = AsyncMock(
             side_effect=GatewayNotFoundError('Project not found')
         )
         try:
             response = self.client.get(f'{self.project_path}/usage/mcp/keys')
             assert response.status_code == 404
         finally:
-            self.project_service.validate_exists = MagicMock()
+            self.project_service.validate_exists = AsyncMock()
 
     def test_mcp_key_usage_with_malformed_tag_returns_400(self):
         response = self.client.get(f'{self.project_path}/usage/mcp/keys?tags=not-a-tag')

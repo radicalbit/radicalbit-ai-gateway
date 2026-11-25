@@ -241,11 +241,12 @@ async def test_startup_loads_served_projects_and_wires_every_trace_exporter(capl
             )
         ],
     )
+    database = MagicMock(init_mappings=AsyncMock(), dispose=AsyncMock())
     with ExitStack() as stack:
         # The startup resets the app's routes: put them back afterwards.
         stack.enter_context(patch.object(app, 'state', State(dict(app.state._state))))
         for target, attribute, value in [
-            (server, 'database', MagicMock()),
+            (server, 'database', database),
             (server, 'ch_database', MagicMock()),
             (server, 'start_http_server', MagicMock(return_value=(MagicMock(), None))),
             (server, 'run_alert_window_scheduler', AsyncMock()),
@@ -270,7 +271,9 @@ async def test_startup_loads_served_projects_and_wires_every_trace_exporter(capl
             )
         )
         async with server.lifespan(app):
-            pass
+            database.connect.assert_called_once_with()
+            database.init_mappings.assert_awaited_once_with()
+        database.dispose.assert_awaited_once_with()
 
     assert [c.args[:2] for c in register.call_args_list] == [('a', 'a'), ('c', 'c')]
     assert 'Skipping project b' in caplog.text

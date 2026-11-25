@@ -1,6 +1,6 @@
 import datetime
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import uuid
 from uuid import UUID
 
@@ -54,7 +54,7 @@ class TestTracingRoute(unittest.TestCase):
         # Project mock
         project_mock = MagicMock()
         project_mock.name = PROJECT_NAME
-        cls.project_service.get_by_uuid = MagicMock(return_value=project_mock)
+        cls.project_service.get_by_uuid = AsyncMock(return_value=project_mock)
 
         # Project config with routes route-a, route-b, my-route
         project_entry_mock = MagicMock()

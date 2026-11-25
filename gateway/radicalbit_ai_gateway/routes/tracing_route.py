@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from fastapi_pagination import Page, Params
 
+from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
     GroupedSpanLatenciesDTO,
@@ -41,7 +42,7 @@ class TracingRoute:
             routes: Annotated[list[str] | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
             to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             granularity = determine_granularity(from_dt, to_dt)
@@ -67,7 +68,7 @@ class TracingRoute:
             routes: Annotated[list[str] | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
             to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             return tracing_service.get_latencies(
@@ -93,7 +94,7 @@ class TracingRoute:
             include_others: Annotated[bool, Query()] = False,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
             to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             if grouped:
@@ -133,7 +134,7 @@ class TracingRoute:
             _limit: Annotated[int, Query(ge=1, le=100)] = 50,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             from_dt = datetime.fromtimestamp(_from, timezone.utc) if _from else None
             to_dt = datetime.fromtimestamp(_to, timezone.utc) if _to else None
             params = Params(page=_page, size=_limit)
@@ -156,7 +157,7 @@ class TracingRoute:
             response_model_exclude_none=True,
         )
         def get_span_by_id(project_uuid: UUID, trace_id: str, span_id: str):
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             return tracing_service.get_span_by_id(
                 project_uuid=project_uuid, trace_id=trace_id, span_id=span_id
             )
@@ -168,7 +169,7 @@ class TracingRoute:
             response_model_exclude_none=True,
         )
         def get_trace_by_id(project_uuid: UUID, trace_id: str):
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             return tracing_service.get_trace_by_id(
                 project_uuid=project_uuid, trace_id=trace_id
             )

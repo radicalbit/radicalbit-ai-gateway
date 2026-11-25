@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.sse import EventSourceResponse
 
+from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.models.event_dto import (
     CostChartDataDTO,
     CostDataDTO,
@@ -121,13 +122,13 @@ class DashboardRoute:
     ) -> APIRouter:
         router = APIRouter(tags=['dashboard_api'])
 
-        def validate_project_exists(project_uuid: UUID) -> None:
+        async def validate_project_exists(project_uuid: UUID) -> None:
             """Fail an unknown project before the stream opens.
 
             Inside the generator the response has already started, so a 404
             could no longer reach the caller.
             """
-            project_service.validate_exists(project_uuid)
+            await project_service.validate_exists(project_uuid)
 
         @router.get(
             '/projects/{project_uuid}/metrics',
@@ -142,7 +143,7 @@ class DashboardRoute:
             _to: Annotated[int | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 return EventsDTO(request_error_percentage=0.0)
@@ -168,7 +169,7 @@ class DashboardRoute:
             include_groups: bool = False,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 return []
@@ -197,7 +198,7 @@ class DashboardRoute:
             include_groups: bool = False,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -233,7 +234,7 @@ class DashboardRoute:
             _to: Annotated[int | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -268,7 +269,7 @@ class DashboardRoute:
             group_by: Literal['keys', 'groups', 'models'] = Query(),
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -302,7 +303,7 @@ class DashboardRoute:
             _with_saved_tokens: bool = Query(False),
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry: object = request.app.state.project_configs.get(project.name)
             if not isinstance(project_entry, ProjectEntry):
                 raise GatewayNotFoundError(
@@ -336,7 +337,7 @@ class DashboardRoute:
             _to: Annotated[datetime | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -375,7 +376,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[dict[str, Any]]:
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
                 granularity = determine_granularity(from_datetime, to_datetime)
@@ -405,7 +406,7 @@ class DashboardRoute:
             show_errors: Annotated[bool, Query()] = False,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -449,7 +450,7 @@ class DashboardRoute:
             include_models: Annotated[bool, Query()] = False,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -481,7 +482,7 @@ class DashboardRoute:
             route_name: str,
             request: Request,
         ):
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -504,7 +505,7 @@ class DashboardRoute:
             routes: Annotated[list[str] | None, Query()] = None,
             window_statuses: Annotated[list[WindowStatus] | None, Query()] = None,
         ) -> AsyncIterator[list[dict[str, Any]]]:
-            project = project_service.get_by_uuid(project_uuid)
+            project = await project_service.get_by_uuid(project_uuid)
             project_gateway_routes = {
                 k: v
                 for k, v in request.app.state.routes.items()
@@ -537,7 +538,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[dict[str, Any]]:
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
                 granularity = determine_granularity(from_datetime, to_datetime)
@@ -572,7 +573,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[MostRequestedRouteDTO | dict[str, Any]]:
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -609,7 +610,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[MostRequestedErrorRouteDTO | dict[str, Any]]:
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -647,7 +648,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[dict[str, Any]]:
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
                 result = event_service.get_costs_chart_data(
@@ -681,7 +682,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[dict[str, Any]]:
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
                 result = event_service.get_costs_chart_data_by_route(
@@ -716,7 +717,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[dict[str, Any]]:
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
                 result = event_service.get_costs_chart_data_by_route(
@@ -751,7 +752,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[dict[str, Any]]:
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             while True:
                 from_datetime, to_datetime = compute_sse_time_range(_gte, _from, _to)
                 result = event_service.get_costs_chart_data_by_route(
@@ -779,7 +780,7 @@ class DashboardRoute:
             routes: Annotated[list[str] | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ) -> list[ModelCostDTO]:
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             return event_service.get_cost_breakdown(
                 project_uuid=project_uuid,
                 entity_column='MODEL_ID',
@@ -803,7 +804,7 @@ class DashboardRoute:
             routes: Annotated[list[str] | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ) -> list[ModelCostDTO]:
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             return event_service.get_cost_breakdown(
                 project_uuid=project_uuid,
                 entity_column='API_KEY_UUID',
@@ -827,7 +828,7 @@ class DashboardRoute:
             routes: Annotated[list[str] | None, Query()] = None,
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
         ) -> list[ModelCostDTO]:
-            project_service.validate_exists(project_uuid)
+            run_from_worker(project_service.validate_exists, project_uuid)
             return event_service.get_cost_breakdown(
                 project_uuid=project_uuid,
                 entity_column='GROUP_UUID',
@@ -859,7 +860,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[dict[str, Any]]:
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(
@@ -898,7 +899,7 @@ class DashboardRoute:
             tags: Annotated[list[str] | None, Depends(parse_tags_query)] = None,
             _: None = Depends(validate_sse_params),
         ) -> Iterator[MostExpensiveRouteDTO | dict[str, Any]]:
-            project = project_service.get_by_uuid(project_uuid)
+            project = run_from_worker(project_service.get_by_uuid, project_uuid)
             project_entry = request.app.state.project_configs.get(project.name)
             if not project_entry:
                 raise GatewayNotFoundError(

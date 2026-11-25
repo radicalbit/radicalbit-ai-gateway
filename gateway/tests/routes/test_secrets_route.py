@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import uuid
 
 from fastapi import FastAPI, Request
@@ -33,7 +33,7 @@ class TestSecretsRoute(unittest.TestCase):
         self.client = TestClient(app)
 
     def test_get_secrets_returns_paginated_envelope(self):
-        self.secret_service.get_secrets = MagicMock(
+        self.secret_service.get_secrets = AsyncMock(
             return_value=[SecretOut(key='ALPHA'), SecretOut(key='BRAVO')]
         )
 
@@ -53,7 +53,7 @@ class TestSecretsRoute(unittest.TestCase):
         self.secret_service.get_secrets.assert_called_once_with(None)
 
     def test_unreachable_backend_answers_503_with_a_dedicated_code(self):
-        self.secret_service.get_secrets = MagicMock(
+        self.secret_service.get_secrets = AsyncMock(
             side_effect=SecretsBackendError(
                 'vault.internal:8200 refused the connection'
             )
@@ -69,7 +69,7 @@ class TestSecretsRoute(unittest.TestCase):
         assert 'vault.internal' not in error['message']
 
     def test_get_secrets_passes_search_to_the_service_as_given(self):
-        self.secret_service.get_secrets = MagicMock(return_value=[])
+        self.secret_service.get_secrets = AsyncMock(return_value=[])
 
         res = self.client.get(f'{self.prefix}/secrets', params={'search': ' OpenAI '})
 
@@ -105,7 +105,7 @@ class TestSecretsRoute(unittest.TestCase):
         assert body['pages'] == 2
 
     def test_get_secrets_never_returns_a_value(self):
-        self.secret_service.get_secrets = MagicMock(
+        self.secret_service.get_secrets = AsyncMock(
             return_value=[SecretOut(key='OPENAI_API_KEY')]
         )
 
@@ -118,7 +118,7 @@ class TestSecretsRoute(unittest.TestCase):
 
     def test_get_secrets_includes_used_in_projects(self):
         project_uuid = uuid.uuid4()
-        self.secret_service.get_secrets = MagicMock(
+        self.secret_service.get_secrets = AsyncMock(
             return_value=[
                 SecretOut(
                     key='OPENAI_API_KEY',
@@ -140,7 +140,7 @@ class TestSecretsRoute(unittest.TestCase):
 
     def test_get_secrets_marks_an_unavailable_key(self):
         project_uuid = uuid.uuid4()
-        self.secret_service.get_secrets = MagicMock(
+        self.secret_service.get_secrets = AsyncMock(
             return_value=[
                 SecretOut(
                     key='DEAD_TOKEN',
@@ -164,7 +164,7 @@ class TestSecretsRoute(unittest.TestCase):
         ]
 
     def test_get_secrets_applies_page_and_limit(self):
-        self.secret_service.get_secrets = MagicMock(
+        self.secret_service.get_secrets = AsyncMock(
             return_value=[SecretOut(key=k) for k in ['ALPHA', 'BRAVO', 'CHARLIE']]
         )
 
@@ -185,7 +185,7 @@ class TestSecretsRoute(unittest.TestCase):
             SecretOut(key=k, status=SecretStatus.UNAVAILABLE)
             for k in ['BRAVO_DEAD', 'ZULU_DEAD']
         ]
-        self.secret_service.get_secrets = MagicMock(
+        self.secret_service.get_secrets = AsyncMock(
             return_value=[*dead, SecretOut(key='ALPHA'), SecretOut(key='MIKE')]
         )
 
@@ -221,7 +221,7 @@ class TestSecretsRoute(unittest.TestCase):
         # request so the rows can be filtered by the caller's memberships.
         captured = {}
 
-        def custom_fn(request: Request, search):
+        async def custom_fn(request: Request, search):
             captured['is_request'] = isinstance(request, Request)
             captured['search'] = search
             return [SecretOut(key='FROM_OVERRIDE')]

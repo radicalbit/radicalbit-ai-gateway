@@ -129,9 +129,9 @@ def app(exporter, upstream) -> FastAPI:
     exporter.clear()
     config = _config()
     group_service = MagicMock()
-    group_service.check_key_uuid_for_route.return_value = True
+    group_service.check_key_uuid_for_route = AsyncMock(return_value=True)
     project_budget_limit_dao = MagicMock()
-    project_budget_limit_dao.get_by_project_uuid.return_value = []
+    project_budget_limit_dao.get_by_project_uuid = AsyncMock(return_value=[])
 
     # Its own app, not open_gateway: the McpService under test takes a mocked
     # upstream client the server builds at import.

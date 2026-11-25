@@ -7,6 +7,7 @@ import uuid
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from typing_extensions import override
 import yaml
 
@@ -20,6 +21,7 @@ from radicalbit_ai_gateway.db.dao.key_limit_dao import KeyLimitDAO
 from radicalbit_ai_gateway.db.dao.project_budget_limit_dao import ProjectBudgetLimitDAO
 from radicalbit_ai_gateway.db.dao.project_dao import ProjectDAO
 from radicalbit_ai_gateway.db.tables.alert_rule_table import AlertRule
+from radicalbit_ai_gateway.db.tables.key_limit_table import KeyLimit
 from radicalbit_ai_gateway.db.tables.key_table import Key
 from radicalbit_ai_gateway.middleware.exception_handlers import add_exception_handler
 from radicalbit_ai_gateway.models.gateway_config import GatewayConfig
@@ -113,17 +115,17 @@ class FakeProjectBudgets:
             SimpleNamespace(window_size=window_size, max_value=max_value)
         )
 
-    def get_by_project_uuid(self, project_uuid):
+    async def get_by_project_uuid(self, project_uuid):
         return list(self.limits.get(str(project_uuid), []))
 
 
 class FakeProjects:
-    """The projects that are not deleted, by uuid."""
+    """The projects that are not deleted, by uuid. Async, like ProjectDAO."""
 
     def __init__(self):
         self.names: dict[str, str] = {}
 
-    def get_by_uuid(self, project_uuid):
+    async def get_by_uuid(self, project_uuid):
         name = self.names.get(str(project_uuid))
         return SimpleNamespace(name=name) if name else None
 
@@ -220,7 +222,18 @@ class TestAlertRuleRoute(DatabaseIntegration):
         ):
             add_exception_handler(app, err, alert_rule_exception_handler)
         app.include_router(AlertRuleRoute.get_alert_rule_router(service))
-        cls.client = TestClient(app)
+        # One event loop for every request: the pooled async connections
+        # belong to the loop that opened them.
+        cls.client = TestClient(app).__enter__()
+
+    @override
+    @classmethod
+    def tearDownClass(cls):
+        portal = cls.client.portal
+        assert portal is not None
+        portal.call(cls.db.dispose)
+        cls.client.__exit__(None, None, None)
+        super().tearDownClass()
 
     @override
     def setUp(self):
@@ -294,6 +307,10 @@ class TestAlertRuleRoute(DatabaseIntegration):
                 updated_at=now,
             )
         )
+
+    def delete_row(self, table, row_uuid) -> None:
+        with self.db.begin_session() as session:
+            session.execute(delete(table).where(table.uuid == row_uuid))
 
     def listed(self, rule_uuid) -> dict[str, Any]:
         response = self.client.get('/rule')
@@ -1116,22 +1133,22 @@ class TestAlertRuleRoute(DatabaseIntegration):
     def test_a_credential_rule_is_stale_once_its_limit_is_gone(self):
         cases = [
             (
-                lambda c, lim: KeyDAO(self.db).delete_by_uuid(c.uuid),
+                lambda c, lim: self.delete_row(Key, c.uuid),
                 None,
                 'The credential no longer exists',
             ),
             (
-                lambda c, lim: KeyLimitDAO(self.db).delete_by_uuid(lim.uuid),
+                lambda c, lim: self.delete_row(KeyLimit, lim.uuid),
                 None,
                 'The credential has no rate limit with a 1m window',
             ),
             (
-                lambda c, lim: KeyLimitDAO(self.db).delete_by_uuid(lim.uuid),
+                lambda c, lim: self.delete_row(KeyLimit, lim.uuid),
                 ('1 hour', 10.0),
                 'The credential has no rate limit with a 1m window',
             ),
             (
-                lambda c, lim: KeyLimitDAO(self.db).delete_by_uuid(lim.uuid),
+                lambda c, lim: self.delete_row(KeyLimit, lim.uuid),
                 ('1 minute', 5.0),
                 None,
             ),

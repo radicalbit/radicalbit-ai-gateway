@@ -8,6 +8,7 @@ from radicalbit_ai_gateway.db.dao.otel_traces_dao import (
     OtelTracesDAO,
     request_type_of_root_span,
 )
+from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.db.models.trace import SpanRecord
 from radicalbit_ai_gateway.models.request_event_type import RequestType
 from radicalbit_ai_gateway.models.trace_dto import (
@@ -320,13 +321,17 @@ class TracingService:
         key_name = None
         group_name = None
         if resolved_key_uuid:
-            key_names = self.key_service.get_names_by_uuids([resolved_key_uuid])
+            key_names = run_from_worker(
+                self.key_service.get_names_by_uuids, [resolved_key_uuid]
+            )
             key_name = key_names.get(
                 resolved_key_uuid,
                 f'Deleted Key ({str(resolved_key_uuid)[:8]})',
             )
         if resolved_group_uuid:
-            group_names = self.group_service.get_names_by_uuids([resolved_group_uuid])
+            group_names = run_from_worker(
+                self.group_service.get_names_by_uuids, [resolved_group_uuid]
+            )
             group_name = group_names.get(
                 resolved_group_uuid,
                 f'Deleted Group ({str(resolved_group_uuid)[:8]})',
@@ -401,9 +406,15 @@ class TracingService:
         # so that deleted keys still have resolvable names, removing the need for this fallback.
         key_uuids = [u for r in traces_page.items if (u := _parse_uuid(r.api_key_uuid))]
         group_uuids = [u for r in traces_page.items if (u := _parse_uuid(r.group_uuid))]
-        key_names = self.key_service.get_names_by_uuids(key_uuids) if key_uuids else {}
+        key_names = (
+            run_from_worker(self.key_service.get_names_by_uuids, key_uuids)
+            if key_uuids
+            else {}
+        )
         group_names = (
-            self.group_service.get_names_by_uuids(group_uuids) if group_uuids else {}
+            run_from_worker(self.group_service.get_names_by_uuids, group_uuids)
+            if group_uuids
+            else {}
         )
 
         # Transform rows to TraceDTO
@@ -494,13 +505,17 @@ class TracingService:
         resolved_key_name = None
         resolved_group_name = None
         if api_key_uuid:
-            key_names = self.key_service.get_names_by_uuids([api_key_uuid])
+            key_names = run_from_worker(
+                self.key_service.get_names_by_uuids, [api_key_uuid]
+            )
             resolved_key_name = key_names.get(
                 api_key_uuid,
                 f'Deleted Key ({str(api_key_uuid)[:8]})',
             )
         if group_uuid:
-            group_names = self.group_service.get_names_by_uuids([group_uuid])
+            group_names = run_from_worker(
+                self.group_service.get_names_by_uuids, [group_uuid]
+            )
             resolved_group_name = group_names.get(
                 group_uuid,
                 f'Deleted Group ({str(group_uuid)[:8]})',

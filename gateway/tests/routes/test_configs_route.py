@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -30,7 +30,7 @@ class TestConfigsRoute(unittest.TestCase):
 
     def test_get_configs_no_filter(self):
         out = db_mock.get_sample_project_out()
-        self.project_service.get_configs = MagicMock(return_value=[out])
+        self.project_service.get_configs = AsyncMock(return_value=[out])
         res = self.client.get(f'{self.prefix}/configs/projects')
         assert res.status_code == 200
         assert res.json() == jsonable_encoder([out])
@@ -38,7 +38,7 @@ class TestConfigsRoute(unittest.TestCase):
 
     def test_get_configs_with_status(self):
         out = db_mock.get_sample_project_out()
-        self.project_service.get_configs = MagicMock(return_value=[out])
+        self.project_service.get_configs = AsyncMock(return_value=[out])
         res = self.client.get(
             f'{self.prefix}/configs/projects', params={'status': 'published'}
         )
@@ -60,7 +60,7 @@ class TestConfigsRoute(unittest.TestCase):
         out = db_mock.get_sample_project_out()
         captured = {}
 
-        def custom_fn(request: Request, status):
+        async def custom_fn(request: Request, status):
             captured['is_request'] = isinstance(request, Request)
             captured['status'] = status
             return [out]
