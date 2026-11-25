@@ -31,12 +31,15 @@ class ClickHouseConfig(BaseSettings):
 
 
 class DBConfig(BaseSettings):
-    db_type: str = 'sqlite'
-    db_host: str | None = None
-    db_port: int | None = None
-    db_user: str | None = None
-    db_pwd: str | None = None
-    db_name: str = ':memory:'
+    """Postgres connection. Postgres is required: there is no other backend.
+    The defaults match the local docker-compose stack.
+    """
+
+    db_host: str = 'localhost'
+    db_port: int = 5432
+    db_user: str = 'postgres'
+    db_pwd: str = 'postgres'
+    db_name: str = 'radicalbit'
     db_schema: str | None = None
 
 

@@ -237,8 +237,7 @@ async def lifespan(app: FastAPI):
     # setup database
     database.connect()
     ch_database.connect()
-    if app_config.db_config.db_type == 'postgresql':
-        database.init_mappings()
+    await database.init_mappings()
     app.state.project_configs = project_configs
     app.state.routes = {}
 
@@ -322,6 +321,7 @@ async def lifespan(app: FastAPI):
     alert_window_scheduler.cancel()
     with suppress(asyncio.CancelledError):
         await alert_window_scheduler
+    await database.dispose()
     database.reset_connection()
     ch_database.reset_connection()
     await httpx_aiohttp_client.aclose()
