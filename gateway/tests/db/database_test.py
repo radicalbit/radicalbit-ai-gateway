@@ -14,16 +14,10 @@ NOT_CONNECTED = r'call connect\(\) first'
 def test_a_database_not_connected_neither_maps_nor_opens_sessions():
     database = Database(DBConfig())
 
-    async def open_async_session():
-        async with database.begin_session():
-            pass
-
     with pytest.raises(RuntimeError, match=NOT_CONNECTED):
         asyncio.run(database.init_mappings())
     with pytest.raises(RuntimeError, match=NOT_CONNECTED):
-        asyncio.run(open_async_session())
-    with pytest.raises(RuntimeError, match=NOT_CONNECTED), database.begin_session():
-        pass
+        database.begin_session()
 
 
 def test_a_clickhouse_database_not_connected_neither_maps_nor_opens_sessions():

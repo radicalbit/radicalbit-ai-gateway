@@ -1,10 +1,11 @@
 import datetime
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, TypeVar
 from unittest.mock import create_autospec, patch
 import uuid
 
+from anyio.from_thread import BlockingPortal
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
@@ -12,7 +13,7 @@ from typing_extensions import override
 import yaml
 
 from tests.common import db_mock  # noqa: F401  (registers every table Key relates to)
-from tests.common.db_integration import DatabaseIntegration
+from tests.common.db_integration import SchemaIntegration, delete_all_rows, insert_row
 from tests.common.db_mock import get_sample_key_limit
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
@@ -37,6 +38,8 @@ from radicalbit_ai_gateway.utils.exceptions import (
     AlertRuleUnsupportedTimeAggregationError,
     alert_rule_exception_handler,
 )
+
+T = TypeVar('T')
 
 PROJECT_NAME = 'acme'
 PROJECT_UUID = uuid.uuid4()
@@ -187,7 +190,7 @@ def route_rule(event: str, **fields) -> dict[str, Any]:
     }
 
 
-class TestAlertRuleRoute(DatabaseIntegration):
+class TestAlertRuleRoute(SchemaIntegration):
     @override
     @classmethod
     def setUpClass(cls):
@@ -236,11 +239,24 @@ class TestAlertRuleRoute(DatabaseIntegration):
 
     @override
     def tearDown(self):
-        portal = self.client.portal
-        assert portal is not None
-        portal.call(self.db.dispose)
+        self.portal.call(delete_all_rows, self.db)
+        self.portal.call(self.db.dispose)
         self.client.__exit__(None, None, None)
-        super().tearDown()
+
+    @property
+    def portal(self) -> BlockingPortal:
+        """The client's event loop, which owns the pool."""
+        portal = self.client.portal
+        assert isinstance(portal, BlockingPortal)
+        return portal
+
+    def insert(self, row: T) -> T:
+        """Store `row` on the client's event loop, which owns the pool."""
+
+        async def insert_it() -> T:
+            return await insert_row(self.db, row)
+
+        return self.portal.call(insert_it)
 
     def publish(self, config: GatewayConfig) -> None:
         self.project_configs[PROJECT_NAME] = ProjectEntry(
@@ -310,8 +326,11 @@ class TestAlertRuleRoute(DatabaseIntegration):
         )
 
     def delete_row(self, table, row_uuid) -> None:
-        with self.db.begin_session() as session:
-            session.execute(delete(table).where(table.uuid == row_uuid))
+        async def delete_it():
+            async with self.db.begin_session() as session:
+                await session.execute(delete(table).where(table.uuid == row_uuid))
+
+        self.portal.call(delete_it)
 
     def listed(self, rule_uuid) -> dict[str, Any]:
         response = self.client.get('/rule')
