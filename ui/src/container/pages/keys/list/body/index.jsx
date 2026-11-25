@@ -3,9 +3,6 @@ import { Popup, usePopup } from '@Components/popup';
 import Lucide from '@Components/lucide';
 import { MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/keys/three-dots-menu';
-import {
-  OwnershipTabEnum, TAB_QP, filterByTab, parseTab,
-} from '@Helpers/ownership-tabs';
 import useModals, { modals } from '@Hooks/use-modals';
 import {
   useGetKeysQuery, useDeleteKeyMutation, useEditKeyMutation, useAddGroupToKeyMutation,
@@ -24,7 +21,6 @@ import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useParams, useSearchParams } from 'react-router-dom';
 import columns from './columns';
-import OwnershipTabs from './ownership-tabs';
 
 function KeysList() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -44,8 +40,6 @@ function KeysList() {
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      <OwnershipTabs />
-
       <div className="flex flex-row items-center gap-4">
         <Search
           allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
@@ -65,14 +59,10 @@ function KeysList() {
 }
 
 function KeysCount({ searchValue }) {
-  const [searchParams] = useSearchParams();
-
   const { data = [], isSuccess } = useGetKeysQuery();
-
-  const tabData = filterByTab(data, parseTab(searchParams.get(TAB_QP)));
   const filteredData = searchValue
-    ? tabData.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
-    : tabData;
+    ? data.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
+    : data;
   const count = filteredData.length;
 
   if (!isSuccess) {
@@ -95,14 +85,9 @@ function KeysCount({ searchValue }) {
 }
 
 function KeysTable({ searchValue }) {
-  const [searchParams] = useSearchParams();
+  useInitLayoutConfigurations();
 
   const { data = [], isError, isLoading, isSuccess, refetch } = useGetKeysQuery();
-
-  const tab = parseTab(searchParams.get(TAB_QP));
-  const tabData = filterByTab(data, tab);
-
-  useInitLayoutConfigurations();
 
   if (isLoading) {
     return <DataTable loading />;
@@ -120,15 +105,7 @@ function KeysTable({ searchValue }) {
     return false;
   }
 
-  if (tabData.length === 0 && tab === OwnershipTabEnum.EXTERNALLY_MANAGED) {
-    return (
-      <div className="flex justify-center h-full">
-        <IsEmptyExternallyManaged />
-      </div>
-    );
-  }
-
-  if (tabData.length === 0) {
+  if (data.length === 0) {
     return (
       <div className="flex justify-center h-full">
         <IsEmpty />
@@ -163,14 +140,12 @@ function IsSuccess({ searchValue }) {
   const items = useGetThreeDotsMenuItems(popup?.record?.uuid);
 
   const { uuid } = useParams();
-  const [searchParams] = useSearchParams();
 
   const { data = [] } = useGetKeysQuery();
 
-  const tabData = filterByTab(data, parseTab(searchParams.get(TAB_QP)));
   const filteredData = searchValue
-    ? tabData.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
-    : tabData;
+    ? data.filter(({ name }) => name.toLowerCase().includes(searchValue.toLowerCase()))
+    : data;
 
   const components = { body: { row: RowWithSpinner } };
 
@@ -225,21 +200,6 @@ function IsEmpty() {
           )}
           image={<Lucide icon={Inbox} />}
           title="Credentials"
-        />
-      )}
-      width="100%"
-    />
-  );
-}
-
-function IsEmptyExternallyManaged() {
-  return (
-    <Board
-      main={(
-        <Void
-          description="Credentials from your identity provider appear here after the sync"
-          size="small"
-          title="No externally managed credentials"
         />
       )}
       width="100%"
