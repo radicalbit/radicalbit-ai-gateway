@@ -124,7 +124,7 @@ class GroupRoute:
             include_keys: bool = Query(False),
         ):
             """Let the group's credentials call routes of a project's served config."""
-            project = project_service.get_by_uuid(project_uuid)
+            project = await project_service.get_by_uuid(project_uuid)
             return await group_service.add_project_routes(
                 group_uuid,
                 project_uuid,
@@ -148,7 +148,7 @@ class GroupRoute:
             group_uuid: UUID, project_uuid: UUID, route_name: str
         ):
             """Stop the group's credentials from calling a route."""
-            project = project_service.get_by_uuid(project_uuid)
+            project = await project_service.get_by_uuid(project_uuid)
             return await group_service.remove_project_route(
                 group_uuid, project_uuid, project.name, route_name
             )
@@ -226,7 +226,7 @@ class GroupRoute:
             response_model=list[GroupRouteOut],
         )
         async def get_associable_routes(group_uuid: UUID, project_uuid: UUID):
-            project = project_service.get_by_uuid(project_uuid)
+            project = await project_service.get_by_uuid(project_uuid)
             return await group_service.get_associable_routes(group_uuid, project.name)
 
         return router

@@ -115,12 +115,12 @@ class FakeProjectBudgets:
 
 
 class FakeProjects:
-    """The projects that are not deleted, by uuid."""
+    """The projects that are not deleted, by uuid. Async, like ProjectDAO."""
 
     def __init__(self):
         self.names: dict[str, str] = {}
 
-    def get_by_uuid(self, project_uuid):
+    async def get_by_uuid(self, project_uuid):
         name = self.names.get(str(project_uuid))
         return SimpleNamespace(name=name) if name else None
 

@@ -22,8 +22,8 @@ class GroupRouteDAOTest(AsyncDatabaseIntegration):
         )
         cls.project_uuid = uuid.uuid4()
 
-    def setUp(self):
-        self.project_dao.insert(
+    async def asyncSetUp(self):
+        await self.insert(
             db_mock.get_sample_project(uuid=self.project_uuid, name='my-project')
         )
 
@@ -80,7 +80,7 @@ class GroupRouteDAOTest(AsyncDatabaseIntegration):
 
     async def test_add_bulk_two_projects_same_local_route_name(self):
         project_b_uuid = uuid.uuid4()
-        self.project_dao.insert(
+        await self.insert(
             db_mock.get_sample_project(uuid=project_b_uuid, name='other-project')
         )
         routes = [

@@ -209,7 +209,10 @@ class AlertRuleService:
         if self.project_dao is None:
             return False
         try:
-            return self.project_dao.get_by_uuid(UUID(project_uuid)) is not None
+            return (
+                run_from_worker(self.project_dao.get_by_uuid, UUID(project_uuid))
+                is not None
+            )
         except ValueError:  # a rule still holding a project name
             return False
 
@@ -221,7 +224,7 @@ class AlertRuleService:
                 return p_name
         if self.project_dao is not None:
             try:
-                proj = self.project_dao.get_by_uuid(UUID(project_uuid))
+                proj = run_from_worker(self.project_dao.get_by_uuid, UUID(project_uuid))
                 if proj and proj.name:
                     return proj.name
             except Exception:

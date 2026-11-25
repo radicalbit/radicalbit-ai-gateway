@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -13,7 +13,7 @@ from radicalbit_ai_gateway.services.secret_service import SecretService
 class SecretsRouteConfig:
     # Receives the request and the raw ``search`` query parameter, and returns
     # the full filtered row list; the route paginates it.
-    get_secrets_fn: Callable[[Request, str | None], Any] | None = None
+    get_secrets_fn: Callable[[Request, str | None], Awaitable[Any]] | None = None
 
 
 class SecretsRoute:
@@ -33,13 +33,13 @@ class SecretsRoute:
             status_code=200,
             response_model=Page[SecretOut],
         )
-        def get_secrets(
+        async def get_secrets(
             request: Request,
             search: Annotated[str | None, Query()] = None,
             _page: Annotated[int, Query(ge=1)] = 1,
             _limit: Annotated[int, Query(ge=1, le=100)] = 50,
         ):
-            rows = get_secrets_fn(request, search)
+            rows = await get_secrets_fn(request, search)
             offset = (_page - 1) * _limit
             return Page.create(
                 items=rows[offset : offset + _limit],
