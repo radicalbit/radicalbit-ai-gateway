@@ -225,3 +225,109 @@ class GroupDAOTest(AsyncDatabaseIntegration):
         assert rows_for_A[0].uuid == power_user_group_uuid
         assert len(rows_for_B) == 1
         assert rows_for_B[0].uuid == user_group_uuid
+
+    async def test_get_all_by_owner_returns_only_that_owners_groups(self):
+        mine = db_mock.get_sample_group(uuid=uuid.uuid4(), name='mine')
+        other = db_mock.get_sample_group(uuid=uuid.uuid4(), name='other')
+        other.owner = 'idp'
+        await self.group_dao.insert(mine)
+        await self.group_dao.insert(other)
+
+        res = await self.group_dao.get_all_by_owner('gateway')
+
+        assert [g.uuid for g in res] == [mine.uuid]
+
+    async def test_delete_by_uuid_of_a_missing_group_returns_none(self):
+        assert await self.group_dao.delete_by_uuid(uuid.uuid4()) is None
+
+    async def test_remove_project_route_deletes_only_that_route(self):
+        group = db_mock.get_sample_group(uuid=uuid.uuid4(), group_routes=[])
+        await self.group_dao.insert(group)
+        for route in ('route-A', 'route-B'):
+            await self.group_dao.add_route(
+                GroupRoute(
+                    group_uuid=group.uuid,
+                    route_name=route,
+                    project_uuid=self.project_uuid,
+                )
+            )
+
+        removed = await self.group_dao.remove_project_route(
+            group.uuid, self.project_uuid, 'route-A'
+        )
+
+        assert removed == 1
+        assert await self.group_dao.get_route_names_by_group_uuid(group.uuid) == [
+            'my-project/route-B'
+        ]
+
+    async def test_get_by_name_and_owner(self):
+        group = db_mock.get_sample_group(uuid=uuid.uuid4(), name='finance')
+        await self.group_dao.insert(group)
+
+        found = await self.group_dao.get_by_name_and_owner('finance', 'gateway')
+
+        assert found.uuid == group.uuid
+        assert await self.group_dao.get_by_name_and_owner('finance', 'idp') is None
+
+    async def test_check_key_uuid_for_route_finds_the_group_of_a_member_key(self):
+        group = db_mock.get_sample_group(uuid=uuid.uuid4(), group_routes=[])
+        await self.group_dao.insert(group)
+        await self.group_dao.add_route(
+            GroupRoute(
+                group_uuid=group.uuid,
+                route_name='route-A',
+                project_uuid=self.project_uuid,
+            )
+        )
+        key = db_mock.get_sample_key(uuid=uuid.uuid4(), group_uuid=group.uuid)
+        await self.key_dao.insert(key)
+
+        found = await self.group_dao.check_key_uuid_for_route(
+            self.project_uuid, 'route-A', key.uuid
+        )
+
+        assert found.uuid == group.uuid
+
+    async def test_check_key_uuid_for_route_is_none_off_the_groups_routes(self):
+        group = db_mock.get_sample_group(uuid=uuid.uuid4(), group_routes=[])
+        await self.group_dao.insert(group)
+        await self.group_dao.add_route(
+            GroupRoute(
+                group_uuid=group.uuid,
+                route_name='route-A',
+                project_uuid=self.project_uuid,
+            )
+        )
+        member = db_mock.get_sample_key(uuid=uuid.uuid4(), group_uuid=group.uuid)
+        stranger = db_mock.get_sample_key(
+            uuid=uuid.uuid4(), name='stranger', hashed_key='other-hash'
+        )
+        await self.key_dao.insert(member)
+        await self.key_dao.insert(stranger)
+
+        assert (
+            await self.group_dao.check_key_uuid_for_route(
+                self.project_uuid, 'route-B', member.uuid
+            )
+            is None
+        )
+        assert (
+            await self.group_dao.check_key_uuid_for_route(
+                self.project_uuid, 'route-A', stranger.uuid
+            )
+            is None
+        )
+
+    async def test_get_names_by_uuids(self):
+        one = db_mock.get_sample_group(uuid=uuid.uuid4(), name='one')
+        two = db_mock.get_sample_group(uuid=uuid.uuid4(), name='two')
+        await self.group_dao.insert(one)
+        await self.group_dao.insert(two)
+
+        names = await self.group_dao.get_names_by_uuids([one.uuid, uuid.uuid4()])
+
+        assert names == {one.uuid: 'one'}
+
+    async def test_get_names_by_uuids_with_no_uuids_is_empty(self):
+        assert await self.group_dao.get_names_by_uuids([]) == {}

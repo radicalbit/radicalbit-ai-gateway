@@ -1206,3 +1206,21 @@ class TestLimitsConsumption:
             limit: (bar.window_size, bar.window_filled_size)
             for limit, bar in consumption.items()
         } == {str(rate.uuid): (10.0, 3.0), str(budget.uuid): (2.0, 0.0)}
+
+
+class KeyServiceNamesTest(unittest.IsolatedAsyncioTestCase):
+    async def test_get_names_by_uuids_reads_the_dao(self):
+        key_dao = MagicMock(spec_set=KeyDAO)
+        key_uuid = uuid.uuid4()
+        key_dao.get_names_by_uuids = AsyncMock(return_value={key_uuid: 'alice'})
+        service = KeyService(
+            key_dao=key_dao,
+            api_key_security=MagicMock(spec_set=ApiKeySecurity),
+            group_dao=MagicMock(spec_set=GroupDAO),
+            key_limit_dao=MagicMock(spec_set=KeyLimitDAO),
+        )
+
+        names = await service.get_names_by_uuids([key_uuid])
+
+        assert names == {key_uuid: 'alice'}
+        key_dao.get_names_by_uuids.assert_awaited_once_with([key_uuid])

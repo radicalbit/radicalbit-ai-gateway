@@ -736,3 +736,21 @@ class TestApplyLimitsToGroup(_AsyncGroupServiceTestBase):
                 uuid.uuid4(), db_mock.get_sample_group_limits_in()
             )
         key_service.apply_limits_to_keys.assert_not_called()
+
+
+class GroupServiceNamesTest(unittest.IsolatedAsyncioTestCase):
+    async def test_get_names_by_uuids_reads_the_dao(self):
+        group_dao = MagicMock(spec_set=GroupDAO)
+        group_uuid = uuid.uuid4()
+        group_dao.get_names_by_uuids = AsyncMock(return_value={group_uuid: 'finance'})
+        service = GroupService(
+            group_dao=group_dao,
+            key_service=MagicMock(spec_set=KeyService),
+            group_route_dao=MagicMock(spec_set=GroupRouteDAO),
+            project_configs={},
+        )
+
+        names = await service.get_names_by_uuids([group_uuid])
+
+        assert names == {group_uuid: 'finance'}
+        group_dao.get_names_by_uuids.assert_awaited_once_with([group_uuid])

@@ -142,3 +142,16 @@ class GroupRouteDAOTest(AsyncDatabaseIntegration):
             self.project_uuid, []
         )
         assert removed == 2
+
+    async def test_add(self):
+        group_route = db_mock.get_sample_group_route(
+            group_uuid=self.group_one,
+            route_name='route-A',
+            project_uuid=self.project_uuid,
+        )
+
+        inserted = await self.group_route_dao.add(group_route)
+
+        assert inserted.group_uuid == self.group_one
+        assert inserted.route_name == 'route-A'
+        assert inserted.project_uuid == self.project_uuid

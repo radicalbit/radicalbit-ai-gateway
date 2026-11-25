@@ -10,6 +10,11 @@ from starlette.testclient import TestClient
 from tests.common import db_mock
 from tests.common.sse import first_events
 
+from radicalbit_ai_gateway.models.auth_dto import (
+    GroupFullOut,
+    GroupsRouteOut,
+    RouteGroupsIn,
+)
 from radicalbit_ai_gateway.models.config_slot import Slot
 from radicalbit_ai_gateway.models.config_status import ConfigStatus
 from radicalbit_ai_gateway.models.event_dto import WindowProgressBarDTO
@@ -701,3 +706,47 @@ async def test_budget_limits_stream_sends_the_readable_projects_consumption(
         [uuids[name] for name in readable]
     )
     assert event == {str(LID): BAR_JSON}
+
+
+def test_add_groups_to_project_route_passes_the_project_name(client, deps):
+    group_uuid = uuid.uuid4()
+    deps.project_service.get_by_uuid.return_value = db_mock.get_sample_project(
+        uuid=PID, name='my-project'
+    )
+    deps.group_service.add_groups_to_project_route = AsyncMock(
+        return_value=GroupsRouteOut(
+            route_name='tp', project_name='my-project', groups=None
+        )
+    )
+
+    res = client.patch(
+        f'{PROJECT}/routes/tp/groups', json={'groups': [str(group_uuid)]}
+    )
+
+    assert res.status_code == 200
+    assert res.json() == {
+        'route_name': 'tp',
+        'project_name': 'my-project',
+        'groups': None,
+    }
+    deps.group_service.add_groups_to_project_route.assert_awaited_once_with(
+        PID, 'my-project', 'tp', RouteGroupsIn(groups=[group_uuid]), False
+    )
+
+
+def test_get_associable_groups_for_project_route(client, deps):
+    group = db_mock.get_sample_group_plain(uuid=uuid.uuid4(), name='finance')
+    deps.project_service.get_by_uuid.return_value = db_mock.get_sample_project(
+        uuid=PID, name='my-project'
+    )
+    deps.group_service.get_associable_groups_for_project_route = AsyncMock(
+        return_value=[GroupFullOut.from_group(group=group)]
+    )
+
+    res = client.get(f'{PROJECT}/routes/tp/associable-groups?include_keys=true')
+
+    assert res.status_code == 200
+    assert [g['name'] for g in res.json()] == ['finance']
+    deps.group_service.get_associable_groups_for_project_route.assert_awaited_once_with(
+        'my-project', 'tp', False, True
+    )
