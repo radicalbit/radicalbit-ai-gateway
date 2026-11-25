@@ -50,8 +50,10 @@ _ALLOWED_IMPORT_SUFFIXES = ('.yaml', '.yml')
 
 @dataclass
 class ProjectRouteConfig:
-    get_projects_fn: Callable[[Request, ProjectFilter | None, bool], Any] | None = None
-    get_project_fn: Callable[[Request, UUID, bool], Any] | None = None
+    get_projects_fn: (
+        Callable[[Request, ProjectFilter | None, bool], Awaitable[Any]] | None
+    ) = None
+    get_project_fn: Callable[[Request, UUID, bool], Awaitable[Any]] | None = None
     # The projects among the requested ones the caller may read consumption of
     filter_project_uuids_fn: Callable[[Request, list[UUID]], list[UUID]] | None = None
     list_response_model: type = field(default_factory=lambda: list[ProjectOut])
@@ -70,14 +72,19 @@ class ProjectRoute:
         config_generator_service: ConfigGeneratorService | None = None,
     ) -> APIRouter:
         config = config or ProjectRouteConfig()
-        get_projects_fn = config.get_projects_fn or (
-            lambda _, f, include_limits: project_service.get_all_filtered(
-                f, include_limits
+
+        async def _get_projects(_, project_filter, include_limits):
+            return await project_service.get_all_filtered(
+                project_filter, include_limits
             )
-        )
-        get_project_fn = config.get_project_fn or (
-            lambda _, u, include_limits: project_service.get_by_uuid(u, include_limits)
-        )
+
+        async def _get_project(_, project_uuid, include_limits):
+            if include_limits:
+                return await project_service.get_by_uuid_with_limits(project_uuid)
+            return project_service.get_by_uuid(project_uuid)
+
+        get_projects_fn = config.get_projects_fn or _get_projects
+        get_project_fn = config.get_project_fn or _get_project
         filter_project_uuids_fn = config.filter_project_uuids_fn or (
             lambda _, uuids: uuids
         )
@@ -107,13 +114,13 @@ class ProjectRoute:
             tags=projects,
             operation_id='projects_list',
         )
-        def get_all(
+        async def get_all(
             request: Request,
             filter: ProjectFilter | None = Query(None),
             include_limits: bool = Query(False),
         ):
             """List the projects, optionally filtered."""
-            return get_projects_fn(request, filter, include_limits)
+            return await get_projects_fn(request, filter, include_limits)
 
         @router.get(
             '/projects/{project_uuid}',
@@ -123,13 +130,13 @@ class ProjectRoute:
             operation_id='projects_get',
             responses=error_responses(404),
         )
-        def get_project_by_uuid(
+        async def get_project_by_uuid(
             project_uuid: UUID,
             request: Request,
             include_limits: bool = Query(False),
         ):
             """Get a project with its two config slots."""
-            return get_project_fn(request, project_uuid, include_limits)
+            return await get_project_fn(request, project_uuid, include_limits)
 
         @router.patch(
             '/projects/{project_uuid}/configs/{config_uuid}',
@@ -140,11 +147,11 @@ class ProjectRoute:
             responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def update_config(
+        async def update_config(
             project_uuid: UUID, config_uuid: UUID, config_in: ProjectConfigFileIn
         ):
             """Save a YAML configuration into a config slot that is not served."""
-            project = project_service.update_config(
+            project = await project_service.update_config(
                 project_uuid, config_uuid, config_in
             )
             logger.info('Updated config %s for project %s', config_uuid, project_uuid)
@@ -159,9 +166,9 @@ class ProjectRoute:
             responses=error_responses(400, 404, 409),
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def approve_config(project_uuid: UUID, config_uuid: UUID):
+        async def approve_config(project_uuid: UUID, config_uuid: UUID):
             """Request to publish a draft config: it becomes ready to serve."""
-            project = project_service.approve_config(project_uuid, config_uuid)
+            project = await project_service.approve_config(project_uuid, config_uuid)
             logger.info('Approved config %s for project %s', config_uuid, project_uuid)
             return project
 
@@ -195,7 +202,7 @@ class ProjectRoute:
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
         async def serve_config(project_uuid: UUID, config_uuid: UUID):
             """Publish an approved config: it replaces the one served, if any."""
-            project = project_service.serve_config(project_uuid, config_uuid)
+            project = await project_service.serve_config(project_uuid, config_uuid)
             # Swap: drop any routes from the previously served config, then
             # register the newly served one.
             if deregister_project_routes:
@@ -210,7 +217,7 @@ class ProjectRoute:
                 )
             # Auto-cleanup on swap: drop group↔route associations whose route_name
             # is no longer present in the newly served config.
-            removed = group_service.cleanup_orphaned_associations(
+            removed = await group_service.cleanup_orphaned_associations(
                 project_uuid, project.name
             )
             logger.info(
@@ -299,7 +306,9 @@ class ProjectRoute:
                     f'Uploaded file exceeds the {MAX_IMPORT_BYTES // (1024 * 1024)} MB limit'
                 )
             content = await file.read()
-            project = project_service.import_config(project_uuid, config_uuid, content)
+            project = await project_service.import_config(
+                project_uuid, config_uuid, content
+            )
             logger.info('Imported config %s for project %s', config_uuid, project_uuid)
             return project
 
@@ -346,14 +355,14 @@ class ProjectRoute:
         @route_meta(
             entity_type='PROJECT', entity_uuid_param='project_uuid', action='ASSIGN'
         )
-        def add_groups_to_project_route(
+        async def add_groups_to_project_route(
             project_uuid: UUID,
             route_name: str,
             route_groups_in: RouteGroupsIn,
             include_groups: bool = Query(False),
         ):
             project = project_service.get_by_uuid(project_uuid)
-            return group_service.add_groups_to_project_route(
+            return await group_service.add_groups_to_project_route(
                 project_uuid, project.name, route_name, route_groups_in, include_groups
             )
 
@@ -363,14 +372,14 @@ class ProjectRoute:
             response_model=list[GroupFullOut],
             tags=projects,
         )
-        def get_associable_groups_for_project_route(
+        async def get_associable_groups_for_project_route(
             project_uuid: UUID,
             route_name: str,
             include_routes: bool = Query(False),
             include_keys: bool = Query(False),
         ):
             project = project_service.get_by_uuid(project_uuid)
-            return group_service.get_associable_groups_for_project_route(
+            return await group_service.get_associable_groups_for_project_route(
                 project.name, route_name, include_routes, include_keys
             )
 
@@ -406,10 +415,10 @@ class ProjectRoute:
             entity_uuid_param='project_uuid',
             action='ADD_BUDGET_LIMIT',
         )
-        def add_budget_limits_to_project(
+        async def add_budget_limits_to_project(
             project_uuid: UUID, limits_in: ProjectBudgetLimitsIn
         ):
-            limits = project_service.add_budget_limits_to_project(
+            limits = await project_service.add_budget_limits_to_project(
                 project_uuid, limits_in
             )
             logger.info(
@@ -425,8 +434,8 @@ class ProjectRoute:
             response_model=list[ProjectBudgetLimitOut],
             tags=projects,
         )
-        def get_budget_limits_for_project(project_uuid: UUID):
-            return project_service.get_budget_limits_for_project(project_uuid)
+        async def get_budget_limits_for_project(project_uuid: UUID):
+            return await project_service.get_budget_limits_for_project(project_uuid)
 
         @router.get(
             '/projects/{project_uuid}/budget-limits/conflicts',
@@ -444,10 +453,10 @@ class ProjectRoute:
             tags=projects,
         )
         @route_meta(entity_type='PROJECT', entity_uuid_param='project_uuid')
-        def update_budget_limit_value(
+        async def update_budget_limit_value(
             project_uuid: UUID, limit_uuid: UUID, value_in: ProjectBudgetLimitValueIn
         ):
-            return project_service.update_budget_limit_value(
+            return await project_service.update_budget_limit_value(
                 project_uuid, limit_uuid, value_in
             )
 

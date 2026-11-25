@@ -8,7 +8,7 @@ from contextlib import nullcontext
 import json
 from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pook
@@ -470,7 +470,7 @@ class TestDecisionJudgeEndpoints(unittest.TestCase):
             limits=[CredentialLimitOut.from_key_limit(limit)],
             expires_on=None,
         )
-        key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
+        key_service.get_key_by_hashed_key = AsyncMock(return_value=key_record)
 
     # Tracing
 
@@ -881,7 +881,7 @@ def test_judge_usage_counts_against_the_limits(judge_case, limit):
         budgets = patch.object(
             project_budget_limit_dao,
             'get_by_project_uuid',
-            MagicMock(return_value=[budget]),
+            AsyncMock(return_value=[budget]),
         )
 
     with budgets:

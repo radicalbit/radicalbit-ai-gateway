@@ -1,12 +1,14 @@
+import threading
 import uuid
 
+import anyio
 import pytest
 from sqlalchemy import select
 
 from tests.common import db_mock
 from tests.common.db_integration import AsyncDatabaseIntegration
 
-from radicalbit_ai_gateway.db.database import Database, filter_if
+from radicalbit_ai_gateway.db.database import Database, filter_if, run_from_worker
 from radicalbit_ai_gateway.db.tables.project_table import Project
 from radicalbit_ai_gateway.utils.app_config import DBConfig
 
@@ -98,3 +100,15 @@ class FilterIfTest(AsyncDatabaseIntegration):
         )
 
         assert await self._names(stmt) == []
+
+
+async def test_a_sync_caller_in_a_worker_thread_runs_the_query_on_the_event_loop():
+    loop_thread = threading.get_ident()
+
+    async def query(value):
+        return threading.get_ident(), value
+
+    ran_on, value = await anyio.to_thread.run_sync(run_from_worker, query, 'v')
+
+    assert ran_on == loop_thread
+    assert value == 'v'

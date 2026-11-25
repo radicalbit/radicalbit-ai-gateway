@@ -188,7 +188,7 @@ class Admission:
         if announce:
             announce(route_name)
 
-        if not self._group_service.check_key_uuid_for_route(
+        if not await self._group_service.check_key_uuid_for_route(
             route_key, UUID(key_details.api_key_uuid)
         ):
             raise rules.not_member(route)

@@ -1,4 +1,3 @@
-import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -542,22 +541,14 @@ class TestLoadProjectLimits:
         dao.get_by_project_uuid.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_reads_the_limits_off_the_event_loop_on_every_call(self):
-        loop_thread = threading.get_ident()
-        query_threads = []
-
-        def get_by_project_uuid(_):
-            query_threads.append(threading.get_ident())
-            return [self._row()]
-
+    async def test_reads_the_limits_on_every_call(self):
         dao = MagicMock(spec_set=ProjectBudgetLimitDAO)
-        dao.get_by_project_uuid = get_by_project_uuid
+        dao.get_by_project_uuid.return_value = [self._row()]
         [limit] = await load_project_limits(P, dao)
         await load_project_limits(P, dao)
 
         assert limit.value == 10.0
-        assert len(query_threads) == 2
-        assert loop_thread not in query_threads
+        assert dao.get_by_project_uuid.await_count == 2
 
 
 class _CountingStorage(InMemoryStorage):

@@ -12,7 +12,6 @@ pass a check and then overshoot together.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -505,10 +504,9 @@ async def load_project_limits(
 ) -> list[ProjectBudgetLimitOut]:
     """Return a project's budget limits as they are now.
 
-    Read on every request, so a change applies at once. The query blocks: it
-    runs on a worker thread, not the event loop.
+    Read on every request, so a change applies at once.
     """
     if not project_uuid:
         return []
-    rows = await asyncio.to_thread(dao.get_by_project_uuid, UUID(project_uuid))
+    rows = await dao.get_by_project_uuid(UUID(project_uuid))
     return [ProjectBudgetLimitOut.from_project_budget_limit(row) for row in rows]

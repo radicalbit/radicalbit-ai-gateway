@@ -6,7 +6,7 @@ Typesafe and OpenAI are mocked with pook.
 from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pook
@@ -469,7 +469,7 @@ class TestDecisionRoutingEndpoint(unittest.TestCase):
             limits=[CredentialLimitOut.from_key_limit(limit)],
             expires_on=None,
         )
-        key_service.get_key_by_hashed_key = MagicMock(return_value=key_record)
+        key_service.get_key_by_hashed_key = AsyncMock(return_value=key_record)
 
     def test_fallback_answer_is_costed_at_the_fallback_price(self):
         app.state.routes = _build_routes(
@@ -596,7 +596,7 @@ def test_routing_usage_counts_against_the_limits(routing_case, limit):
         budgets = patch.object(
             project_budget_limit_dao,
             'get_by_project_uuid',
-            MagicMock(return_value=[budget]),
+            AsyncMock(return_value=[budget]),
         )
 
     with budgets:

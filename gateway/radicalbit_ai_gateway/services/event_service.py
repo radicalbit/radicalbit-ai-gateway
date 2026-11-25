@@ -7,6 +7,7 @@ from uuid import UUID
 
 from radicalbit_ai_gateway.db.dao.event_dao import EventDAO
 from radicalbit_ai_gateway.db.dao.request_event_dao import RequestEventDAO
+from radicalbit_ai_gateway.db.database import run_from_worker
 from radicalbit_ai_gateway.db.models.event import (
     CostData,
     Counters,
@@ -116,7 +117,9 @@ class EventService:
         if not last_events:
             return
         uuids_to_resolve = list({e.api_key_uuid for e in last_events})
-        names_map = self.key_service.get_names_by_uuids(uuids_to_resolve)
+        names_map = run_from_worker(
+            self.key_service.get_names_by_uuids, uuids_to_resolve
+        )
         for e in last_events:
             e.api_key_name = names_map.get(
                 e.api_key_uuid,
@@ -287,8 +290,8 @@ class EventService:
                     config.routes[route_name], config
                 ),
                 metrics=metrics[route_name],
-                groups=self.group_service.get_all_groups_by_route(
-                    project_name, route_name
+                groups=run_from_worker(
+                    self.group_service.get_all_groups_by_route, project_name, route_name
                 )
                 if include_groups
                 else None,
@@ -372,7 +375,9 @@ class EventService:
             return LastNEvents()
 
         unique_key_uuids = list({e.api_key_uuid for e in events})
-        key_names_map = self.key_service.get_names_by_uuids(unique_key_uuids)
+        key_names_map = run_from_worker(
+            self.key_service.get_names_by_uuids, unique_key_uuids
+        )
 
         # TODO: Implement soft delete for keys/groups in Postgres (deleted_at column)
         # so that deleted keys still have resolvable names, removing the need for this fallback.
@@ -709,9 +714,9 @@ class EventService:
                     uuid_str_to_obj[uid_str] = UUID(uid_str)
             unique_ids = list(uuid_str_to_obj.values())
             names_map = (
-                self.key_service.get_names_by_uuids(unique_ids)
+                run_from_worker(self.key_service.get_names_by_uuids, unique_ids)
                 if group_by == 'keys'
-                else self.group_service.get_names_by_uuids(unique_ids)
+                else run_from_worker(self.group_service.get_names_by_uuids, unique_ids)
             )
             entity_label = 'Key' if group_by == 'keys' else 'Group'
             resolved: dict[str, dict[int, float]] = {}

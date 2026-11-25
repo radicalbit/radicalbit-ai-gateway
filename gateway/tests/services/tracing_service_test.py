@@ -6,6 +6,8 @@ from uuid import UUID
 from fastapi_pagination import Page, Params
 import pytest
 
+from tests.common.worker import in_worker
+
 from radicalbit_ai_gateway.db.dao.otel_traces_dao import OtelTracesDAO
 from radicalbit_ai_gateway.db.models.trace import (
     CategoryLatencies,
@@ -306,7 +308,9 @@ class TracingServiceTest(unittest.TestCase):
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(return_value=[])
 
         with pytest.raises(GatewayNotFoundError):
-            self.tracing_service.get_trace_by_id(PROJECT_UUID, 'nonexistent-trace')
+            in_worker(self.tracing_service.get_trace_by_id)(
+                PROJECT_UUID, 'nonexistent-trace'
+            )
 
     def test_get_trace_by_id_single_span(self):
         """Test retrieving a trace with a single span."""
@@ -335,7 +339,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-123'
+        )
 
         assert isinstance(result, TraceDTO)
         assert result.trace_id == 'trace-123'
@@ -370,7 +376,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-tags')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-tags'
+        )
 
         assert result.tags == ['env=prod', 'cost_center=retail']
 
@@ -400,7 +408,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-mcp')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-mcp'
+        )
 
         assert result.request_type == RequestType.MCP
 
@@ -430,7 +440,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-no-uuid')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-no-uuid'
+        )
 
         assert result.request_uuid is None
         assert result.total_spans == 1
@@ -507,7 +519,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-hierarchy')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-hierarchy'
+        )
 
         assert result.total_spans == 3
         assert result.root_span_id == 'span-root'
@@ -558,7 +572,9 @@ class TracingServiceTest(unittest.TestCase):
         # The DAO mock is shared by the class: start this one clean.
         self.otel_traces_dao.get_span_by_trace_and_span_id = MagicMock()
 
-        tree = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
+        tree = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-123'
+        ).tree
 
         assert (tree.operation_category, tree.span_kind) == ('endpoint', 'workflow')
         children = {c.span_id: c for c in tree.children}
@@ -574,7 +590,9 @@ class TracingServiceTest(unittest.TestCase):
 
     def _tree_of(self, *spans: SpanRecord):
         self.otel_traces_dao.get_spans_by_trace_id = MagicMock(return_value=list(spans))
-        return self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
+        return in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-123'
+        ).tree
 
     @staticmethod
     def _named_span(span_id, parent, span_name, **kwargs):
@@ -836,7 +854,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        tree = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-123').tree
+        tree = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-123'
+        ).tree
 
         assert tree.start_offset_ms == 0
         children = {c.span_id: c for c in tree.children}
@@ -907,7 +927,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-error')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-error'
+        )
 
         assert result.error_count == 2
         assert result.trace_status == TraceStatus.ERROR
@@ -955,7 +977,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-duration')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-duration'
+        )
 
         # Duration should be the max of all spans
         assert result.duration_ms == 350.0
@@ -1004,7 +1028,9 @@ class TracingServiceTest(unittest.TestCase):
             ]
         )
 
-        result = self.tracing_service.get_trace_by_id(PROJECT_UUID, 'trace-warn')
+        result = in_worker(self.tracing_service.get_trace_by_id)(
+            PROJECT_UUID, 'trace-warn'
+        )
 
         assert result.error_count == 1
         assert result.trace_status == TraceStatus.WARNING
@@ -1041,7 +1067,7 @@ class TracingServiceTest(unittest.TestCase):
             return_value=set()
         )
 
-        self.tracing_service.get_traces(
+        in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=None,
             group_uuids=None,
@@ -1102,7 +1128,7 @@ class TracingServiceTest(unittest.TestCase):
             return_value=set()  # Root span has no error
         )
 
-        res = self.tracing_service.get_traces(
+        res = in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=['my-route'],
             group_uuids=None,
@@ -1169,7 +1195,7 @@ class TracingServiceTest(unittest.TestCase):
             return_value=set()
         )
 
-        res = self.tracing_service.get_traces(
+        res = in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=None,
             group_uuids=None,
@@ -1218,7 +1244,7 @@ class TracingServiceTest(unittest.TestCase):
             return_value=set()
         )
 
-        res = self.tracing_service.get_traces(
+        res = in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=None,
             group_uuids=None,
@@ -1265,7 +1291,7 @@ class TracingServiceTest(unittest.TestCase):
             return_value=set()
         )
 
-        res = self.tracing_service.get_traces(
+        res = in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=None,
             group_uuids=None,
@@ -1328,7 +1354,7 @@ class TracingServiceTest(unittest.TestCase):
                     return_value=root_errors
                 )
 
-                res = self.tracing_service.get_traces(
+                res = in_worker(self.tracing_service.get_traces)(
                     project_uuid=PROJECT_UUID,
                     route_names=None,
                     group_uuids=None,
@@ -1356,7 +1382,7 @@ class TracingServiceTest(unittest.TestCase):
             return_value=mock_page
         )
 
-        self.tracing_service.get_traces(
+        in_worker(self.tracing_service.get_traces)(
             project_uuid=PROJECT_UUID,
             route_names=['route-a', 'route-b'],
             group_uuids=[UUID('550e8400-e29b-41d4-a716-446655440001')],
@@ -1389,7 +1415,9 @@ class TracingServiceTest(unittest.TestCase):
         )
 
         with pytest.raises(GatewayNotFoundError) as exc_info:
-            self.tracing_service.get_span_by_id(PROJECT_UUID, 'trace-123', 'span-456')
+            in_worker(self.tracing_service.get_span_by_id)(
+                PROJECT_UUID, 'trace-123', 'span-456'
+            )
 
         assert "Span 'span-456' not found in trace 'trace-123'" in str(exc_info.value)
 
@@ -1429,7 +1457,7 @@ class TracingServiceTest(unittest.TestCase):
             UUID('550e8400-e29b-41d4-a716-446655440003'): 'test-group'
         }
 
-        result = self.tracing_service.get_span_by_id(
+        result = in_worker(self.tracing_service.get_span_by_id)(
             PROJECT_UUID, 'trace-123', 'span-456'
         )
 
@@ -1493,7 +1521,7 @@ class TracingServiceTest(unittest.TestCase):
             )
         )
 
-        result = self.tracing_service.get_span_by_id(
+        result = in_worker(self.tracing_service.get_span_by_id)(
             PROJECT_UUID, 'trace-123', 'span-456'
         )
 
@@ -1537,7 +1565,7 @@ class TracingServiceTest(unittest.TestCase):
             )
         )
 
-        result = self.tracing_service.get_span_by_id(
+        result = in_worker(self.tracing_service.get_span_by_id)(
             PROJECT_UUID, 'trace-123', 'span-456'
         )
 
@@ -1577,7 +1605,7 @@ class TracingServiceTest(unittest.TestCase):
             )
         )
 
-        result = self.tracing_service.get_span_by_id(
+        result = in_worker(self.tracing_service.get_span_by_id)(
             PROJECT_UUID, 'trace-123', 'span-456'
         )
 
