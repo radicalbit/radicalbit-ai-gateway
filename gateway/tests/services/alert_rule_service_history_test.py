@@ -94,15 +94,15 @@ def test_history_returns_the_buckets_in_camel_case(service):
     }
 
 
-def test_rule_history_asks_only_for_that_rule(service, alert_dao):
-    service.get_rule_history(KNOWN_RULE)
+async def test_rule_history_asks_only_for_that_rule(service, alert_dao):
+    await service.get_rule_history(KNOWN_RULE)
 
     assert [rule for _, _, rule in alert_dao.calls] == [KNOWN_RULE]
 
 
-def test_rule_history_of_an_unknown_rule_is_not_found(service, alert_dao):
+async def test_rule_history_of_an_unknown_rule_is_not_found(service, alert_dao):
     with pytest.raises(AlertRuleNotFoundError):
-        service.get_rule_history(UNKNOWN_RULE)
+        await service.get_rule_history(UNKNOWN_RULE)
 
     assert alert_dao.calls == []
 

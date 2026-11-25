@@ -1,9 +1,8 @@
-import atexit
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import logging
 from typing import TYPE_CHECKING, Any
 
+from radicalbit_ai_gateway.alerting.alert_tasks import AlertTasks
 from radicalbit_ai_gateway.events.buffer import CeleryBuffer
 from radicalbit_ai_gateway.models.event_payload import EventPayload
 from radicalbit_ai_gateway.models.event_type import EventType
@@ -21,12 +20,8 @@ app_config = get_app_config()
 _events_buffer = CeleryBuffer(task_name='emit_event', buffer_name='EventsBuffer')
 _events_buffer.register_atexit()
 
-# Thread pool for asynchronous, non-blocking alert notification dispatch
-_alert_executor = ThreadPoolExecutor(
-    max_workers=app_config.smtp_config.smtp_max_workers,
-    thread_name_prefix='alert_notification',
-)
-atexit.register(lambda: _alert_executor.shutdown(wait=False, cancel_futures=True))
+# Alert dispatches run as tasks on the event loop, a few at a time.
+_alert_tasks = AlertTasks(max_concurrency=app_config.smtp_config.smtp_max_workers)
 
 _alert_dispatcher: 'AlertDispatcher | None' = None
 
@@ -37,11 +32,9 @@ def set_alert_dispatcher(dispatcher: 'AlertDispatcher') -> None:
     _alert_dispatcher = dispatcher
 
 
-def _safe_dispatch_alert(dispatcher: 'AlertDispatcher', event: EventPayload) -> None:
-    try:
-        dispatcher.dispatch(event)
-    except Exception:
-        logger.exception('Error dispatching alert rule notification')
+async def cancel_alert_dispatches() -> None:
+    """Cancel the alert dispatches still pending. Called on shutdown."""
+    await _alert_tasks.cancel()
 
 
 def _create_event_dict(
@@ -127,11 +120,9 @@ def _create_event_dict(
 
 def emit_event(event: EventPayload) -> None:
     """Emit a metrics event. Events are buffered and sent in batches."""
-    if _alert_dispatcher is not None:
-        try:
-            _alert_executor.submit(_safe_dispatch_alert, _alert_dispatcher, event)
-        except Exception:
-            logger.exception('Failed to submit alert notification to executor')
+    dispatcher = _alert_dispatcher
+    if dispatcher is not None:
+        _alert_tasks.schedule(lambda: dispatcher.dispatch(event))
 
     data = event.model_dump(exclude_none=True)
 

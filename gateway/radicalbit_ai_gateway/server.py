@@ -51,7 +51,10 @@ from radicalbit_ai_gateway.endpoints.messages.errors import with_messages_error_
 from radicalbit_ai_gateway.endpoints.messages.route import MessagesRoute
 from radicalbit_ai_gateway.endpoints.responses.route import ResponsesRoute
 from radicalbit_ai_gateway.endpoints.transcriptions.route import TranscriptionsRoute
-from radicalbit_ai_gateway.events.events_processor import set_alert_dispatcher
+from radicalbit_ai_gateway.events.events_processor import (
+    cancel_alert_dispatches,
+    set_alert_dispatcher,
+)
 from radicalbit_ai_gateway.gateway_route.factory import build_project_route_registrar
 from radicalbit_ai_gateway.limiter.storage.shared import close_limit_storage
 from radicalbit_ai_gateway.mcp_proxy.upstream_client import McpUpstreamClient
@@ -227,10 +230,11 @@ alert_rule_service = AlertRuleService(
     key_limit_dao=key_limit_dao,
     alert_dao=AlertDAO(ch_database),
 )
+alert_store = build_alert_store(app_config.redis_config.redis_url)
 alert_dispatcher = AlertDispatcher(
     alert_rule_dao=alert_rule_dao,
     email_service=EmailService(),
-    store=build_alert_store(app_config.redis_config.redis_url),
+    store=alert_store,
 )
 set_alert_dispatcher(alert_dispatcher)
 admission = Admission(group_service, project_budget_limit_dao)
@@ -327,6 +331,8 @@ async def lifespan(app: FastAPI):
     alert_window_scheduler.cancel()
     with suppress(asyncio.CancelledError):
         await alert_window_scheduler
+    await cancel_alert_dispatches()
+    await alert_store.close()
     await database.dispose()
     database.reset_connection()
     ch_database.reset_connection()

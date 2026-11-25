@@ -1,62 +1,89 @@
-"""Sending an email logs in to the SMTP server only with credentials."""
+"""EmailService sends alert emails over SMTP with aiosmtplib.
 
-import smtplib
-from unittest.mock import MagicMock, patch
+SMTP is the boundary: `aiosmtplib.send` is replaced, and the tests check what
+reaches it and what `send_email` reports back.
+"""
 
+from unittest.mock import AsyncMock, patch
+
+import aiosmtplib
 import pytest
 
 from radicalbit_ai_gateway.services.email_service import EmailService
 
-SMTP = 'radicalbit_ai_gateway.services.email_service.smtplib.SMTP'
+
+@pytest.fixture
+def smtp_send():
+    with patch.object(aiosmtplib, 'send', AsyncMock()) as send:
+        yield send
 
 
-def _send(service: EmailService) -> tuple[bool, MagicMock, MagicMock]:
-    server = MagicMock(spec_set=smtplib.SMTP)
-    smtp = MagicMock(spec_set=smtplib.SMTP)
-    smtp.return_value.__enter__.return_value = server
-    with patch(SMTP, smtp):
-        sent = service.send_email(['ops@example.com'], 'Alert', 'Budget exceeded')
-    return sent, smtp, server
-
-
-def test_sending_with_credentials_logs_in_over_tls():
-    service = EmailService(
+def service(**credentials) -> EmailService:
+    return EmailService(
         smtp_host='smtp.example.com',
-        smtp_port=587,
-        smtp_user='alerts',
-        smtp_password='s3cret',
+        smtp_port=2525,
         from_email='gateway@example.com',
-    )
-
-    sent, smtp, server = _send(service)
-
-    assert sent is True
-    smtp.assert_called_once_with('smtp.example.com', 587, timeout=10)
-    server.starttls.assert_called_once_with()
-    server.login.assert_called_once_with('alerts', 's3cret')
-    server.sendmail.assert_called_once()
-    assert server.sendmail.call_args.args[:2] == (
-        'gateway@example.com',
-        ['ops@example.com'],
+        **credentials,
     )
 
 
-@pytest.mark.parametrize(
-    ('user', 'password'),
-    [
-        pytest.param(None, None, id='no-credentials'),
-        pytest.param('alerts', None, id='no-password'),
-    ],
-)
-def test_sending_without_credentials_does_not_log_in(user, password):
-    service = EmailService(smtp_user=user, smtp_password=password)
-    # Not taken from the environment's SMTP settings.
-    service.smtp_user = user
-    service.smtp_password = password
-
-    sent, _, server = _send(service)
+async def test_an_email_is_sent_to_every_recipient(smtp_send):
+    sent = await service().send_email(
+        recipients=['ops@example.com', 'dev@example.com'],
+        subject='[Alert] PII watch',
+        body='<p>PII found</p>',
+    )
 
     assert sent is True
-    server.starttls.assert_not_called()
-    server.login.assert_not_called()
-    server.sendmail.assert_called_once()
+    [call] = smtp_send.await_args_list
+    message = call.args[0]
+    assert message['Subject'] == '[Alert] PII watch'
+    assert message['From'] == 'gateway@example.com'
+    assert message['To'] == 'ops@example.com, dev@example.com'
+    assert call.kwargs['recipients'] == ['ops@example.com', 'dev@example.com']
+    assert call.kwargs['hostname'] == 'smtp.example.com'
+    assert call.kwargs['port'] == 2525
+
+
+async def test_an_html_body_is_sent_as_html_and_text_as_plain(smtp_send):
+    await service().send_email(['ops@example.com'], 's', '<p>html</p>')
+    await service().send_email(['ops@example.com'], 's', 'plain text')
+
+    html, plain = (c.args[0] for c in smtp_send.await_args_list)
+    assert html.get_payload()[0].get_content_type() == 'text/html'
+    assert plain.get_payload()[0].get_content_type() == 'text/plain'
+
+
+async def test_without_credentials_there_is_no_starttls_and_no_login(smtp_send):
+    await service().send_email(['ops@example.com'], 's', 'b')
+
+    kwargs = smtp_send.await_args.kwargs
+    assert kwargs['start_tls'] is False
+    assert kwargs.get('username') is None
+    assert kwargs.get('password') is None
+
+
+async def test_with_credentials_it_upgrades_with_starttls_and_logs_in(smtp_send):
+    await service(smtp_user='user', smtp_password='pwd').send_email(
+        ['ops@example.com'], 's', 'b'
+    )
+
+    kwargs = smtp_send.await_args.kwargs
+    assert kwargs['start_tls'] is True
+    assert kwargs['username'] == 'user'
+    assert kwargs['password'] == 'pwd'
+
+
+async def test_no_recipients_sends_nothing(smtp_send):
+    sent = await service().send_email([], 's', 'b')
+
+    assert sent is False
+    smtp_send.assert_not_awaited()
+
+
+async def test_an_smtp_failure_is_reported_as_not_sent(smtp_send):
+    smtp_send.side_effect = aiosmtplib.SMTPConnectError('refused')
+
+    sent = await service().send_email(['ops@example.com'], 's', 'b')
+
+    assert sent is False

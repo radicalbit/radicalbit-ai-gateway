@@ -1,25 +1,16 @@
 import Lucide from '@Components/lucide';
 import { CollapsedTitle } from '@Container/layout';
-import {
-  OwnershipTabEnum, TAB_QP, filterByTab, parseTab,
-} from '@Helpers/ownership-tabs';
 import useModals, { modals } from '@Hooks/use-modals';
 import { useGetKeysQuery } from '@State/keys/api';
 import { Button, Helmet, NewHeader, SectionTitle, Tooltip } from '@radicalbit/radicalbit-design-system';
 import { Key, Plus } from 'lucide-react';
 import { useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import Subtitle from './subtitle';
 
 function KeysListHeader() {
-  const [searchParams] = useSearchParams();
-
   const { data = [], isError } = useGetKeysQuery();
-
-  const tab = parseTab(searchParams.get(TAB_QP));
-  const isGatewayManagedTab = tab === OwnershipTabEnum.GATEWAY_MANAGED;
-  const count = filterByTab(data, OwnershipTabEnum.GATEWAY_MANAGED).length;
-  const hasCreateButton = isGatewayManagedTab && (count !== 0 || isError);
+  const count = data.length;
+  const hasCreateButton = count !== 0 || isError;
 
   useOpenModalWithKeyboard();
 

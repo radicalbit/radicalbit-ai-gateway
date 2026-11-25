@@ -222,24 +222,25 @@ class TestAlertRuleRoute(DatabaseIntegration):
         ):
             add_exception_handler(app, err, alert_rule_exception_handler)
         app.include_router(AlertRuleRoute.get_alert_rule_router(service))
-        # One event loop for every request: the pooled async connections
-        # belong to the loop that opened them.
-        cls.client = TestClient(app).__enter__()
-
-    @override
-    @classmethod
-    def tearDownClass(cls):
-        portal = cls.client.portal
-        assert portal is not None
-        portal.call(cls.db.dispose)
-        cls.client.__exit__(None, None, None)
-        super().tearDownClass()
+        cls.app = app
 
     @override
     def setUp(self):
         self.project_configs.clear()
         self.project_budgets.limits.clear()
         self.projects.names = {str(PROJECT_UUID): PROJECT_NAME}
+        # One event loop for the whole test: the async DAO's pooled connections
+        # belong to the loop that opened them.
+        self.client = TestClient(self.app)
+        self.client.__enter__()
+
+    @override
+    def tearDown(self):
+        portal = self.client.portal
+        assert portal is not None
+        portal.call(self.db.dispose)
+        self.client.__exit__(None, None, None)
+        super().tearDown()
 
     def publish(self, config: GatewayConfig) -> None:
         self.project_configs[PROJECT_NAME] = ProjectEntry(
@@ -458,6 +459,15 @@ class TestAlertRuleRoute(DatabaseIntegration):
         assert self.body(response.json()) == route_rule(
             'guardrail-input-pii', enabled=False
         )
+
+    def test_an_update_with_no_fields_returns_the_rule_unchanged(self):
+        self.publish(route_config(guardrails={'pii': 'input'}))
+        rule = self.created('guardrail-input-pii')
+
+        response = self.patched(rule['uuid'])
+
+        assert response.status_code == 200, response.text
+        assert self.body(response.json()) == self.body(rule)
 
     def test_create_a_rule_on_a_limit_event_with_limit_window(self):
         self.publish(route_config(limits=rate_limit()))

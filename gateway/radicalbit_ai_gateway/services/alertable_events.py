@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from uuid import UUID
 
 from radicalbit_ai_gateway.alerting.limit_event_names import (
@@ -188,6 +188,18 @@ def _limit_stale_reason(
     return f'Event "{event}" is not offered by route "{route_name}"'
 
 
+async def _no_budgets(_: str) -> list[int]:
+    return []
+
+
+async def _no_project(_: str) -> bool:
+    return False
+
+
+async def _no_credential(_: str) -> list[tuple[str, int]] | None:
+    return None
+
+
 class AlertableEvents:
     """Which alertable events a target offers, according to what is published now.
 
@@ -198,11 +210,11 @@ class AlertableEvents:
     def __init__(
         self,
         project_configs: dict[str, ProjectEntry],
-        project_budget_windows: Callable[[str], list[int]] = lambda _: [],
-        project_exists: Callable[[str], bool] = lambda _: False,
-        credential_limits: Callable[[str], list[tuple[str, int]] | None] = (
-            lambda _: None
-        ),
+        project_budget_windows: Callable[[str], Awaitable[list[int]]] | None = None,
+        project_exists: Callable[[str], Awaitable[bool]] | None = None,
+        credential_limits: (
+            Callable[[str], Awaitable[list[tuple[str, int]] | None]] | None
+        ) = None,
     ):
         """`project_budget_windows` gives the window seconds of each budget limit
         stored for a project; `project_exists` says whether it is still there.
@@ -211,76 +223,84 @@ class AlertableEvents:
         credential is gone.
         """
         self._project_configs = project_configs
-        self._project_budget_windows = project_budget_windows
-        self._project_exists = project_exists
-        self._credential_limits = credential_limits
+        self._project_budget_windows = project_budget_windows or _no_budgets
+        self._project_exists = project_exists or _no_project
+        self._credential_limits = credential_limits or _no_credential
 
-    def for_project(self, project: UUID | str | None) -> AlertableEventsOut:
+    async def for_project(self, project: UUID | str | None) -> AlertableEventsOut:
         """List the project's budget events, read from the stored budget limits."""
-        if not self._project_exists(str(project)):
+        if not await self._project_exists(str(project)):
             return AlertableEventsOut()
-        return _stored_events(self._project_budgets(project))
+        return _stored_events(await self._project_budgets(project))
 
-    def offers_project(self, project: UUID | str | None, event: str) -> bool:
-        return event in _event_names(self.for_project(project))
+    async def offers_project(self, project: UUID | str | None, event: str) -> bool:
+        return event in _event_names(await self.for_project(project))
 
-    def project_stale_reason(
+    async def project_stale_reason(
         self, project: UUID | str | None, event: str
     ) -> str | None:
         """Why a project rule on `event` no longer matches the stored budget limits.
 
         Returns None when the rule is not stale.
         """
-        if not self._project_exists(str(project)):
+        if not await self._project_exists(str(project)):
             return 'The project no longer exists'
-        if self.offers_project(project, event):
+        if await self.offers_project(project, event):
             return None
-        return _stored_stale_reason('project', self._project_budgets(project), event)
+        return _stored_stale_reason(
+            'project', await self._project_budgets(project), event
+        )
 
-    def _project_budgets(self, project: UUID | str | None) -> list[tuple[str, int]]:
-        return [(BUDGET_LIMIT, s) for s in self._project_budget_windows(str(project))]
+    async def _project_budgets(
+        self, project: UUID | str | None
+    ) -> list[tuple[str, int]]:
+        windows = await self._project_budget_windows(str(project))
+        return [(BUDGET_LIMIT, s) for s in windows]
 
-    def for_credential(self, credential: UUID | str | None) -> AlertableEventsOut:
+    async def for_credential(self, credential: UUID | str | None) -> AlertableEventsOut:
         """List the credential's limit events, read from its stored limits."""
-        limits = self._credential_limits(str(credential))
+        limits = await self._credential_limits(str(credential))
         if limits is None:
             return AlertableEventsOut()
         return _stored_events(limits)
 
-    def offers_credential(self, credential: UUID | str | None, event: str) -> bool:
-        return event in _event_names(self.for_credential(credential))
+    async def offers_credential(
+        self, credential: UUID | str | None, event: str
+    ) -> bool:
+        return event in _event_names(await self.for_credential(credential))
 
-    def credential_stale_reason(
+    async def credential_stale_reason(
         self, credential: UUID | str | None, event: str
     ) -> str | None:
         """Why a credential rule on `event` no longer matches the stored limits.
 
         Returns None when the rule is not stale.
         """
-        limits = self._credential_limits(str(credential))
+        limits = await self._credential_limits(str(credential))
         if limits is None:
             return 'The credential no longer exists'
         if event in _event_names(_stored_events(limits)):
             return None
         return _stored_stale_reason('credential', limits, event)
 
-    def for_route(
+    async def for_route(
         self, project: UUID | str | None, route_name: str | None
     ) -> AlertableEventsOut:
         published = self._published_route(project, route_name)
         if published is None:
             return AlertableEventsOut()
-        return _route_events(*published, self._with_budget(project))
+        return _route_events(*published, await self._with_budget(project))
 
-    def offers(
+    async def offers(
         self, project: UUID | str | None, route_name: str | None, event: str
     ) -> bool:
         published = self._published_route(project, route_name)
-        return published is not None and event in _event_names(
-            _route_events(*published, self._with_budget(project))
-        )
+        if published is None:
+            return False
+        with_budget = await self._with_budget(project)
+        return event in _event_names(_route_events(*published, with_budget))
 
-    def stale_reason(
+    async def stale_reason(
         self, project: UUID | str | None, route_name: str | None, event: str
     ) -> str | None:
         """Why a route rule on `event` no longer matches the published configuration.
@@ -291,7 +311,7 @@ class AlertableEvents:
         # A rule with no route name has no published route.
         if published is None or route_name is None:
             return f'Route "{route_name}" is not in the published configuration'
-        with_budget = self._with_budget(project)
+        with_budget = await self._with_budget(project)
         if event in _event_names(_route_events(*published, with_budget)):
             return None
 
@@ -314,9 +334,9 @@ class AlertableEvents:
             )
         return f'Event "{event}" is not offered by route "{route_name}"'
 
-    def _with_budget(self, project: UUID | str | None) -> bool:
+    async def _with_budget(self, project: UUID | str | None) -> bool:
         """Whether the route budget counts: not when the project has a budget."""
-        return not self._project_budget_windows(str(project))
+        return not await self._project_budget_windows(str(project))
 
     def _published_route(
         self, project: UUID | str | None, route_name: str | None
