@@ -107,7 +107,31 @@ export const useGetThreeDotsMenuItems = (uuid) => {
   const isExternallyManaged = data?.owner !== GATEWAY_OWNER;
 
   if (isExternallyManaged) {
-    return [manageLimitsItem];
+    return [
+      {
+        label: <Tooltip title="This credential is managed externally and cannot be modified">Edit credential</Tooltip>,
+        disabled: true,
+      },
+      {
+        label: <Tooltip title="This credential is managed externally and cannot be modified">Rotate credential</Tooltip>,
+        disabled: true,
+      },
+      {
+        type: 'divider',
+      },
+      {
+        label: <Tooltip title="This credential is managed externally and cannot be modified">Associate group</Tooltip>,
+        disabled: true,
+      },
+      manageLimitsItem,
+      {
+        type: 'divider',
+      },
+      {
+        label: <Tooltip title="This credential is managed externally and cannot be modified"><div className="is-error">Delete credential</div></Tooltip>,
+        disabled: true,
+      },
+    ];
   }
 
   const group = data?.group;
