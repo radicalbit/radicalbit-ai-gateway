@@ -3,9 +3,6 @@ import { Popup, usePopup } from '@Components/popup';
 import { DETAIL_LAYOUT_CONFIGURATION, MAIN_LAYOUT_CONFIGURATION } from '@Container/layout/layout-provider/layout-provider-configuration';
 import { useGetThreeDotsMenuItems } from '@Container/pages/groups/detail/header/three-dots-menu';
 import { filterByName } from '@Container/pages/groups/list/helpers';
-import {
-  OwnershipTabEnum, TAB_QP, filterByTab, parseTab,
-} from '@Helpers/ownership-tabs';
 import useModals, { modals } from '@Hooks/use-modals';
 import { PathsEnum, SEARCH_PARAMS } from '@Src/constants';
 import {
@@ -25,7 +22,6 @@ import { useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import columns from './columns';
-import OwnershipTabs from './ownership-tabs';
 import VerticalResizableDivider from './vertical-resizable-divider';
 
 function GroupsList() {
@@ -46,8 +42,6 @@ function GroupsList() {
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      <OwnershipTabs />
-
       <div className="flex flex-row items-center gap-4">
         <Search
           allowClear={{ clearIcon: <Lucide icon={CircleX} /> }}
@@ -67,12 +61,9 @@ function GroupsList() {
 }
 
 function GroupsCount({ searchValue }) {
-  const [searchParams] = useSearchParams();
-
   const { data = [], isSuccess } = useGetGroupsQuery();
 
-  const tab = parseTab(searchParams.get(TAB_QP));
-  const count = filterByName(filterByTab(data, tab), searchValue).length;
+  const count = filterByName(data, searchValue).length;
 
   if (!isSuccess) {
     return false;
@@ -100,12 +91,8 @@ function GroupsTable({ searchValue }) {
 
   const navigate = useNavigate();
   const { uuid } = useParams();
-  const [searchParams] = useSearchParams();
 
   const { data = [], isLoading, isError, isSuccess, refetch } = useGetGroupsQuery();
-
-  const tab = parseTab(searchParams.get(TAB_QP));
-  const tabData = filterByTab(data, tab);
 
   useInitLayoutConfigurations();
 
@@ -121,15 +108,7 @@ function GroupsTable({ searchValue }) {
     return false;
   }
 
-  if (tabData.length === 0 && tab === OwnershipTabEnum.EXTERNALLY_MANAGED) {
-    return (
-      <div className="flex justify-center h-full">
-        <IsEmptyExternallyManaged />
-      </div>
-    );
-  }
-
-  if (tabData.length === 0) {
+  if (data.length === 0) {
     return (
       <div className="flex justify-center h-full">
         <IsEmpty />
@@ -137,7 +116,7 @@ function GroupsTable({ searchValue }) {
     );
   }
 
-  const filteredData = filterByName(tabData, searchValue);
+  const filteredData = filterByName(data, searchValue);
 
   const handleOnRowClick = (record) => {
     const { search } = window.location;
@@ -220,21 +199,6 @@ function IsEmpty() {
           )}
           image={<Lucide icon={Inbox} />}
           title="Groups"
-        />
-      )}
-      width="100%"
-    />
-  );
-}
-
-function IsEmptyExternallyManaged() {
-  return (
-    <Board
-      main={(
-        <Void
-          description="Groups from your identity provider appear here after the sync"
-          size="small"
-          title="No externally managed groups"
         />
       )}
       width="100%"
