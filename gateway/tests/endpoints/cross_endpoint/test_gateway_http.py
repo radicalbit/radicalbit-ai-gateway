@@ -242,6 +242,8 @@ async def test_startup_loads_served_projects_and_wires_every_trace_exporter(capl
         ],
     )
     database = MagicMock(init_mappings=AsyncMock(), dispose=AsyncMock())
+    cancel_alert_dispatches = AsyncMock()
+    alert_store = MagicMock(close=AsyncMock())
     with ExitStack() as stack:
         # The startup resets the app's routes: put them back afterwards.
         stack.enter_context(patch.object(app, 'state', State(dict(app.state._state))))
@@ -250,6 +252,8 @@ async def test_startup_loads_served_projects_and_wires_every_trace_exporter(capl
             (server, 'ch_database', MagicMock()),
             (server, 'start_http_server', MagicMock(return_value=(MagicMock(), None))),
             (server, 'run_alert_window_scheduler', AsyncMock()),
+            (server, 'cancel_alert_dispatches', cancel_alert_dispatches),
+            (server, 'alert_store', alert_store),
             (server, 'build_project_route_registrar', lambda *_: (register, None)),
             (server, 'close_limit_storage', AsyncMock()),
             (server.httpx_aiohttp_client, 'aclose', AsyncMock()),
@@ -274,6 +278,9 @@ async def test_startup_loads_served_projects_and_wires_every_trace_exporter(capl
             database.connect.assert_called_once_with()
             database.init_mappings.assert_awaited_once_with()
         database.dispose.assert_awaited_once_with()
+        # Pending alert dispatches are cancelled, and the alert store closed.
+        cancel_alert_dispatches.assert_awaited_once_with()
+        alert_store.close.assert_awaited_once_with()
 
     assert [c.args[:2] for c in register.call_args_list] == [('a', 'a'), ('c', 'c')]
     assert 'Skipping project b' in caplog.text
