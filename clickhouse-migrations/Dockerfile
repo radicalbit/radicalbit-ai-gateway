@@ -1,7 +1,7 @@
 # goose is built from source with a patched Go toolchain and only the
 # ClickHouse driver: the binary shipped in the upstream image lags behind on
 # Go and module security fixes, and every other driver only adds dependencies.
-FROM golang:1.27.3-alpine AS goose
+FROM golang:1.27.4-alpine AS goose
 
 ARG GOOSE_VERSION=v3.29.0
 # Modules raised above what goose pins, for security fixes it has not picked up.
