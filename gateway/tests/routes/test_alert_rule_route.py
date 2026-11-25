@@ -10,7 +10,7 @@ from sqlalchemy import delete
 import yaml
 
 from tests.common import db_mock  # noqa: F401  (registers every table Key relates to)
-from tests.common.db_integration import DatabaseIntegration
+from tests.common.db_integration import SchemaIntegration, delete_all_rows, insert_row
 from tests.common.db_mock import get_sample_key_limit
 
 from radicalbit_ai_gateway.db.dao.alert_rule_dao import AlertRuleDAO
@@ -182,7 +182,7 @@ def route_rule(event: str, **fields) -> dict:
     }
 
 
-class TestAlertRuleRoute(DatabaseIntegration):
+class TestAlertRuleRoute(SchemaIntegration):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -219,9 +219,13 @@ class TestAlertRuleRoute(DatabaseIntegration):
         self.client.__enter__()
 
     def tearDown(self):
+        self.client.portal.call(delete_all_rows, self.db)
         self.client.portal.call(self.db.dispose)
         self.client.__exit__(None, None, None)
-        super().tearDown()
+
+    def insert(self, row):
+        """Store `row` on the client's event loop, which owns the pool."""
+        return self.client.portal.call(insert_row, self.db, row)
 
     def publish(self, config: GatewayConfig) -> None:
         self.project_configs[PROJECT_NAME] = ProjectEntry(
@@ -288,8 +292,11 @@ class TestAlertRuleRoute(DatabaseIntegration):
         )
 
     def delete_row(self, table, row_uuid) -> None:
-        with self.db.begin_session() as session:
-            session.execute(delete(table).where(table.uuid == row_uuid))
+        async def delete_it():
+            async with self.db.begin_session() as session:
+                await session.execute(delete(table).where(table.uuid == row_uuid))
+
+        self.client.portal.call(delete_it)
 
     def listed(self, rule_uuid) -> dict:
         response = self.client.get('/rule')

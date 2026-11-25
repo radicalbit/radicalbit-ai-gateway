@@ -35,15 +35,27 @@ def _db_conf(container: PostgresContainer) -> DBConfig:
     )
 
 
-async def _init_mappings(db: Database) -> None:
+async def _create_schema(db: Database) -> None:
+    async with db._async_engine.begin() as conn:
+        await conn.run_sync(database.BaseTable.metadata.create_all)
     await db.init_mappings()
-    # The pooled async connection belongs to this short-lived loop: drop it.
+    # The pooled connections belong to this short-lived loop: drop them.
     await db.dispose()
 
 
-class _SchemaPerClass:
+async def _drop_schema(db: Database) -> None:
+    async with db._async_engine.begin() as conn:
+        await conn.run_sync(database.BaseTable.metadata.drop_all)
+    await db.dispose()
+
+
+class SchemaIntegration(unittest.TestCase):
     """Create the schema in the shared Postgres when a test class starts, and
-    drop it when the class ends. Both engines are connected.
+    drop it when the class ends.
+
+    Use it as is for sync tests that reach the database through an event loop
+    of their own, like a ``TestClient`` portal. Async tests use
+    ``AsyncDatabaseIntegration``.
     """
 
     @classmethod
@@ -52,17 +64,13 @@ class _SchemaPerClass:
         cls.db_conf = _db_conf(cls.postgres_container)
         cls.db = Database(conf=cls.db_conf)
         cls.db.connect()
-        database.BaseTable.metadata.create_all(cls.db._engine)
-        asyncio.run(_init_mappings(cls.db))
+        asyncio.run(_create_schema(cls.db))
 
     @classmethod
     def tearDownClass(cls) -> None:
-        # Drop schema at class end
-        database.BaseTable.metadata.drop_all(cls.db._engine)
+        asyncio.run(_drop_schema(cls.db))
         # Sanitize possible duplicated/reflected UNIQUE constraints left in metadata
         cls._sanitize_unique_constraints()
-        # Close the pooled connections: reset_connection only drops the engines.
-        asyncio.run(cls.db.dispose())
         cls.db.reset_connection()
 
     @classmethod
@@ -114,37 +122,29 @@ class _SchemaPerClass:
                     seen_idx.add(index.name)
 
 
-class DatabaseIntegration(_SchemaPerClass, unittest.TestCase):
-    """Sync base: tests use ``with self.db.begin_session()``. It goes in Async 05."""
-
-    def tearDown(self):
-        with self.db.begin_session() as session:
-            for table in reversed(database.BaseTable.metadata.sorted_tables):
-                session.execute(table.delete())
-            session.commit()
-
-    def insert(self, table: T) -> T:
-        with self.db.begin_session() as session:
-            session.add(table)
-            session.flush()
-            return table
+async def delete_all_rows(db: Database) -> None:
+    async with db.begin_session() as session:
+        for table in reversed(database.BaseTable.metadata.sorted_tables):
+            await session.execute(delete(table))
 
 
-class AsyncDatabaseIntegration(_SchemaPerClass, unittest.IsolatedAsyncioTestCase):
+async def insert_row(db: Database, row: T) -> T:
+    async with db.begin_session() as session:
+        session.add(row)
+        await session.flush()
+        return row
+
+
+class AsyncDatabaseIntegration(SchemaIntegration, unittest.IsolatedAsyncioTestCase):
     """Async base: tests are ``async def`` and use
     ``async with self.db.begin_session()``. Every row is deleted after each test.
     """
 
     async def asyncTearDown(self):
-        async with self.db.begin_session() as session:
-            for table in reversed(database.BaseTable.metadata.sorted_tables):
-                await session.execute(delete(table))
+        await delete_all_rows(self.db)
         # Each test runs on its own event loop. A pooled async connection is
         # bound to the loop that opened it, so close them all here.
         await self.db.dispose()
 
     async def insert(self, row: T) -> T:
-        async with self.db.begin_session() as session:
-            session.add(row)
-            await session.flush()
-            return row
+        return await insert_row(self.db, row)

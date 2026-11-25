@@ -17,7 +17,7 @@ import pytest
 from redis import Redis
 from sqlalchemy import delete
 
-from tests.common.db_integration import DatabaseIntegration
+from tests.common.db_integration import SchemaIntegration
 
 from radicalbit_ai_gateway.alerting.alert_dispatch import AlertDispatcher
 from radicalbit_ai_gateway.alerting.alert_store import (
@@ -213,7 +213,7 @@ def window_rule(size: str = '5m', **columns) -> dict:
 
 @pytest.fixture(scope='module')
 def db():
-    class Schema(DatabaseIntegration):
+    class Schema(SchemaIntegration):
         pass
 
     Schema.setUpClass()
