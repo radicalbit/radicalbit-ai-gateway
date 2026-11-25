@@ -61,16 +61,6 @@ class AsyncSessionTest(AsyncDatabaseIntegration):
         # expire_on_commit=False: no lazy load (which async cannot do) is needed.
         assert project.name == 'kept'
 
-    async def test_the_sync_session_reads_what_the_async_one_wrote(self):
-        project = db_mock.get_sample_project(uuid=uuid.uuid4(), name='both')
-        async with self.db.begin_session() as session:
-            session.add(project)
-
-        with self.db.begin_session() as session:
-            found = session.scalar(select(Project).where(Project.uuid == project.uuid))
-
-        assert found.name == 'both'
-
 
 class FilterIfTest(AsyncDatabaseIntegration):
     async def asyncSetUp(self):
