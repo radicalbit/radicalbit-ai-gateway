@@ -704,14 +704,11 @@ async def test_budget_limits_stream_sends_the_readable_projects_consumption(
     deps.project_service.get_budget_limits_consumption = AsyncMock(
         return_value={str(LID): BAR}
     )
-    app = _app(
-        deps,
-        ProjectRouteConfig(
-            filter_project_uuids_fn=lambda _request, ids: [
-                u for u in ids if u == uuids['member']
-            ]
-        ),
-    )
+
+    async def members_only(_request, ids):
+        return [u for u in ids if u == uuids['member']]
+
+    app = _app(deps, ProjectRouteConfig(filter_project_uuids_fn=members_only))
 
     [event] = await first_events(
         app,
@@ -723,6 +720,29 @@ async def test_budget_limits_stream_sends_the_readable_projects_consumption(
 
     deps.project_service.get_budget_limits_consumption.assert_awaited_once_with(
         [uuids[name] for name in readable]
+    )
+    assert event == {str(LID): BAR_JSON}
+
+
+@pytest.mark.asyncio
+async def test_budget_limits_stream_without_a_filter_sends_every_requested_project(
+    deps,
+):
+    requested = [uuid.uuid4(), uuid.uuid4()]
+    deps.project_service.get_budget_limits_consumption = AsyncMock(
+        return_value={str(LID): BAR}
+    )
+
+    [event] = await first_events(
+        _app(deps, ProjectRouteConfig()),
+        f'{PREFIX}/projects/budget-limits/stream',
+        sleep='radicalbit_ai_gateway.routes.project_route.asyncio.sleep',
+        interval=10,
+        params={'projects': [str(u) for u in requested]},
+    )
+
+    deps.project_service.get_budget_limits_consumption.assert_awaited_once_with(
+        requested
     )
     assert event == {str(LID): BAR_JSON}
 

@@ -55,7 +55,9 @@ class ProjectRouteConfig:
     ) = None
     get_project_fn: Callable[[Request, UUID, bool], Awaitable[Any]] | None = None
     # The projects among the requested ones the caller may read consumption of
-    filter_project_uuids_fn: Callable[[Request, list[UUID]], list[UUID]] | None = None
+    filter_project_uuids_fn: (
+        Callable[[Request, list[UUID]], Awaitable[list[UUID]]] | None
+    ) = None
     list_response_model: type = field(default_factory=lambda: list[ProjectOut])
     item_response_model: type = field(default_factory=lambda: ProjectOut)
 
@@ -85,9 +87,11 @@ class ProjectRoute:
 
         get_projects_fn = config.get_projects_fn or _get_projects
         get_project_fn = config.get_project_fn or _get_project
-        filter_project_uuids_fn = config.filter_project_uuids_fn or (
-            lambda _, uuids: uuids
-        )
+
+        async def _all_project_uuids(_, project_uuids):
+            return project_uuids
+
+        filter_project_uuids_fn = config.filter_project_uuids_fn or _all_project_uuids
         router = APIRouter()
         projects: list[str | Enum] = ['projects']
         configs: list[str | Enum] = ['configs']
@@ -404,7 +408,7 @@ class ProjectRoute:
             projects: Annotated[list[UUID] | None, Query()] = None,
         ) -> AsyncIterator[dict[str, dict[str, Any]]]:
             while True:
-                visible = filter_project_uuids_fn(request, projects or [])
+                visible = await filter_project_uuids_fn(request, projects or [])
                 consumption = await project_service.get_budget_limits_consumption(
                     visible
                 )
